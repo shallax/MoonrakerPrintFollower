@@ -87,13 +87,40 @@ class LocalFailureModelTests(unittest.TestCase):
         session = FakeSession([boxes, scores])
         image = QImage(100, 100, QImage.Format.Format_RGB888)
         image.fill(0xffffff)
-        regions = (((0, 0), (.5, 0), (.5, 1), (0, 1)),)
+        regions = (((0, 0), (1, 0), (0, 1)),)
         result = LocalFailureModel(session).detect(image, regions)
         self.assertAlmostEqual(result.score, .9)
         self.assertEqual(len(result.boxes), 1)
         self.assertEqual(result.boxes[0].as_dict()["x"], .1)
-        self.assertEqual(float(session.feed["camera"][0, :, 200, 350].max()), 0)
+        self.assertEqual(float(session.feed["camera"][0, :, 350, 350].max()), 0)
         self.assertEqual(float(session.feed["camera"][0, :, 200, 50].min()), 1)
+
+    def test_crop_fills_input_and_maps_boxes_back_to_source_pixels(self):
+        image = QImage(200, 100, QImage.Format.Format_RGB888)
+        image.fill(0xffffff)
+        regions = (((.25, .2), (.75, .2), (.75, .8), (.25, .8)),)
+        boxes = np.array([[[[.1, .25, .9, .75]], [[.1, .25, .9, .75]]]])
+        session = FakeSession([boxes, np.array([[[.9], [.8]]])])
+        result = LocalFailureModel(session).detect(image, regions)
+        self.assertEqual(float(session.feed["camera"].min()), 1)
+        self.assertAlmostEqual(result.score, .9)
+        self.assertEqual(len(result.boxes), 1, "NMS still removes duplicates in the crop")
+        box = result.boxes[0]
+        np.testing.assert_allclose([box.x, box.y, box.width, box.height], [.3, .35, .4, .3])
+
+    def test_disjoint_regions_keep_gap_masked_and_filter_boxes_in_source_space(self):
+        image = QImage(200, 100, QImage.Format.Format_RGB888)
+        image.fill(0xffffff)
+        regions = (((.2, .2), (.4, .2), (.4, .8), (.2, .8)),
+                   ((.6, .2), (.8, .2), (.8, .8), (.6, .8)))
+        boxes = np.array([[[[0, 0, .2, 1]], [[.4, .2, .6, .8]], [[.8, 0, 1, 1]]]])
+        session = FakeSession([boxes, np.array([[[.9], [.99], [.8]]])])
+        result = LocalFailureModel(session).detect(image, regions)
+        self.assertEqual(float(session.feed["camera"][0, :, 200, 208].max()), 0)
+        self.assertEqual(float(session.feed["camera"][0, :, 200, 25].min()), 1)
+        self.assertAlmostEqual(result.score, 1.7)
+        self.assertEqual(len(result.boxes), 2)
+        np.testing.assert_allclose([result.boxes[0].x, result.boxes[1].x], [.2, .68])
 
     def test_run_options_can_be_cancelled_without_reusing_a_terminated_run(self):
         import threading

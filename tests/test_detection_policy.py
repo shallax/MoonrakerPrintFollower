@@ -6,6 +6,25 @@ from mpf.detection.DetectionPolicy import DetectionPolicy
 
 
 class DetectionPolicyTests(unittest.TestCase):
+    def test_untrained_camera_learns_six_frames_then_detects_a_rise_without_absorbing_it(self):
+        context = ("printer", "print", "camera")
+        policy = DetectionPolicy(warning_threshold=1, failure_threshold=9, safe_seconds=0)
+        for index in range(6):
+            self.assertEqual(policy.observe(.2, now=index * 10, context=context), "learning")
+            self.assertIsNone(policy.state(now=index * 10, context=context, active=True).score)
+            self.assertAlmostEqual(policy.baseline["mean"], .2)
+            # Restart partway through calibration must resume its real count.
+            if index == 2:
+                saved = policy.baseline
+                policy = DetectionPolicy(warning_threshold=1, failure_threshold=9, safe_seconds=0)
+                policy.restore_baseline(saved)
+        self.assertEqual(policy.baseline["frames"], 6)
+        self.assertEqual(policy.observe(.2, now=60, context=context), "normal")
+        levels = [policy.observe(1.2, now=index * 10, context=context) for index in range(7, 10)]
+        self.assertIn("failure", levels)
+        self.assertLess(policy.baseline["mean"], .201)
+        self.assertGreater(policy.state(now=90, context=context, active=True).score, 0)
+
     def test_sensitivity_scales_classification_and_score_monotonically(self):
         policies = [DetectionPolicy(sensitivity=value, safe_seconds=0) for value in (.8, 1, 1.2)]
         context = ("printer", "job", "camera")
@@ -30,14 +49,14 @@ class DetectionPolicyTests(unittest.TestCase):
         policy.observe(0.12, now=1, context=job)
         self.assertEqual(policy.state(now=1, context=job, active=False).name, "idle")
         self.assertIsNone(policy.state(now=1, context=job, active=False).raw_score)
-        self.assertEqual(policy.state(now=1, context=job, active=True).name, "normal")
+        self.assertEqual(policy.state(now=1, context=job, active=True).name, "learning")
         self.assertEqual(policy.state(now=1, context=job, active=True).raw_score, .12)
         self.assertEqual(policy.state(now=1, context=("printer-a", "job-2", "camera-bed"),
                                       active=True).name, "waiting")
         self.assertEqual(policy.state(now=32, context=job, active=True).name, "stale")
         self.assertIsNone(policy.state(now=32, context=job, active=True).raw_score)
         policy.observe(0.10, now=33, context=job)
-        self.assertEqual(policy.state(now=33, context=job, active=True).name, "normal")
+        self.assertEqual(policy.state(now=33, context=job, active=True).name, "learning")
 
     def test_obico_safe_frames_adaptive_warning_and_confirmed_failure(self):
         policy = DetectionPolicy()
@@ -64,7 +83,7 @@ class DetectionPolicyTests(unittest.TestCase):
         policy.observe(.9, now=0, context=first)
         baseline = policy.baseline
         policy.observe(.1, now=10, context=second)
-        self.assertEqual(policy.state(now=10, context=second, active=True).name, "normal")
+        self.assertEqual(policy.state(now=10, context=second, active=True).name, "learning")
         self.assertEqual(policy.state(now=10, context=first, active=True).name, "waiting")
         self.assertGreater(policy.baseline["frames"], baseline["frames"])
         self.assertEqual(policy.state(now=10, context=second, active=True).raw_score, .1)
@@ -74,7 +93,7 @@ class DetectionPolicyTests(unittest.TestCase):
         job = ("printer", "print", "camera")
         policy.observe(.11, now=0, context=job)
         result = policy.state(now=0, context=job, active=True)
-        self.assertEqual(result.score, 0)
+        self.assertIsNone(result.score)
         self.assertEqual(result.raw_score, .11)
         policy.observe(1.42, now=10, context=job)
         self.assertEqual(policy.state(now=10, context=job, active=True).raw_score, 1.42)
@@ -129,6 +148,7 @@ class DetectionPolicyTests(unittest.TestCase):
         self.assertLess(still_warning.score, 78)
 
         zero = DetectionPolicy(warning_threshold=0, failure_threshold=1, safe_seconds=0)
+        zero.restore_baseline({"mean": 0, "frames": 6})
         zero.observe(0, now=0, context=context)
         self.assertEqual(zero.state(now=0, context=context, active=True).score, 0)
 

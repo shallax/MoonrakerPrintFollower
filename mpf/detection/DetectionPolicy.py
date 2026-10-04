@@ -15,6 +15,7 @@ class DetectionPolicy:
     EWM_SPAN = 12
     SHORT_WINDOW = 310
     LONG_WINDOW = 7200
+    BASELINE_LEARNING_FRAMES = 6
     SHORT_MULTIPLE = 3.8
     ESCALATION = 1.75
 
@@ -118,7 +119,16 @@ class DetectionPolicy:
         self._lifetime_frames += 1
         self._ewm_mean = confidence * (2 / (self.EWM_SPAN + 1)) + self._ewm_mean * (1 - 2 / (self.EWM_SPAN + 1))
         self._short_mean = self._rolling(self._short_mean, confidence, self._current_frames, self.SHORT_WINDOW)
-        self._long_mean = self._rolling(self._long_mean, confidence, self._lifetime_frames, self.LONG_WINDOW)
+        learning = self._lifetime_frames <= self.BASELINE_LEARNING_FRAMES
+        baseline_weight = self._lifetime_frames if learning else self.LONG_WINDOW
+        self._long_mean += (confidence - self._long_mean) / baseline_weight
+        if learning:
+            # Calibrate on the cleared scene, then use a slow reference so a
+            # newly introduced failure cannot immediately become normal.
+            self._ewm_mean = self._short_mean = self._long_mean
+            self._level = "learning"
+            self._score = None
+            return self._level
         elapsed = (print_elapsed_seconds if print_elapsed_seconds is not None
                    else now - self._first_sample_at)
         self._level = ("failure" if self._failing(self.ESCALATION, elapsed)

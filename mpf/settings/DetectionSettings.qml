@@ -18,6 +18,7 @@ Item {
     readonly property string detectionHostError: settings && settings.detectionHostError !== undefined ? settings.detectionHostError : ""
     readonly property bool detectionCameraReady: settings && settings.detectionCameraReady !== undefined ? settings.detectionCameraReady : false
     readonly property var values: ({})
+    readonly property var detectionMonitor: settings && settings.detectionMonitor !== undefined ? settings.detectionMonitor : null
 
     Connections {
         target: root.settings || null
@@ -101,6 +102,25 @@ Item {
             }
 
             UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Camera baseline (raw): " + (root.detectionMonitor != null ? root.detectionMonitor.detectionBaseline.toFixed(2) : "Unavailable")
+            }
+            Cura.SecondaryButton {
+                objectName: "detectionResetBaselineButton"
+                text: "Reset training data"
+                enabled: root.detectionMonitor != null && root.detectionMonitor.detectionGlobalEnabled && root.detectionMonitor.detectionEnabled && root.detectionMonitor.detectionCameraReady && !root.detectionMonitor.detectionEditingRegions
+                onClicked: {
+                    resetTrainingDialog.targetMonitor = root.detectionMonitor;
+                    resetTrainingDialog.open();
+                }
+            }
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Clears training data for all cameras on this printer. Each camera learns again from six analysed frames. Detection zones and tuning are kept."
+            }
+            UM.Label {
                 text: "Requirements"
                 font: UM.Theme.getFont("medium_bold")
             }
@@ -156,6 +176,20 @@ Item {
                 text: "The per-printer safe period suppresses warnings and automatic pause at the start of a print (default five minutes). Only confirmed failures request a pause; prints are never cancelled automatically. Notifications resume after you acknowledge an alert."
                 color: UM.Theme.getColor("text_inactive")
             }
+        }
+    }
+
+    Cura.MessageDialog {
+        id: resetTrainingDialog
+        objectName: "resetPrinterTrainingDialog"
+        property var targetMonitor: null
+        title: "Reset training data for all cameras?"
+        text: "All cameras on this printer will learn a new baseline from six analysed frames. Keep their scenes free of spaghetti while learning. Detection zones and tuning will be kept."
+        standardButtons: Dialog.Yes | Dialog.No
+        anchors.centerIn: Overlay.overlay
+        onAccepted: {
+            if (targetMonitor != null && targetMonitor === root.detectionMonitor)
+                targetMonitor.resetPrinterDetectionTraining();
         }
     }
 

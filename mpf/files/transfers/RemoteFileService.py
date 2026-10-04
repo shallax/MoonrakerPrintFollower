@@ -33,17 +33,17 @@ def _log_cache_warning(message, error):
 # accumulation. A root that carries its creating pid is swept the
 # moment that pid is dead.
 _STALE_ROOT_AGE_S = 24 * 3600
-# The whole plugin temp family plus the legacy names — the download
-# root, the thumbnails, the raster cache and the upload staging all
-# leak on an unclean exit.
-_SWEPT_PREFIXES = ("mpf-", "cura-moonraker-files-", "cura-moonraker-upload-")
+# Only roots created by this plugin are ours to remove. A broad "mpf-"
+# match can delete another live process's test or evidence directory.
+_SWEPT_PREFIXES = ("mpf-files-", "mpf-thumbs-", "mpf-raster-", "mpf-upload-",
+                   "cura-moonraker-files-", "cura-moonraker-upload-")
 
 
 def _owner_pid(entry):
     """The creating pid embedded in the mpf-<kind>-<pid>-... shape
     (the kind segment first, then the digits); None for a pid-less
     legacy name."""
-    if not entry.startswith("mpf-"):
+    if not entry.startswith(_SWEPT_PREFIXES[:4]):
         return None
     parts = entry[len("mpf-"):].split("-")
     if len(parts) >= 2 and parts[1].isdigit():
@@ -120,7 +120,7 @@ def _sweep_stale_roots(temp_dir: str, current_root: str) -> None:
     """Remove abandoned temp roots (sessions that died without the
     shutdown hook): every file the session never cleaned lives
     under these. A live pid's root stays — a concurrent Cura
-    session survives the sweep at any age. A pid-less mpf-* name
+    session survives the sweep at any age. A pid-less plugin-owned root
     cannot belong to a live current-version session (the current
     version always embeds its pid), so it goes outright; the age
     gate covers only the pid-less LEGACY names."""
@@ -134,7 +134,7 @@ def _sweep_stale_roots(temp_dir: str, current_root: str) -> None:
         if not entry.startswith(_SWEPT_PREFIXES) or entry == current_name:
             continue
         path = os.path.join(temp_dir, entry)
-        if entry.startswith("mpf-"):
+        if entry.startswith(_SWEPT_PREFIXES[:4]):
             pid = _owner_pid(entry)
             if pid is not None and _pid_alive(pid):
                 continue

@@ -98,15 +98,18 @@ class PluginPersistenceTests(unittest.TestCase):
     def test_disable_all_detection_is_one_atomic_settings_write(self):
         self._seed({
             "A": {"url": "http://a:7125", "detection_enabled": True,
-                  "detection_notify_enabled": True, "detection_pause_enabled": True},
+                  "detection_notify_enabled": True, "detection_pause_enabled": True,
+                  "detection_regions": {"top": [[[0, 0], [1, 0], [1, 1]]]}},
             "B": {"url": "http://b:7125", "detection_enabled": True,
-                  "detection_notify_enabled": True},
+                  "detection_notify_enabled": True,
+                  "detection_regions": {"side": [[[0, 0], [1, 0], [1, 1]]]}},
         })
         before = len(self.saves)
         self.assertTrue(self.facade.disable_all_detection())
         self.assertEqual(len(self.saves), before + 1)
         document = self.facade.settings_document()
         for machine in document["machines"].values():
+            self.assertEqual(machine["detection_regions"], {})
             for field in ("detection_enabled", "detection_notify_enabled",
                           "detection_pause_enabled"):
                 self.assertIs(machine[field], False)

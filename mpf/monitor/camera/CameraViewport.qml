@@ -41,7 +41,7 @@ Item {
     property int paneId: -1
     readonly property string signalState: root.printerModel != null ? root.printerModel.detectionState : "idle"
     readonly property bool signalLive: (root.signalState === "normal" || root.signalState === "warning" || root.signalState === "failure") && root.cameraControlLive
-    readonly property bool signalWaiting: root.signalState === "waiting" && root.cameraControlLive
+    readonly property bool signalWaiting: (root.signalState === "waiting" || root.signalState === "learning") && root.cameraControlLive
     // A stale analysis is PRESENT, with its reason: vanishing entirely
     // would read as "no detection at all", and the neutral grey keeps
     // it out of the green band the live states own.
@@ -49,6 +49,9 @@ Item {
     readonly property bool signalShown: root.signalLive || root.signalWaiting || root.signalStale
     readonly property bool signalWithoutScore: root.signalWaiting || root.signalStale
     readonly property bool signalCompact: !root.cameraBarFits
+    // User-selected presentation: bar, line, or number pill. Camera refreshes
+    // and detection updates do not change it.
+    property int signalBarMode: 0
     readonly property int signalScore: root.printerModel != null ? root.printerModel.detectionScore : -1
     readonly property string signalName: root.printerModel != null ? root.printerModel.detectionStatus : "Unavailable"
     readonly property color signalColor: root.signalWithoutScore ? UM.Theme.getColor("text_inactive") : root.signalState === "failure" ? MoonrakerTheme.dangerRed : root.signalState === "warning" ? MoonrakerTheme.warningOrange : MoonrakerTheme.successGreen
@@ -956,6 +959,7 @@ Item {
             }
         }
         Rectangle {
+            id: analysisAgePill
             objectName: "detectionAnalysisAgePill"
             anchors.left: parent.left
             anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
@@ -1041,34 +1045,43 @@ Item {
             }
         }
         FailureSignalBar {
-            visible: root.signalShown && !root.signalCompact
+            visible: root.signalShown && !root.signalCompact && root.signalBarMode < 2
+            lineOnly: root.signalBarMode === 1
+            onCollapseRequested: function (steps) {
+                root.signalBarMode = Math.max(0, Math.min(2, root.signalBarMode + steps));
+            }
             score: root.signalScore
             signalColor: root.signalColor
             waiting: root.signalWithoutScore
-            waitingText: root.signalStale ? "Stale" : "Wait"
+            waitingText: root.signalStale ? "Stale" : root.signalState === "learning" ? "Learn" : "Wait"
             anchors.left: parent.left
             anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
             anchors.verticalCenter: parent.verticalCenter
-            width: controlBar.cameraBarWidth
             height: controlBar.cameraBarHeight
         }
         Rectangle {
             objectName: "failureSignalPill"
-            visible: root.signalShown && root.signalCompact
+            visible: root.signalShown && (root.signalCompact || root.signalBarMode === 2)
             width: signalPillLabel.width + 20 * screenScaleFactor
             height: 20 * screenScaleFactor
             radius: 10 * screenScaleFactor
             color: MoonrakerTheme.cameraLivePill
             anchors.left: parent.left
             anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
-            anchors.verticalCenter: parent.verticalCenter
+            y: root.signalBarMode === 2 ? (analysisAgePill.opacity > 0 ? analysisAgePill.y + analysisAgePill.height : cameraLiveBadge.y + cameraLiveBadge.height) + UM.Theme.getSize("narrow_margin").height : (parent.height - height) / 2
             UM.Label {
                 id: signalPillLabel
                 objectName: "failureSignalPillText"
                 anchors.centerIn: parent
-                text: root.signalWithoutScore ? (root.signalStale ? root.signalName : "Wait") : (root.signalScore / 100).toFixed(2) + " · " + root.signalName
+                text: root.signalState === "learning" ? "Learning baseline" : root.signalBarMode === 2 ? (root.signalWithoutScore ? (root.signalStale ? "Stale" : "Wait") : (root.signalScore / 100).toFixed(2)) : root.signalWithoutScore ? (root.signalStale ? root.signalName : "Wait") : (root.signalScore / 100).toFixed(2) + " · " + root.signalName
                 color: root.signalColor
                 font: UM.Theme.getFont("small")
+            }
+            MouseArea {
+                objectName: "failureSignalExpand"
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.signalBarMode = 0
             }
         }
         Rectangle {

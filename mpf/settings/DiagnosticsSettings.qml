@@ -136,7 +136,7 @@ Item {
 
             UM.Label {
                 width: parent.width
-                text: "Remove the downloaded Obico model and inference runtime, and disable detection, notification, and automatic pause for every printer. A fresh setup will be required. Alert frames and score timelines are removed with them."
+                text: "Remove the downloaded Obico model and inference runtime, clear saved detection regions, and disable detection, notification, and automatic pause for every printer. A fresh setup will be required. Alert frames and score timelines are removed with them."
                 wrapMode: Text.WordWrap
                 color: UM.Theme.getColor("text_inactive")
             }

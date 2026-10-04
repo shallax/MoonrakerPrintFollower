@@ -86,12 +86,17 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
                 self._safe = safe
                 self._rearmable = False
                 self._sensitivity = 1.0
+                self._baseline = 1.47
                 self._alert_level = "warning"
                 self.expanded = True
                 self.calls = []
 
             @harness.pyqtProperty(float, notify=detectionChanged)
             def detectionSensitivity(self): return self._sensitivity
+            @harness.pyqtProperty(float, notify=detectionChanged)
+            def detectionBaseline(self): return self._baseline
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionEditingRegions(self): return False
             @harness.pyqtProperty(str, notify=detectionChanged)
             def detectionStatus(self): return "Off for this printer"
             @harness.pyqtProperty(bool, notify=detectionChanged)
@@ -170,6 +175,12 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
                 self.calls.append(("reset",))
                 self._sensitivity = 1.0
                 self._warning, self._failure = 38, 78
+                self.detectionChanged.emit()
+
+            @harness.pyqtSlot()
+            def resetDetectionBaseline(self):
+                self.calls.append(("baseline",))
+                self._baseline = 0.0
                 self.detectionChanged.emit()
 
             @harness.pyqtSlot(int, int)
@@ -362,6 +373,8 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
             self.assertTrue(control.property("enabled"))
 
         sensitivity = self.find(section, "detectionSensitivitySlider")
+        baseline = self.find(section, "detectionBaselineLabel")
+        self.assertEqual(baseline.property("text"), "Camera baseline (raw): 1.47")
         first._sensitivity = .9
         first.detectionChanged.emit()
         self.pump()
@@ -393,6 +406,7 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
         self.assertEqual(safe_slider.property("value"), 900)
         self.assertEqual(second.calls, [])
         self.assertEqual(sensitivity.property("value"), 80, "switching printers refreshes the thumb")
+        self.assertEqual(baseline.property("text"), "Camera baseline (raw): 1.47")
         second._ready = True
         second._camera = True
         second.detectionChanged.emit()

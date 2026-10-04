@@ -7,7 +7,7 @@ import shutil
 from dataclasses import asdict, replace
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 # QHostAddress is a QtNetwork class: some bundled PyQt6 builds (Cura
 # 5.13's included) do not re-export it from QtCore, and the plugin
 # fails to register with "cannot import name 'QHostAddress'" when the
@@ -314,6 +314,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return bool(monitor is not None and monitor._camera.url
                     and monitor.webcamStreamEnabled and not self._config().camera_disabled)
 
+    @pyqtProperty(QObject, notify=settingsChanged)
+    def detectionMonitor(self):
+        return self._output_plugin._current_monitor() if self._output_plugin is not None else None
+
     @pyqtProperty(str, notify=detectionChanged)
     def detectionRefusal(self) -> str:
         return self._detection_refusal
@@ -395,7 +399,8 @@ class MoonrakerFollowerMachineAction(MachineAction):
         else:
             config = self._config()
             disabled = replace(config, detection_enabled=False,
-                               detection_notify_enabled=False, detection_pause_enabled=False)
+                               detection_notify_enabled=False, detection_pause_enabled=False,
+                               detection_regions={})
             if self._follower.apply_printer_config(disabled) is False:
                 status = "Detection disabled in storage, but this printer's live settings could not refresh."
             elif not self._detection.remove_assets():

@@ -3,6 +3,32 @@ import time
 from tests import monitor_test_support as harness
 
 class MonitorQtTests(harness.MonitorQtTests):
+    def test_idle_camera_switch_notifies_region_bindings(self):
+        config = self.follower.current_printer_config()
+        self.follower.apply_printer_config(harness.replace(config, camera_url="http://printer-a/bed"))
+        model = self.monitor()
+        self.deliver()
+        self.qt.events()
+        camera = model.detectionRegionCamera
+        region = [[[.2, .2], [.6, .2], [.6, .6], [.2, .6]]]
+        self.follower.apply_printer_config(harness.replace(
+            self.follower.current_printer_config(), detection_regions={camera: region}))
+        model._publish()
+        observed = [model.detectionRegions]
+        model.detectionChanged.connect(lambda: observed.append(model.detectionRegions))
+        self.assertEqual(observed[-1], region)
+        self.follower.apply_printer_config(harness.replace(
+            self.follower.current_printer_config(), camera_url="http://printer-a/toolhead"))
+        model._camera.observe()
+        model._publish()
+        self.assertEqual(model.detectionRegions, [])
+        self.assertEqual(observed[-1], [], "QML must be notified even while detection is idle")
+        self.follower.apply_printer_config(harness.replace(
+            self.follower.current_printer_config(), camera_url="http://printer-a/bed"))
+        model._camera.observe()
+        model._publish()
+        self.assertEqual(observed[-1], region)
+
     def attest(self, model):
         from mpf.printing.PrintRunIdentity import PrintRunIdentity
         owner = model._failure_detection
@@ -166,8 +192,8 @@ class MonitorQtTests(harness.MonitorQtTests):
             model.acknowledgeDetectionAlert()
             self.assertFalse(model.detectionAlertPending)
             model._failure_detection._handle_detection_action(context, "failure", now + 10)
-            pause.assert_not_called()
-            notify.assert_called_once()
+            pause.assert_called_once()
+            notify.assert_called_with("failure", False)
             model._failure_detection._handle_detection_action(context, "failure", now + 95)
             pause.assert_called_once()
             self.assertFalse(model._failure_detection._detection_paused_for_print)
@@ -311,6 +337,7 @@ class MonitorQtTests(harness.MonitorQtTests):
 
         directory = tempfile.TemporaryDirectory(prefix="mpf-alert-evidence-")
         self.addCleanup(directory.cleanup)
+        io_results = []
 
         class Detector(QObject):
             stateChanged = pyqtSignal()
@@ -329,9 +356,9 @@ class MonitorQtTests(harness.MonitorQtTests):
 
             def enqueue_io(self, key, callback):
                 try:
-                    callback()
-                except Exception:
-                    pass
+                    io_results.append((key, callback()))
+                except Exception as error:
+                    io_results.append((key, repr(error)))
                 return True
 
             def close(self):
@@ -367,6 +394,7 @@ class MonitorQtTests(harness.MonitorQtTests):
             model._publish()
             model.acceptDetectionFrame(frame)
             model._failure_detection._detection_frame = frame
+            model._failure_detection._detection_policy.restore_baseline({"mean": 0.0, "frames": 7200})
             fed = 0
             for _ in range(30):
                 model._on_detection_result(context, 0.0)
@@ -388,7 +416,8 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertEqual(len(timelines), 1)
         # One line per analysed frame, exactly: a missing line is a
         # frame the evidence never recorded.
-        self.assertEqual(len(timelines[0].read_text(encoding="utf-8").splitlines()), fed)
+        self.assertEqual(len(timelines[0].read_text(encoding="utf-8").splitlines()), fed,
+                         "evidence callbacks: %r" % io_results)
 
     def test_an_evidence_write_that_raises_never_escapes_the_result_slot(self):
         import tempfile
@@ -707,8 +736,8 @@ class MonitorQtTests(harness.MonitorQtTests):
         first_context = detector.samples[-1][1]
         detector.resultReady.emit(first_context, 0.1)
         self.qt.events()
-        self.assertEqual(model.detectionState, "normal")
-        self.assertEqual(model.detectionScore, 0)
+        self.assertEqual(model.detectionState, "learning")
+        self.assertEqual(model.detectionScore, -1)
         self.assertEqual(model.detectionRawScore, .1)
         detector.enabled = False
         detector.stateChanged.emit()
@@ -743,6 +772,18 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertEqual(model.detectionState, "failure")
         self.assertGreater(model.detectionScore, 66)
         self.assertEqual(model.detectionRawScore, 4.0)
+        # Bringing Cura forward reloads the stream, but it is still the
+        # same camera and print: keep the accumulated failure evidence.
+        from PyQt6.QtCore import Qt
+        owner = model._failure_detection
+        before = (model.detectionState, model.detectionScore, model.detectionRawScore,
+                  owner._detection_policy._current_frames, owner._detection_policy._ewm_mean)
+        nonce = model._camera_recovery.nonce
+        model._on_app_state_changed(Qt.ApplicationState.ApplicationInactive)
+        model._on_app_state_changed(Qt.ApplicationState.ApplicationActive)
+        self.assertGreater(model._camera_recovery.nonce, nonce)
+        self.assertEqual((model.detectionState, model.detectionScore, model.detectionRawScore,
+                          owner._detection_policy._current_frames, owner._detection_policy._ewm_mean), before)
         model._failure_detection._detection_policy._sample_at -= 31
         model._refresh_detection()
         self.qt.events()
@@ -3415,6 +3456,9 @@ Item {
         ))
         allowed = {
             "visible: detectionOverlay.editing",  # explicit user region editor
+            # The canvas contains only detection annotations; hide it
+            # with the printer's Enable checkbox without reflowing controls.
+            "visible: printerModel != null && printerModel.detectionEnabled",
             "visible: !detectionOverlay.editing && root.cameraBarFits && root.cameraControlLive",  # edit mode and the existing fitted/live bar rule
             "visible: advancedButton.expanded",  # explicit user advanced tuning
             "visible: detectionStatusHover.hovered",  # readout tooltip only
@@ -3434,8 +3478,12 @@ Item {
             # The webcam FPS bar: parked until the pane is wide enough
             # and the stream is live — layout-static within the pane.
             "visible: root.cameraBarFits && root.cameraControlLive",
-            "visible: root.signalShown && !root.signalCompact",
-            "visible: root.signalShown && root.signalCompact",
+            # Explicit user drag/click modes for the detection indicator.
+            "visible: root.signalShown && !root.signalCompact && root.signalBarMode < 2",
+            "visible: root.signalShown && (root.signalCompact || root.signalBarMode === 2)",
+            # User-requested training reset only belongs to enabled detection.
+            "visible: root.printerModel != null && root.printerModel.detectionGlobalEnabled && root.printerModel.detectionEnabled",
+            "visible: !root.lineOnly",
             "visible: root.signalShown",
             "visible: !root.waiting",
             # The camera bar's two modes (zoom / FPS) and its compact

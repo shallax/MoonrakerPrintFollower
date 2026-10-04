@@ -213,6 +213,8 @@ class MonitorDetection(QObject):
         printer_id = self._detection_printer_id()
         if printer_id is None:
             return None
+        # A transport reload (including foregrounding Cura) does not change
+        # the analysis identity. Frame intake still rejects old reload URLs.
         return (printer_id, self._client.session.generation, job,
                 camera_id, str(camera.get("cameraName") or ""),
                 self._detection_source_key(),
@@ -222,7 +224,7 @@ class MonitorDetection(QObject):
                 self._config().detection_notify_enabled,
                 self._config().detection_pause_enabled,
                 self._config().detection_sensitivity, self._regions_fingerprint(),
-                self._camera_recovery.nonce, self._detection_run_identity or "unresolved", self._detection_epoch)
+                self._detection_run_identity or "unresolved", self._detection_epoch)
 
     def _detection_source_key(self):
         return source_key(self._camera.url)
@@ -286,7 +288,10 @@ class MonitorDetection(QObject):
                 self._detection_action_saved = saved.get("detectionActions") or {}
         camera_id = self._detection_camera_id() if printer_id is not None else None
         if camera_id is not None:
-            camera_id += ":mask-v1:" + self._regions_fingerprint()
+            # Cropped input has a different score distribution from the old
+            # full-frame mask. Keep full-frame baselines, retire masked ones.
+            mode = ":crop-v1:" if self._active_detection_regions() else ":mask-v1:"
+            camera_id += mode + self._regions_fingerprint()
         if camera_id != self._detection_baseline_camera:
             self._detection_baseline_camera = camera_id
             self._detection_policy = DetectionPolicy()
@@ -310,7 +315,9 @@ class MonitorDetection(QObject):
 
     def _detection_values(self):
         self._sync_detection_thresholds()
-        if self._detection_editing and (self._detection_edit_camera != self._detection_camera_id() or not self.detectionCameraReady):
+        if self._detection_editing and (self._detection_edit_camera != self._detection_camera_id()
+                                       or not self.detectionCameraReady or not self.detectionGlobalEnabled
+                                       or not self.detectionEnabled):
             self._detection_editing = False
             self._invalidate_detection()
         self._ensure_detection_run()
@@ -339,6 +346,8 @@ class MonitorDetection(QObject):
         else:
             reason = {
                 "waiting": "Waiting for an analysed frame",
+                "learning": "Learning baseline — keep the camera scene clear (%d/%d frames)" % (
+                    self._detection_policy.baseline["frames"], self._detection_policy.BASELINE_LEARNING_FRAMES),
                 "stale": "Camera analysis is stale",
                 "normal": "Normal",
                 "warning": "Warning",
@@ -522,6 +531,7 @@ class MonitorDetection(QObject):
         self._sync_detection_action_context(print_key, now)
         if self._detection_muted or level not in ("warning", "failure"):
             return
+        escalated = level == "failure" and self._detection_alert_level == "warning"
         config = self._config()
         pause_candidate = (self._detection_run_identity is not None and level == "failure" and config.detection_pause_enabled
                            and not self._detection_paused_for_print and not self._detection_pause_pending
@@ -531,7 +541,7 @@ class MonitorDetection(QObject):
             if context != self._detection_context():
                 return
         if pause_candidate and self._attestation_fresh(2):
-            if (self._detection_acknowledged_at is not None
+            if (not escalated and self._detection_acknowledged_at is not None
                     and now - self._detection_acknowledged_at < 90):
                 return
             observation = getattr(self._data, "observation", None)
@@ -552,12 +562,11 @@ class MonitorDetection(QObject):
                 self._commands.report_status(f"Automatic pause was not sent: {verdict.reason}")
         if not config.detection_notify_enabled:
             return
-        if (self._detection_acknowledged_at is not None and now - self._detection_acknowledged_at < 90):
+        if (not escalated and self._detection_acknowledged_at is not None and now - self._detection_acknowledged_at < 90):
             return
         # An unacknowledged failure retains its severity until acknowledged.
         if self.detectionAlertPending and self._detection_alert_level == "failure":
             level = "failure"
-        escalated = level == "failure" and self._detection_alert_level == "warning"
         if self._detection_alerted_at is not None and not escalated:
             unacknowledged = (self._detection_acknowledged_at is None
                               or self._detection_acknowledged_at < self._detection_alerted_at)
@@ -868,6 +877,45 @@ class MonitorDetection(QObject):
     def resetDetectionTuning(self):
         self._set_detection_config(detection_sensitivity=1.0, detection_warning_threshold=38,
                                    detection_failure_threshold=78)
+
+    @pyqtProperty(float, notify=detectionChanged)
+    def detectionBaseline(self):
+        return self._detection_policy.baseline["mean"]
+
+    @pyqtSlot()
+    def resetDetectionBaseline(self):
+        self._reset_detection_training(False)
+
+    @pyqtSlot()
+    def resetPrinterDetectionTraining(self):
+        self._reset_detection_training(True)
+
+    def _reset_detection_training(self, all_cameras):
+        if not (self.detectionGlobalEnabled and self.detectionEnabled) or (not all_cameras and not self.detectionCameraReady) or self._detection_editing:
+            self._commands.report_status("Enable detection and finish region editing before resetting the camera baseline")
+            return
+        self._sync_detection_thresholds()
+        printer = self._detection_baseline_printer
+        camera = self._detection_baseline_camera
+        if printer is None or (not all_cameras and camera is None):
+            return
+        prefix = str(self._detection_camera_id()) + ":"
+        baselines = {} if all_cameras else {key: value for key, value in self._detection_baselines.items()
+                                            if not key.startswith(prefix)}
+        if camera is not None:
+            baselines[camera] = {"mean": 0.0, "frames": 0}
+        saved_baselines = dict(baselines)
+        # Use the same ordered worker lane/key as samples: replace a pending
+        # old write, or follow an in-flight one, so it cannot resurrect the mean.
+        if not self._queue_detection_io("baseline:" + str(printer),
+                lambda: self._store.set_machine_state(printer, {"detectionBaselines": saved_baselines})):
+            self._commands.report_status("Camera baseline could not be reset; try again when detection is ready")
+            return
+        self._detection_baselines = baselines
+        self._detection_policy.restore_baseline({"mean": 0.0, "frames": 0})
+        self._invalidate_detection()
+        self._publish()
+
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionMuted(self):

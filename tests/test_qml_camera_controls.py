@@ -3,6 +3,87 @@ from tests import qml_engine_support as harness
 
 
 class DetectionSignalLayoutTests(harness.CameraFpsControlTests):
+    def test_camera_training_reset_requires_confirmation_and_detection_enabled(self):
+        from PyQt6.QtCore import QObject, QMetaObject
+        pane, _window, model, _image, _frame = self._fps_pane(700, 700)
+        button = self.find(pane, "resetCameraTrainingButton")
+        self.assertFalse(button.property("visible"))
+        model.set_detection("normal", 0)
+        self.pump()
+        self.assertTrue(button.property("visible"))
+        QMetaObject.invokeMethod(button, "clicked")
+        self.pump()
+        dialog = pane.findChild(QObject, "resetCameraTrainingDialog")
+        self.assertIn("webcam", dialog.property("title"))
+        self.assertEqual(model.training_resets, 0)
+        QMetaObject.invokeMethod(dialog, "reject")
+        self.assertEqual(model.training_resets, 0)
+        QMetaObject.invokeMethod(button, "clicked")
+        QMetaObject.invokeMethod(dialog, "accept")
+        self.assertEqual(model.training_resets, 1)
+
+    def test_signal_drag_collapses_to_line_then_pill_and_click_restores_bar(self):
+        from PyQt6.QtCore import QPoint, QPointF, QEvent
+        from PyQt6.QtGui import QMouseEvent
+        from PyQt6.QtTest import QTest
+        pane, window, model, _image, frame = self._fps_pane(700, 700)
+        model.set_detection("warning", 54)
+        self.pump()
+        view = self.find(pane, "cameraViewport")
+        drag = self.find(pane, "failureSignalDrag")
+        bar = drag.parentItem()
+        full_width = bar.width()
+        self.assertLess(full_width, 52)
+
+        def swipe(dx, via=None):
+            initial_mode = view.property("signalBarMode")
+            start = drag.mapToItem(window.contentItem(), QPointF(drag.width()/2, drag.height()/2)).toPoint()
+            end = start + QPoint(dx, 0)
+            QTest.mousePress(window, harness.Qt.MouseButton.LeftButton,
+                             harness.Qt.KeyboardModifier.NoModifier, start)
+            for distance in ([via, dx] if via is not None else [dx]):
+                point = start + QPoint(distance, 0)
+                event = QMouseEvent(QEvent.Type.MouseMove, QPointF(point), QPointF(window.mapToGlobal(point)),
+                                   harness.Qt.MouseButton.NoButton, harness.Qt.MouseButton.LeftButton,
+                                   harness.Qt.KeyboardModifier.NoModifier)
+                self.app.sendEvent(window, event)
+                self.pump()
+                steps = 2 if distance < -55 else 1 if distance < -12 else -1 if distance > 12 else 0
+                self.assertEqual(view.property("signalBarMode"), max(0, min(2, initial_mode + steps)),
+                                 "The bar must change mode while the mouse is still held")
+            QTest.mouseRelease(window, harness.Qt.MouseButton.LeftButton,
+                               harness.Qt.KeyboardModifier.NoModifier, end)
+            self.pump()
+
+        swipe(-20)
+        self.assertEqual(view.property("signalBarMode"), 1)
+        self.assertLess(bar.width(), full_width)
+        self.assertTrue(self.find(pane, "failureSignalMarker").property("visible"))
+        swipe(20)
+        self.assertEqual(view.property("signalBarMode"), 0)
+        swipe(-20)
+        swipe(-20)
+        self.assertEqual(view.property("signalBarMode"), 2)
+        self.assertFalse(bar.property("visible"))
+        pill = self.find(pane, "failureSignalPill")
+        self.assertTrue(pill.property("visible"))
+        self.assertEqual(self.find(pane, "failureSignalPillText").property("text"), "0.54")
+        model.set_detection("failure", 88)
+        self.pump()
+        self.assertEqual(view.property("signalBarMode"), 2)
+        self.assertEqual(self.find(pane, "failureSignalPillText").property("text"), "0.88")
+        point = pill.mapToItem(window.contentItem(), QPointF(pill.width()/2, pill.height()/2)).toPoint()
+        QTest.mouseClick(window, harness.Qt.MouseButton.LeftButton,
+                         harness.Qt.KeyboardModifier.NoModifier, point)
+        self.pump()
+        self.assertEqual(view.property("signalBarMode"), 0)
+        self.assertTrue(bar.property("visible"))
+        self.assertAlmostEqual(bar.width(), full_width)
+        swipe(0, via=20)
+        swipe(0, via=-20)
+        swipe(-65, via=-20)
+        self.assertEqual(view.property("signalBarMode"), 2)
+
     def test_waiting_for_first_analysis_has_a_grey_frame_and_wait_without_marker(self):
         pane, _window, model, _image, frame = self._fps_pane(700, 700)
         model.set_detection("waiting")
@@ -22,6 +103,13 @@ class DetectionSignalLayoutTests(harness.CameraFpsControlTests):
         self.assertFalse(marker.property("visible"))
         self.assertIn("Wait", [item.property("text") for item in
                                 bar.findChildren(harness.QQuickItem)])
+        model.set_detection("learning")
+        self.pump()
+        self.assertFalse(view.property("signalLive"))
+        self.assertTrue(view.property("signalWaiting"))
+        self.assertEqual(view.property("signalColor"), grey)
+        self.assertFalse(marker.property("visible"))
+        self.assertIn("Learn", [item.property("text") for item in bar.findChildren(harness.QQuickItem)])
         model.set_detection("normal", 12)
         self.pump()
         self.assertTrue(view.property("signalLive"))

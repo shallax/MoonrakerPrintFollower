@@ -107,6 +107,18 @@ if QT_AVAILABLE:
             self._snapshot_available = False
             self._detection_state = "idle"
             self._detection_score = -1
+            self.training_resets = 0
+
+        @pyqtProperty(bool, notify=detectionChanged)
+        def detectionEnabled(self): return self._detection_state != "idle"
+        @pyqtProperty(bool, notify=detectionChanged)
+        def detectionCameraReady(self): return True
+        @pyqtProperty(str, notify=detectionChanged)
+        def detectionRegionCamera(self): return "camera-one"
+        @pyqtProperty(str, notify=detectionChanged)
+        def cameraName(self): return "webcam"
+        @pyqtSlot()
+        def resetDetectionBaseline(self): self.training_resets += 1
 
         @pyqtProperty(bool, notify=detectionChanged)
         def detectionEditingRegions(self): return False
@@ -3564,9 +3576,11 @@ if QT_AVAILABLE:
     class _CatalogDouble(QObject):
         """Cura's translation catalog, read by the themed controls."""
 
+        @pyqtSlot(str, str, result=str)
         def i18nc(self, _context, text):
             return text
 
+        @pyqtSlot(str, result=str)
         def i18n(self, text):
             return text
 

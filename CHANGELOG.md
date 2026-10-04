@@ -12,6 +12,25 @@ upload camera frames to a cloud service.
   cancellable progress, and a real inference benchmark. Setup and a global
   switch also live in the new Detection settings tab. No download occurs
   without consent; Diagnostics can reset the offer or remove shared assets.
+- Poll model/runtime and file-manager download progress every 250 ms. Coalesce
+  worker progress and bound each GUI delivery batch so fast downloads cannot
+  flood the interface. File progress updates avoid rebuilding file rows.
+- Restrict stale temporary-folder cleanup to folders owned by the plugin,
+  preserving other live `mpf-*` folders such as detection evidence fixtures.
+- Narrow the detection scale and let a leftward drag reduce it to a line or
+  a score pill below the analysis age. Drag right to expand the line; click
+  the pill to restore the full scale. Modes change during the drag, before
+  releasing the mouse.
+- Show the selected camera's raw baseline. Reset training data for that camera
+  from the Webcam pane, or for every camera on the printer from Detection
+  settings, with confirmation. Resets preserve zones, sensitivity and bounds.
+- New cameras and reset cameras explicitly learn a baseline from six analysed
+  frames, without displaying a green score or triggering alerts while learning.
+  Afterwards the baseline adapts slowly so a sudden failure is not absorbed.
+- Escalating from warning to failure bypasses the acknowledgement cooldown,
+  allowing a fresh failure notification and opted-in automatic pause immediately.
+- Removing local detection assets also clears saved regions for every printer
+  and closes any active region editor.
 - Sample the already-decoded selected webcam feed on a bounded worker.
   A fresh active-print signal colours the camera frame green, amber or red
   with a left-hand scale; missing, idle and stale states remain neutral.
@@ -29,10 +48,17 @@ upload camera frames to a cloud service.
 - Configure each printer independently with sensitivity, advanced adaptive
   bounds, a 0–15-minute safe period, and separate notification/pause opt-ins.
 - Draw up to four monitored polygons per camera. Pixels outside their union
-  are excluded before analysis. Rectangles have draggable vertex handles,
+  are excluded, then the image is cropped to the smallest rectangle enclosing
+  all regions before resizing for analysis. Detection boxes map back to the
+  original camera image. Cropped regions start a fresh per-camera baseline.
+  Rectangles have draggable vertex handles,
   midpoint insertion, vertex/shape deletion and Undo. Save/Cancel and Escape
   make editing explicit. Camera loss or disabled feeds suspend detection and
   camera-dependent controls until fresh analysis returns.
+- Restore each printer/camera's saved regions when switching cameras, and hide
+  their webcam outlines while detection is disabled for the printer. Camera
+  refreshes and foregrounding Cura preserve
+  accumulated detection state; stale analysis still expires normally.
   Show sampled suspicious-region boxes with an analysis-age label; overlays
   follow camera rotation, mirroring, zoom and pan.
 - Mute alerts and automatic pause for the rest of the current print while

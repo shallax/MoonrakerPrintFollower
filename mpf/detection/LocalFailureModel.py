@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 
-from .DetectionMask import masked_image, region_path, box_intersects_regions
+from .DetectionMask import cropped_masked_image, region_path, box_intersects_regions
 from .DetectionObservation import DetectionBox, ModelDetections, MAX_BOXES
 
 from PyQt6.QtCore import Qt
@@ -87,7 +87,8 @@ class LocalFailureModel:
         deadline = time.monotonic() + 5
         if image.isNull():
             raise ValueError("Cannot analyse an empty camera frame")
-        rgb = masked_image(image, regions).convertToFormat(QImage.Format.Format_RGB888).scaled(
+        cropped, bounds = cropped_masked_image(image, regions)
+        rgb = cropped.convertToFormat(QImage.Format.Format_RGB888).scaled(
             self._width, self._height,
             Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
@@ -134,6 +135,10 @@ class LocalFailureModel:
         if not np.isfinite(coords).all():
             raise ValueError("Invalid failure model coordinates")
         coords = np.clip(coords, 0, 1)
+        # Model coordinates describe the crop. Restore raw camera coordinates
+        # before polygon filtering, NMS and drawing on the full camera image.
+        coords = coords * np.array([bounds.width(), bounds.height()] * 2) / np.array([image.width(), image.height()] * 2)
+        coords += np.array([bounds.x() / image.width(), bounds.y() / image.height()] * 2)
         valid = (coords[:, 2] > coords[:, 0]) & (coords[:, 3] > coords[:, 1])
         if regions:
             path = region_path(regions)

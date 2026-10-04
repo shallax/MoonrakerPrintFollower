@@ -1173,7 +1173,7 @@ for _name in (
 for _name in (
     "cameraStreamDisabledNotice", "failureSignalPill",
     "failureSignalPillText", "failureSignalTick", "failureSignalTrack",
-    "failureSignalFrame", "failureSignalMarker",
+    "failureSignalFrame", "failureSignalMarker", "failureSignalDrag", "failureSignalExpand",
     "detectionScore", "detectionRawScore", "detectionGlobalEnabled",
     "detectionState", "detectionStatus",
 ):
@@ -1188,13 +1188,15 @@ for _name in (
 # network-free desktop simulator has no model-generated failure observations.
 for _name in (
     "MonitorDetection.acknowledgeDetectionAlert", "MonitorDetection.rearmDetectionPause",
-    "MonitorDetection.resetDetectionTuning", "MonitorDetection.saveDetectionRegions",
+    "MonitorDetection.resetDetectionTuning", "MonitorDetection.resetDetectionBaseline", "MonitorDetection.saveDetectionRegions",
+    "MonitorDetection.resetPrinterDetectionTraining", "MoonrakerMonitorModel.resetPrinterDetectionTraining",
+    "resetPrinterTrainingDialog", "resetCameraTrainingDialog", "resetCameraTrainingButton",
     "MonitorDetection.setDetectionEditingRegions", "MonitorDetection.setDetectionEnabled",
     "MonitorDetection.setDetectionMuted", "MonitorDetection.setDetectionNotifyEnabled",
     "MonitorDetection.setDetectionPauseEnabled", "MonitorDetection.setDetectionSafeSeconds",
     "MonitorDetection.setDetectionSensitivity", "MonitorDetection.setDetectionShowBoxes",
     "MonitorDetection.setDetectionThresholds", "MonitorDetection.validateDetectionRegions",
-    "MoonrakerMonitorModel.resetDetectionTuning", "MoonrakerMonitorModel.saveDetectionRegions",
+    "MoonrakerMonitorModel.resetDetectionTuning", "MoonrakerMonitorModel.resetDetectionBaseline", "MoonrakerMonitorModel.saveDetectionRegions",
     "MoonrakerMonitorModel.setDetectionEditingRegions", "MoonrakerMonitorModel.setDetectionMuted",
     "MoonrakerMonitorModel.setDetectionSensitivity", "MoonrakerMonitorModel.setDetectionShowBoxes",
     "MoonrakerMonitorModel.validateDetectionRegions",
@@ -1204,7 +1206,7 @@ for _name in (
     "detectionRegionEditor", "detectionRegionEditorStatus", "detectionResetTuningButton",
     "detectionSaveRegionsButton", "detectionSensitivitySlider", "detectionShowBoxesCheckbox",
     "detectionStatusLabel", "detectionUndoRegionEditButton", "detectionDeleteVertexButton",
-    "detectionDeleteRegionButton",
+    "detectionDeleteRegionButton", "detectionBaseline", "detectionBaselineLabel", "detectionResetBaselineButton",
 ):
     EXCLUSIONS[_name] = {
         "reason": "local inference and transactional camera regions have no synthetic model feed in the desktop simulator",

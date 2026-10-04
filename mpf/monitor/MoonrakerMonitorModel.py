@@ -385,9 +385,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # note line through the same channel as file refusals.
         self._request_file_download = request_file_download
         # The save download's progress window: the model polls the
-        # follower's progress payload each publish; the Cancel button
+        # follower's progress payload on a 250 ms clock; the Cancel button
         # retires the in-flight stream.
         self._request_download_progress = request_download_progress
+        self._download_progress = ""
         self._cancel_file_download = cancel_file_download
         if download_failed is not None:
             download_failed.connect(self._on_file_manager_note)
@@ -607,6 +608,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._chart_timer = QTimer(self)
         self._chart_timer.setInterval(1000)
         self._chart_timer.timeout.connect(self._on_chart_tick)
+        self._download_progress_timer = QTimer(self)
+        self._download_progress_timer.setInterval(250)
+        self._download_progress_timer.timeout.connect(self._poll_download_progress)
         if detection is not None:
             self._chart_timer.timeout.connect(self._refresh_detection)
         # The Preview value block rides the aux clock: the data's
@@ -847,8 +851,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._temperature._chart_full = None
         if active:
             self._chart_timer.start()
+            self._download_progress_timer.start()
         else:
             self._chart_timer.stop()
+            self._download_progress_timer.stop()
         self._data.set_owner_active(active)
         # The post-migration ready point: the record may have landed
         # since construction (the early publishes read it while the
@@ -864,6 +870,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # — the signal path the toggle uses, fired here.
             self.sectionLayoutChanged.emit()
 
+
+    def _poll_download_progress(self) -> None:
+        """Sample byte counters without rebuilding the monitor or file rows."""
+        progress = (self._request_download_progress() or ""
+                    if self._request_download_progress is not None else "")
+        if progress == self._download_progress:
+            return
+        self._download_progress = progress
+        self._publication.set("fileDownloadProgress", progress)
+        self.fileManagerChanged.emit()
 
     def _publish_thumbs(self) -> None:
         """The thumbnail-only publish, COALESCED: landings arrive in
@@ -933,9 +949,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._publication.store(self._compose(snapshot))
         self._apply_camera_url()
         self._emit_changed(previous)
-        camera_ready = self.detectionCameraReady
-        if camera_ready != self._failure_detection._detection_camera_seen:
-            self._failure_detection._detection_camera_seen = camera_ready
+        # Region bindings also change while detection is idle, when neither
+        # the analysis context nor camera readiness changes on a selection.
+        camera_state = (self.detectionCameraReady, self._failure_detection._detection_printer_id(),
+                        self.detectionRegionCamera, self._failure_detection._regions_fingerprint())
+        if camera_state != self._failure_detection._detection_camera_seen:
+            self._failure_detection._detection_camera_seen = camera_state
             self.detectionChanged.emit()
 
     def _invalidate_detection(self):
@@ -1047,6 +1066,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def resetDetectionTuning(self):
         return self._failure_detection.resetDetectionTuning()
 
+    @pyqtProperty(float, notify=detectionChanged)
+    def detectionBaseline(self):
+        return self._failure_detection.detectionBaseline
+
+    @pyqtSlot()
+    def resetDetectionBaseline(self):
+        return self._failure_detection.resetDetectionBaseline()
+
+    @pyqtSlot()
+    def resetPrinterDetectionTraining(self):
+        return self._failure_detection.resetPrinterDetectionTraining()
+
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionMuted(self):
         return self._failure_detection.detectionMuted
@@ -1141,8 +1172,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["monitorLoading"] = bool(self._client.connected and not self._data.snapshot.auxiliary)
         # The download progress window's payload: {name, percent} while
         # a save download streams, "" otherwise (the popup's gate).
-        values["fileDownloadProgress"] = (self._request_download_progress() or ""
-                                          if self._request_download_progress is not None else "")
+        values["fileDownloadProgress"] = self._download_progress
         # The M117 message lives on Klipper's display_status object,
         # not print_stats — the Print-job slot reads it from the aux
         # snapshot (the report: M117 showed nowhere).

@@ -5,6 +5,7 @@ Canvas {
     id: root
     objectName: "detectionOverlay"
     property var printerModel: null
+    visible: printerModel != null && printerModel.detectionEnabled
     property real viewZoom: 1
     readonly property bool editing: printerModel != null && printerModel.detectionEditingRegions
     property var draftRegions: []

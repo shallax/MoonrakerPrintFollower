@@ -219,6 +219,23 @@ class MonitorDetectionTests(unittest.TestCase):
         self.assertEqual(self.owner._notify_detection.call_count, 3)
         self.assertEqual(self.owner.detectionAlertLevel, "failure")
 
+    def test_acknowledged_warning_does_not_delay_failure_notification_or_pause(self):
+        self.attest()
+        context = self.owner._detection_context()
+        now = time.time()
+        self.owner._handle_detection_action(context, "warning", now - 1)
+        self.owner.acknowledgeDetectionAlert()
+        self.owner._handle_detection_action(context, "warning", now + 1)
+        self.owner._notify_detection.assert_called_once()
+        self.commands.send.assert_not_called()
+        self.owner._handle_detection_action(context, "failure", now + 2)
+        self.assertEqual(self.owner._notify_detection.call_count, 2)
+        self.commands.send.assert_called_once()
+        self.assertEqual(self.owner.detectionAlertLevel, "failure")
+        self.owner.acknowledgeDetectionAlert()
+        self.owner._handle_detection_action(context, "failure", now + 3)
+        self.assertEqual(self.owner._notify_detection.call_count, 2)
+
     def test_stale_history_reply_cannot_attest_next_local_print(self):
         old = self.requests[-1]
         self.job.job_key = ("next.gcode", 200, 2)
@@ -297,6 +314,43 @@ class MonitorDetectionTests(unittest.TestCase):
         self.assertLess(len(camera), 256)
         self.assertEqual(len(restored.detection_regions[camera]), 1)
         self.assertNotIn("invalid", restored.detection_regions)
+
+    def test_regions_persist_independently_per_printer_and_camera_after_restart(self):
+        import os
+        import tempfile
+        from mpf.settings.PluginPersistence import PluginPersistence
+        with tempfile.TemporaryDirectory() as directory:
+            paths = (os.path.join(directory, "settings.json"),
+                     os.path.join(directory, "state.json"), os.path.join(directory, "machines"))
+            persistence = PluginPersistence(*paths)
+            self.data.snapshot.webcams = [
+                {"uid": "bed", "stream_url": "/stream?camera=bed"},
+                {"uid": "top", "stream_url": "/stream?camera=top"}]
+            expected = {}
+            for printer in ("printer-one", "printer-two"):
+                self.config = PrinterConfig(url="http://printer", camera_url="http://printer/camera")
+                self.owner._identity = lambda printer=printer: (printer, printer)
+                def save(config, printer=printer):
+                    if not persistence.set_machine_config(printer, config):
+                        return False
+                    return self.apply(PrinterConfig.from_dict(persistence.get_machine(printer)))
+                self.owner._apply_config = save
+                for index in (0, 1):
+                    self.camera.values["activeWebcamIndex"] = index
+                    inset = round(.1 + .1 * index + (.2 if printer == "printer-two" else 0), 2)
+                    region = [[[inset, inset], [.8, inset], [.8, .8], [inset, .8]]]
+                    self.owner.setDetectionEditingRegions(True)
+                    self.assertTrue(self.owner.saveDetectionRegions(region))
+                    expected[printer, index] = region
+            # A new persistence facade and owner read the saved disk records.
+            persistence = PluginPersistence(*paths)
+            for printer in ("printer-one", "printer-two"):
+                self.config = PrinterConfig.from_dict(persistence.get_machine(printer))
+                restored = self.make_owner()
+                restored._identity = lambda printer=printer: (printer, printer)
+                for index in (1, 0):
+                    self.camera.values["activeWebcamIndex"] = index
+                    self.assertEqual(restored.detectionRegions, expected[printer, index])
 
     def test_tuning_and_overlay_preferences_round_trip_and_reset(self):
         self.assertTrue(self.owner.detectionNotifyEnabled)
@@ -405,6 +459,19 @@ class MonitorDetectionTests(unittest.TestCase):
         self.assertEqual(self.owner.detectionBoxes, [])
         self.assertEqual(self.owner._detection_values()["detectionState"], "waiting")
 
+    def test_model_removal_closes_the_region_edit_transaction(self):
+        self.owner.setDetectionEditingRegions(True)
+        self.assertTrue(self.owner.detectionEditingRegions)
+        self.detector.ready = False
+        self.owner._detection_values()
+        self.assertFalse(self.owner.detectionEditingRegions)
+
+    def test_disabling_detection_closes_the_region_edit_transaction(self):
+        self.owner.setDetectionEditingRegions(True)
+        self.assertTrue(self.owner.detectionEditingRegions)
+        self.owner.setDetectionEnabled(False)
+        self.assertFalse(self.owner.detectionEditingRegions)
+
     def test_failed_acknowledgement_rolls_back_and_retired_toast_cannot_acknowledge(self):
         self.attest()
         self.owner._handle_detection_action(self.owner._detection_context(), "warning", time.time())
@@ -460,6 +527,96 @@ class MonitorDetectionTests(unittest.TestCase):
         self.owner._detection_values()
         self.assertEqual(self.owner.detectionRegionCamera, camera)
         self.assertEqual(self.owner.detectionRegions, regions)
+
+    def test_cropped_regions_do_not_restore_old_full_frame_mask_baseline(self):
+        self.owner.setDetectionEditingRegions(True)
+        self.assertTrue(self.owner.saveDetectionRegions([[[.2,.2],[.6,.2],[.6,.6],[.2,.6]]]))
+        camera = self.owner.detectionRegionCamera
+        fingerprint = self.owner._regions_fingerprint()
+        old_key = camera + ":mask-v1:" + fingerprint
+        new_key = camera + ":crop-v1:" + fingerprint
+        self.store.records["printer-one"] = {"detectionBaselines": {
+            old_key: {"mean": 4, "frames": 1000}}}
+        restored = self.make_owner()
+        restored._detection_values()
+        self.assertEqual(restored._detection_baseline_camera, new_key)
+        self.assertEqual(restored._detection_policy.baseline, {"mean": 0, "frames": 0})
+        self.store.records["printer-one"]["detectionBaselines"][new_key] = {"mean": .2, "frames": 50}
+        restarted = self.make_owner()
+        restarted._detection_values()
+        self.assertEqual(restarted._detection_policy.baseline, {"mean": .2, "frames": 50})
+
+    def test_baseline_reset_keeps_regions_other_cameras_and_survives_restart(self):
+        self.owner.setDetectionEditingRegions(True)
+        self.assertTrue(self.owner.saveDetectionRegions([[[.2,.2],[.6,.2],[.6,.6],[.2,.6]]]))
+        self.owner._detection_values()
+        self.attest()
+        self.owner._detection_policy.restore_baseline({"mean": 1.5, "frames": 194})
+        self.owner._detection_baselines["other-camera"] = {"mean": .3, "frames": 30}
+        self.store.records["other-printer"] = {"detectionBaselines": {"camera": {"mean": .4, "frames": 40}}}
+        original_config = self.config
+        other_printer = deepcopy(self.store.records["other-printer"])
+        pending = {}
+        def enqueue(key, callback):
+            pending[key] = callback
+            return True
+        self.detector.enqueue_io = enqueue
+        self.owner._on_detection_observation(self.observation(1.5))
+        old_result = self.observation(8)
+        self.assertGreater(self.owner.detectionBaseline, 1)
+        self.owner.resetDetectionBaseline()
+        self.assertEqual(self.owner.detectionBaseline, 0)
+        self.assertEqual(self.config, original_config, "reset must not edit zones or settings")
+        self.owner._on_detection_observation(old_result)
+        self.assertEqual(self.owner._detection_policy.baseline, {"mean": 0, "frames": 0})
+        pending["baseline:printer-one"]()
+        self.assertEqual(self.store.records["other-printer"], other_printer)
+        saved = self.store.records["printer-one"]["detectionBaselines"]
+        self.assertEqual(saved["other-camera"], {"mean": .3, "frames": 30})
+        restarted = self.make_owner()
+        restarted._detection_values()
+        self.assertEqual(restarted.detectionBaseline, 0)
+        self.assertEqual(restarted.detectionRegions, self.owner.detectionRegions)
+
+    def test_baseline_reset_refuses_when_its_persistence_queue_is_unavailable(self):
+        self.owner._detection_policy.restore_baseline({"mean": 1.5, "frames": 194})
+        self.detector.enqueue_io = lambda key, callback: False
+        self.owner.resetDetectionBaseline()
+        self.assertEqual(self.owner.detectionBaseline, 1.5)
+        self.assertIn("could not be reset", self.commands.report_status.call_args.args[0])
+
+    def test_first_camera_use_and_training_reset_publish_learning_without_a_green_score(self):
+        self.owner.setDetectionThresholds(1, 9)
+        self.attest()
+        for index in range(6):
+            self.owner._on_detection_observation(self.observation(0))
+            values = self.owner._detection_values()
+            self.assertEqual(values["detectionState"], "learning")
+            self.assertEqual(values["detectionScore"], -1)
+            self.assertIn("%d/6" % (index + 1), values["detectionStatus"])
+        self.commands.send.assert_not_called()
+        self.owner._notify_detection.assert_not_called()
+        for _ in range(3):
+            self.owner._on_detection_observation(self.observation(1))
+        self.assertEqual(self.owner._detection_values()["detectionState"], "failure")
+        self.assertLess(self.owner.detectionBaseline, .001)
+        self.owner.resetDetectionBaseline()
+        self.owner._detection_values()
+        self.owner._on_detection_observation(self.observation(0))
+        self.assertEqual(self.owner._detection_values()["detectionState"], "learning")
+        self.assertEqual(self.owner._detection_policy.baseline["frames"], 1)
+
+    def test_printer_training_reset_clears_all_cameras_but_keeps_zones_and_other_printers(self):
+        config = self.config
+        self.owner._detection_baselines["other-camera"] = {"mean": 2, "frames": 50}
+        self.store.records["other-printer"] = {"detectionBaselines": {"camera": {"mean": 3, "frames": 100}}}
+        other = deepcopy(self.store.records["other-printer"])
+        self.owner.resetPrinterDetectionTraining()
+        saved = self.store.records["printer-one"]["detectionBaselines"]
+        self.assertNotIn("other-camera", saved)
+        self.assertTrue(all(value == {"mean": 0, "frames": 0} for value in saved.values()))
+        self.assertEqual(self.config, config)
+        self.assertEqual(self.store.records["other-printer"], other)
 
     def test_delayed_history_response_cannot_become_a_fresh_pause_authorisation(self):
         from unittest.mock import patch

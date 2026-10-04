@@ -63,6 +63,41 @@ class Model:
 
 
 class LocalDetectionServiceTests(unittest.TestCase):
+    def test_download_chunk_progress_is_coalesced_before_gui_publication(self):
+        service = self.service()
+        self.until(lambda: service.phase == "uninstalled")
+        self.assertEqual(service._mailbox_timer.interval(), 250)
+        seen = []
+        service.stateChanged.connect(lambda: seen.append((service.phase, service.received, service.busy)))
+        def download():
+            for phase in ("runtime", "model"):
+                for received in range(25000):
+                    service._send(service._generation, phase=phase, received=received, total=24999)
+            service._send(service._generation, phase="ready", ready=True, busy=False)
+        worker = threading.Thread(target=download)
+        worker.start()
+        worker.join(3)
+        self.assertFalse(worker.is_alive())
+        service._drain_mailbox()
+        self.assertEqual([item[:2] for item in seen],
+                         [("runtime", 24999), ("model", 24999), ("ready", 24999)])
+        self.assertTrue(service.ready)
+        self.assertFalse(service.busy)
+
+    def test_mailbox_drain_yields_even_when_callbacks_keep_posting(self):
+        service = self.service()
+        self.until(lambda: service.phase == "uninstalled")
+        seen = []
+        def replenish():
+            seen.append(service.phase)
+            service._send(service._generation, phase="checking")
+        service.stateChanged.connect(replenish)
+        service._send(service._generation, phase="checking")
+        service._drain_mailbox()
+        service.stateChanged.disconnect(replenish)
+        self.assertEqual(len(seen), 16)
+        service._drain_mailbox()
+
     @classmethod
     def setUpClass(cls):
         cls.app = QCoreApplication.instance() or QCoreApplication([])

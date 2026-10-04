@@ -593,7 +593,17 @@ class PrintConfirmTests(MonitorModelCase):
         self.assertEqual(self.value("fileDownloadProgress"), "")
         progress[0] = {"name": "part.gcode", "percent": 42}
         self.model._publish()
+        self.assertEqual(self.value("fileDownloadProgress"), "")
+        self.model._poll_download_progress()
         self.assertEqual(self.value("fileDownloadProgress"), {"name": "part.gcode", "percent": 42})
+        self.assertEqual(self.model._download_progress_timer.interval(), 250)
+        with patch.object(self.model, "_compose", side_effect=AssertionError("full rebuild")):
+            progress[0] = {"name": "part.gcode", "percent": 70}
+            self.model._poll_download_progress()
+            self.assertEqual(self.value("fileDownloadProgress")["percent"], 70)
+            progress[0] = None
+            self.model._poll_download_progress()
+            self.assertEqual(self.value("fileDownloadProgress"), "")
         self.model.fileDownloadCancel()
         self.assertEqual(cancelled, [True])
         self.model._cancel_file_download = None

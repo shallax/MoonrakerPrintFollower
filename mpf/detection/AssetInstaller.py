@@ -135,7 +135,7 @@ def download(url: str, path: str, size: int, digest: str, cancel, progress) -> N
                         raise ValueError("Local detection downloads require HTTPS after redirects")
                     while True:
                         _check_cancelled(cancel)
-                        block = getattr(response, "read1", response.read)(8192)
+                        block = getattr(response, "read1", response.read)(64 * 1024)
                         if not block:
                             break
                         received += len(block)

@@ -21,6 +21,9 @@ class RegionCamera(harness.CameraModelDouble):
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionEditingRegions(self): return self.editing
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionEnabled(self): return self._detection_state != "idle"
     @pyqtProperty(QVariant, notify=detectionChanged)
     def detectionRegions(self): return self.regions
     @pyqtProperty(int, notify=cameraRotationChanged)
@@ -59,10 +62,13 @@ class DetectionRegionGestureTests(harness.RealEngineTestCase):
         self.assertFalse([m for m in messages if ("TypeError" in m or "ReferenceError" in m) and "Cura/Widgets/ComboBox.qml" not in m], messages)
 
     def scene(self, width=700, height=700, *, angle=0, mirror=False):
+        self._catalog = harness._CatalogDouble()
+        self.engine.rootContext().setContextProperty("catalog", self._catalog)
         pane, window = self.mount_window("CameraPane.qml", width, height)
         pane.setProperty("configured", True)
         model = RegionCamera()
         model.angle, model.mirror = angle, mirror
+        model.set_detection("normal")
         pane.setProperty("printerModel", model)
         self.pump(30)
         image = self.find(pane, "cameraImage")
@@ -81,6 +87,25 @@ class DetectionRegionGestureTests(harness.RealEngineTestCase):
 
     def regions(self, overlay):
         return json.loads(self.js(overlay, "JSON.stringify(draftRegions)"))
+
+    def test_printer_detection_enable_hides_and_restores_saved_region_outline(self):
+        pane, window, model, image, overlay = self.scene()
+        model.regions = [[[.2, .2], [.8, .2], [.8, .8], [.2, .8]]]
+        model.setDetectionEditingRegions(False)
+        self.pump()
+        self.assertTrue(overlay.isVisible())
+        self.assertEqual(len(json.loads(self.js(overlay, "JSON.stringify(regions)"))), 1)
+
+        model.set_detection("idle")
+        self.pump()
+        self.assertFalse(overlay.isVisible())
+        self.assertEqual(len(model.regions), 1)
+
+        model.set_detection("normal")
+        self.pump()
+        self.assertTrue(overlay.isVisible())
+        self.assertEqual(len(json.loads(self.js(overlay, "JSON.stringify(regions)"))), 1)
+        self.assert_no_qml_errors()
 
     def point(self, image, window, x, y):
         return image.mapToItem(window.contentItem(), harness.QPointF(image.width()*x, image.height()*y)).toPoint()

@@ -74,6 +74,11 @@ ColumnLayout {
                 text: parent.text
             }
         }
+        UM.Label {
+            objectName: "detectionBaselineLabel"
+            Layout.fillWidth: true
+            text: "Camera baseline (raw): " + (root.printerModel != null ? root.printerModel.detectionBaseline.toFixed(2) : "0.00")
+        }
         RowLayout {
             Layout.fillWidth: true
             UM.Label {

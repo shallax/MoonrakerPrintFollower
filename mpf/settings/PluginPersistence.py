@@ -126,7 +126,7 @@ class PluginPersistence:
         return self._settings.update(mutate)
 
     def disable_all_detection(self) -> bool:
-        """Disable detection and its actions for every saved machine in one write."""
+        """Disable detection/actions and clear regions for download removal, atomically."""
         def mutate(document):
             machines = document.get("machines")
             if not isinstance(machines, dict) or not machines:
@@ -135,7 +135,8 @@ class PluginPersistence:
                 if isinstance(entry, dict):
                     entry.update(detection_enabled=False,
                                  detection_notify_enabled=False,
-                                 detection_pause_enabled=False)
+                                 detection_pause_enabled=False,
+                                 detection_regions={})
             return document
 
         return self._settings.update(mutate)

@@ -5,6 +5,7 @@ import shutil
 import threading
 import queue
 import time
+from collections import deque
 
 from PyQt6.QtCore import QObject, QTimer, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QImage
@@ -40,9 +41,37 @@ class _MailboxSignal:
 class _Updates:
     """Workers only post Python data; they never touch deleted Qt objects."""
     def __init__(self):
-        self.mailbox = queue.SimpleQueue()
+        self.mailbox = _Mailbox()
         self.status = _MailboxSignal(self.mailbox, "status")
         self.result = _MailboxSignal(self.mailbox, "result")
+
+
+class _Mailbox:
+    """Keep the latest chunk progress without losing lifecycle/result ordering."""
+    def __init__(self):
+        self._pending = deque()
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _progress_key(item):
+        kind, args = item
+        if kind == "status" and set(args[1]) == {"phase", "received", "total"}:
+            return args[0], args[1]["phase"]
+        return None
+
+    def put(self, item):
+        with self._lock:
+            key = self._progress_key(item)
+            if self._pending and key is not None and key == self._progress_key(self._pending[-1]):
+                self._pending[-1] = item
+            else:
+                self._pending.append(item)
+
+    def get_nowait(self):
+        with self._lock:
+            if not self._pending:
+                raise queue.Empty
+            return self._pending.popleft()
 
 
 class LocalDetectionService(QObject):
@@ -84,7 +113,9 @@ class LocalDetectionService(QObject):
         self._record = self._read_record()
         self._updates = _Updates()
         self._mailbox_timer = QTimer(self)
-        self._mailbox_timer.setInterval(50)
+        # Poll the worker's latest progress four times a second. Transfer
+        # chunks never enqueue individual Qt signals or repaint requests.
+        self._mailbox_timer.setInterval(250)
         self._mailbox_timer.timeout.connect(self._drain_mailbox)
         self._mailbox_timer.start()
         if self._wheel is None:
@@ -305,7 +336,11 @@ class LocalDetectionService(QObject):
         return True
 
     def _drain_mailbox(self):
-        while not self._closed:
+        # Never chase an active producer indefinitely on the GUI thread.
+        # Remaining lifecycle messages are handled on the next timer tick.
+        for _ in range(16):
+            if self._closed:
+                return
             try:
                 kind, args = self._updates.mailbox.get_nowait()
             except queue.Empty:

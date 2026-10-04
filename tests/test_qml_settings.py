@@ -4,6 +4,37 @@ from unittest.mock import patch
 from tests import qml_engine_support as harness
 
 class SettingsCacheSizeTests(harness.SettingsCacheSizeTests):
+    def test_detection_settings_resets_the_selected_camera_baseline(self):
+        from PyQt6.QtCore import QObject, QMetaObject, pyqtProperty, pyqtSlot
+        from types import SimpleNamespace
+
+        class Monitor(QObject):
+            detectionBaseline = pyqtProperty(float, lambda self: 1.47, constant=True)
+            detectionGlobalEnabled = pyqtProperty(bool, lambda self: True, constant=True)
+            detectionEnabled = pyqtProperty(bool, lambda self: True, constant=True)
+            detectionCameraReady = pyqtProperty(bool, lambda self: True, constant=True)
+            detectionEditingRegions = pyqtProperty(bool, lambda self: False, constant=True)
+            resets = 0
+
+            @pyqtSlot()
+            def resetPrinterDetectionTraining(self):
+                self.resets += 1
+
+        monitor = Monitor()
+        document, window = self.open_settings(tab=3, width=700, height=900)
+        with patch.object(self.action, "_output_plugin", SimpleNamespace(_current_monitor=lambda: monitor)):
+            self.action.settingsChanged.emit()
+            self.pump()
+            button = document.findChild(harness.QQuickItem, "detectionResetBaselineButton")
+            self.assertEqual(button.property("text"), "Reset training data")
+            self.assertTrue(button.property("enabled"))
+            self.click_item(window, button)
+            self.assertEqual(monitor.resets, 0)
+            dialog = document.findChild(QObject, "resetPrinterTrainingDialog")
+            QMetaObject.invokeMethod(dialog, "accept")
+            self.pump()
+            self.assertEqual(monitor.resets, 1)
+
     def test_detection_page_has_no_redundant_model_ready_heading(self):
         document, _window = self.open_settings(tab=3)
         page = next(item for item in document.findChildren(harness.QQuickItem)
@@ -400,7 +431,8 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         from unittest.mock import Mock
         document, window = self.open_settings(self.settings_config(
             detection_enabled=True, detection_notify_enabled=True,
-            detection_pause_enabled=True), tab=4)
+            detection_pause_enabled=True,
+            detection_regions={"camera": [[[0, 0], [1, 0], [1, 1]]]}), tab=4)
         persistence = SimpleNamespace(disable_all_detection=Mock(return_value=True))
         # A complete service double: the publish below re-evaluates every
         # detection binding the pages own, and a missing attribute in a
@@ -425,6 +457,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         self.assertFalse(self.follower.config.detection_enabled)
         self.assertFalse(self.follower.config.detection_notify_enabled)
         self.assertFalse(self.follower.config.detection_pause_enabled)
+        self.assertEqual(self.follower.config.detection_regions, {})
         self.assertIn("Removing", self.action.detectionResetStatus)
         self.action._on_detection_reset_progress()
         self.assertIn("removed", self.action.detectionResetStatus)

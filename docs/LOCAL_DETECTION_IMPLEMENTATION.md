@@ -402,13 +402,35 @@ The programme's closing gate run, before the push:
   neutral, not green. Evidence needs hysteresis. The 0.00–1.00 score is a
   relative signal, **not** a calibrated probability.
 - Put the green/amber/red border on the *actual Monitor webcam*. Its left
-  scale matches the existing right-side zoom/FPS bar, uses linear marks
+  scale uses a narrower two-decimal readout, uses linear marks
   with a center gap at 0.25 and 0.75, and never resizes the picture. On a
   small picture, the vertically centered in-image pill includes a two-decimal score and
   the state. The Diagnostics settings tab is last; every scrollable
   settings tab has a persistent visible scrollbar.
 
 ## Implemented in the worktree
+
+Download progress is polled every 250 ms. The detection worker coalesces
+consecutive byte-count updates and the GUI drains at most 16 mailbox entries
+per tick, preserving lifecycle and result ordering. File-manager progress has
+its own timer and amends only the progress payload, without composing file rows.
+Removing detection downloads clears every printer's saved regions and closes
+the active region editor. The detection scale supports full, line-only and
+number-pill modes; leftward dragging collapses it, rightward dragging expands
+the line, and clicking the pill restores the full scale.
+The camera baseline readout shows the raw long-term mean. The confirmed Webcam
+reset clears the selected camera's training across its region variants; the
+confirmed Detection settings reset clears every camera on the selected printer.
+Both clear means and sample counts, retire in-flight observations, and persist
+through the same ordered worker lane as baseline updates. Regions, tuning and
+other printers remain unchanged. Untrained cameras average their first six
+analysed frames with an explicit neutral Learning baseline state and no score
+or alerts. Subsequently the long-term mean uses a fixed 1/7200 update weight,
+so a sudden change cannot immediately become the new normal. Partial learning
+progress persists per camera across restarts and switches.
+Baselines still span prints: different print geometry can shift the model's
+background score, and a failure present during learning can contaminate the
+mean. The manual reset does not establish automatic per-print calibration.
 
 | Area | Files | Current contract |
 | --- | --- | --- |
@@ -417,7 +439,7 @@ The programme's closing gate run, before the push:
 | Regions | `geometry/DetectionRegions.py`, `detection/DetectionMask.py`, `monitor/camera/DetectionOverlay.qml` | Up to four simple polygons of 3–32 normalized raw-image points per camera. Empty regions mean full frame; malformed persisted regions inhibit analysis. Regions form a union. Source pixels outside it are blacked out **before resizing/inference**, and outside-only boxes are removed before confidence aggregation. One inference handles the union. The editor starts with rectangles, has draggable vertex handles and midpoint insertion, vertex/shape deletion and bounded Undo. It is a Save/Cancel transaction; editing suspends detection, Escape cancels, invalid polygons retain their vertices and show a reason. |
 | Camera geometry and boxes | `CameraViewport.qml`, `MoonrakerMJPGImage.py`, `DetectionObservation.py` | The exact decoded frame carries its network-arrival age and source URL. An immutable result contains that frame and up to 50 retained normalized boxes. The overlay is a child of the actual image, inheriting rotation, mirroring, zoom and pan. Pointer coordinates map back through that same image. Boxes are clipped to monitored polygons and disappear when analysis is stale. An age pill distinguishes sampled analysis from live tracking. Showing boxes is a presentation preference. |
 | Policy and baseline | `DetectionPolicy.py`, `MonitorDetection.py` | Obico-derived ten-second cadence, span-12 EWM, 310/7200-sample short/long streaming means, 3.8 short-mean multiple and 1.75 escalation. Baselines belong to printer + stable upstream camera identity (independent of bridge ports and snapshot mode; upstream query selectors are retained, with only known rotating transport parameters excluded) + canonical region fingerprint + mask preprocessing version; at most 32 variants are retained. Sensitivity/bounds edits retain the raw baseline but retire short-term evidence. Region changes start or restore their own baseline. A monotonic epoch rejects A→B→A, re-arm and disable/re-enable results. Freshness is measured from acquisition, not completion. |
-| Model adapter | `LocalFailureModel.py` | Pinned CPU ONNX Runtime, one intra-/inter-op thread. NCHW float32 RGB [0,1], Obico's confidence >0.08 filter and 0.45 IoU non-max suppression; retained confidences are summed and may exceed one. Qt smooth resize and QImage JPEG decoding differ from Obico's OpenCV preprocessing. Shared weights and policy do **not** establish identical pixels or accuracy. ROI masking is an additional distribution change and can create border artefacts. |
+| Model adapter | `LocalFailureModel.py` | Pinned CPU ONNX Runtime, one intra-/inter-op thread. NCHW float32 RGB [0,1], Obico's confidence >0.08 filter and 0.45 IoU non-max suppression; retained confidences are summed and may exceed one. Qt smooth resize and QImage JPEG decoding differ from Obico's OpenCV preprocessing. Shared weights and policy do **not** establish identical pixels or accuracy. The polygon union is masked and cropped to its outward-rounded pixel bounds before resize; model boxes are mapped back to full-frame coordinates before region filtering and NMS. No regions retains full-frame inference. ROI masking/cropping changes the input distribution and can create border artefacts; cropped regions use a new baseline namespace so full-frame-mask baselines are not reused. |
 | Print identity and actions | `printing/PrintRunIdentity.py`, `MonitorDetection.py`, `MoonrakerSession.py`, `MonitorCommands.py` | The latest active Moonraker history row must match filename, `status=in_progress`, absent end time, server job ID and finite start time; printer binding scopes the durable identity. Local follower serials never form the persisted pause/mute key. History is re-attested every ten seconds; a new pause requires proof no more than two seconds old, measured from request issuance, and the usual fresh command permission. An in-flight request or failed/negative response revokes proof. A pending attempt with a unique command ID is saved **before dispatch**. A lost reply/timeout remains guarded across restarts; actual server refusal releases it. Re-arm must save before retiring old results and never commands the printer itself. Late callbacks cannot settle another attempt. |
 | Mute | `MonitorDetection.py`, `FailureDetectionSection.qml` | “Mute for the rest of this print” suppresses notifications and new automatic pauses while analysis, baseline learning and boxes continue. It survives reconnect/restart after the same server run is attested and clears for a different run. Unmute requires fresh analysis. Re-arm does not unmute. Mute cannot recall an already dispatched pause. A potentially applicable saved mute is respected while identity is being resolved. |
 | Alerts and evidence | `MonitorDetection.py`, `EvidenceStore.py` | One owned 60-second Cura toast, bound to its original run. Warning→failure upgrades immediately. Unacknowledged alerts repeat every 300 seconds, with at most three notifications per acknowledgement episode; acknowledging allows a fresh episode after the 90-second cooldown. Severity never downgrades while unacknowledged. Missing history may still permit notifications when no saved mute could apply; pause and persistent mute remain unavailable with an explicit reason. Exact triggering frames and timelines are submitted to a bounded worker queue. Evidence names use attested identity or a unique session fallback, preventing same-filename collisions. Storage uses one root, confined recursive cleanup, no-follow timeline opens and atomic frame replacement. |
@@ -437,7 +459,7 @@ It requires Cura to stay running and the selected camera feed to remain enabled.
 | --- | --- |
 | Analysis cadence | One selected frame every ten seconds (0.1 FPS), independently of live display FPS. Obico documents 0.1 FPS as the intended failure-detection cadence. A busy worker drops intermediate frames rather than building a backlog. |
 | Model and temporal policy | Shared pinned Obico weights, confidence filtering/NMS and Obico-derived temporal adaptation. MPF exposes a 0.80–1.20 multiplier on the adaptive signal and retains its Advanced bounds. |
-| Exact algorithm/accuracy | Not identical end to end: Qt decoding/resizing replaces OpenCV, the exported CPU ONNX execution differs, and polygon masking changes the input. The raw sum and displayed adaptive signal are not failure probabilities. Shared weights do not establish accuracy parity. |
+| Exact algorithm/accuracy | Not identical end to end: Qt decoding/resizing replaces OpenCV, the exported CPU ONNX execution differs, and polygon masking/cropping changes the input. The raw sum and displayed adaptive signal are not failure probabilities. Shared weights do not establish accuracy parity. |
 | Local actions | Cura notifications, exact-frame evidence, acknowledgement, guarded automatic pause and persistent current-run mute. No automatic cancellation or heater changes. |
 | Remote service features | Email/SMS/mobile push, always-on server monitoring, remote accounts, timelapse cloud analysis and first-layer AI are separate Obico service capabilities; this local Cura feature does not provide them. |
 
