@@ -3481,8 +3481,9 @@ Item {
             # Explicit user drag/click modes for the detection indicator.
             "visible: root.signalShown && !root.signalCompact && root.signalBarMode < 2",
             "visible: root.signalShown && (root.signalCompact || root.signalBarMode === 2)",
-            # User-requested training reset only belongs to enabled detection.
-            "visible: root.printerModel != null && root.printerModel.detectionGlobalEnabled && root.printerModel.detectionEnabled",
+            # User-requested training reset belongs to enabled detection and
+            # gives way when the camera title/controls need the row's width.
+            "visible: cameraControls.visible && root.printerModel != null && root.printerModel.detectionGlobalEnabled && root.printerModel.detectionEnabled && root.width >= 450 * screenScaleFactor && root.width - cameraTitle.implicitWidth - 3 * UM.Theme.getSize(\"default_margin\").width >= (cameraSelector.visible ? cameraSelector.Layout.minimumWidth + UM.Theme.getSize(\"narrow_margin\").width : 0) + refreshButton.width + webcamToggle.implicitWidth + resetTrainingButton.implicitWidth + 4 * UM.Theme.getSize(\"narrow_margin\").width",
             "visible: !root.lineOnly",
             "visible: root.signalShown",
             "visible: !root.waiting",

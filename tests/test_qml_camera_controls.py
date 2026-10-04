@@ -3,6 +3,16 @@ from tests import qml_engine_support as harness
 
 
 class DetectionSignalLayoutTests(harness.CameraFpsControlTests):
+    def test_camera_training_reset_hides_before_it_overflows(self):
+        wide, _window, model, _image, _frame = self._fps_pane(700, 700)
+        model.set_detection("normal", 0)
+        self.pump()
+        self.assertTrue(self.find(wide, "resetCameraTrainingButton").property("visible"))
+        narrow, _window, model, _image, _frame = self._fps_pane(360, 700)
+        model.set_detection("normal", 0)
+        self.pump()
+        self.assertFalse(self.find(narrow, "resetCameraTrainingButton").property("visible"))
+
     def test_camera_training_reset_requires_confirmation_and_detection_enabled(self):
         from PyQt6.QtCore import QObject, QMetaObject
         pane, _window, model, _image, _frame = self._fps_pane(700, 700)

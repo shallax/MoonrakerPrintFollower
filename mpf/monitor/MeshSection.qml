@@ -13,6 +13,7 @@ ColumnLayout {
     id: root
     spacing: 0
     property var printerModel: null
+    readonly property real bedDepthRatio: printerModel != null && printerModel.bedMeshMachineWidth > 0 && printerModel.bedMeshMachineDepth > 0 ? printerModel.bedMeshMachineDepth / printerModel.bedMeshMachineWidth : 1.0
     signal popOverToggleRequested(string name)
 
     // The host re-renders the mini map on typed-controls changes; the
@@ -40,14 +41,14 @@ ColumnLayout {
         // The mini map is the at-a-glance widget; a
         // click opens the pop-over detail view with
         // the probe-snapping crosshair. NO-REFLOW
-        // RULE: the 90 px slot is always reserved —
+        // RULE: a bed-shaped slot is always reserved —
         // the map fades in and out, and the
         // placeholder is an overlay inside the same
         // slot, so the mesh arriving (connect,
         // calibrate) never shifts the section.
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: 90 * screenScaleFactor
+            Layout.preferredHeight: Math.max(90 * screenScaleFactor, width * root.bedDepthRatio)
 
             BedMeshMap {
                 id: meshMiniMap

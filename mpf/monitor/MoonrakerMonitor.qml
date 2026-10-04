@@ -25,6 +25,11 @@ Component {
         id: root
 
         property var printer: OutputDevice != null ? OutputDevice.activePrinter : null
+        // The three enlarged beds share a width. Reserve height in
+        // proportion to the machine bed, so a deep rectangular bed
+        // can still reach both sides of its pane when space permits.
+        readonly property real bedDepthRatio: printer != null && printer.bedMeshMachineWidth > 0 && printer.bedMeshMachineDepth > 0 ? Math.max(0.2, printer.bedMeshMachineDepth / printer.bedMeshMachineWidth) : 1.0
+        readonly property real bedHeightAdjustment: (585 * screenScaleFactor - 2 * UM.Theme.getSize("default_margin").width) * (bedDepthRatio - 1.0)
         // NOT a binding: root-level bindings on this dynamically
         // created document don't re-evaluate when the model's camera
         // URL lands (engine-proven — the stream sat dead until a
@@ -800,8 +805,8 @@ Component {
             printerModel: root.printer
             x: cameraArea.x + UM.Theme.getSize("default_margin").width
             y: UM.Theme.getSize("default_margin").height
-            height: Math.min((520 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
-            contentWidth: 390 * screenScaleFactor
+            height: Math.min((860 * screenScaleFactor) + root.bedHeightAdjustment + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
+            contentWidth: 585 * screenScaleFactor
         }
 
         ObjectPickerPopover {
@@ -810,8 +815,8 @@ Component {
             printerModel: root.printer
             x: cameraArea.x + UM.Theme.getSize("default_margin").width
             y: UM.Theme.getSize("default_margin").height
-            height: Math.min((520 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
-            contentWidth: 390 * screenScaleFactor
+            height: Math.min((790 * screenScaleFactor) + root.bedHeightAdjustment + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
+            contentWidth: 585 * screenScaleFactor
         }
 
         PrintFollowerPopover {
@@ -820,7 +825,7 @@ Component {
             printerModel: root.printer
             x: cameraArea.x + UM.Theme.getSize("default_margin").width
             y: UM.Theme.getSize("default_margin").height
-            height: Math.min((780 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
+            height: Math.min((950 * screenScaleFactor) + root.bedHeightAdjustment + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
             // The plate's 585 plus the pause column beside it (the live
             // report: the schedule belongs in the width, not below the
             // plate) — clamped to the room right of the card's own x, so

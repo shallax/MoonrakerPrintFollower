@@ -1332,6 +1332,7 @@ if QT_AVAILABLE:
         # The picker's own payload: a test installs one before it mounts
         # (the class-attribute pattern the follower half's PAYLOAD uses).
         PLATE = None
+        BED = (250.0, 250.0)
 
         def __init__(self):
             super().__init__()
@@ -1385,11 +1386,11 @@ if QT_AVAILABLE:
 
         @pyqtProperty(float, constant=True)
         def bedMeshMachineWidth(self):
-            return 250.0
+            return self.BED[0]
 
         @pyqtProperty(float, constant=True)
         def bedMeshMachineDepth(self):
-            return 250.0
+            return self.BED[1]
 
         @pyqtProperty(bool, constant=True)
         def bedMeshCenterIsZero(self):

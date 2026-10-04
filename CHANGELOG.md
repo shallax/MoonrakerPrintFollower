@@ -5,7 +5,8 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 ## 5.0.0
 
 Local failure detection is optional, runs on the Cura computer and does not
-upload camera frames to a cloud service.
+upload camera frames to a cloud service. It watches only while Cura is open,
+the Monitor is active and the selected webcam is streaming.
 
 - Offer one-time consent-based setup after What's New on eligible hosts, with
   verified downloads of Obico's model and the pinned CPU inference runtime,
@@ -23,7 +24,8 @@ upload camera frames to a cloud service.
   releasing the mouse.
 - Show the selected camera's raw baseline. Reset training data for that camera
   from the Webcam pane, or for every camera on the printer from Detection
-  settings, with confirmation. Resets preserve zones, sensitivity and bounds.
+  settings, with confirmation. The Webcam button yields when its title row is
+  too narrow. Resets preserve zones, sensitivity and bounds.
 - New cameras and reset cameras explicitly learn a baseline from six analysed
   frames, without displaying a green score or triggering alerts while learning.
   Afterwards the baseline adapts slowly so a sudden failure is not absorbed.
@@ -79,6 +81,10 @@ upload camera frames to a cloud service.
   inside it, read exactly as a scheduled pause is, and an em dash when the
   index has no timing for it. The layer's own tracks now sit together as
   one control.
+- Let the Information pane's mini Bed Mesh, Exclude Object Picker and Print
+  Follower beds use the available width while retaining rectangular bed
+  proportions. The Print Follower antialiasing setting also smooths the
+  grid in its own bed and the Exclude Object Picker.
 - Apply a nonzero G-code Z offset through Klipper's generic probe or
   endstop command when its reference is unambiguous. Apply stages the
   configuration change; the separate Save configuration action persists it.

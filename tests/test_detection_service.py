@@ -771,6 +771,9 @@ class LocalDetectionServiceTests(unittest.TestCase):
         self.assertFalse(service.busy)
         self.assertEqual(service.phase, "closed")
         self.assertEqual(service.error, "")
+        # close() bounds its GUI-thread join; an already-running removal
+        # may finish just after that bound on a busy host.
+        self.until(lambda: not service._worker.is_alive())
         self.assertFalse(os.path.exists(model))
         self.assertEqual(self.persistence.record["ready_version"], "")
 

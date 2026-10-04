@@ -134,7 +134,7 @@ class SettingsCacheClearTests(harness.SettingsCacheClearTests):
         harness.os.makedirs(harness.os.path.dirname(entry), exist_ok=True)
         with open(entry, "w", encoding="utf-8") as handle:
             handle.write("{}")
-        self.click_item(window, self.clear_cache_button(document))
+        self.activate_item(window, self.clear_cache_button(document))
         self.assertTrue(self.action.cacheStatus, "the cache-clear click did not reach the action")
         self.assertFalse(harness.os.path.exists(cache_root),
                          "the clear button left the persistent cache on disk")

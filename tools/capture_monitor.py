@@ -531,11 +531,25 @@ def main():
         if not chart_items:
             raise RuntimeError("visible compact TemperatureChart not found in the scene")
         chart = chart_items[0]
+        # The bed-sized mini maps above this chart can push it below the
+        # Information viewport. Scroll the chart into view before reading
+        # its pixels; a fixed scene position now samples the clipped area.
+        info_flick = chart.parentItem()
+        while info_flick is not None and info_flick.metaObject().indexOfProperty("contentY") < 0:
+            info_flick = info_flick.parentItem()
+        if info_flick is None:
+            raise RuntimeError("Information flickable not found above the mini chart")
+        chart_y = chart.mapToItem(info_flick, QPointF(0, 0)).y()
+        info_flick.setProperty("contentY", max(0, min(
+            info_flick.property("contentHeight") - info_flick.height(),
+            info_flick.property("contentY") + chart_y - info_flick.height() / 3)))
         scene = settled_window()
         top_left = chart.mapToScene(QPointF(0, 0))
         colours = {scene.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name()
                    for x in range(5, min(160, int(chart.width())), 7)
-                   for y in range(5, int(chart.height()), 4)}
+                   for y in range(5, int(chart.height()), 4)
+                   if 0 <= top_left.x() + x < scene.width()
+                   and 0 <= top_left.y() + y < scene.height()}
         # The mini is a SPARKLINE (2 grid lines, flat series, no
         # labels): its correct signature is the background, the grid
         # and at least ONE series colour — the old 12-colour floor
@@ -545,6 +559,7 @@ def main():
         if len(colours) < 3:
             raise RuntimeError("mini chart region looks blank (%d colours)" % len(colours))
         print("mini chart region colours:", len(colours))
+        info_flick.setProperty("contentY", 0)
         for _ in range(3):
             app.processEvents()
 

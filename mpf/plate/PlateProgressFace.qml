@@ -1725,6 +1725,11 @@ Item {
         anchors.fill: parent
         z: 0.2
         visible: gpuFollower.visible
+        // The grid is a separate scene-graph layer, so smoothing the
+        // toolpath material alone does not affect its straight edges.
+        layer.enabled: root.smoothToolpaths
+        layer.samples: 4
+        layer.smooth: true
         dataSource: gpuFollower
         settings: {
             var settings = root.translucentSettings("");

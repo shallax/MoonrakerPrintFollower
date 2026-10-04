@@ -120,6 +120,7 @@ Cura.RoundedRectangle {
             spacing: UM.Theme.getSize("default_margin").width
 
             UM.Label {
+                id: cameraTitle
                 // The pane title, in the other panes'
                 // style — the same large bold face as
                 // Information and Printer status (a
@@ -177,6 +178,7 @@ Cura.RoundedRectangle {
                         }
 
                         UM.SimpleButton {
+                            id: refreshButton
                             width: UM.Theme.getSize("small_button_icon").width
                             height: UM.Theme.getSize("small_button_icon").height
                             enabled: root.printerModel != null && root.printerModel.monitorConnected && root.printerModel.webcamStreamEnabled
@@ -207,6 +209,7 @@ Cura.RoundedRectangle {
                         // its upstream fetch and the controls stand
                         // down until it comes back on.
                         UM.CheckBox {
+                            id: webcamToggle
                             text: "Enable"
                             checked: root.printerModel != null ? root.printerModel.webcamStreamEnabled : true
                             onToggled: {
@@ -216,9 +219,14 @@ Cura.RoundedRectangle {
                             }
                         }
                         Cura.SecondaryButton {
+                            id: resetTrainingButton
                             objectName: "resetCameraTrainingButton"
                             text: "Reset training data"
-                            visible: root.printerModel != null && root.printerModel.detectionGlobalEnabled && root.printerModel.detectionEnabled
+                            // Reserve the selector's minimum width, the refresh
+                            // icon and Enable first. Visibility must depend on
+                            // the outer width rather than this row's implicit
+                            // width, which itself changes with visibility.
+                            visible: cameraControls.visible && root.printerModel != null && root.printerModel.detectionGlobalEnabled && root.printerModel.detectionEnabled && root.width >= 450 * screenScaleFactor && root.width - cameraTitle.implicitWidth - 3 * UM.Theme.getSize("default_margin").width >= (cameraSelector.visible ? cameraSelector.Layout.minimumWidth + UM.Theme.getSize("narrow_margin").width : 0) + refreshButton.width + webcamToggle.implicitWidth + resetTrainingButton.implicitWidth + 4 * UM.Theme.getSize("narrow_margin").width
                             enabled: visible && root.printerModel.detectionCameraReady && !root.printerModel.detectionEditingRegions
                             onClicked: {
                                 resetTrainingDialog.targetMonitor = root.printerModel;

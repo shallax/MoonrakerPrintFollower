@@ -26,6 +26,9 @@ Item {
     // lands between grabs, so a measurement that subtracts one frame
     // from another measures the grid and whatever else moved with it.
     property bool showGrid: true
+    // Item already owns an antialiasing property; keep the model
+    // preference distinct from that built-in render hint.
+    readonly property bool smoothGrid: root.printerModel != null ? root.printerModel.followerAntialiasing : false
     property bool showAxisArrows: true
     // The zoom/pan view, owned by the follower face and applied by
     // THIS canvas's grid (the bottom raster must move with the
@@ -346,8 +349,8 @@ Item {
         id: objectRenderer
         anchors.fill: parent
         visible: root.gpuRendering
-        // The picker always antialiases, independently of follower settings.
-        layer.enabled: true
+        // The same setting controls the picker grid and object edges.
+        layer.enabled: root.smoothGrid
         layer.samples: 4
         layer.smooth: true
         scene: root.gpuRendering ? ({

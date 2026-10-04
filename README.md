@@ -18,6 +18,8 @@ Moonraker webcam. With consent, Cura downloads and verifies the model and
 CPU inference runtime once; it needs no cloud account, video upload, Docker
 service or second camera connection. Supported hosts are checked before setup
 and benchmarked with a real inference call before detection can be enabled.
+Detection watches only while Cura is open, Monitor is active and the selected
+webcam is streaming.
 
 The **Detection** settings tab holds shared setup, a global on/off switch,
 health and recovery controls, and the safety explanation. Each printer has a
@@ -35,6 +37,10 @@ the command is sent and retained if its outcome is uncertain.
 allow another pause after cleaning up a failure. The Z-offset controls also
 gain a generic Klipper **Apply Z offset** action; saving the resulting
 configuration remains a separate step.
+The mini Bed Mesh, Exclude Object Picker and Print Follower views use the
+available Information-pane width while retaining each printer bed's aspect
+ratio. Print Follower's antialiasing setting also smooths the grid in its bed
+and the Exclude Object Picker.
 
 **Detection is an assistant, not a safety system.** It can miss spaghetti
 or raise false alarms; its adaptive signal is not a calibrated failure
@@ -836,7 +842,8 @@ requires fresh analysis.
 The raw camera baseline is shown in Printer controls. A newly enabled camera
 shows **Learning baseline** for its first six analysed frames. **Reset training
 data** in the Webcam pane clears only the selected camera's learned scores;
-the same action in Detection settings clears every camera's learned scores for
+the button hides when that pane is too narrow. Widen the pane to use it.
+The same action in Detection settings clears every camera's learned scores for
 that printer. Both ask for confirmation and keep the saved regions and tuning.
 Training survives Cura restarts and spans prints, so a print with a different
 footprint may warrant a reset before detection resumes.

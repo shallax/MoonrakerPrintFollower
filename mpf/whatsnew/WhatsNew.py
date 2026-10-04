@@ -32,7 +32,8 @@ WHATS_NEW: Tuple[dict, ...] = (
         "items": (
             "After you opt in, setup downloads and verifies the model and "
             "CPU runtime, then checks that inference works on this computer. "
-            "There is no cloud account, video upload or server to run.",
+            "There is no cloud account, video upload or server to run. "
+            "Detection watches while Cura and its Monitor are open.",
             "The Detection settings tab handles shared setup, a global switch "
             "and health checks. Each printer has its own Enable checkbox, "
             "sensitivity, advanced bounds and initial safe period.",
@@ -59,6 +60,9 @@ WHATS_NEW: Tuple[dict, ...] = (
             "the layer you pick while it is detached, down to the point you "
             "select inside it, so a look ahead says exactly how long the "
             "wait is.",
+            "The mini Bed Mesh, Exclude Object Picker and Print Follower beds "
+            "fill the available pane width, keeping rectangular beds in "
+            "proportion. Antialiasing also smooths the Follower and Picker grids.",
             "Klipper's Apply Z offset can stage a probe or endstop adjustment "
             "when the target is clear; Save configuration remains separate.",
             "Detection can miss failures or raise false alarms. Do not rely "

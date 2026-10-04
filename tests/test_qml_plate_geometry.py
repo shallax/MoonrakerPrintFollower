@@ -2,6 +2,54 @@
 from tests import qml_engine_support as harness
 
 class PlateFaceRenderTests(harness.PlateFaceRenderTests):
+    def test_information_mini_beds_keep_a_rectangular_bed_in_proportion(self):
+        previous = harness.PlatePrinterDouble.BED
+        harness.PlatePrinterDouble.BED = (250.0, 400.0)
+        self.addCleanup(setattr, harness.PlatePrinterDouble, "BED", previous)
+        monitor, _window = self.mount_window("MoonrakerMonitor.qml", 1100, 1000)
+        self._open(monitor, "")
+        faces = (
+            next(item for item in monitor.findChildren(harness.QQuickItem, "moonrakerBedMeshMap")
+                 if item.property("compact")),
+            next(item for item in monitor.findChildren(harness.QQuickItem, "moonrakerPlateProgressFace")
+                 if item.property("compact")),
+            next(item for item in monitor.findChildren(harness.QQuickItem, "moonrakerPlateCanvas")
+                 if item.property("compact") and item.parentItem().objectName() != "moonrakerPlateProgressFace"),
+        )
+        for face in faces:
+            self.assertGreater(face.width(), 170)
+            self.assertAlmostEqual(face.height() / face.width(), 1.6, delta=.02)
+
+    def test_information_mini_beds_fill_the_column(self):
+        monitor, _window = self.mount_window("MoonrakerMonitor.qml", 1100, 760)
+        self._open(monitor, "")
+        mesh = next(item for item in monitor.findChildren(harness.QQuickItem, "moonrakerBedMeshMap")
+                    if item.property("compact"))
+        follower = next(item for item in monitor.findChildren(harness.QQuickItem, "moonrakerPlateProgressFace")
+                        if item.property("compact"))
+        picker = next(item for item in monitor.findChildren(harness.QQuickItem, "moonrakerPlateCanvas")
+                      if item.property("compact") and item.parentItem().objectName() != "moonrakerPlateProgressFace")
+        for face in (mesh, follower, picker):
+            self.assertGreater(face.width(), 170)
+            self.assertAlmostEqual(face.height(), face.width(), delta=2)
+        self.assertAlmostEqual(mesh.width(), follower.width(), delta=2)
+        self.assertAlmostEqual(mesh.width(), picker.width(), delta=2)
+
+    def test_enlarged_plate_popovers_leave_room_for_square_beds(self):
+        widths = []
+        for popover, name in (("plate", "moonrakerPlateExcludeFace"),
+                              ("plateprogress", "moonrakerPlateProgressFace")):
+            with self.subTest(popover=popover):
+                monitor, _window = self.mount_window("MoonrakerMonitor.qml", 1100, 1100)
+                self._open(monitor, popover)
+                face = self._popover_faces(monitor, name)[0]
+                widths.append(face.width())
+                self.assertGreater(face.width(), 300)
+                self.assertGreaterEqual(face.height(), face.width() - 2,
+                                        "the plate is flattened by the popover's height")
+        self.assertAlmostEqual(widths[0], widths[1], delta=2,
+                               msg="the same bed uses different widths across popovers")
+
     def test_clear_pause_action_fits_and_stays_beside_pause_during_zoom(self):
         for panel_width in (800, 900, 1100):
             with self.subTest(panel_width=panel_width):
