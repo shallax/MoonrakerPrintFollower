@@ -45,7 +45,9 @@ upload camera frames to a cloud service.
   requires a successful save and fresh analysis; late results cannot re-use it.
 - Harden cancelled downloads, native inference retirement, disabled startup,
   deferred Windows runtime deletion and confined evidence cleanup. Evidence
-  saves the exact analysed image on a bounded background queue.
+  saves the exact analysed image on a bounded background queue. Model
+  setup cancellation interrupts blocked HTTP headers, chunk framing and TLS
+  negotiation on Windows as well as Unix, while slow healthy reads resume.
 - Show the estimated time to reach the point you pick in the Print Follower
   popover while it is detached — the layer you seek to and the position
   inside it, read exactly as a scheduled pause is, and an em dash when the

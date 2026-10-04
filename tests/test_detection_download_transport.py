@@ -1,12 +1,11 @@
 """Cancellation aborts blocked header and chunk-header receipt, not just body reads."""
-from http.client import HTTPResponse
 import socket
 import threading
 import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from mpf.detection.DetectionDownloadTransport import TransferAbort, _Connection, AbortHTTPSHandler, transfer_abort
+from mpf.detection.DetectionDownloadTransport import TransferAbort, _Connection, _Response, AbortHTTPSHandler, transfer_abort
 
 
 class TransferAbortTests(unittest.TestCase):
@@ -42,7 +41,9 @@ class TransferAbortTests(unittest.TestCase):
                 factory = opening.call_args.args[0]
                 connection = factory("model.example")
                 connection.sock = Mock()
-                with patch("http.client.HTTPSConnection.connect"):
+                connection._context = Mock()
+                connection._context.wrap_socket.return_value = connection.sock
+                with patch("http.client.HTTPConnection.connect"):
                     connection.connect()
                 self.assertIn(connection.sock, inner._sockets)
             with patch.object(handler, "do_open", return_value="outer") as opening:
@@ -54,6 +55,116 @@ class TransferAbortTests(unittest.TestCase):
 
     def test_cancel_interrupts_chunk_size_framing(self):
         self._blocked_receipt(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n123", header=False)
+
+    def test_slow_healthy_headers_and_body_resume_after_poll_timeouts(self):
+        client, server = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(server.close)
+        client.settimeout(2)
+        guard = TransferAbort(None)
+        self.addCleanup(guard.close)
+        response = _Response(client, guard=guard)
+        self.addCleanup(response.close)
+        server.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nX-Slow:")
+        finished = threading.Event()
+        result = []
+        def read():
+            try:
+                response.begin()
+                result.append(response.read())
+            except Exception as exc:
+                result.append(exc)
+            finally:
+                finished.set()
+        worker = threading.Thread(target=read, daemon=True)
+        worker.start()
+        self.assertFalse(finished.wait(.25))
+        server.sendall(b" yes\r\n\r\na")
+        self.assertFalse(finished.wait(.25))
+        server.sendall(b"b")
+        self.assertTrue(finished.wait(1))
+        worker.join(1)
+        self.assertEqual(result, [b"ab"])
+        self.assertEqual(client.gettimeout(), 2)
+
+    def test_socket_file_reference_survives_connection_close(self):
+        client, server = socket.socketpair()
+        self.addCleanup(server.close)
+        guard = TransferAbort(None)
+        self.addCleanup(guard.close)
+        response = _Response(client, guard=guard)
+        self.addCleanup(response.close)
+        client.close()
+        server.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+        response.begin()
+        self.assertEqual(response.read(), b"ok")
+        self.assertEqual(client.fileno(), -1)
+
+    def test_response_factory_accepts_http_client_positional_debuglevel(self):
+        client, server = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(server.close)
+        guard = TransferAbort(None)
+        self.addCleanup(guard.close)
+        connection = _Connection("model.example", guard=guard)
+        response = connection.response_class(client, 1, method="GET")
+        self.addCleanup(response.close)
+        self.assertEqual(response.debuglevel, 1)
+        self.assertEqual(response._method, "GET")
+
+    def test_deadline_interrupts_blocked_headers_without_shutdown(self):
+        client, server = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(server.close)
+        guard = TransferAbort(None)
+        self.addCleanup(guard.close)
+        response = _Response(client, guard=guard)
+        self.addCleanup(response.close)
+        # The polling reader must work even when Winsock shutdown does
+        # not wake an in-progress receive operation.
+        guard._abort = Mock()
+        guard.deadline = time.monotonic() + .15
+        server.sendall(b"HTTP/1.1 200 OK\r\nX-Slow:")
+        started = time.monotonic()
+        with self.assertRaisesRegex(TimeoutError, "deadline"):
+            response.begin()
+        self.assertLess(time.monotonic() - started, .5)
+
+    def test_tls_handshake_retries_poll_timeout_and_restores_socket_timeout(self):
+        guard = TransferAbort(None)
+        self.addCleanup(guard.close)
+        connection = _Connection("model.example", guard=guard)
+        connection._context = Mock()
+        tls = connection._context.wrap_socket.return_value
+        tls.gettimeout.return_value = 3
+        tls.do_handshake.side_effect = [socket.timeout(), None]
+        with patch("http.client.HTTPConnection.connect"):
+            connection.connect()
+        self.assertEqual(tls.do_handshake.call_count, 2)
+        tls.settimeout.assert_called_with(3)
+        self.assertIn(tls, guard._sockets)
+        connection._context.wrap_socket.assert_called_once_with(
+            unittest.mock.ANY, server_hostname="model.example", do_handshake_on_connect=False)
+
+    def test_tls_handshake_cancellation_does_not_depend_on_socket_shutdown(self):
+        cancel = threading.Event()
+        guard = TransferAbort(cancel)
+        self.addCleanup(guard.close)
+        connection = _Connection("proxy.example", guard=guard)
+        connection.set_tunnel("model.example", 443)
+        connection._context = Mock()
+        tls = connection._context.wrap_socket.return_value
+        tls.gettimeout.return_value = 3
+        def stalled_handshake():
+            cancel.set()
+            raise socket.timeout()
+        tls.do_handshake.side_effect = stalled_handshake
+        with patch("http.client.HTTPConnection.connect"), self.assertRaisesRegex(OSError, "cancelled"):
+            connection.connect()
+        tls.settimeout.assert_called_with(3)
+        self.assertEqual(tls.do_handshake.call_count, 1)
+        connection._context.wrap_socket.assert_called_once_with(
+            unittest.mock.ANY, server_hostname="model.example", do_handshake_on_connect=False)
 
     def test_proxy_connect_headers_are_abortable_before_tls_wrapping(self):
         listener = socket.socket()
@@ -106,7 +217,7 @@ class TransferAbortTests(unittest.TestCase):
         guard = TransferAbort(cancel)
         self.addCleanup(guard.close)
         guard.register_socket(client)
-        response = HTTPResponse(client)
+        response = _Response(client, guard=guard)
         server.sendall(prefix)
         finished = threading.Event()
         errors = []

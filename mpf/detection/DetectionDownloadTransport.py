@@ -1,7 +1,8 @@
 """Abort HTTPS receipt actively, including headers and chunk framing."""
 
 from contextlib import contextmanager
-from http.client import HTTPSConnection
+from http.client import HTTPConnection, HTTPResponse, HTTPSConnection
+import io
 import socket
 import threading
 import time
@@ -38,6 +39,12 @@ class TransferAbort:
             self.register_socket(connection)
         self.deadline = time.monotonic() + 1800.0
 
+    def check(self):
+        if self.expired or time.monotonic() > self.deadline:
+            raise TimeoutError("Model transfer deadline exceeded")
+        if self.cancel is not None and self.cancel.is_set():
+            raise OSError("Model transfer cancelled")
+
     def _abort(self):
         with self._lock:
             sockets = tuple(self._sockets)
@@ -61,10 +68,64 @@ class TransferAbort:
             connection.close()
 
 
+class _Receipt(io.RawIOBase):
+    """Keep HTTP buffering while bounding each socket wait on every OS."""
+
+    def __init__(self, connection, guard):
+        super().__init__()
+        self._sock = connection
+        self._guard = guard
+        # Hold the standard makefile reference so HTTPConnection.close()
+        # cannot close the descriptor while the response still owns it.
+        self._owner = connection.makefile("rb", buffering=0)
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        self._guard.check()
+        previous = self._sock.gettimeout()
+        self._sock.settimeout(.1)
+        try:
+            while True:
+                self._guard.check()
+                try:
+                    return self._sock.recv_into(buffer)
+                except socket.timeout:
+                    # SocketIO permanently poisons itself after a timeout.
+                    # Read the socket directly so a slow, healthy transfer
+                    # can resume, while cancellation/deadlines still win.
+                    continue
+        finally:
+            self._sock.settimeout(previous)
+
+    def close(self):
+        try:
+            self._owner.close()
+        finally:
+            super().close()
+
+
+class _ResponseSocket:
+    def __init__(self, connection, guard):
+        self.connection = connection
+        self.guard = guard
+
+    def makefile(self, mode):
+        assert mode == "rb"
+        return io.BufferedReader(_Receipt(self.connection, self.guard))
+
+
+class _Response(HTTPResponse):
+    def __init__(self, connection, *args, guard, **kwargs):
+        super().__init__(_ResponseSocket(connection, guard), *args, **kwargs)
+
+
 class _Connection(HTTPSConnection):
     def __init__(self, host, *, guard, **kwargs):
         super().__init__(host, **kwargs)
         self._guard = guard
+        self.response_class = lambda connection, *args, **options: _Response(connection, *args, guard=guard, **options)
         create_connection = self._create_connection
         def guarded_connection(*args, **options):
             connection = create_connection(*args, **options)
@@ -80,8 +141,22 @@ class _Connection(HTTPSConnection):
         self._create_connection = guarded_connection
 
     def connect(self):
-        super().connect()
+        HTTPConnection.connect(self)
+        hostname = self._tunnel_host or self.host
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=hostname, do_handshake_on_connect=False)
         self._guard.register_socket(self.sock)
+        previous = self.sock.gettimeout()
+        self.sock.settimeout(.1)
+        try:
+            while True:
+                self._guard.check()
+                try:
+                    self.sock.do_handshake()
+                    break
+                except socket.timeout:
+                    continue
+        finally:
+            self.sock.settimeout(previous)
 
 
 class AbortHTTPSHandler(HTTPSHandler):
