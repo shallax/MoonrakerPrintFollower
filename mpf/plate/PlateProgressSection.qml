@@ -13,6 +13,7 @@ ColumnLayout {
     id: root
     spacing: 0
     property var printerModel: null
+    property real miniSlotWidth: 90 * screenScaleFactor
     readonly property real bedDepthRatio: printerModel != null && printerModel.bedMeshMachineWidth > 0 && printerModel.bedMeshMachineDepth > 0 ? printerModel.bedMeshMachineDepth / printerModel.bedMeshMachineWidth : 1.0
     signal popOverToggleRequested(string name)
 
@@ -37,7 +38,7 @@ ColumnLayout {
         // the placeholder overlays the same slot.
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.max(90 * screenScaleFactor, width * root.bedDepthRatio)
+            Layout.preferredHeight: Math.max(90 * screenScaleFactor, root.miniSlotWidth * root.bedDepthRatio)
 
             PlateProgressFace {
                 id: progressMini

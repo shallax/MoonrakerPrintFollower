@@ -6,6 +6,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         previous = harness.PlatePrinterDouble.BED
         harness.PlatePrinterDouble.BED = (250.0, 400.0)
         self.addCleanup(setattr, harness.PlatePrinterDouble, "BED", previous)
+        message_start = len(harness._APPLICATION["messages"])
         monitor, window = self.mount_window("MoonrakerMonitor.qml", 1100, 1000)
         self._open(monitor, "")
         faces = (
@@ -24,6 +25,10 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                 self.assertGreater(face.width(), 170)
                 self.assertAlmostEqual(face.height() / face.width(), 1.6, delta=.02,
                                        msg=f"{face.objectName()}: {face.width()}x{face.height()}")
+        info = monitor.findChild(harness.QQuickItem, "infoPanel")
+        self.assertAlmostEqual(info.property("miniBedSlotWidth"), faces[0].width(), delta=1)
+        self.assertFalse([line for line in harness._APPLICATION["messages"][message_start:]
+                          if "polish loop" in line.lower() or "binding loop" in line.lower()])
 
     def test_information_mini_beds_fill_the_column(self):
         monitor, window = self.mount_window("MoonrakerMonitor.qml", 1100, 760)
