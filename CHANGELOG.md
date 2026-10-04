@@ -26,16 +26,26 @@ upload camera frames to a cloud service.
   evidence folder under the detection storage, opened from Diagnostics and
   removed with the downloads. Diagnostics also reports the measured
   inference cost of this computer.
-- Configure each printer independently with an Enable checkbox, ordered
-  warning/failure slider, 0–15-minute safe period, and separately opted-in
-  notifications and automatic pause. Per-camera baselines persist separately;
-  changing thresholds or cameras retires stale evidence. Dependent controls
-  are disabled until that printer is enabled.
-- Save an automatic-pause latch only after confirmation. A failed request may
-  be retried; an unconfirmed timeout requires inspection rather than a
-  possibly duplicate request. Re-arm explicitly clears the latch and
-  acknowledgment cooldown for an active print, including while paused,
-  without issuing any printer command.
+- Configure each printer independently with sensitivity, advanced adaptive
+  bounds, a 0–15-minute safe period, and separate notification/pause opt-ins.
+- Draw up to four monitored polygons per camera. Pixels outside their union
+  are excluded before analysis. Rectangles have draggable vertex handles,
+  midpoint insertion, vertex/shape deletion and Undo. Save/Cancel and Escape
+  make editing explicit. Camera loss or disabled feeds suspend detection and
+  camera-dependent controls until fresh analysis returns.
+  Show sampled suspicious-region boxes with an analysis-age label; overlays
+  follow camera rotation, mirroring, zoom and pan.
+- Mute alerts and automatic pause for the rest of the current print while
+  retaining analysis and boxes. Mute survives restarts for the same attested
+  Moonraker run and clears for the next print.
+- Persist the automatic-pause guard before sending its uniquely identified
+  command. History is periodically re-attested and fresh proof is required
+  before a new pause; same-file restarts cannot inherit the previous run.
+  Uncertain outcomes remain guarded across restarts. Explicit re-arm
+  requires a successful save and fresh analysis; late results cannot re-use it.
+- Harden cancelled downloads, native inference retirement, disabled startup,
+  deferred Windows runtime deletion and confined evidence cleanup. Evidence
+  saves the exact analysed image on a bounded background queue.
 - Show the estimated time to reach the point you pick in the Print Follower
   popover while it is detached — the layer you seek to and the position
   inside it, read exactly as a scheduled pause is, and an em dash when the

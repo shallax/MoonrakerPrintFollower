@@ -87,9 +87,9 @@ class NextPausePipeline:
         if layer == current and fraction <= 0.0:
             # The point selected IS where the print is: nothing left.
             return ""
-        start = self._preview.remaining(layer, self._index.view, end=False) or 0.0
+        start = self._preview.remaining(layer, self._index.view, end=False)
         end = self._preview.remaining(layer, self._index.view, end=True)
-        if end is None:
+        if start is None or end is None:
             return ""
         # The layer's start is in the past for a layer under the print
         # (remaining() floors it at zero), which is exactly right: the

@@ -108,6 +108,17 @@ if QT_AVAILABLE:
             self._detection_state = "idle"
             self._detection_score = -1
 
+        @pyqtProperty(bool, notify=detectionChanged)
+        def detectionEditingRegions(self): return False
+        @pyqtProperty(bool, notify=detectionChanged)
+        def detectionShowBoxes(self): return True
+        @pyqtProperty("QVariant", notify=detectionChanged)
+        def detectionRegions(self): return []
+        @pyqtProperty("QVariant", notify=detectionChanged)
+        def detectionBoxes(self): return []
+        @pyqtProperty(float, notify=detectionChanged)
+        def detectionAnalysisAge(self): return -1.0
+
         @pyqtProperty(str, notify=detectionChanged)
         def detectionState(self):
             return self._detection_state

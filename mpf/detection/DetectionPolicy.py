@@ -20,7 +20,7 @@ class DetectionPolicy:
 
     def __init__(self, *, cadence_seconds: float = 10.0,
                  warning_threshold: int = 38, failure_threshold: int = 78,
-                 safe_seconds: int = 300):
+                 safe_seconds: int = 300, sensitivity: float = 1.0):
         if not isfinite(cadence_seconds) or cadence_seconds <= 0:
             raise ValueError("Detection cadence must be positive")
         if (type(warning_threshold) is not int or type(failure_threshold) is not int
@@ -28,6 +28,9 @@ class DetectionPolicy:
             raise ValueError("Detection thresholds must be ordered percentages from 0 to 100")
         if type(safe_seconds) is not int or not 0 <= safe_seconds <= 900:
             raise ValueError("Detection safe period must be between 0 and 900 seconds")
+        if type(sensitivity) not in (int, float) or not .8 <= sensitivity <= 1.2 or not isfinite(sensitivity):
+            raise ValueError("Detection sensitivity must be between 0.8 and 1.2")
+        self.sensitivity = float(sensitivity)
         self.warning_threshold = warning_threshold
         self.failure_threshold = failure_threshold
         self.safe_seconds = safe_seconds
@@ -45,7 +48,7 @@ class DetectionPolicy:
             return
         mean, frames = value.get("mean"), value.get("frames")
         if (type(frames) is int and 0 <= frames <= 1_000_000_000
-                and type(mean) in (float, int) and isfinite(mean) and mean >= 0):
+                and type(mean) in (float, int) and 0 <= mean <= 32768 and isfinite(mean)):
             self._long_mean, self._lifetime_frames = float(mean), frames
 
     def reset(self) -> None:
@@ -66,7 +69,7 @@ class DetectionPolicy:
     def _failing(self, escalation: float, elapsed_seconds: float) -> bool:
         if elapsed_seconds < self.safe_seconds:
             return False
-        adjusted = (self._ewm_mean - self._long_mean) / escalation
+        adjusted = (self._ewm_mean - self._long_mean) * self.sensitivity / escalation
         low, high = self.warning_threshold / 100, self.failure_threshold / 100
         if adjusted < low:
             return False
@@ -79,7 +82,7 @@ class DetectionPolicy:
         warning = min(high, max(low, (self._short_mean - self._long_mean) * self.SHORT_MULTIPLE))
         warning = max(warning, 1e-9)
         failure = warning * self.ESCALATION
-        gap = self._ewm_mean - self._long_mean
+        gap = (self._ewm_mean - self._long_mean) * self.sensitivity
         if gap > failure:
             result = self.failure_threshold + (gap - failure) / (failure * .5) * (
                 100 - self.failure_threshold)

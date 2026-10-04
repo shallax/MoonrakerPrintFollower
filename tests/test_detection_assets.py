@@ -352,7 +352,7 @@ class DetectionAssetsTests(unittest.TestCase):
             opened.append((request, timeout))
             return sentinel.response
 
-        with patch.object(AssetInstaller, "HTTPSHandler") as handler, \
+        with patch.object(AssetInstaller, "AbortHTTPSHandler") as handler, \
                 patch.object(AssetInstaller, "_trusted_context", return_value=sentinel.context), \
                 patch.object(AssetInstaller, "build_opener",
                              return_value=SimpleNamespace(open=open_request)) as builder:
@@ -755,6 +755,8 @@ class DetectionAssetsTests(unittest.TestCase):
                 def read(self, _size=-1):
                     cancel.set()
                     raise TimeoutError("socket read timed out")
+
+                read1 = read
 
             path = os.path.join(directory, "model")
             with patch.object(AssetInstaller, "_open_download",

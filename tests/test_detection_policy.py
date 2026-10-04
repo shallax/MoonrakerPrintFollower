@@ -6,6 +6,23 @@ from mpf.detection.DetectionPolicy import DetectionPolicy
 
 
 class DetectionPolicyTests(unittest.TestCase):
+    def test_sensitivity_scales_classification_and_score_monotonically(self):
+        policies = [DetectionPolicy(sensitivity=value, safe_seconds=0) for value in (.8, 1, 1.2)]
+        context = ("printer", "job", "camera")
+        for policy in policies:
+            policy.restore_baseline({"mean": 0, "frames": 7200})
+            for index in range(30):
+                policy.observe(0, now=index*10, context=context)
+            for index in range(30, 36):
+                policy.observe(.9, now=index*10, context=context)
+        scores = [policy.state(now=350, context=context, active=True).score for policy in policies]
+        self.assertEqual(scores, sorted(scores))
+        self.assertGreater(scores[-1], scores[0])
+        for invalid in (True, float('nan'), .7, 1.3, 10**400):
+            with self.subTest(invalid=str(invalid)[:20]), self.assertRaises(ValueError):
+                DetectionPolicy(sensitivity=invalid)
+
+
     def test_only_fresh_samples_from_the_current_print_can_show_green(self):
         policy = DetectionPolicy()
         job = ("printer-a", "job-1", "camera-bed")

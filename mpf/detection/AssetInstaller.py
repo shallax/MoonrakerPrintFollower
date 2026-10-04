@@ -8,9 +8,10 @@ import shutil
 import ssl
 import tempfile
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 import zipfile
 
+from .DetectionDownloadTransport import AbortHTTPSHandler, transfer_abort
 from .DetectionAssets import (
     MODEL_SHA256, MODEL_SIZE, MODEL_URL, RUNTIME_INDEX_URL,
     RuntimeWheel, installed_paths,
@@ -37,7 +38,7 @@ class _HTTPSRedirectHandler(HTTPRedirectHandler):
 
 
 def _open_download(url):
-    opener = build_opener(HTTPSHandler(context=_trusted_context()), _HTTPSRedirectHandler())
+    opener = build_opener(AbortHTTPSHandler(context=_trusted_context()), _HTTPSRedirectHandler())
     return opener.open(Request(url), timeout=3)
 
 
@@ -45,7 +46,7 @@ def _open_index(request, timeout, context):
     """The index fetch's one seam — the same HTTPS-at-every-hop handler
     and Cura's own CA as the wheel download, so an intermediate hop can
     never downgrade the scheme the way a bare urlopen allowed."""
-    opener = build_opener(HTTPSHandler(context=context), _HTTPSRedirectHandler())
+    opener = build_opener(AbortHTTPSHandler(context=context), _HTTPSRedirectHandler())
     return opener.open(request, timeout=timeout)
 
 
@@ -69,13 +70,25 @@ def wheel_url(wheel: RuntimeWheel, cancel=None) -> str:
         _check_cancelled(cancel)
     try:
         # The index fetch is a hop like any other: never a bare urlopen.
-        with _open_index(Request(RUNTIME_INDEX_URL, headers={"Accept": "application/json"}),
-                         timeout=3, context=_trusted_context()) as response:
-            if urlsplit(response.geturl()).scheme != "https" \
-                    or urlsplit(response.geturl()).hostname != "pypi.org":
-                raise ValueError("Unexpected runtime index host")
-            raw = response.read(1024 * 1024 + 1)
-    except OSError as exc:
+        with transfer_abort(cancel) as guard:
+            with _open_index(Request(RUNTIME_INDEX_URL, headers={"Accept": "application/json"}),
+                             timeout=3, context=_trusted_context()) as response:
+                guard.body(response)
+                if urlsplit(response.geturl()).scheme != "https" \
+                        or urlsplit(response.geturl()).hostname != "pypi.org":
+                    raise ValueError("Unexpected runtime index host")
+                chunks = []
+                total = 0
+                while total <= 1024 * 1024:
+                    if cancel is not None:
+                        _check_cancelled(cancel)
+                    block = getattr(response, "read1", response.read)(min(8192, 1024 * 1024 + 1 - total))
+                    if not block:
+                        break
+                    chunks.append(block)
+                    total += len(block)
+                raw = b"".join(chunks)
+    except Exception as exc:
         if cancel is not None and cancel.is_set():
             raise DownloadCancelled("Local detection setup cancelled") from exc
         raise
@@ -115,20 +128,22 @@ def download(url: str, path: str, size: int, digest: str, cancel, progress) -> N
             temporary = target.name
             received = 0
             sha = hashlib.sha256()
-            with _open_download(url) as response:
-                if urlsplit(response.geturl()).scheme != "https":
-                    raise ValueError("Local detection downloads require HTTPS after redirects")
-                while True:
-                    _check_cancelled(cancel)
-                    block = response.read(64 * 1024)
-                    if not block:
-                        break
-                    received += len(block)
-                    if received > size:
-                        raise ValueError("Local detection asset exceeds its pinned size")
-                    sha.update(block)
-                    target.write(block)
-                    progress(received, size)
+            with transfer_abort(cancel) as guard:
+                with _open_download(url) as response:
+                    guard.body(response)
+                    if urlsplit(response.geturl()).scheme != "https":
+                        raise ValueError("Local detection downloads require HTTPS after redirects")
+                    while True:
+                        _check_cancelled(cancel)
+                        block = getattr(response, "read1", response.read)(8192)
+                        if not block:
+                            break
+                        received += len(block)
+                        if received > size:
+                            raise ValueError("Local detection asset exceeds its pinned size")
+                        sha.update(block)
+                        target.write(block)
+                        progress(received, size)
             _check_cancelled(cancel)
             if received != size or sha.hexdigest() != digest:
                 raise ValueError("Local detection asset failed its integrity check")
@@ -137,6 +152,10 @@ def download(url: str, path: str, size: int, digest: str, cancel, progress) -> N
         os.replace(temporary, path)
         temporary = None
     except OSError as exc:
+        if cancel.is_set():
+            raise DownloadCancelled("Local detection setup cancelled") from exc
+        raise
+    except Exception as exc:
         if cancel.is_set():
             raise DownloadCancelled("Local detection setup cancelled") from exc
         raise

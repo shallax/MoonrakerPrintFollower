@@ -85,9 +85,21 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
                 self._failure = failure
                 self._safe = safe
                 self._rearmable = False
+                self._sensitivity = 1.0
                 self._alert_level = "warning"
                 self.expanded = True
                 self.calls = []
+
+            @harness.pyqtProperty(float, notify=detectionChanged)
+            def detectionSensitivity(self): return self._sensitivity
+            @harness.pyqtProperty(str, notify=detectionChanged)
+            def detectionStatus(self): return "Off for this printer"
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionMuted(self): return False
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionMuteAvailable(self): return False
+            @harness.pyqtProperty(bool, notify=detectionChanged)
+            def detectionShowBoxes(self): return True
 
             @harness.pyqtProperty(bool, notify=detectionChanged)
             def detectionReady(self):
@@ -147,6 +159,19 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
                 self._enabled = value
                 self.detectionChanged.emit()
 
+            @harness.pyqtSlot(float)
+            def setDetectionSensitivity(self, value):
+                self.calls.append(("sensitivity", value))
+                self._sensitivity = value
+                self.detectionChanged.emit()
+
+            @harness.pyqtSlot()
+            def resetDetectionTuning(self):
+                self.calls.append(("reset",))
+                self._sensitivity = 1.0
+                self._warning, self._failure = 38, 78
+                self.detectionChanged.emit()
+
             @harness.pyqtSlot(int, int)
             def setDetectionThresholds(self, warning, failure):
                 self.calls.append(("thresholds", warning, failure))
@@ -185,7 +210,7 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
 
         section = self.mount("FailureDetectionSection.qml")
         window = harness.QQuickWindow()
-        window.resize(480, 600)
+        window.resize(480, 1100)
         section.setParentItem(window.contentItem())
         section.setWidth(460)
         window.show()
@@ -261,6 +286,11 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
             self.pump()
         self.assertEqual(first.calls, [("enabled", True), ("safe", first._safe),
                                        ("pause", True), ("notify", True)])
+        advanced = self.find(section, "detectionAdvancedButton")
+        center = advanced.mapToScene(harness.QPointF(advanced.width()/2, advanced.height()/2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+        self.pump()
+        self.assertTrue(slider.property("visible"))
         low_target = slider.mapToScene(harness.QPointF(slider.width() * 0.15, slider.height() / 2)).toPoint()
         QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=low_target)
         self.pump()
@@ -270,8 +300,8 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
         self.assertAlmostEqual(slider.property("low"), first._warning / 100)
         self.assertAlmostEqual(slider.property("high"), first._failure / 100)
         labels = [item.property("text") for item in section.findChildren(harness.QQuickItem)]
-        self.assertIn("Warning at %.2f" % (first._warning / 100), labels)
-        self.assertIn("Failure at %.2f" % (first._failure / 100), labels)
+        self.assertIn("Lower %.2f" % (first._warning / 100), labels)
+        self.assertIn("Upper %.2f" % (first._failure / 100), labels)
         self.assertTrue(notify.property("checked"))
         self.assertTrue(pause.property("checked"))
 
@@ -331,6 +361,23 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
         for control in (slider, safe_slider, notify, pause):
             self.assertTrue(control.property("enabled"))
 
+        sensitivity = self.find(section, "detectionSensitivitySlider")
+        first._sensitivity = .9
+        first.detectionChanged.emit()
+        self.pump()
+        self.assertEqual(sensitivity.property("value"), 90)
+        target = sensitivity.mapToScene(harness.QPointF(sensitivity.width() * .8, sensitivity.height()/2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=target)
+        self.pump()
+        self.assertEqual(first.calls[-1][0], "sensitivity")
+        self.assertGreater(first._sensitivity, 1.0, "integer slider percentages must become model multipliers")
+        reset = self.find(section, "detectionResetTuningButton")
+        center = reset.mapToScene(harness.QPointF(reset.width()/2, reset.height()/2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+        self.pump()
+        self.assertEqual(first.calls[-1], ("reset",))
+        self.assertEqual(sensitivity.property("value"), 100, "reset must restore the thumb after a gesture")
+        second._sensitivity = .8
         section.setProperty("printerModel", second)
         self.pump()
         self.assertTrue(notify.property("checked"))
@@ -345,6 +392,7 @@ class FailureDetectionSectionTests(harness.RealEngineTestCase):
         self.assertAlmostEqual(slider.property("high"), .65)
         self.assertEqual(safe_slider.property("value"), 900)
         self.assertEqual(second.calls, [])
+        self.assertEqual(sensitivity.property("value"), 80, "switching printers refreshes the thumb")
         second._ready = True
         second._camera = True
         second.detectionChanged.emit()

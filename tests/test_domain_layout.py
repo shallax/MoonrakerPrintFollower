@@ -54,7 +54,7 @@ RULES = {
     "mpf.printing": (("mpf.printing",), ()),
     "mpf.gcode": (("mpf.gcode", "mpf.geometry", "mpf.printing"),
                   ("mpf.moonraker.MoonrakerProtocol",)),
-    "mpf.settings": (("mpf.settings",), ()),
+    "mpf.settings": (("mpf.settings",), ("mpf.geometry.DetectionRegions",)),
     "mpf.moonraker": (("mpf.moonraker",), ("mpf.diagnostics.CameraTiming",)),
     "mpf.files.browser": (("mpf.files.browser",), ("mpf.moonraker.MoonrakerProtocol",)),
     "mpf.files.transfers": (("mpf.files.transfers", "mpf.moonraker"),

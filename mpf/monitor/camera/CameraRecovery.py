@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 
 from PyQt6.QtCore import Qt
+from .CameraSourceIdentity import source_key
 
 # Once a recovery cycle is running, later retries wait this long: a dead
 # stream must not spin Cura's loader in a tight loop.
@@ -132,20 +133,15 @@ class CameraRecovery:
     def note_url(self, url) -> tuple:
         """Record this frame's stream URL: (bumped, first_attach).
 
-        A query-only transition is the upstream's own noise (a rotated
-        nonce in the reported URL) — the live stream keeps working, so
-        neither this nor the pane's guard reloads it. An origin, port or
-        path transition reloads, and the first attach always does: its
+        Known rotating transport parameters leave the live stream running.
+        A feed selector, origin, port or path transition reloads, and the first attach always does: its
         initial request dies silently in the loader."""
         last = self._last_url
         if url == last:
             return False, False
         self._last_url = url
 
-        def stripped(value):
-            cut = value.find("?")
-            return value[:cut] if cut >= 0 else value
-        if stripped(url) == stripped(last or ""):
+        if source_key(url) == source_key(last or ""):
             return False, False
         self._nonce += 1
         return True, not last

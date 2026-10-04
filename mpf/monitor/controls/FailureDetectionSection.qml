@@ -11,9 +11,10 @@ ColumnLayout {
     spacing: 0
     property var printerModel: null
     readonly property bool detectionReady: root.printerModel != null && root.printerModel.detectionReady
-    readonly property bool controlsEnabled: root.detectionReady && root.printerModel.detectionEnabled
+    readonly property bool controlsEnabled: root.detectionReady && root.printerModel.detectionEnabled && root.printerModel.detectionCameraReady
     onPrinterModelChanged: {
         if (root.printerModel != null) {
+            sensitivitySlider.value = root.printerModel.detectionSensitivity * 100;
             safePeriodSlider.previewSafeSeconds = -1;
             safePeriodSlider.value = root.printerModel.detectionSafeSeconds;
         }
@@ -49,7 +50,7 @@ ColumnLayout {
             objectName: "detectionMainEnabledCheckbox"
             text: "Enable"
             checked: root.printerModel != null ? root.printerModel.detectionEnabled : false
-            enabled: root.detectionReady && (checked || root.printerModel.detectionCameraReady)
+            enabled: root.detectionReady && root.printerModel.detectionCameraReady
             onToggled: {
                 if (root.detectionReady)
                     root.printerModel.setDetectionEnabled(checked);
@@ -57,44 +58,120 @@ ColumnLayout {
         }
 
         UM.Label {
-            text: "Failure signal thresholds"
-            font: UM.Theme.getFont("medium_bold")
-        }
-
-        BedMeshRangeSlider {
-            objectName: "detectionControlsThresholdSlider"
             Layout.fillWidth: true
-            minimum: 0.00
-            maximum: 1.00
-            minWindowFraction: 0.01
-            low: root.printerModel != null ? root.printerModel.detectionWarningThreshold / 100 : 0
-            high: root.printerModel != null ? root.printerModel.detectionFailureThreshold / 100 : 1
-            segmented: true
-            enabled: root.controlsEnabled
-            onWindowAdjusted: function (low, high) {
-                if (root.controlsEnabled) {
-                    var warning = Math.min(99, Math.max(0, Math.round(low * 100)));
-                    var failure = Math.min(100, Math.max(warning + 1, Math.round(high * 100)));
-                    root.printerModel.setDetectionThresholds(warning, failure);
-                }
+            objectName: "detectionStatusLabel"
+            elide: Text.ElideRight
+            text: root.printerModel != null ? root.printerModel.detectionStatus : "Unavailable"
+            HoverHandler {
+                id: detectionStatusHover
+            }
+            UM.ToolTip {
+                visible: detectionStatusHover.hovered
+                targetPoint: Qt.point(parent.width / 2, 0)
+                x: 0
+                y: parent.height + UM.Theme.getSize("default_margin").height
+                width: UM.Theme.getSize("tooltip").width
+                text: parent.text
             }
         }
-
         RowLayout {
             Layout.fillWidth: true
             UM.Label {
-                text: root.printerModel != null ? "Warning at " + (root.printerModel.detectionWarningThreshold / 100).toFixed(2) : "Warning at —"
-                color: MoonrakerTheme.warningOrange
-            }
-            Item {
+                text: "Sensitivity"
                 Layout.fillWidth: true
             }
             UM.Label {
-                text: root.printerModel != null ? "Failure at " + (root.printerModel.detectionFailureThreshold / 100).toFixed(2) : "Failure at —"
-                color: MoonrakerTheme.dangerRed
+                text: root.printerModel != null ? root.printerModel.detectionSensitivity.toFixed(2) + "×" : "1.00×"
             }
         }
+        OutlineSlider {
+            id: sensitivitySlider
+            objectName: "detectionSensitivitySlider"
+            Layout.fillWidth: true
+            from: 80
+            to: 120
+            stepSize: 5
+            live: false
+            enabled: root.controlsEnabled
+            value: root.printerModel != null ? root.printerModel.detectionSensitivity * 100 : 100
+            Connections {
+                target: root.printerModel
+                function onDetectionChanged() {
+                    if (!sensitivitySlider.interacting)
+                        sensitivitySlider.value = root.printerModel.detectionSensitivity * 100;
+                }
+            }
+            onValueCommitted: function (value) {
+                if (root.controlsEnabled)
+                    root.printerModel.setDetectionSensitivity(value / 100);
+            }
+            UM.ToolTip {
+                visible: parent.hovered
+                targetPoint: Qt.point(parent.width / 2, 0)
+                x: 0
+                y: parent.height + UM.Theme.getSize("default_margin").height
+                width: UM.Theme.getSize("tooltip").width
+                text: "Higher sensitivity detects smaller changes. This is an adaptive signal, not a failure probability."
+            }
+        }
+        CentredSecondaryButton {
+            id: advancedButton
+            objectName: "detectionAdvancedButton"
+            property bool expanded: false
+            Layout.fillWidth: true
+            text: expanded ? "Hide advanced tuning" : "Advanced tuning"
+            onClicked: expanded = !expanded
+        }
+        ColumnLayout {
+            visible: advancedButton.expanded
+            Layout.fillWidth: true
+            UM.Label {
+                text: "Adaptive lower / upper bounds"
+                font: UM.Theme.getFont("medium_bold")
+            }
 
+            BedMeshRangeSlider {
+                objectName: "detectionControlsThresholdSlider"
+                Layout.fillWidth: true
+                minimum: 0.00
+                maximum: 1.00
+                minWindowFraction: 0.01
+                low: root.printerModel != null ? root.printerModel.detectionWarningThreshold / 100 : 0
+                high: root.printerModel != null ? root.printerModel.detectionFailureThreshold / 100 : 1
+                segmented: true
+                enabled: root.controlsEnabled
+                onWindowAdjusted: function (low, high) {
+                    if (root.controlsEnabled) {
+                        var warning = Math.min(99, Math.max(0, Math.round(low * 100)));
+                        var failure = Math.min(100, Math.max(warning + 1, Math.round(high * 100)));
+                        root.printerModel.setDetectionThresholds(warning, failure);
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                UM.Label {
+                    text: root.printerModel != null ? "Lower " + (root.printerModel.detectionWarningThreshold / 100).toFixed(2) : "Warning at —"
+                    color: MoonrakerTheme.warningOrange
+                }
+                Item {
+                    Layout.fillWidth: true
+                }
+                UM.Label {
+                    text: root.printerModel != null ? "Upper " + (root.printerModel.detectionFailureThreshold / 100).toFixed(2) : "Failure at —"
+                    color: MoonrakerTheme.dangerRed
+                }
+            }
+
+            CentredSecondaryButton {
+                objectName: "detectionResetTuningButton"
+                Layout.fillWidth: true
+                text: "Reset sensitivity and bounds"
+                enabled: root.controlsEnabled
+                onClicked: root.printerModel.resetDetectionTuning()
+            }
+        }
         RowLayout {
             Layout.fillWidth: true
             UM.Label {
@@ -151,7 +228,7 @@ ColumnLayout {
 
         UM.CheckBox {
             objectName: "detectionPauseCheckbox"
-            text: "Pause on confirmed failure"
+            text: "Pause on detected failure"
             checked: root.printerModel != null ? root.printerModel.detectionPauseEnabled : false
             enabled: root.controlsEnabled
             onToggled: {
@@ -160,6 +237,35 @@ ColumnLayout {
             }
         }
 
+        CentredSecondaryButton {
+            objectName: "detectionMutePrintButton"
+            Layout.fillWidth: true
+            text: root.printerModel != null && root.printerModel.detectionMuted ? "Unmute this print" : "Mute for the rest of this print"
+            enabled: root.controlsEnabled && root.printerModel.detectionMuteAvailable
+            onClicked: root.printerModel.setDetectionMuted(!root.printerModel.detectionMuted)
+            UM.ToolTip {
+                visible: parent.hovered
+                targetPoint: Qt.point(parent.width / 2, 0)
+                x: 0
+                y: parent.height + UM.Theme.getSize("default_margin").height
+                width: UM.Theme.getSize("tooltip").width
+                text: "Keep analysis and detection boxes, but suppress alerts and automatic pauses for this print. An already sent pause cannot be recalled."
+            }
+        }
+        UM.CheckBox {
+            objectName: "detectionShowBoxesCheckbox"
+            text: "Show suspicious regions on camera"
+            checked: root.printerModel != null && root.printerModel.detectionShowBoxes
+            enabled: root.controlsEnabled
+            onToggled: root.printerModel.setDetectionShowBoxes(checked)
+        }
+        CentredSecondaryButton {
+            objectName: "detectionEditRegionsButton"
+            Layout.fillWidth: true
+            text: "Draw monitored regions on camera"
+            enabled: root.controlsEnabled
+            onClicked: root.printerModel.setDetectionEditingRegions(true)
+        }
         CentredSecondaryButton {
             objectName: "detectionAcknowledgeButton"
             Layout.fillWidth: true

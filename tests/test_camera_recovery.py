@@ -118,6 +118,12 @@ class CameraRecoveryTests(unittest.TestCase):
         self.assertEqual(self.recovery.note_url("http://cam/other"), (True, False))
         self.assertEqual(self.recovery.nonce, 2)
 
+    def test_feed_selectors_restart_but_auth_rotation_and_query_order_do_not(self):
+        self.recovery.note_url("http://cam/stream?src=bed&token=old")
+        self.assertEqual(self.recovery.note_url("http://cam/stream?token=new&src=bed"), (False, False))
+        self.assertEqual(self.recovery.note_url("http://cam/stream?src=toolhead&token=new"), (True, False))
+        self.assertEqual(self.recovery.note_url("http://cam/stream?src=toolhead&device=2"), (True, False))
+
     def test_a_host_change_reloads_without_being_an_attach(self):
         self.recovery.note_url("http://cam/stream")
         bumped, first_attach = self.recovery.note_url("http://other/stream")

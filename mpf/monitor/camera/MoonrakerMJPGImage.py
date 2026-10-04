@@ -206,7 +206,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._detection_faulted = False
         self.detectionReceiverChanged.emit()
 
-    def _deliver_detection_frame(self, image: QImage) -> None:
+    def _deliver_detection_frame(self, image: QImage, captured_at=None) -> None:
         """The frame hand-off runs inside the Qt thread's install slot.
 
         An exception escaping a slot aborts Cura, so a receiver that
@@ -220,7 +220,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         if receiver is None:
             return
         try:
-            receiver.acceptDetectionFrame(image)
+            receiver.acceptDetectionFrame(image, captured_at, self._source_url.toString())
         except Exception:
             if not self._detection_faulted:
                 self._detection_faulted = True
@@ -801,7 +801,7 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         # imageHeight must already expose the new dimensions when the
         # signal fires.
         self._image = image
-        self._deliver_detection_frame(image)
+        self._deliver_detection_frame(image, time.monotonic() - max(0, arrived_at - (arrival or arrived_at)))
         rect = image.rect()
         if self._image_rect is None or rect != self._image_rect:
             self._image_rect = rect

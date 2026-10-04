@@ -923,7 +923,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
                 super().__init__()
                 self.frames = []
 
-            def acceptDetectionFrame(self, image):
+            def acceptDetectionFrame(self, image, captured_at=None, source_url=None):
                 self.frames.append(image)
 
         sink = _Sink()
@@ -940,7 +940,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
                 super().__init__()
                 self.calls = 0
 
-            def acceptDetectionFrame(self, image):
+            def acceptDetectionFrame(self, image, captured_at=None, source_url=None):
                 self.calls += 1
                 raise ValueError("receiver bug")
 
@@ -962,7 +962,7 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
         from PyQt6 import sip
 
         class _Sink(QObject):
-            def acceptDetectionFrame(self, image):
+            def acceptDetectionFrame(self, image, captured_at=None, source_url=None):
                 # The real receiver is a QObject whose handler touches
                 # its C++ side; a pure-Python body would keep working
                 # on a deleted wrapper and test nothing.

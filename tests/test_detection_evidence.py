@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from mpf.detection import EvidenceStore
 
@@ -26,6 +27,29 @@ class _Image:
 
 
 class EvidenceStoreTests(unittest.TestCase):
+    def test_symbolic_link_parents_refuse_frame_timeline_and_cleanup(self):
+        directory = Path(self.root, "detection")
+        target = Path(self.root, "elsewhere")
+        target.mkdir()
+        sentinel = target / "keep"
+        sentinel.write_text("unrelated")
+        directory.symlink_to(target, target_is_directory=True)
+        self.assertEqual(EvidenceStore.save_frame(self.root, _Image(), printer="p", print_key="r", level="failure", score=90), "")
+        self.assertEqual(EvidenceStore.append_sample(self.root, printer="p", print_key="r", score=90, raw=1., at=1.), "")
+        with self.assertRaisesRegex(ValueError, "symbolic link"):
+            EvidenceStore.clear(self.root)
+        self.assertEqual(sentinel.read_text(), "unrelated")
+
+    def test_prune_and_clear_tolerate_files_removed_by_another_cleanup(self):
+        directory = Path(EvidenceStore.evidence_directory(self.root))
+        directory.mkdir(parents=True)
+        path = directory / "frame-old.jpg"
+        path.write_text("old")
+        with patch.object(EvidenceStore.os, "unlink", side_effect=FileNotFoundError):
+            EvidenceStore._prune(str(directory), "frame-", 0)
+            EvidenceStore.clear(self.root)
+        self.assertTrue(path.is_file())
+
     def setUp(self):
         self._directory = tempfile.TemporaryDirectory(prefix="mpf-evidence-")
         self.addCleanup(self._directory.cleanup)
@@ -33,6 +57,33 @@ class EvidenceStoreTests(unittest.TestCase):
 
     def _names(self):
         return sorted(Path(EvidenceStore.evidence_directory(self.root)).iterdir())
+
+    def test_clear_unlinks_evidence_symlink_and_cleans_legacy_nested_files(self):
+        elsewhere = Path(self.root, "unrelated")
+        elsewhere.mkdir()
+        keep = elsewhere / "keep.txt"
+        keep.write_text("keep")
+        directory = Path(EvidenceStore.evidence_directory(self.root))
+        directory.parent.mkdir()
+        directory.symlink_to(elsewhere, target_is_directory=True)
+        EvidenceStore.clear(self.root)
+        self.assertEqual(keep.read_text(), "keep")
+        self.assertFalse(directory.is_symlink())
+        legacy = directory / "detection" / "evidence"
+        legacy.mkdir(parents=True)
+        (legacy / "old.jpg").write_bytes(b"old")
+        EvidenceStore.clear(self.root)
+        self.assertEqual(list(directory.iterdir()), [])
+
+    def test_timeline_symlink_is_not_followed(self):
+        path = EvidenceStore.append_sample(self.root, printer="p", print_key="j", at=1, score=1, raw=.1)
+        target = Path(self.root, "private.txt")
+        target.write_text("private")
+        Path(path).unlink()
+        Path(path).symlink_to(target)
+        self.assertEqual(EvidenceStore.append_sample(self.root, printer="p", print_key="j", at=2, score=2, raw=.2), "")
+        self.assertEqual(target.read_text(), "private")
+
 
     def test_a_frame_is_named_for_its_print_and_level(self):
         image = _Image()
@@ -111,7 +162,8 @@ class EvidenceStoreTests(unittest.TestCase):
         EvidenceStore.save_frame(self.root, _Image(), printer="p", print_key="j",
                                  level="warning", score=40)
         with patch.object(EvidenceStore.os, "unlink", side_effect=OSError("busy")):
-            EvidenceStore.clear(self.root)  # must not raise; nothing else can be done
+            with self.assertRaises(OSError):
+                EvidenceStore.clear(self.root)  # removal must disclose remaining files
         self.assertTrue(self._names())
 
     def test_clear_takes_every_file_and_tolerates_an_absent_folder(self):

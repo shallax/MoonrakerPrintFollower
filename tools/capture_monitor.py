@@ -623,7 +623,8 @@ def main():
             follower.current_printer_config(), detection_enabled=True,
             detection_notify_enabled=True, detection_pause_enabled=True))
         model._detection = SimpleNamespace(ready=True, enabled=True,
-                                           sample=lambda image, context: None)
+            reset=lambda: None, sample=lambda image, context, captured_at=None, regions=(): None)
+        model._failure_detection._detection = model._detection
         model.detectionChanged.emit()
         for _ in range(3):
             app.processEvents()
@@ -672,6 +673,52 @@ def main():
         if not 0 <= viewport <= control_flick.height() - 40:
             raise RuntimeError("the detection section sits outside the controls viewport")
         grab("12-detection-controls.png")
+
+        # Camera-local polygons and model proposals, fed through the production
+        # owner. A deterministic analysis clock keeps the age label reproducible.
+        from mpf.detection.DetectionObservation import DetectionBox, DetectionSample, DetectionResult, ModelDetections
+        from PyQt6.QtQml import QQmlExpression
+        owner = model._failure_detection
+        owner._monotonic = lambda: 100.0
+        owner._detection_history_pending = True  # no network identity request in a visual fixture
+        owner.setDetectionEditingRegions(True)
+        overlay = item.findChild(QQuickItem, "detectionOverlay")
+        if overlay is None:
+            raise RuntimeError("the region overlay did not render")
+        expression = QQmlExpression(engine.rootContext(), overlay, "addRectangle(); addRectangle(); selectedRegion = 0")
+        expression.evaluate()
+        if expression.hasError():
+            raise RuntimeError(expression.error().toString())
+        pump_ms(200)
+        grab("13-monitored-region-editor.png")
+        if not owner.saveDetectionRegions([[[.18,.18],[.72,.18],[.78,.72],[.20,.80]],
+                                           [[.62,.15],[.90,.15],[.90,.68],[.62,.68]]]):
+            raise RuntimeError("the capture regions could not be saved")
+        owner._detection_values()
+        sample_context = owner._detection_context()
+        image = QColor("white")
+        from PyQt6.QtGui import QImage
+        frame = QImage(640, 480, QImage.Format.Format_RGB888)
+        frame.fill(image)
+        # Notifications/commands are off for this explicitly synthetic sample.
+        follower.apply_printer_config(_replace(follower.current_printer_config(),
+            detection_notify_enabled=False, detection_pause_enabled=False))
+        owner._detection_values()
+        if len(owner.detectionRegions) != 2:
+            raise RuntimeError("the saved capture regions did not survive a detection-settings edit")
+        sample_context = owner._detection_context()
+        owner._on_detection_observation(DetectionResult(DetectionSample(frame, sample_context, 97.),
+            ModelDetections(.3, (DetectionBox(.35,.35,.20,.25,.8), DetectionBox(.74,.22,.10,.12,.6)))))
+        model._publish()
+        pump_ms(200)
+        drawn_regions = overlay.property("regions")
+        if hasattr(drawn_regions, "toVariant"):
+            drawn_regions = drawn_regions.toVariant()
+        if len(drawn_regions) != 2:
+            raise RuntimeError("the overlay lost its saved monitored regions")
+        if len(owner.detectionBoxes) != 2 or owner.detectionAnalysisAge != 3:
+            raise RuntimeError("the suspicious-region capture did not retain its sampled boxes and age")
+        grab("14-suspicious-region-boxes.png")
 
         # Tear the scene down in dependency order while the context-property
         # wrappers are still referenced: at exit the wrappers free in

@@ -8,7 +8,10 @@ wrote or "" and lets the caller carry on.
 
 import json
 import os
+import shutil
 import time
+import tempfile
+from collections import deque
 from hashlib import sha256
 
 EVIDENCE_DIRECTORY = "evidence"
@@ -50,12 +53,21 @@ def save_frame(root: str, image, *, printer, print_key, level, score, at=None) -
     """The frame an alert was raised on, as a JPEG named for its print."""
     directory = evidence_directory(root)
     try:
+        if any(os.path.islink(path) for path in (root, os.path.join(root, "detection"), directory)):
+            return ""
         os.makedirs(directory, mode=0o700, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(at if at is not None else time.time()))
         path = os.path.join(directory, "frame-%s-%s-%s-%s.jpg"
                             % (_token(printer), _token(print_key), stamp, _token(level)))
-        if not image.save(path, "JPG", 85):
-            return ""
+        descriptor, temporary = tempfile.mkstemp(prefix=".frame-", suffix=".jpg", dir=directory)
+        os.close(descriptor)
+        try:
+            if not image.save(temporary, "JPG", 85):
+                return ""
+            os.replace(temporary, path)
+        finally:
+            if os.path.lexists(temporary):
+                os.unlink(temporary)
     except OSError:
         return ""
     _prune(directory, "frame-", MAX_FRAMES)
@@ -73,15 +85,29 @@ def append_sample(root: str, *, printer, print_key, at, score, raw) -> str:
     path = os.path.join(directory, "timeline-%s-%s.jsonl"
                         % (_token(printer), _token(print_key)))
     try:
+        if any(os.path.islink(path) for path in (root, os.path.join(root, "detection"), directory)):
+            return ""
         os.makedirs(directory, mode=0o700, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as handle:
+        if os.path.islink(path):
+            return ""
+        flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        with os.fdopen(os.open(path, flags, 0o600), "r+", encoding="utf-8") as handle:
+            handle.seek(0, os.SEEK_END)
             handle.write(json.dumps({"at": round(float(at), 3), "score": score,
                                      "raw": round(float(raw), 6)}) + "\n")
-        with open(path, encoding="utf-8") as handle:
-            samples = handle.readlines()
-        if len(samples) > 2 * MAX_SAMPLES:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.writelines(samples[-MAX_SAMPLES:])
+            handle.flush()
+            handle.seek(0)
+            samples = deque(maxlen=MAX_SAMPLES)
+            count = 0
+            for line in handle:
+                samples.append(line)
+                count += 1
+            if count > 2 * MAX_SAMPLES:
+                # O_APPEND must be removed for rewriting on this same no-follow fd.
+                handle.close()
+                with os.fdopen(os.open(path, os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)),
+                               "w", encoding="utf-8") as rewrite:
+                    rewrite.writelines(samples)
     except (OSError, TypeError, ValueError):
         return ""
     _prune(directory, "timeline-", MAX_TIMELINES)
@@ -92,12 +118,18 @@ def clear(root: str) -> None:
     """Drop the evidence: the removal path takes the prints with the
     downloads, so nothing of the user's stays behind."""
     directory = evidence_directory(root)
-    try:
-        names = os.listdir(directory)
-    except OSError:
-        return
-    for name in names:
-        try:
-            os.unlink(os.path.join(directory, name))
-        except OSError:
-            pass
+    # Never traverse a substituted preferences/evidence directory.
+    for parent in (root, os.path.join(root, "detection")):
+        if os.path.islink(parent):
+            raise ValueError("Unsafe detection evidence path (symbolic link)")
+    if os.path.islink(directory):
+        os.unlink(directory)
+    elif os.path.isdir(directory):
+        for entry in os.scandir(directory):
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path)
+            else:
+                try:
+                    os.unlink(entry.path)
+                except FileNotFoundError:
+                    pass

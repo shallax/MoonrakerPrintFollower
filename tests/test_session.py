@@ -6,6 +6,7 @@ import unittest
 from tests.fake_moonraker import FakeMoonraker
 from mpf.moonraker.MoonrakerSession import (
     BindingIdentity,
+    CommandTracker,
     MoonrakerSession,
     MoonrakerSessionState,
     PollPolicy,
@@ -44,6 +45,17 @@ class _FakeTransport:
 
 
 class SessionStateTests(unittest.TestCase):
+    def test_old_http_callbacks_cannot_settle_new_commands_with_the_same_label(self):
+        tracker = CommandTracker()
+        tracker.issue("Pause", {"paused"}, command_id="old")
+        current = tracker.issue("Pause", {"paused"}, command_id="new")
+        self.assertIsNone(tracker.accepted("Pause", "old"))
+        self.assertIsNone(tracker.failed("Pause", "refused", "old"))
+        self.assertFalse(current.http_accepted)
+        self.assertFalse(current.terminal)
+        self.assertIs(tracker.accepted("Pause", "new"), current)
+
+
     def test_polling_is_category_state_and_pause_guard_aware(self):
         policy = PollPolicy()
         self.assertEqual(policy.interval_ms(RequestCategory.CORE, 750, "printing"), 750)

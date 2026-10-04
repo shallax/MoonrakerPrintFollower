@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from hashlib import sha256
-from math import isfinite
 from PyQt6.QtCore import QLocale, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
 from UM.Logger import Logger
@@ -43,10 +41,9 @@ def _british_spelling() -> bool:
     return False
 
 
+from .MonitorDetection import MonitorDetection
 from .camera.CameraRecovery import CameraRecovery
 from .camera.MonitorCamera import MonitorCamera
-from ..detection.DetectionPolicy import DetectionPolicy
-from ..detection import EvidenceStore
 from ..plate.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO
 from ..plate.PlateRenderController import PlateRenderController, SceneInputs
 from .controls.MonitorCommands import MonitorCommands
@@ -102,7 +99,6 @@ CONSOLE_HEIGHT_MAX = 2000
 # with the per-print record, so a Cura restart does not restart the
 # count, and a silent alert can never nag a whole print.
 DETECTION_ALERT_REPEAT_SECONDS = 300
-DETECTION_ALERT_MAX_PER_PRINT = 3
 # What the follower's placeholder says when the layer it is on will
 # never arrive: the service latches a source it could not present
 # ("failed") and refuses an anchor a shrunken file left behind
@@ -370,22 +366,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._request_pause_clear = request_pause_clear
         self._identity = identity
         self._detection = detection
-        self._detection_policy = DetectionPolicy()
-        self._detection_context_seen = None
-        self._detection_thresholds_seen = (38, 78, 300)
-        self._detection_action_context = None
-        self._detection_alerted_at = None
-        self._detection_acknowledged_at = None
-        self._detection_alert_count = 0
-        self._detection_alert_level = ""
-        self._detection_frame = None
-        self._detection_paused_for_print = False
-        self._detection_pause_pending = False
-        self._detection_pause_uncertain = False
-        if detection is not None:
-            detection.resultReady.connect(self._on_detection_result)
-            detection.stateChanged.connect(self._refresh_detection)
-            detection.stateChanged.connect(self.detectionChanged.emit)
         # The state file's owner (4.2.0, F11/A6): passed in as a
         # capability — 4.3.0's UI-state store consumes the same
         # instance; the default builds the production path.
@@ -393,17 +373,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # in production (4.5.0); the StateStore double serves the
         # harness's config-only path.
         self._store = persistence or state_store or StateStore(_sections_path(), note=self._on_store_note)
-        self._detection_baseline_printer = identity()[0] if identity is not None else None
-        self._detection_baseline_camera = None
-        self._detection_baselines = {}
-        self._detection_action_saved = {}
-        self._detection_camera_seen = None
-        if persistence is not None and hasattr(persistence, "get_machine_state") and identity is not None:
-            saved = persistence.get_machine_state(self._detection_baseline_printer) or {}
-            baselines = saved.get("detectionBaselines")
-            if isinstance(baselines, dict):
-                self._detection_baselines = baselines
-            self._detection_action_saved = saved.get("detectionActions") or {}
         # Failure notes that fired before the console existed (the
         # hydration read runs first) queue here and flush once the
         # console lands.
@@ -525,7 +494,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # padlock to be cycled.
         self._data.set_controls_locked(self._controls_locked)
         self._commands = MonitorCommands(self._data, self)
-        self._data.commandChanged.connect(self._on_detection_pause_command)
         self._tuning = MonitorTuning(self._data, self._commands, self)
         # The object gestures bind to the print that received the
         # click: the coordinator's job key is the only identity that
@@ -661,6 +629,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # e-stop's automatic cycle included).
         self._data.connectionStateChanged.connect(self._on_connection_state)
         self._temperature.changed.connect(lambda: self._publish())
+        self._failure_detection = MonitorDetection(
+            detection=detection, data=self._data, client=client, camera=self._camera,
+            recovery=self._camera_recovery, config=config, apply_config=apply_config,
+            identity=identity, print_state=self._print_state, commands=self._commands,
+            store=self._store, publish=self._publish, schedule_publish=self._schedule_publish,
+            published_values=lambda: self._values, printer_name=lambda: self.name or self.uniqueName,
+            parent=self)
+        self._failure_detection.detectionChanged.connect(self.detectionChanged.emit)
+        self._data.commandChanged.connect(self._on_detection_pause_command)
         self._data.set_owner_active(True)
         self._publish()
 
@@ -828,8 +805,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._schedule_publish()
 
     def _on_invalidated(self):
-        self._detection_policy.reset()
-        self._detection_context_seen = None
+        self._invalidate_detection()
         self._temperature._history.reset()
         # The session boundary drops the projection: a reconnect's
         # first snapshot must never match a definition read for the
@@ -854,8 +830,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def setMonitoringActive(self, active):
         if not active:
-            self._detection_policy.reset()
-            self._detection_context_seen = None
+            self._invalidate_detection()
         if not active:
             # Ownership revocation retires the chart pop-over's
             # transient hydration state: a cached monitor must not
@@ -959,499 +934,174 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._apply_camera_url()
         self._emit_changed(previous)
         camera_ready = self.detectionCameraReady
-        if camera_ready != self._detection_camera_seen:
-            self._detection_camera_seen = camera_ready
+        if camera_ready != self._failure_detection._detection_camera_seen:
+            self._failure_detection._detection_camera_seen = camera_ready
             self.detectionChanged.emit()
 
+    def _invalidate_detection(self):
+        return self._failure_detection._invalidate_detection()
+
     def _detection_context(self):
-        if self._detection is None or not self._detection.ready or not self._detection.enabled \
-                or not self._config().detection_enabled or not self._data.active \
-                or self._data.connection_state != "yes" or not self._camera_recovery.stream_enabled \
-                or not getattr(self._camera, "url", "") or self._identity is None:
-            return None
-        stats = (self._data.snapshot.core or {}).get("print_stats") or {}
-        job = getattr(self._print_state(), "job_key", None)
-        if stats.get("state") != "printing" or job is None:
-            return None
-        camera = self._camera.values
-        printer_id = self._detection_printer_id()
-        if printer_id is None:
-            return None
-        return (printer_id, self._client.session.generation, job,
-                camera.get("activeWebcamIndex"), camera.get("cameraName"),
-                self._camera.url.partition("?")[0],
-                self._config().detection_warning_threshold,
-                self._config().detection_failure_threshold,
-                self._config().detection_safe_seconds,
-                self._config().detection_notify_enabled,
-                self._config().detection_pause_enabled)
-
-    def _detection_printer_id(self):
-        if self._identity is None:
-            return None
-        try:
-            return self._identity()[0]
-        except RuntimeError:
-            return None
-
-    def _detection_camera_id(self):
-        cameras = self._data.snapshot.webcams or []
-        index = self._camera.values.get("activeWebcamIndex")
-        if cameras:
-            if type(index) is int and 0 <= index < len(cameras):
-                return MonitorCamera.identity(cameras[index], index)
-            return None
-        if not getattr(self._camera, "url", ""):
-            return None
-        source = self._config().camera_url or self._camera.url
-        return "configured:" + sha256(source.partition("?")[0].encode("utf-8")).hexdigest()
-
-    def _sync_detection_printer(self):
-        printer_id = self._detection_printer_id()
-        if printer_id != self._detection_baseline_printer:
-            self._detection_baseline_printer = printer_id
-            self._detection_baseline_camera = None
-            self._detection_baselines = {}
-            self._detection_action_context = None
-            self._detection_alerted_at = None
-            self._detection_acknowledged_at = None
-            self._detection_paused_for_print = False
-            self._detection_pause_pending = False
-            self._detection_pause_uncertain = False
-            self._detection_action_saved = {}
-            if printer_id is not None and hasattr(self._store, "get_machine_state"):
-                saved = self._store.get_machine_state(printer_id) or {}
-                baselines = saved.get("detectionBaselines")
-                if isinstance(baselines, dict):
-                    self._detection_baselines = baselines
-                self._detection_action_saved = saved.get("detectionActions") or {}
-        camera_id = self._detection_camera_id() if printer_id is not None else None
-        if camera_id != self._detection_baseline_camera:
-            self._detection_baseline_camera = camera_id
-            self._detection_policy = DetectionPolicy()
-            self._detection_policy.restore_baseline(self._detection_baselines.get(camera_id))
-            self._detection_thresholds_seen = (38, 78, 300)
-            self._detection_context_seen = None
-
-    def _sync_detection_thresholds(self):
-        self._sync_detection_printer()
-        config = self._config()
-        thresholds = (config.detection_warning_threshold, config.detection_failure_threshold,
-                      config.detection_safe_seconds)
-        if thresholds != self._detection_thresholds_seen:
-            baseline = self._detection_policy.baseline
-            self._detection_policy = DetectionPolicy(
-                warning_threshold=thresholds[0], failure_threshold=thresholds[1],
-                safe_seconds=thresholds[2])
-            self._detection_policy.restore_baseline(baseline)
-            self._detection_thresholds_seen = thresholds
-            self._detection_context_seen = None
+        return self._failure_detection._detection_context()
 
     def _detection_values(self):
-        self._sync_detection_thresholds()
-        context = self._detection_context()
-        if context != self._detection_context_seen:
-            self._detection_policy.reset()
-            self._detection_context_seen = context
-        state = self._detection_policy.state(now=time.monotonic(), context=context,
-                                             active=context is not None)
-        if context is None:
-            if self._detection is not None and self._detection.ready and not self._detection.enabled:
-                reason = "Local detection is disabled in Settings"
-            elif not self._config().detection_enabled:
-                reason = "Off for this printer"
-            elif self._detection is None or not self._detection.ready:
-                reason = "Local detection is unavailable"
-            elif not getattr(self._camera, "url", "") or not self._camera_recovery.stream_enabled:
-                reason = "Camera is unavailable"
-            else:
-                reason = "Waiting for an active print"
-        else:
-            reason = {
-                "waiting": "Waiting for an analysed frame",
-                "stale": "Camera analysis is stale",
-                "normal": "Normal",
-                "warning": "Warning",
-                "failure": "Possible failure",
-            }[state.name]
-        return {"detectionState": state.name if context is not None else "idle",
-                "detectionScore": state.score if state.score is not None else -1,
-                "detectionRawScore": state.raw_score if state.raw_score is not None else -1.0,
-                "detectionStatus": reason}
+        return self._failure_detection._detection_values()
 
     def _refresh_detection(self):
-        if self._detection is not None and any(
-                self._values.get(key) != value for key, value in self._detection_values().items()):
-            self._schedule_publish()
+        return self._failure_detection._refresh_detection()
 
     def _on_detection_result(self, context, confidence):
-        if context != self._detection_context():
-            return
-        self._sync_detection_thresholds()
-        now = time.monotonic()
-        stats = (self._data.snapshot.core or {}).get("print_stats") or {}
-        duration = stats.get("print_duration")
-        elapsed = duration if type(duration) in (int, float) and isfinite(duration) and duration >= 0 else None
-        level = self._detection_policy.observe(
-            confidence, now=now, context=context, print_elapsed_seconds=elapsed)
-        self._record_detection_sample(context, now, confidence)
-        if self._detection_baseline_camera is not None and hasattr(self._store, "set_machine_state"):
-            self._detection_baselines[self._detection_baseline_camera] = self._detection_policy.baseline
-            self._store.set_machine_state(context[0], {
-                "detectionBaselines": self._detection_baselines})
-        self._handle_detection_action(context, level, time.time())
-        self._schedule_publish()
-
-    def _detection_evidence_root(self):
-        """Where the alert evidence belongs: the detection service's own
-        storage, so a removal takes the frames and timelines with the
-        downloads. A stand-in without it keeps only the timeline's
-        in-memory effect — the alert itself never depends on this."""
-        getter = getattr(self._detection, "evidence_root", None)
-        try:
-            return getter() if callable(getter) else None
-        except Exception:
-            return None
-
-    def _record_detection_sample(self, context, now, confidence) -> None:
-        """Every analysed frame lands in its print's timeline: the
-        record a user (or a bug report) reads to see what the signal
-        did before an alert, and what it was tuned against."""
-        root = self._detection_evidence_root()
-        if root is None:
-            return
-        state = self._detection_policy.state(now=now, context=context, active=True)
-        if state.score is None:
-            return
-        try:
-            EvidenceStore.append_sample(
-                root, printer=context[0], print_key=context[2],
-                at=time.time(), score=state.score, raw=confidence)
-        except Exception:
-            # This runs inside the result slot, and an exception
-            # escaping a slot aborts Cura: a diagnostic write is never
-            # worth the print.
-            Logger.logException("e", "Moonraker Print Follower: detection timeline write failed")
-
-    def _retain_detection_evidence(self, level: str, context) -> str:
-        """The alert's triggering frame on disk, best-effort."""
-        root = self._detection_evidence_root()
-        frame = self._detection_frame
-        if root is None or frame is None or frame.isNull():
-            return ""
-        try:
-            return EvidenceStore.save_frame(
-                root, frame, printer=context[0], print_key=context[2], level=level,
-                score=self.detectionScore, at=time.time())
-        except Exception:
-            Logger.logException("e", "Moonraker Print Follower: detection evidence write failed")
-            return ""
-
-    def _notify_detection(self, level: str, paused: bool) -> None:
-        from UM.Message import Message
-        status = "Possible print failure" if level == "failure" else "Print failure warning"
-        suffix = " — print paused" if paused else " — check the camera"
-        # The alert names the printer: two machines on one Cura make an
-        # unattributed toast ambiguous.
-        printer = self.name or self.uniqueName
-        summary = ("%s on %s%s" % (status, printer, suffix)) if printer else status + suffix
-        message = Message(summary, 0, True)
-        message.setTitle("Moonraker — local failure detection")
-        # The alert's own acknowledgement: it repeats while nobody
-        # acknowledges it (bounded per print), and this button is the
-        # direct way to stop that without hunting for the panel.
-        message.addAction("detectionAcknowledge", "Acknowledge", "",
-                          "Acknowledge this failure-detection alert")
-        message.pyQtActionTriggered.connect(self._on_detection_alert_action)
-        message.show()
-
-    def _on_detection_alert_action(self, message, action_id) -> None:
-        if action_id != "detectionAcknowledge":
-            return
-        self.acknowledgeDetectionAlert()
-        try:
-            message.hide()
-        except Exception:
-            pass
-
-    def _handle_detection_action(self, context, level: str, now: float) -> None:
-        print_key = (context[0], context[2])
-        self._sync_detection_action_context(print_key, now)
-        if level not in ("warning", "failure"):
-            return
-        config = self._config()
-        if level == "failure" and config.detection_pause_enabled \
-                and not self._detection_paused_for_print and not self._detection_pause_pending:
-            if (self._detection_acknowledged_at is not None
-                    and now - self._detection_acknowledged_at < 90):
-                return
-            observation = getattr(self._data, "observation", None)
-            verdict = can_pause(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
-            if verdict.mode == "allowed":
-                self._detection_pause_pending = True
-                if not self.pausePrint():
-                    self._detection_pause_pending = False
-                    self._commands.report_status("Automatic pause was not sent; check the printer and pause manually if needed")
-            else:
-                self._commands.report_status(f"Automatic pause was not sent: {verdict.reason}")
-        if not config.detection_notify_enabled:
-            return
-        if self._detection_alerted_at is not None:
-            unacknowledged = (self._detection_acknowledged_at is None
-                              or self._detection_acknowledged_at < self._detection_alerted_at)
-            if unacknowledged:
-                # A missed toast must not mean a missed failure, so an
-                # unacknowledged alert repeats on a long interval — and
-                # stops after a few: nagging forever trains the user to
-                # ignore it, and the print is capped either way.
-                if (now - self._detection_alerted_at < DETECTION_ALERT_REPEAT_SECONDS
-                        or self._detection_alert_count >= DETECTION_ALERT_MAX_PER_PRINT):
-                    return
-            elif now - self._detection_alerted_at < 90:
-                return
-        self._detection_alerted_at = now
-        self._detection_alert_level = level
-        self._detection_alert_count += 1
-        self._save_detection_actions()
-        self.detectionChanged.emit()
-        # The evidence is written BEFORE the message: the frame has to
-        # be on disk by the time anyone follows the alert to it.
-        self._retain_detection_evidence(level, context)
-        self._notify_detection(level, False)
+        return self._failure_detection._on_detection_result(context, confidence)
 
     def _on_detection_pause_command(self, event):
-        if not self._detection_pause_pending or event.get("name") != "Pause" or not event.get("terminal"):
-            return
-        if event.get("outcome") == "confirmed":
-            self._detection_pause_pending = False
-            self._detection_paused_for_print = True
-            if not self._save_detection_actions():
-                self._commands.report_status("Print paused, but the one-pause-per-print record could not be saved")
-        elif event.get("outcome") == "timed_out":
-            self._detection_pause_uncertain = True
-            self._commands.report_status("Automatic pause unconfirmed; check the printer and pause manually if needed")
-        else:
-            self._detection_pause_pending = False
-        self.detectionChanged.emit()
-
-    def _sync_detection_action_context(self, print_key, now):
-        if print_key == self._detection_action_context:
-            return
-        self._detection_action_context = print_key
-        self._detection_pause_pending = False
-        self._detection_pause_uncertain = False
-        saved = self._detection_action_saved
-        if isinstance(saved, dict) and saved.get("print") == repr(print_key[1]):
-            alerted = saved.get("alertedAt")
-            acknowledged = saved.get("acknowledgedAt")
-            count = saved.get("alertCount")
-            self._detection_alerted_at = alerted if type(alerted) in (int, float) and isfinite(alerted) and 0 <= alerted <= now else None
-            self._detection_acknowledged_at = acknowledged if type(acknowledged) in (int, float) and isfinite(acknowledged) and 0 <= acknowledged <= now else None
-            self._detection_alert_count = count if type(count) is int and 0 <= count <= DETECTION_ALERT_MAX_PER_PRINT else 0
-            self._detection_alert_level = saved.get("alertLevel") if saved.get("alertLevel") in ("warning", "failure") else ""
-            self._detection_paused_for_print = saved.get("paused") is True
-        else:
-            self._detection_alerted_at = None
-            self._detection_acknowledged_at = None
-            self._detection_alert_count = 0
-            self._detection_alert_level = ""
-            self._detection_paused_for_print = False
-
-    def _save_detection_actions(self) -> bool:
-        if self._detection_action_context is None:
-            return True
-        record = {
-            "print": repr(self._detection_action_context[1]),
-            "alertedAt": self._detection_alerted_at,
-            "acknowledgedAt": self._detection_acknowledged_at,
-            "alertCount": self._detection_alert_count,
-            "alertLevel": self._detection_alert_level,
-            "paused": self._detection_paused_for_print,
-        }
-        self._detection_action_saved = record
-        if hasattr(self._store, "set_machine_state"):
-            return self._store.set_machine_state(self._detection_action_context[0], {
-                "detectionActions": record})
-        return True
+        return self._failure_detection._on_detection_pause_command(event)
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionNotifyEnabled(self):
-        return self._config().detection_notify_enabled
+        return self._failure_detection.detectionNotifyEnabled
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionEnabled(self):
-        return self._config().detection_enabled
+        return self._failure_detection.detectionEnabled
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionReady(self):
-        return self._detection is not None and self._detection.ready
+        return self._failure_detection.detectionReady
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionGlobalEnabled(self):
-        return self._detection is not None and self._detection.ready and self._detection.enabled
+        return self._failure_detection.detectionGlobalEnabled
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionCameraReady(self):
-        return bool(getattr(self._camera, "url", "") and self._camera_recovery.stream_enabled
-                    and not self._config().camera_disabled)
+        return self._failure_detection.detectionCameraReady
 
     @pyqtProperty(int, notify=detectionChanged)
     def detectionWarningThreshold(self):
-        return self._config().detection_warning_threshold
+        return self._failure_detection.detectionWarningThreshold
 
     @pyqtProperty(int, notify=detectionChanged)
     def detectionFailureThreshold(self):
-        return self._config().detection_failure_threshold
+        return self._failure_detection.detectionFailureThreshold
 
     @pyqtProperty(int, notify=detectionChanged)
     def detectionSafeSeconds(self):
-        return self._config().detection_safe_seconds
+        return self._failure_detection.detectionSafeSeconds
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionPauseEnabled(self):
-        return self._config().detection_pause_enabled
+        return self._failure_detection.detectionPauseEnabled
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionAlertPending(self):
-        if self._detection_action_context is None:
-            return False
-        stats = (self._data.snapshot.core or {}).get("print_stats") or {}
-        if stats.get("state") not in ("printing", "paused") \
-                or getattr(self._print_state(), "job_key", None) != self._detection_action_context[1]:
-            return False
-        return self._detection_alerted_at is not None and (
-            self._detection_acknowledged_at is None
-            or self._detection_acknowledged_at < self._detection_alerted_at)
+        return self._failure_detection.detectionAlertPending
 
     @pyqtProperty(str, notify=detectionChanged)
     def detectionAlertLevel(self):
-        """The level of the alert standing unacknowledged ("warning",
-        "failure", or ""): the pending indicators colour by it rather
-        than guessing a severity."""
-        if not self.detectionAlertPending:
-            return ""
-        return self._detection_alert_level
+        return self._failure_detection.detectionAlertLevel
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionPauseRearmable(self):
-        if not (self.detectionGlobalEnabled and self.detectionEnabled and self.detectionPauseEnabled):
-            return False
-        stats = (self._data.snapshot.core or {}).get("print_stats") or {}
-        job = getattr(self._print_state(), "job_key", None)
-        printer = self._detection_printer_id()
-        if stats.get("state") not in ("printing", "paused") or job is None or printer is None:
-            return False
-        print_key = (printer, job)
-        if print_key == self._detection_action_context:
-            return (self._detection_paused_for_print or self._detection_pause_uncertain)
-        saved = self._detection_action_saved
-        return (isinstance(saved, dict) and saved.get("print") == repr(job)
-                and saved.get("paused") is True)
+        return self._failure_detection.detectionPauseRearmable
 
     @pyqtSlot()
     def rearmDetectionPause(self):
-        if not self.detectionPauseRearmable:
-            self._commands.report_status("Re-arm unavailable: enable automatic pause during an active print with a used pause latch")
-            self._publish()
-            return
-        job = self._print_state().job_key
-        self._sync_detection_action_context((self._detection_printer_id(), job), time.time())
-        previous = (self._detection_paused_for_print, self._detection_pause_pending,
-                    self._detection_pause_uncertain, self._detection_alerted_at,
-                    self._detection_acknowledged_at, self._detection_alert_count,
-                    self._detection_alert_level, self._detection_action_saved)
-        self._detection_paused_for_print = False
-        self._detection_pause_pending = False
-        self._detection_pause_uncertain = False
-        self._detection_alerted_at = None
-        self._detection_acknowledged_at = None
-        self._detection_alert_count = 0
-        self._detection_alert_level = ""
-        if not self._save_detection_actions():
-            (self._detection_paused_for_print, self._detection_pause_pending,
-             self._detection_pause_uncertain, self._detection_alerted_at,
-             self._detection_acknowledged_at, self._detection_alert_count,
-             self._detection_alert_level, self._detection_action_saved) = previous
-            self._commands.report_status("Could not save automatic pause re-arm; the pause latch is unchanged")
-            self._publish()
-            return
-        self._detection_policy.reset()
-        self._commands.report_status("Automatic pause re-armed for this print")
-        self.detectionChanged.emit()
-        self._schedule_publish()
+        return self._failure_detection.rearmDetectionPause()
 
     @pyqtSlot(bool)
     def setDetectionNotifyEnabled(self, enabled):
-        self._set_detection_action("detection_notify_enabled", enabled)
+        return self._failure_detection.setDetectionNotifyEnabled(enabled)
 
     @pyqtSlot(bool)
     def setDetectionEnabled(self, enabled):
-        if type(enabled) is not bool:
-            raise ValueError("Detection enablement must be a checkbox value")
-        if enabled and (not self.detectionGlobalEnabled or not self.detectionCameraReady):
-            self._commands.report_status("Select a connected camera and set up local detection before enabling")
-            self._publish()
-            return
-        self._set_detection_config(detection_enabled=enabled)
+        return self._failure_detection.setDetectionEnabled(enabled)
 
     @pyqtSlot(int, int)
     def setDetectionThresholds(self, warning, failure):
-        if (type(warning) is not int or type(failure) is not int
-                or not 0 <= warning < failure <= 100):
-            raise ValueError("Detection thresholds must be ordered integer percentages")
-        self._set_detection_config(
-            detection_warning_threshold=warning, detection_failure_threshold=failure)
+        return self._failure_detection.setDetectionThresholds(warning, failure)
 
     @pyqtSlot(int)
     def setDetectionSafeSeconds(self, seconds):
-        if type(seconds) is not int or not 0 <= seconds <= 900 or seconds % 10:
-            raise ValueError("Detection safe period must be 0 to 900 seconds in ten-second steps")
-        self._set_detection_config(detection_safe_seconds=seconds)
+        return self._failure_detection.setDetectionSafeSeconds(seconds)
 
     @pyqtSlot(bool)
     def setDetectionPauseEnabled(self, enabled):
-        self._set_detection_action("detection_pause_enabled", enabled)
-
-    def _set_detection_action(self, field, enabled):
-        if type(enabled) is not bool:
-            raise ValueError("Detection action must be a checkbox value")
-        self._set_detection_config(**{field: enabled})
-
-    def _set_detection_config(self, **changes):
-        if not self.detectionReady:
-            self._commands.report_status("Local detection is not ready; set it up in Detection settings")
-            self._publish()
-            return
-        config = self._config()
-        if "detection_enabled" not in changes and not config.detection_enabled:
-            self._commands.report_status("Enable failure detection for this printer before changing its controls")
-            self._publish()
-            return
-        if all(getattr(config, field) == value for field, value in changes.items()):
-            return
-        if self._apply_config(replace(config, **changes)) is False:
-            self._commands.report_status("Could not save failure-detection controls for this printer")
-            self._publish()
-            return
-        self._detection_values()
-        self._publish()
-        self.detectionChanged.emit()
+        return self._failure_detection.setDetectionPauseEnabled(enabled)
 
     @pyqtSlot()
     def acknowledgeDetectionAlert(self):
-        if self.detectionEnabled and self.detectionAlertPending:
-            self._detection_acknowledged_at = time.time()
-            self._save_detection_actions()
-            self.detectionChanged.emit()
+        return self._failure_detection.acknowledgeDetectionAlert()
 
-    def acceptDetectionFrame(self, image):
-        context = self._detection_context()
-        if context is not None:
-            # The newest frame handed over, kept by reference (no copy):
-            # an alert saves THIS as its evidence, and the reference
-            # costs one frame's lifetime beyond detection's own.
-            self._detection_frame = image
-            self._detection.sample(image, context)
+    def acceptDetectionFrame(self, image, captured_at=None, source_url=None):
+        return self._failure_detection.acceptDetectionFrame(image, captured_at, source_url)
+
+    @pyqtProperty(float, notify=detectionChanged)
+    def detectionSensitivity(self):
+        return self._failure_detection.detectionSensitivity
+
+    @pyqtSlot(float)
+    def setDetectionSensitivity(self, value):
+        return self._failure_detection.setDetectionSensitivity(value)
+
+    @pyqtSlot()
+    def resetDetectionTuning(self):
+        return self._failure_detection.resetDetectionTuning()
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionMuted(self):
+        return self._failure_detection.detectionMuted
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionMuteAvailable(self):
+        return self._failure_detection.detectionMuteAvailable
+
+    @pyqtSlot(bool)
+    def setDetectionMuted(self, muted):
+        return self._failure_detection.setDetectionMuted(muted)
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionShowBoxes(self):
+        return self._failure_detection.detectionShowBoxes
+
+    @pyqtSlot(bool)
+    def setDetectionShowBoxes(self, enabled):
+        return self._failure_detection.setDetectionShowBoxes(enabled)
+
+    @pyqtProperty(QVariant, notify=detectionChanged)
+    def detectionBoxes(self):
+        return self._failure_detection.detectionBoxes
+
+    @pyqtProperty(float, notify=detectionChanged)
+    def detectionAnalysisAge(self):
+        return self._failure_detection.detectionAnalysisAge
+
+    @pyqtProperty(QVariant, notify=detectionChanged)
+    def detectionRegions(self):
+        return self._failure_detection.detectionRegions
+
+    @pyqtProperty(str, notify=detectionChanged)
+    def detectionRegionCamera(self):
+        return self._failure_detection.detectionRegionCamera
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionRegionsValid(self):
+        return self._failure_detection.detectionRegionsValid
+
+    @pyqtProperty(bool, notify=detectionChanged)
+    def detectionEditingRegions(self):
+        return self._failure_detection.detectionEditingRegions
+
+    @pyqtSlot(bool)
+    def setDetectionEditingRegions(self, editing):
+        return self._failure_detection.setDetectionEditingRegions(editing)
+
+    @pyqtSlot(QVariant, result=str)
+    def validateDetectionRegions(self, value):
+        return self._failure_detection.validateDetectionRegions(value)
+
+    @pyqtSlot(QVariant, result=bool)
+    def saveDetectionRegions(self, value):
+        return self._failure_detection.saveDetectionRegions(value)
 
     def _observe(self):
         """The snapshot read and the transitions that precede the values

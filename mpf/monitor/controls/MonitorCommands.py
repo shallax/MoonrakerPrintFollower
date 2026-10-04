@@ -10,6 +10,7 @@ own request) — console feedback lives on the console's own status line.
 from __future__ import annotations
 
 import time
+from uuid import uuid4
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from ..MonitorPermissions import R_UNKNOWN, Verdict
@@ -53,6 +54,7 @@ class MonitorCommands(QObject):
         # request: after the stop the plugin assumes the print was
         # cancelled and clears everything).
         self._lifecycle = 0
+        self._dispatch_id = None
         self._busy = False
         self._status = self._tracked = ""
         self._live = self._receipt = ""
@@ -149,6 +151,7 @@ class MonitorCommands(QObject):
         self._data.set_commands_busy(busy)
 
     def reset(self):
+        self._dispatch_id = None
         self._set_busy(False)
         self._queue.clear()
         self._status = self._tracked = ""
@@ -159,7 +162,7 @@ class MonitorCommands(QObject):
         self._reset_clicks()
         self.changed.emit()
 
-    def send(self, label, path, body=None):
+    def send(self, label, path, body=None, *, command_id=None):
         if self._busy or not self._data.active: return False
         self._set_busy(True)
         # A new action supersedes any old completion banner: the receipt
@@ -167,16 +170,18 @@ class MonitorCommands(QObject):
         # terminal outcome (the engineering panel's receipt resurrection).
         self._clear_receipt()
         token = self._lifecycle
+        command_id = command_id or uuid4().hex
+        self._dispatch_id = command_id
         self._live = f"{label} requested…"
         self._live_at = self._timestamp()
         self._retired_cancel = False
         expected = self.EXPECTED.get(label)
         self._tracked = label if expected else ""
         if expected: self._data.track_command(label, expected,
-            timeout_s=self.EXPECTED_TIMEOUT_S.get(label, 10))
+            timeout_s=self.EXPECTED_TIMEOUT_S.get(label, 10), command_id=command_id)
         self.changed.emit()
         def finished(payload, error):
-            if token != self._lifecycle:
+            if token != self._lifecycle or command_id != self._dispatch_id:
                 # The emergency stop reset the lane mid-flight: this
                 # reply belongs to the pre-stop world and must not
                 # touch the status.
@@ -201,11 +206,12 @@ class MonitorCommands(QObject):
                     # The tracker's signal owns the final display too:
                     # preserve the refusal/unknown distinction there.
                     detail = f"refused: {error}" if payload is not None else f"outcome unknown: {error}"
-                    self._data.fail_command(label, detail)
-                self._tracked = ""
+                    self._data.fail_command(label, detail, command_id=command_id)
+                if command_id == self._dispatch_id:
+                    self._tracked = ""
             elif expected:
                 self._live = ""
-                self._data.accept_command(label)
+                self._data.accept_command(label, command_id=command_id)
             else:
                 self._set_busy(False)
                 self._live = ""
@@ -213,6 +219,8 @@ class MonitorCommands(QObject):
                 # Moonraker queued the script, and Klipper can still
                 # answer "!!" afterwards (panel UX ruling).
                 self._set_receipt(f"{label} sent")
+            if command_id != self._dispatch_id:
+                return  # A synchronous tracker signal dispatched the next queued command.
             self._data.later(150, self._data.refresh_all)
             # Pump the queued one-shots BEFORE announcing the idle lane:
             # listeners (the toolhead controller) react to "changed" by
@@ -287,6 +295,7 @@ class MonitorCommands(QObject):
 
     def _command_changed(self, event):
         if event.get("name") != self._tracked: return
+        if event.get("commandId") is not None and event["commandId"] != self._dispatch_id: return
         outcome = event.get("outcome")
         # A fresh terminal outcome must never hide under an old receipt
         # banner (the engineering panel's receipt resurrection).
@@ -408,4 +417,3 @@ class MonitorCommands(QObject):
         # stale durable claim from an earlier action (panel ruling).
         self._status = ""
         self.changed.emit()
-

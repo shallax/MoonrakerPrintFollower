@@ -182,6 +182,9 @@ class PrinterConfig:
     camera_rotation: int = 0
     camera_mirror: bool = False
     camera_selected: str = ""
+    detection_sensitivity: float = 1.0
+    detection_regions: dict = field(default_factory=dict)
+    detection_show_boxes: bool = True
     detection_enabled: bool = False
     detection_warning_threshold: int = 38
     detection_failure_threshold: int = 78
@@ -265,6 +268,13 @@ class PrinterConfig:
             fps = defaults.camera_fps
         data["camera_fps"] = max(CAMERA_FPS_MIN, min(CAMERA_FPS_MAX, fps))
 
+        from ..geometry.DetectionRegions import persisted_regions
+        data["detection_regions"] = persisted_regions(data["detection_regions"])
+        sensitivity = data["detection_sensitivity"]
+        if type(sensitivity) not in (int, float) or not .8 <= sensitivity <= 1.2 or not isfinite(sensitivity):
+            data["detection_sensitivity"] = 1.0
+        if type(data["detection_show_boxes"]) is not bool:
+            data["detection_show_boxes"] = True
         for key in ("detection_notify_enabled", "detection_pause_enabled"):
             if type(data[key]) is not bool:
                 data[key] = getattr(defaults, key)

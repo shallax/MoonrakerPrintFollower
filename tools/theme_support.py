@@ -314,19 +314,21 @@ Item {
     cura_dir = os.path.join(target_dir, "Cura")
     real_qmldir = os.path.join(cura_dir, "qmldir")
     declared = set()
-    for line in open(real_qmldir, encoding="utf-8"):
-        parts = line.split()
-        if len(parts) == 3:
-            declared.add(parts[0])
-    additions = []
-    for line in open(os.path.join(stub_dir, "Cura", "qmldir"), encoding="utf-8"):
-        parts = line.split()
-        if len(parts) == 3 and parts[0] not in declared:
-            stub_file = os.path.join(stub_dir, "Cura", parts[2])
-            if os.path.exists(stub_file):
-                shutil.copy(stub_file, os.path.join(cura_dir, os.path.basename(parts[2])))
-                additions.append("%s %s %s" % (parts[0], parts[1], os.path.basename(parts[2])))
+    with open(real_qmldir, encoding="utf-8") as handle:
+        for line in handle:
+            parts = line.split()
+            if len(parts) == 3:
                 declared.add(parts[0])
+    additions = []
+    with open(os.path.join(stub_dir, "Cura", "qmldir"), encoding="utf-8") as handle:
+        for line in handle:
+            parts = line.split()
+            if len(parts) == 3 and parts[0] not in declared:
+                stub_file = os.path.join(stub_dir, "Cura", parts[2])
+                if os.path.exists(stub_file):
+                    shutil.copy(stub_file, os.path.join(cura_dir, os.path.basename(parts[2])))
+                    additions.append("%s %s %s" % (parts[0], parts[1], os.path.basename(parts[2])))
+                    declared.add(parts[0])
     if additions:
         with open(real_qmldir, "a", encoding="utf-8") as handle:
             handle.write("\n".join(additions) + "\n")

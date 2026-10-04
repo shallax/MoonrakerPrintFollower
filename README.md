@@ -802,16 +802,27 @@ GPL-3.0, and the licences combine under GPL-3.0 section 13.
 
 ![Failure Detection controls](screenshots/12-detection-controls.png)
 
-Each printer keeps its own opt-ins on the Monitor: configurable warning
-and failure thresholds, a safe period at the start of a print, and
+Each printer keeps its own opt-ins on the Monitor: sensitivity, advanced adaptive
+bounds, a safe period at the start of a print, and
 notification and automatic-pause switches that stay off by default. An
 alert names the printer, carries an **Acknowledge** button, and repeats
-a bounded number of times while it stands unacknowledged. When Cura is
-not the window in front the alert is also sent to the desktop
-notification area where the platform supports it — the in-Cura message
-is always shown either way. The frame that raised an alert and each
+a bounded number of times while it stands unacknowledged. Monitoring runs while Cura is open with the Monitor active and its selected camera streaming. The frame that raised an alert and each
 print's score timeline are kept in a bounded evidence folder, opened
 from Diagnostics.
+
+You can mute notifications and automatic pause for the rest of the current print
+while analysis continues. Draw monitored polygons directly on the webcam; pixels
+outside their union are excluded before inference. Start with rectangles, drag
+vertex handles to reshape them, click midpoint handles to add vertices, and
+delete selected vertices or whole shapes. Up to four regions with 32 vertices
+each are supported; Save applies them together and Cancel/Escape discards edits.
+Empty regions monitor the
+full frame. Optional boxes show sampled suspicious regions, with the analysis
+age displayed; they are model proposals rather than confirmed failures. Mute
+and automatic-pause protection use Moonraker's active history identity so they
+follow the same print across reconnects and restarts. Detection and its controls
+are suspended when the camera is unavailable or its feed is disabled; returning
+requires fresh analysis.
 
 ![Upload dialog](screenshots/06-upload-dialog.png)
 

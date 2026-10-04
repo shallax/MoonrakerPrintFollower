@@ -3,6 +3,7 @@ import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import MoonrakerPrintFollower 1.0
 import "../../resources/theme"
+import "../../widgets"
 
 // The camera picture and the view it is presented through: the frame
 // every overlay is clipped to, the renderer image with its aspect fit,
@@ -80,7 +81,7 @@ Item {
     // start, no second HTTP connection. The latched URL is the
     // _stateKey identity: a rotated upstream nonce in the query is
     // still the same desired stream, while an mpf_reload bump (the
-    // model's explicit reload) and a camera= selection change still
+    // model's explicit reload) and a feed selector change still
     // restart.
     property string _appliedUrl: ""
     property bool _appliedVisible: false
@@ -100,28 +101,41 @@ Item {
     }
 
     function _stateKey(text) {
-        // The stream identity: the query-stripped URL plus the
-        // parameters that name a DIFFERENT stream — the camera a
-        // direct URL selects, and the plugin's own reload marker
-        // (manual refresh, watchdog recovery, reconnect). Nothing else
-        // in the query counts: the rest is upstream rotation (a token
-        // or timestamp the camera service rewrites per poll), and a
-        // healthy connection must not be killed for it.
+        // Unknown query parameters can select another physical feed. Only
+        // known rotating transport parameters are ignored; mpf_reload remains
+        // an explicit renderer restart. Align with CameraSourceIdentity.py.
+        var fragment = text.indexOf("#");
+        if (fragment >= 0) {
+            text = text.slice(0, fragment);
+        }
         var cut = text.indexOf("?");
         if (cut < 0) {
             return text;
         }
-        var query = text.slice(cut + 1);
-        var key = text.slice(0, cut);
-        var camera = _queryValue(query, "camera");
-        if (camera !== null) {
-            key += "?camera=" + camera;
+        var pairs = text.slice(cut + 1).split("&");
+        var kept = [];
+        for (var i = 0; i < pairs.length; i++) {
+            if (!pairs[i].length) {
+                continue;
+            }
+            var eq = pairs[i].indexOf("=");
+            var rawName = eq >= 0 ? pairs[i].slice(0, eq) : pairs[i];
+            var name;
+            var value;
+            try {
+                name = decodeURIComponent(rawName.replace(/\+/g, " "));
+                value = decodeURIComponent((eq >= 0 ? pairs[i].slice(eq + 1) : "").replace(/\+/g, " "));
+            } catch (error) {
+                // Preserve malformed selectors rather than merging feeds.
+                kept.push(pairs[i]);
+                continue;
+            }
+            if (["nonce", "token", "timestamp", "ts", "_"].indexOf(name) < 0) {
+                kept.push(encodeURIComponent(name) + "=" + encodeURIComponent(value));
+            }
         }
-        var reload = _queryValue(query, "mpf_reload");
-        if (reload !== null) {
-            key += (camera === null ? "?" : "&") + "mpf_reload=" + reload;
-        }
-        return key;
+        kept.sort();
+        return text.slice(0, cut) + (kept.length ? "?" + kept.join("&") : "");
     }
 
     function applyCamera(url, visible) {
@@ -272,8 +286,8 @@ Item {
     property real cameraDisplayZoom: 1.0
     property real cameraDisplayPanX: 0
     property real cameraDisplayPanY: 0
-    readonly property real cameraDisplayOffsetX: Math.max(-cameraImage.width * (cameraDisplayZoom - 1) / 2, Math.min(cameraImage.width * (cameraDisplayZoom - 1) / 2, cameraDisplayPanX))
-    readonly property real cameraDisplayOffsetY: Math.max(-cameraImage.height * (cameraDisplayZoom - 1) / 2, Math.min(cameraImage.height * (cameraDisplayZoom - 1) / 2, cameraDisplayPanY))
+    readonly property real cameraDisplayOffsetX: Math.max(-root.cameraPictureWidth * (cameraDisplayZoom - 1) / 2, Math.min(root.cameraPictureWidth * (cameraDisplayZoom - 1) / 2, cameraDisplayPanX))
+    readonly property real cameraDisplayOffsetY: Math.max(-root.cameraPictureHeight * (cameraDisplayZoom - 1) / 2, Math.min(root.cameraPictureHeight * (cameraDisplayZoom - 1) / 2, cameraDisplayPanY))
 
     Timer {
         id: cameraZoomAnimator
@@ -303,8 +317,8 @@ Item {
     // ceiling, one wheel notch the FPS throttle's own 1.25x step.
     readonly property real cameraZoomMax: 8.0
     readonly property real cameraZoomStep: 1.25
-    readonly property real cameraPanLimitX: Math.max(0, cameraImage.width * (root.cameraZoom - 1) / 2)
-    readonly property real cameraPanLimitY: Math.max(0, cameraImage.height * (root.cameraZoom - 1) / 2)
+    readonly property real cameraPanLimitX: Math.max(0, root.cameraPictureWidth * (root.cameraZoom - 1) / 2)
+    readonly property real cameraPanLimitY: Math.max(0, root.cameraPictureHeight * (root.cameraZoom - 1) / 2)
     readonly property real cameraPanOffsetX: Math.max(-root.cameraPanLimitX, Math.min(root.cameraPanLimitX, root.cameraPanX))
     readonly property real cameraPanOffsetY: Math.max(-root.cameraPanLimitY, Math.min(root.cameraPanLimitY, root.cameraPanY))
 
@@ -361,8 +375,8 @@ Item {
             return;
         }
         var ratio = target / root.cameraDisplayZoom;
-        root.cameraPanX = root.cameraDisplayOffsetX + (x - cameraImage.width / 2 - root.cameraDisplayOffsetX) * (1 - ratio);
-        root.cameraPanY = root.cameraDisplayOffsetY + (y - cameraImage.height / 2 - root.cameraDisplayOffsetY) * (1 - ratio);
+        root.cameraPanX = root.cameraDisplayOffsetX + (x - cameraFrame.width / 2 - root.cameraDisplayOffsetX) * (1 - ratio);
+        root.cameraPanY = root.cameraDisplayOffsetY + (y - cameraFrame.height / 2 - root.cameraDisplayOffsetY) * (1 - ratio);
         root.cameraZoom = target;
         if (target <= 1.0) {
             root.cameraPanX = 0;
@@ -475,6 +489,7 @@ Item {
         width: Math.max(1, root.cameraPictureWidth)
         height: Math.max(1, root.cameraPictureHeight)
         anchors.centerIn: parent
+        anchors.verticalCenterOffset: detectionOverlay.editing ? -(regionEditor.height + 8) / 2 : 0
         clip: true
 
         MoonrakerMJPGImage {
@@ -500,7 +515,7 @@ Item {
 
             property bool imageRotated: rotation === 90 || rotation === 270
             property real maxViewWidth: root.width
-            property real maxViewHeight: root.height
+            property real maxViewHeight: Math.max(1, root.height - (detectionOverlay.editing ? regionEditor.height + 8 : 0))
             property real fitScale: {
                 if (imageWidth <= 0 || imageHeight <= 0) {
                     return 1;
@@ -533,6 +548,13 @@ Item {
                     y: root.cameraDisplayOffsetY
                 }
             ]
+
+            DetectionOverlay {
+                id: detectionOverlay
+                anchors.fill: parent
+                printerModel: root.printerModel
+                viewZoom: root.cameraDisplayZoom
+            }
 
             onVisibleChanged: {
                 // The stage hide/show lifecycle reconciles
@@ -708,7 +730,7 @@ Item {
             anchors.fill: parent
             enabled: root.cameraControlLive
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            cursorShape: _dragButton === Qt.RightButton && pressed ? Qt.SizeVerCursor : root.cameraZoom > 1.0 ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.ArrowCursor
+            cursorShape: detectionOverlay.editing ? (_dragButton === Qt.RightButton && pressed ? Qt.ClosedHandCursor : Qt.CrossCursor) : _dragButton === Qt.RightButton && pressed ? Qt.SizeVerCursor : root.cameraZoom > 1.0 ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.ArrowCursor
             property real _lastX: 0
             property real _lastY: 0
             // The button the live drag belongs to: a move event
@@ -726,7 +748,7 @@ Item {
             // inside a turn, so the drag carries its own.
             property real _fpsDragRate: 0
             onWheel: function (wheel) {
-                if (wheel.modifiers & Qt.ShiftModifier) {
+                if (!detectionOverlay.editing && wheel.modifiers & Qt.ShiftModifier) {
                     controlBar.nudgeFpsWheel(wheel);
                 } else {
                     var factor = root.wheelZoomFactor(wheel);
@@ -736,6 +758,16 @@ Item {
                 }
             }
             onPressed: function (mouse) {
+                if (detectionOverlay.editing) {
+                    _lastX = mouse.x;
+                    _lastY = mouse.y;
+                    _dragButton = mouse.button;
+                    if (mouse.button === Qt.LeftButton) {
+                        var point = cameraImage.mapFromItem(cameraGestureArea, mouse.x, mouse.y);
+                        detectionOverlay.press(point.x / cameraImage.width, point.y / cameraImage.height);
+                    }
+                    return;
+                }
                 _lastX = mouse.x;
                 _lastY = mouse.y;
                 _dragButton = mouse.button;
@@ -749,9 +781,19 @@ Item {
                 }
             }
             onPositionChanged: function (mouse) {
-                if (!pressed) {
+                if (detectionOverlay.editing) {
+                    if (pressed && _dragButton === Qt.RightButton) {
+                        root.panCamera(mouse.x - _lastX, mouse.y - _lastY);
+                        _lastX = mouse.x;
+                        _lastY = mouse.y;
+                    } else if (pressed && _dragButton === Qt.LeftButton) {
+                        var point = cameraImage.mapFromItem(cameraGestureArea, mouse.x, mouse.y);
+                        detectionOverlay.move(point.x / cameraImage.width, point.y / cameraImage.height);
+                    }
                     return;
                 }
+                if (!pressed)
+                    return;
                 if (_dragButton === Qt.RightButton) {
                     // Dragging UP raises the rate. The step is
                     // measured from the LAST position — a move
@@ -791,21 +833,147 @@ Item {
                 _lastY = mouse.y;
             }
             onReleased: function (mouse) {
+                detectionOverlay.release();
                 if (mouse.button === Qt.RightButton) {
                     controlBar.releaseHandle();
                 }
                 _dragButton = Qt.NoButton;
             }
             onCanceled: {
+                detectionOverlay.release();
                 if (_dragButton === Qt.RightButton) {
                     controlBar.releaseHandle();
                 }
                 _dragButton = Qt.NoButton;
             }
             onDoubleClicked: function (mouse) {
-                if (mouse.button === Qt.LeftButton) {
+                if (!detectionOverlay.editing && mouse.button === Qt.LeftButton) {
                     root.resetCameraView();
                 }
+            }
+        }
+
+        FocusScope {
+            id: regionEditor
+            objectName: "detectionRegionEditor"
+            parent: root
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.margins: 8
+            height: Math.min(editorContent.implicitHeight + 12, Math.max(0, parent.height * .45))
+            z: 30
+            visible: detectionOverlay.editing
+            focus: visible
+            Keys.onEscapePressed: function (event) {
+                root.printerModel.setDetectionEditingRegions(false);
+                event.accepted = true;
+            }
+            Rectangle {
+                anchors.fill: parent
+                color: MoonrakerTheme.cameraLivePill
+                radius: 4
+            }
+            Flickable {
+                anchors.fill: parent
+                anchors.margins: 6
+                clip: true
+                contentWidth: width
+                contentHeight: editorContent.implicitHeight
+                Column {
+                    id: editorContent
+                    width: parent.width
+                    spacing: 4
+                    UM.Label {
+                        width: parent.width
+                        color: MoonrakerTheme.cameraLiveText
+                        wrapMode: Text.WordWrap
+                        text: "Add a rectangle. Drag its solid handles to reshape it; click an edge handle to add a vertex. Select a shape or vertex to delete it. Right-drag pans a zoomed view. Empty regions monitor the full frame. Escape cancels."
+                    }
+                    UM.Label {
+                        objectName: "detectionRegionEditorStatus"
+                        width: parent.width
+                        height: font.pixelSize * 2.5
+                        color: MoonrakerTheme.cameraLiveText
+                        wrapMode: Text.WordWrap
+                        text: detectionOverlay.errorText !== "" ? detectionOverlay.errorText : detectionOverlay.draftRegions.length + "/4 regions · " + (detectionOverlay.selectedRegion >= 0 && detectionOverlay.selectedRegion < detectionOverlay.draftRegions.length ? "Shape " + (detectionOverlay.selectedRegion + 1) + ": " + detectionOverlay.draftRegions[detectionOverlay.selectedRegion].length + "/32 vertices" : "No shape selected")
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: 4
+                        CentredSecondaryButton {
+                            objectName: "detectionAddRegionButton"
+                            width: Math.min(implicitWidth, editorContent.width)
+                            text: "Add rectangle"
+                            enabled: detectionOverlay.draftRegions.length < 4
+                            onClicked: detectionOverlay.addRectangle()
+                        }
+                        CentredSecondaryButton {
+                            objectName: "detectionUndoRegionEditButton"
+                            width: Math.min(implicitWidth, editorContent.width)
+                            text: "Undo"
+                            enabled: detectionOverlay.undoHistory.length > 0
+                            onClicked: detectionOverlay.undo()
+                        }
+                        CentredSecondaryButton {
+                            objectName: "detectionDeleteVertexButton"
+                            width: Math.min(implicitWidth, editorContent.width)
+                            text: "Delete vertex"
+                            enabled: detectionOverlay.canDeleteVertex
+                            onClicked: detectionOverlay.deleteVertex()
+                        }
+                        CentredSecondaryButton {
+                            objectName: "detectionDeleteRegionButton"
+                            width: Math.min(implicitWidth, editorContent.width)
+                            text: "Delete shape"
+                            enabled: detectionOverlay.selectedRegion >= 0
+                            onClicked: detectionOverlay.deleteRegion()
+                        }
+                        CentredSecondaryButton {
+                            objectName: "detectionFullFrameButton"
+                            width: Math.min(implicitWidth, editorContent.width)
+                            text: "Use full frame"
+                            onClicked: detectionOverlay.resetRegions()
+                        }
+                        CentredSecondaryButton {
+                            objectName: "detectionSaveRegionsButton"
+                            width: Math.min(implicitWidth, editorContent.width)
+                            text: "Save regions"
+                            enabled: !detectionOverlay.draggingVertex
+                            onClicked: {
+                                if (!root.printerModel.saveDetectionRegions(detectionOverlay.draftRegions))
+                                    detectionOverlay.errorText = root.printerModel.actionStatus;
+                            }
+                        }
+                        CentredSecondaryButton {
+                            objectName: "detectionCancelRegionsButton"
+                            width: Math.min(implicitWidth, editorContent.width)
+                            text: "Cancel"
+                            onClicked: root.printerModel.setDetectionEditingRegions(false)
+                        }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            objectName: "detectionAnalysisAgePill"
+            anchors.left: parent.left
+            anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
+            anchors.top: cameraLiveBadge.bottom
+            anchors.topMargin: UM.Theme.getSize("narrow_margin").height
+            width: Math.min(parent.width, analysisAgeLabel.implicitWidth + 12)
+            height: analysisAgeLabel.implicitHeight + 6
+            color: MoonrakerTheme.cameraLivePill
+            radius: 4
+            opacity: !detectionOverlay.editing && root.printerModel != null && root.printerModel.detectionShowBoxes && root.printerModel.detectionAnalysisAge >= 0 && root.cameraControlLive ? 1 : 0
+            UM.Label {
+                id: analysisAgeLabel
+                objectName: "detectionAnalysisAgeLabel"
+                anchors.fill: parent
+                anchors.margins: 3
+                color: MoonrakerTheme.cameraLiveText
+                elide: Text.ElideRight
+                text: parent.opacity > 0 && root.printerModel != null ? "Analysed " + Math.floor(root.printerModel.detectionAnalysisAge) + "s ago" : ""
             }
         }
 
@@ -814,6 +982,8 @@ Item {
         // the picture cannot carry it.
         CameraControlBar {
             id: controlBar
+            visible: !detectionOverlay.editing && root.cameraBarFits && root.cameraControlLive
+            enabled: !detectionOverlay.editing
             printerModel: root.printerModel
             cameraBarFits: root.cameraBarFits
             cameraControlLive: root.cameraControlLive

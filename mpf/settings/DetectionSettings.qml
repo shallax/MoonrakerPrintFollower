@@ -90,7 +90,7 @@ Item {
             UM.Label {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: "Turning this off stops detection for every printer and hides Failure Detection in Printer controls. Your per-printer choices are kept for when you turn it back on."
+                text: "Turning this off stops detection for every printer. Printers with detection enabled keep their controls visible with a disabled status. Your per-printer choices are kept for when you turn it back on."
             }
             UM.Label {
                 width: parent.width
@@ -113,12 +113,12 @@ Item {
                     },
                     {
                         "name": "Inference runtime",
-                        "detail": root.detectionReady ? "Installed and checked" : "Not checked",
+                        "detail": root.detectionReady ? (root.settings.detectionGlobalEnabled ? "Installed and checked" : "Installed; checked when enabled") : "Not checked",
                         "ok": root.detectionReady
                     },
                     {
                         "name": "Model",
-                        "detail": root.detectionReady ? "Installed and checked" : "Not checked (shared across printers)",
+                        "detail": root.detectionReady ? (root.settings.detectionGlobalEnabled ? "Installed and checked" : "Installed; checked when enabled") : "Not checked (shared across printers)",
                         "ok": root.detectionReady
                     },
                     {

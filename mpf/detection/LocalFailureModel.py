@@ -2,6 +2,11 @@
 
 from pathlib import Path
 import sys
+import threading
+import time
+
+from .DetectionMask import masked_image, region_path, box_intersects_regions
+from .DetectionObservation import DetectionBox, ModelDetections, MAX_BOXES
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage
@@ -25,7 +30,7 @@ def foreign_runtime(runtime_directory: str) -> str | None:
 
 
 class LocalFailureModel:
-    def __init__(self, session):
+    def __init__(self, session, run_options_factory=None):
         inputs = session.get_inputs()
         if len(inputs) != 1 or len(inputs[0].shape) != 4:
             raise ValueError("Unexpected failure model input")
@@ -35,6 +40,9 @@ class LocalFailureModel:
         ):
             raise ValueError("Unsupported failure model dimensions")
         self._session = session
+        self._run_options_factory = run_options_factory
+        self._run_lock = threading.Lock()
+        self._active_run = None
         self._input_name = inputs[0].name
         self._width = width
         self._height = height
@@ -63,14 +71,23 @@ class LocalFailureModel:
         options.intra_op_num_threads = 1
         options.inter_op_num_threads = 1
         return cls(ort.InferenceSession(path, sess_options=options,
-                                        providers=["CPUExecutionProvider"]))
+                                        providers=["CPUExecutionProvider"]), ort.RunOptions)
 
     def score(self, image: QImage) -> float:
+        return self.detect(image).score
+
+    def cancel_current(self):
+        with self._run_lock:
+            if self._active_run is not None:
+                self._active_run.terminate = True
+
+    def detect(self, image: QImage, regions=()) -> ModelDetections:
         import numpy as np
 
+        deadline = time.monotonic() + 5
         if image.isNull():
             raise ValueError("Cannot analyse an empty camera frame")
-        rgb = image.convertToFormat(QImage.Format.Format_RGB888).scaled(
+        rgb = masked_image(image, regions).convertToFormat(QImage.Format.Format_RGB888).scaled(
             self._width, self._height,
             Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
@@ -83,12 +100,29 @@ class LocalFailureModel:
             pixels.reshape(self._height, self._width, 3).transpose(2, 0, 1)[None],
             dtype=np.float32,
         ) / 255.0
-        outputs = self._session.run(None, {self._input_name: tensor})
+        options = self._run_options_factory() if self._run_options_factory else None
+        timer = None
+        with self._run_lock:
+            self._active_run = options
+        if options is not None:
+            timer = threading.Timer(5.0, lambda: setattr(options, "terminate", True))
+            timer.daemon = True
+            timer.start()
+        try:
+            arguments = (None, {self._input_name: tensor})
+            outputs = self._session.run(*arguments, options) if options is not None else self._session.run(*arguments)
+            if options is not None and options.terminate:
+                raise TimeoutError("Local inference was cancelled or exceeded five seconds")
+        finally:
+            if timer is not None:
+                timer.cancel()
+            with self._run_lock:
+                self._active_run = None
         if len(outputs) != 2:
             raise ValueError("Unexpected failure model outputs")
         boxes = np.asarray(outputs[0])
         confidences = np.asarray(outputs[1])
-        if (confidences.ndim != 3 or confidences.shape[0] != 1 or confidences.shape[2] != 1
+        if (confidences.ndim != 3 or confidences.shape[0] != 1 or confidences.shape[2] != 1 or confidences.shape[1] > 32768
                 or boxes.shape != (1, confidences.shape[1], 1, 4)):
             raise ValueError("Unexpected failure model output shapes")
         if not np.isfinite(confidences).all() or np.any((confidences < 0) | (confidences > 1)):
@@ -99,12 +133,25 @@ class LocalFailureModel:
         scores = scores[selected]
         if not np.isfinite(coords).all():
             raise ValueError("Invalid failure model coordinates")
+        coords = np.clip(coords, 0, 1)
+        valid = (coords[:, 2] > coords[:, 0]) & (coords[:, 3] > coords[:, 1])
+        if regions:
+            path = region_path(regions)
+            valid &= np.array([box_intersects_regions((x1, y1, x2 - x1, y2 - y1), path)
+                               for x1, y1, x2, y2 in coords], dtype=bool)
+        coords, scores = coords[valid], scores[valid]
+        retained = []
         areas = (coords[:, 2] - coords[:, 0]) * (coords[:, 3] - coords[:, 1])
         order = scores.argsort()[::-1]
         total = 0.0
         while order.size:
+            if time.monotonic() > deadline:
+                raise TimeoutError("Local inference exceeded five seconds")
             first, rest = order[0], order[1:]
             total += float(scores[first])
+            if len(retained) < MAX_BOXES:
+                x1, y1, x2, y2 = (float(value) for value in coords[first])
+                retained.append(DetectionBox(x1, y1, x2 - x1, y2 - y1, float(scores[first])))
             intersection = (
                 np.maximum(0, np.minimum(coords[first, 2], coords[rest, 2])
                            - np.maximum(coords[first, 0], coords[rest, 0]))
@@ -115,4 +162,4 @@ class LocalFailureModel:
             overlap = np.divide(intersection, union, out=np.zeros_like(intersection),
                                 where=union > 0)
             order = rest[overlap <= .45]
-        return total
+        return ModelDetections(total, tuple(retained))

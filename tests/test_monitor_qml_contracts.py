@@ -37,13 +37,13 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
                                       ("detectionPauseEnabled", "setDetectionPauseEnabled")):
             self.assertIn("root.printerModel." + property_name, section)
             self.assertIn("root.printerModel." + setter + "(checked)", section)
-        self.assertEqual(section.count("UM.CheckBox {"), 3)
-        self.assertEqual(section.count("onToggled:"), 3)
+        self.assertEqual(section.count("UM.CheckBox {"), 4)
+        self.assertEqual(section.count("onToggled:"), 4)
         self.assertIn('text: "Enable"', section)
         self.assertNotIn("Enable for this printer", section)
         self.assertIn("readonly property bool controlsEnabled: root.detectionReady && root.printerModel.detectionEnabled", section)
-        self.assertEqual(section.count("enabled: root.controlsEnabled\n"), 4)
-        self.assertEqual(section.count("if (root.controlsEnabled)"), 4)
+        self.assertEqual(section.count("enabled: root.controlsEnabled\n"), 8)
+        self.assertEqual(section.count("if (root.controlsEnabled)"), 5)
         for token in ("detectionReady", "detectionCameraReady", "detectionWarningThreshold",
                       "detectionFailureThreshold", "setDetectionThresholds(warning, failure)",
                       "detectionSafeSeconds", "setDetectionSafeSeconds(",
@@ -69,7 +69,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
             self.assertIn(phrase, settings)
         self.assertNotIn("cancelPrint(", section)
         self.assertIn('sectionHiddenMap["failureDetection"]', harness.DASHBOARD_QML)
-        self.assertIn('root.printer.detectionGlobalEnabled && root.printer.sectionHiddenMap["failureDetection"]', harness.DASHBOARD_QML)
+        self.assertIn('(root.printer.detectionGlobalEnabled || root.printer.detectionEnabled) && root.printer.sectionHiddenMap["failureDetection"]', harness.DASHBOARD_QML)
 
     def test_toolhead_control_surface(self):
         policy = (harness.PLUGINS / "ToolheadPolicy.py").read_text(encoding="utf-8")

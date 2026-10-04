@@ -45,6 +45,10 @@ __version__ = "{version}"
 calls = {{}}
 
 
+class RunOptions:
+    terminate = False
+
+
 class SessionOptions:
     def __init__(self):
         self.intra_op_num_threads = 0
@@ -76,6 +80,56 @@ class LocalFailureModelTests(unittest.TestCase):
     def _forget_path(entry):
         while entry in sys.path:
             sys.path.remove(entry)
+
+    def test_regions_exclude_pixels_and_outside_boxes_before_aggregation(self):
+        boxes = np.array([[[[.1, .1, .4, .4]], [[.6, .6, .9, .9]]]])
+        scores = np.array([[[.9], [.8]]])
+        session = FakeSession([boxes, scores])
+        image = QImage(100, 100, QImage.Format.Format_RGB888)
+        image.fill(0xffffff)
+        regions = (((0, 0), (.5, 0), (.5, 1), (0, 1)),)
+        result = LocalFailureModel(session).detect(image, regions)
+        self.assertAlmostEqual(result.score, .9)
+        self.assertEqual(len(result.boxes), 1)
+        self.assertEqual(result.boxes[0].as_dict()["x"], .1)
+        self.assertEqual(float(session.feed["camera"][0, :, 200, 350].max()), 0)
+        self.assertEqual(float(session.feed["camera"][0, :, 200, 50].min()), 1)
+
+    def test_run_options_can_be_cancelled_without_reusing_a_terminated_run(self):
+        import threading
+        import time
+        entered, release = threading.Event(), threading.Event()
+        class RunOptions:
+            terminate = False
+        class Session(FakeSession):
+            def run(self, names, feed, options):
+                entered.set()
+                while not options.terminate and not release.wait(.005):
+                    pass
+                if options.terminate:
+                    raise RuntimeError("run terminated")
+                return self.outputs
+        model = LocalFailureModel(Session(), RunOptions)
+        image = QImage(12, 8, QImage.Format.Format_RGB888)
+        image.fill(0)
+        errors = []
+        def detect():
+            try:
+                model.detect(image)
+            except RuntimeError as exc:
+                errors.append(str(exc))
+        worker = threading.Thread(target=detect)
+        worker.start()
+        self.assertTrue(entered.wait(1))
+        started = time.monotonic()
+        model.cancel_current()
+        worker.join(1)
+        self.assertFalse(worker.is_alive())
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(errors, ["run terminated"])
+        release.set()
+        self.assertAlmostEqual(model.detect(image).score, .54)
+
 
     def test_rgb_image_is_resized_and_normalised_before_inference(self):
         session = FakeSession()

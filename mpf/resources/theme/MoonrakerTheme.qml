@@ -55,6 +55,9 @@ QtObject {
     // pill's own fill carries the pair's contrast.
     readonly property color cameraLivePill: "#99000000"
     readonly property color cameraLiveText: "#ffffff"
+    readonly property color detectionRegion: "#63ccff"
+    readonly property color detectionBox: "#ffc04d"
+    readonly property color detectionExcluded: "#88000000"
 
     // ── the file manager ────────────────────────────────────────
     readonly property color scrim: "#66000000"

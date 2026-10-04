@@ -10,5 +10,5 @@ mkdir -p /tmp/mpf
 scratch="$(mktemp -d /tmp/mpf/actionlint.XXXXXX)"
 trap 'rm -rf "$scratch"' EXIT
 wget -qO "$scratch/archive.tar.gz" "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_${architecture}.tar.gz"
-tar -xzf "$scratch/archive.tar.gz" -C "$scratch" actionlint
+tar --no-same-owner -xzf "$scratch/archive.tar.gz" -C "$scratch" actionlint
 "$scratch/actionlint" .github/workflows/*.yml

@@ -10,6 +10,26 @@ Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
+## 5.0.0 — local failure detection
+
+Optional local CPU detection with explicit consent for the Obico weights and
+runtime download. The camera remains local to the Cura computer. Each printer
+opts into analysis, notification and automatic pause independently.
+
+- Primary sensitivity, Advanced adaptive bounds and a safe-start period.
+- Current-print mute, acknowledgement and explicit automatic-pause re-arm,
+  bound to durable Moonraker history identity and persisted before dispatch.
+- Multiple camera-local monitored shapes, initially rectangles, with draggable
+  vertices, midpoint insertion, vertex/shape deletion, Undo and Save/Cancel.
+- Optional suspicious-region boxes and analysis age on the transformed webcam.
+- Analysis/controls suspend when the camera is missing, disabled or disconnected.
+- Bounded worker, acquisition freshness, exact-frame evidence, cancellable
+  downloads, lazy session loading and deferred loaded-runtime cleanup.
+
+Release reconciliation and executable regression evidence live in the detection
+implementation document. Real Cura/hardware validation
+and the pinned platform gates remain prerequisites for publishing a release.
+
 ## 4.6.2 — internal decomposition and plate polish
 
 An internal decomposition with targeted user-visible improvements.

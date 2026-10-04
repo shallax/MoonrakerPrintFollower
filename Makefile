@@ -155,7 +155,9 @@ else
 	# the failure it was (the 2026-10-03 package failure).
 	python3 tools/build_curapackage.py & first=$$!; \
 	python3 tools/build_marketplace_source.py & second=$$!; \
-	wait $$first; wait $$second
+	first_status=0; second_status=0; \
+	wait $$first || first_status=$$?; wait $$second || second_status=$$?; \
+	test $$first_status -eq 0 && test $$second_status -eq 0
 	python3 tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])').curapackage"
 	python3 tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')-source.zip"
 endif

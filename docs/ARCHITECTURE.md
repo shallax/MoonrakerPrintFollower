@@ -164,6 +164,7 @@ correct package ownership.
 | `PauseAtLayerPresentation.py` | The pause-at-layer block the popover reads: its candidate at the follower's own layer, and the button gates re-derived with the card's own helpers | The schedule itself, the coordinator's rows or the live print state |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
+| `CameraSourceIdentity.py` | Pure stable feed identity retaining arbitrary camera selectors and ignoring known rotating transport parameters | Camera transport or credentials in diagnostics |
 | `CameraRecovery.py` | The webcam stream's freshness policy: the reload nonce every recovery path moves, the recovery veil and the stream URL's transition rules | Publishing a frame, the bridge transport or the camera's own configuration |
 | `MonitorCamera.py` | Camera selection, transforms, per-printer selection and FPS persistence; chooses the bridged MJPEG stream or snapshot URL at 5 FPS and below when supported | Private configuration store |
 | `CameraBridge.py` | The key-carrying camera republisher: an ephemeral loopback listener for configured stream and snapshot requests with the X-Api-Key header, same-origin redirects only, per-connection upstreams | MoonrakerMonitorModel |
@@ -171,6 +172,12 @@ correct package ownership.
 | `DetectionAssets.py` | Pinned model and CPU runtime matrix, with host preflight | Network transfers or Qt presentation |
 | `AssetInstaller.py` | Consented, integrity-checked asset downloads (HTTPS at every redirect, fixed size and SHA-256 regardless of CDN host) and guarded runtime extraction | User-interface state |
 | `LocalFailureModel.py` | CPU-only model session and QImage-to-RGB tensor conversion | Camera transport or policy |
+| `DetectionRegions.py` | Pure bounded normalized polygon validation and stable mask identity. |
+| `DetectionMask.py` | Union clipping and source-pixel exclusion before model resizing. |
+| `DetectionObservation.py` | Immutable sampled frame, capture timestamp, result and bounding boxes. |
+| `DetectionDownloadTransport.py` | HTTPS socket abort during headers, chunk framing and body receipt. |
+| `PrintRunIdentity.py` | Attests active Moonraker history identity independently of local follower serials. |
+| `MonitorDetection.py` | Owns detection tuning, per-run mute and pause guard, history resolution and bounded evidence submission. |
 | `DetectionPolicy.py` | Freshness, context reset and sustained evidence transitions | Qt, native inference or printer commands |
 | `LocalDetectionService.py` | Single background setup, benchmark and inference lane; global consent, readiness and persisted enable state. Disabling retires queued/in-flight results while retaining per-printer settings | Camera transport or printer commands |
 | `EvidenceStore.py` | The alert's bounded evidence on disk: the triggering frame and a per-print score timeline, pruned by count | Qt, policy or printer commands |
@@ -1362,44 +1369,77 @@ blocks only when saving and preserves all public validation properties. The
 Detection precedes Diagnostics (always the last tab). All five pages have a
 themed scrollbar that remains visible whenever their content can scroll, with
 space reserved beside the content. Detection settings owns shared consent-gated
-model/runtime setup and prerequisites. A standalone FailureDetectionSection.qml
-in Printer controls owns the active printer's enable checkbox and ordered
-adaptive warning/failure bounds, a 0–15-minute safe-period slider (five-minute
-default), along with independent notification and
-automatic-pause opt-ins and alert acknowledgment. All controls are disabled
-until the model is ready, with setup guidance in the section. Its two-handle
-slider reuses the bed-mesh gesture control with a three-segment colour mode;
-the bed-mesh rainbow remains the default.
-Only the per-printer Enable checkbox remains interactive while detection is
-off for that printer; thresholds, safe period, notification, pause and alert
-acknowledgment remain visible but disabled until enabled.
-The normalized 0.00–1.00 signal maps the adaptive warning and failure boundaries
-to the printer's selected slider positions; it is not raw model confidence.
-Thresholds and scores display exactly two decimals without percent signs;
-their persisted integers represent hundredths to preserve existing settings.
-The long-term baseline is stored per printer and stable camera identity;
-switching cameras restores that camera's own baseline, and the legacy
-printer-wide baseline is ignored because it cannot be assigned safely.
-The selected camera's decoded frames feed the local inference worker. Thresholds
-and the safe period are part of the print/camera context so an edit resets
-evidence and rejects results computed with the previous settings. The worker
-samples no faster than 10 seconds; the policy uses the print's elapsed duration
-for the configurable initial safe period, and mirrors Obico's EWM and streaming
-short/long baselines, relative alert/pause escalation, and 90-second
-acknowledgment cooldown. Printer controls owns per-printer opt-ins for Cura
-notifications and automatic pause (never cancel); both default off. Detection
-marks a per-print pause only after the printer's paused state confirms the
-command, not merely when the request is sent. A refused command can be retried
-on fresh failure evidence; an unconfirmed timeout requires manual inspection
-instead of an automatic repeat. A denied or unsent pause reports its reason.
-After a confirmed pause or unconfirmed timeout, an explicit Re-arm automatic
-pause button can clear the per-print guard and acknowledgment cooldown during
-an active print, including while paused. It does not issue a printer command;
-it resets current evidence while retaining the camera's long-term baseline.
-If the failure remains after resuming, fresh evidence may pause again.
-The lengthy safety, baseline and safe-period explanations
-live only in Settings → Detection; Printer controls retains just its
-controls and values.
+model/runtime setup and prerequisites. `FailureDetectionSection.qml` owns the
+active printer's enable checkbox, primary sensitivity slider (0.80–1.20×),
+explicit Advanced lower/upper bounds, safe period, independent notification and
+automatic-pause opt-ins, mute, acknowledgement and re-arm. Values remain visible
+when disabled. All value-changing controls require a configured, enabled camera
+and connected monitor; the secondary controls also require that printer's
+analysis opt-in. Camera loss or disabling the feed suspends analysis and edits,
+retires outstanding results and owned alerts, and requires fresh analysis on
+return. Advanced and region editing are explicit user modes; neither changes
+the shared collapse/lock contracts.
+
+`MonitorDetection.py` owns policy, immutable observations, run attestation,
+camera-local settings, alerts, evidence and automatic-pause guards. The Qt
+Monitor facade forwards explicit properties/intents and composes that owner.
+The 0.00–1.00 signal maps adaptive boundaries to the chosen Advanced bounds;
+it is not a calibrated probability. Sensitivity scales the adaptive gap, with
+1.00 preserving the original defaults. The long baseline belongs to the printer,
+stable upstream camera identity, canonical region fingerprint and preprocessing
+version. It survives stream/snapshot switching and ephemeral loopback-bridge
+ports. A semantic source change, camera change, tuning change, re-arm, or
+suspend/re-enable retires analysis through a monotonic epoch. Geometry is
+validated once per settings revision rather than on every decoded frame.
+
+The selected camera's decoded frames feed a single bounded CPU worker at no
+more than one inference every ten seconds. Acquisition age, context and ordering
+are checked on delivery. The policy retains Obico's span-12 EWM, streaming short/
+long means and relative escalation, with a configurable safe start. MPF adds
+a 90-second acknowledgement cooldown. Shared weights/policy do not establish identical preprocessing or
+accuracy: Qt resizing differs from upstream OpenCV and region masking changes
+the input distribution. Model proposals are displayed as optional suspicious
+boxes, clipped to monitored regions with their analysis age.
+
+`DetectionOverlay.qml` shares the actual image's rotation, mirrors, zoom and
+pan. The editor reserves a dock below the fitted image. New regions start as
+rectangles; solid handles drag vertices, midpoint handles insert vertices,
+and selected vertices/shapes can be deleted. Undo is bounded; invalid crossed
+or degenerate shapes keep the last valid draft. Up to four polygons with
+32 vertices each form a monitored union. Save applies that camera's complete
+draft; Cancel/Escape discards it. Empty regions mean full frame. Source pixels
+outside the union are blacked out before resize, and outside-only proposals
+are excluded before score aggregation. Insufficient mask resolution is reported
+for that sample/camera without destroying the shared model session.
+
+Durable action state uses Moonraker history's active job ID/start time, filename
+and printer binding. Active history is re-attested every ten seconds even when
+the local follower job serial stays unchanged. New automatic pause requires
+proof no older than two seconds from request issuance; failed or negative
+rechecks revoke that proof. A changed server run retires evidence and action
+state. Mute suppresses notifications and automatic pauses while analysis and
+boxes continue; it restores only for the same attested run and clears for the
+next print. A possible saved mute is conservative while history is unavailable.
+
+The pending pause guard is saved before dispatch. Every command has a unique
+ID, and callbacks revalidate dispatch ownership both at entry and after
+synchronous tracker signals. Confirmed pauses latch the run; pending/unknown
+outcomes remain guarded across restarts. A refused command may retry on fresh
+failure evidence; explicit re-arm clears the guard only after a successful save,
+without issuing a command. Acknowledgement and mute are transactional too.
+Owned Cura messages have a bounded lifetime and token, and are hidden on
+retirement. Warning-to-failure escalation is immediate; repeats are bounded.
+
+Evidence retains the exact analysed frame and timeline through a bounded
+background I/O queue. State document writes and per-machine shard creation are
+thread-safe. Evidence cleanup never follows links outside its own root.
+Downloads abort live sockets during headers, proxy CONNECT and body framing.
+Native inference uses cooperative ORT termination and a watchdog; shutdown
+retires the Python mailbox promptly but cannot hard-abort native import/session
+initialisation. Disabled startup avoids loading a session; setup releases its
+benchmark session when disabled. Locked runtime deletion on Windows records a
+durable cleanup intent and retries before the next import, with cleanup errors
+visible and evidence removal independent of the loaded runtime.
 Diagnostics
 can rearm the global What's New and detection-offer markers for the next
 launch without touching installed assets or printer settings. A separate

@@ -1,7 +1,17 @@
 """Executable monitor model runtime contracts."""
+import time
 from tests import monitor_test_support as harness
 
 class MonitorQtTests(harness.MonitorQtTests):
+    def attest(self, model):
+        from mpf.printing.PrintRunIdentity import PrintRunIdentity
+        owner = model._failure_detection
+        if owner._detection is None or not owner._detection.ready:
+            from types import SimpleNamespace
+            owner._detection = SimpleNamespace(ready=True, enabled=True, reset=lambda: None)
+        owner._detection_attested_at = time.monotonic()
+        owner._detection_run_identity = PrintRunIdentity("active-job", 1000.0, "sample.gcode", "test-binding")
+
     def test_detection_controls_refuse_changes_until_enabled_for_the_printer(self):
         from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -11,12 +21,26 @@ class MonitorQtTests(harness.MonitorQtTests):
             ready = True
             enabled = True
 
+            def reset(self):
+                pass
+
+            def enqueue_io(self, key, callback):
+                try:
+                    callback()
+                except Exception:
+                    pass
+                return True
+
             def close(self):
                 pass
 
         self.follower._runtime.detection.close()
         self.follower._runtime.detection = Detector()
+        config = self.follower.current_printer_config()
+        self.follower.apply_printer_config(harness.replace(config, camera_url="http://printer-a/webcam"))
         model = self.monitor()
+        self.deliver()
+        self.qt.events()
         original = self.follower.current_printer_config()
         self.assertFalse(original.detection_enabled)
         model.setDetectionThresholds(10, 26)
@@ -43,8 +67,18 @@ class MonitorQtTests(harness.MonitorQtTests):
             ready = True
             enabled = True
 
-            def sample(self, image, context):
+            def sample(self, image, context, captured_at=None, regions=()):
                 pass
+
+            def reset(self):
+                pass
+
+            def enqueue_io(self, key, callback):
+                try:
+                    callback()
+                except Exception:
+                    pass
+                return True
 
             def close(self):
                 pass
@@ -62,14 +96,17 @@ class MonitorQtTests(harness.MonitorQtTests):
         model = self.monitor()
         self.deliver_state("printing")
         self.qt.events()
-        cross_bed = model._detection_context()
+        self.qt.events()
+        model._publish()
+        model._failure_detection._detection_values()
+        cross_bed = model._failure_detection._detection_context()
         self.assertIsNotNone(cross_bed)
-        self.assertEqual(model._detection_policy.baseline["frames"], 0,
+        self.assertEqual(model._failure_detection._detection_policy.baseline["frames"], 0,
                          "a legacy mixed-camera baseline must not poison either camera")
-        model._detection_policy.restore_baseline({"mean": .234, "frames": 125})
+        model._failure_detection._detection_policy.restore_baseline({"mean": .234, "frames": 125})
         detector.resultReady.emit(cross_bed, .23)
         self.qt.events()
-        cross_bed_baseline = model._detection_policy.baseline
+        cross_bed_baseline = model._failure_detection._detection_policy.baseline
         self.assertGreater(cross_bed_baseline["mean"], .23)
 
         self.follower.apply_printer_config(harness.replace(
@@ -77,9 +114,12 @@ class MonitorQtTests(harness.MonitorQtTests):
             camera_url="http://printer-a/birds-nest"))
         model._camera.observe()
         model._publish()
-        birds_nest = model._detection_context()
+        self.qt.events()
+        model._publish()
+        model._failure_detection._detection_values()
+        birds_nest = model._failure_detection._detection_context()
         self.assertNotEqual(birds_nest, cross_bed)
-        self.assertEqual(model._detection_policy.baseline, {"mean": 0.0, "frames": 0})
+        self.assertEqual(model._failure_detection._detection_policy.baseline, {"mean": 0.0, "frames": 0})
         for _ in range(30):
             detector.resultReady.emit(birds_nest, 0.0)
             self.qt.events()
@@ -94,7 +134,7 @@ class MonitorQtTests(harness.MonitorQtTests):
             camera_url="http://printer-a/cross-bed"))
         model._camera.observe()
         model._publish()
-        self.assertEqual(model._detection_policy.baseline, cross_bed_baseline)
+        self.assertEqual(model._failure_detection._detection_policy.baseline, cross_bed_baseline)
 
     def test_obico_actions_are_opted_in_per_printer_and_acknowledgment_gates_pauses(self):
         import time
@@ -111,48 +151,51 @@ class MonitorQtTests(harness.MonitorQtTests):
         model._data._observation = harness.replace(
             model._data.observation, pause_resume_supported=True)
         model._publish()
+        self.attest(model)
         self.assertTrue(model.canPausePrint, model.pauseReason)
-        context = ("printer-a", 0, model._print_state().job_key)
+        self.attest(model)
+        context = model._failure_detection._detection_context()
         now = time.time()
-        with patch.object(model, "_notify_detection") as notify, \
-                patch.object(model, "pausePrint") as pause:
-            model._handle_detection_action(context, "warning", now - 101)
+        with patch.object(model._failure_detection, "_notify_detection") as notify, \
+                patch.object(model._commands, "send") as pause:
+            model._failure_detection._handle_detection_action(context, "warning", now - 101)
             notify.assert_called_once_with("warning", False)
             self.assertTrue(model.detectionAlertPending)
-            model._handle_detection_action(context, "warning", now - 1)
+            model._failure_detection._handle_detection_action(context, "warning", now - 1)
             notify.assert_called_once()
             model.acknowledgeDetectionAlert()
             self.assertFalse(model.detectionAlertPending)
-            model._handle_detection_action(context, "failure", now + 10)
+            model._failure_detection._handle_detection_action(context, "failure", now + 10)
             pause.assert_not_called()
             notify.assert_called_once()
-            model._handle_detection_action(context, "failure", now + 95)
+            model._failure_detection._handle_detection_action(context, "failure", now + 95)
             pause.assert_called_once()
-            self.assertFalse(model._detection_paused_for_print)
-            self.assertFalse(self.follower.persistence.get_machine_state("printer-a")
+            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            self.assertFalse(self.follower.persistence.get_machine_state(context[0])
                              ["detectionActions"]["paused"])
             notify.assert_called_with("failure", False)
             model._data.commandChanged.emit({
+                "commandId": model._failure_detection._detection_pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "confirmed",
             })
-            self.assertTrue(model._detection_paused_for_print)
-            self.assertTrue(self.follower.persistence.get_machine_state("printer-a")
+            self.assertTrue(model._failure_detection._detection_paused_for_print)
+            self.assertTrue(self.follower.persistence.get_machine_state(context[0])
                             ["detectionActions"]["paused"])
-            model._handle_detection_action(context, "failure", now + 200)
+            model._failure_detection._handle_detection_action(context, "failure", now + 200)
             pause.assert_called_once()
         self.follower.apply_printer_config(harness.replace(
             self.follower.current_printer_config(), detection_notify_enabled=False,
             detection_pause_enabled=False))
-        with patch.object(model, "_notify_detection") as notify, \
-                patch.object(model, "pausePrint") as pause:
-            model._handle_detection_action((context[0], context[1], ("new-print",)), "failure", now + 300)
+        with patch.object(model._failure_detection, "_notify_detection") as notify, \
+                patch.object(model._commands, "send") as pause:
+            model._failure_detection._handle_detection_action((context[0], context[1], ("new-print",)), "failure", now + 300)
             notify.assert_not_called()
             pause.assert_not_called()
 
     def test_an_unacknowledged_alert_repeats_on_a_bounded_budget(self):
         import time
         from unittest.mock import patch
-        from mpf.monitor.MoonrakerMonitorModel import (
+        from mpf.monitor.MonitorDetection import (
             DETECTION_ALERT_MAX_PER_PRINT, DETECTION_ALERT_REPEAT_SECONDS)
         config = self.follower.current_printer_config()
         self.follower.apply_printer_config(harness.replace(
@@ -165,42 +208,43 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.qt.events()
         model._publish()
         printer_id = self.follower.current_printer_identity()[0]
-        context = (printer_id, 0, model._print_state().job_key)
+        self.attest(model)
+        context = model._failure_detection._detection_context()
         # A base in the PAST: the acknowledgement slot stamps the wall
         # clock, so a future-dated alert would stay unacknowledged
         # forever — the arithmetic below still needs room to advance.
         now = time.time() - 200000.0
-        with patch.object(model, "_notify_detection") as notify:
-            model._handle_detection_action(context, "failure", now)
+        with patch.object(model._failure_detection, "_notify_detection") as notify:
+            model._failure_detection._handle_detection_action(context, "failure", now)
             notify.assert_called_once_with("failure", False)
             self.assertTrue(model.detectionAlertPending)
             self.assertEqual(model.detectionAlertLevel, "failure")
             # A missed toast must not mean a missed failure: the alert
             # re-raises on the long interval, and stops at the cap.
-            model._handle_detection_action(context, "failure", now + DETECTION_ALERT_REPEAT_SECONDS - 1)
+            model._failure_detection._handle_detection_action(context, "failure", now + DETECTION_ALERT_REPEAT_SECONDS - 1)
             notify.assert_called_once()
             for step in (0, 1, DETECTION_ALERT_MAX_PER_PRINT * 2):
-                model._handle_detection_action(
+                model._failure_detection._handle_detection_action(
                     context, "warning", now + DETECTION_ALERT_REPEAT_SECONDS + 1 + step * DETECTION_ALERT_REPEAT_SECONDS)
             self.assertEqual(notify.call_count, DETECTION_ALERT_MAX_PER_PRINT,
                              "the repeat budget must be the cap, not the attempts")
-            self.assertEqual(model.detectionAlertLevel, "warning")
+            self.assertEqual(model.detectionAlertLevel, "failure")
         # The budget is per print and survives a restart: it rides the
         # record, not the process.
         record = self.follower.persistence.get_machine_state(printer_id)["detectionActions"]
         self.assertEqual(record["alertCount"], DETECTION_ALERT_MAX_PER_PRINT)
-        self.assertEqual(record["alertLevel"], "warning")
+        self.assertEqual(record["alertLevel"], "failure")
         restored = self.monitor()
-        restored._sync_detection_thresholds()
-        restored._sync_detection_action_context((context[0], context[2]), time.time())
-        self.assertEqual(restored._detection_alert_count, DETECTION_ALERT_MAX_PER_PRINT)
+        restored._failure_detection._sync_detection_thresholds()
+        restored._failure_detection._sync_detection_action_context((context[0], model._failure_detection._detection_run_identity), time.time())
+        self.assertEqual(restored._failure_detection._detection_alert_count, DETECTION_ALERT_MAX_PER_PRINT)
         # Acknowledging ends the repeat: the next alert is a fresh,
         # immediate one.
-        with patch.object(model, "_notify_detection") as notify:
+        with patch.object(model._failure_detection, "_notify_detection") as notify:
             model.acknowledgeDetectionAlert()
             self.assertFalse(model.detectionAlertPending)
             self.assertEqual(model.detectionAlertLevel, "")
-            model._handle_detection_action(context, "failure", now + 10000)
+            model._failure_detection._handle_detection_action(context, "failure", time.time() + 100)
             notify.assert_called_once_with("failure", False)
 
     def test_the_alert_names_the_printer_and_carries_an_acknowledge_action(self):
@@ -242,7 +286,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         model = self.monitor()
         model.updateName("Voron 2.4")
         with patch.object(sys.modules["UM.Message"], "Message", FakeMessage):
-            model._notify_detection("failure", False)
+            model._failure_detection._notify_detection("failure", False)
         message = sent[-1]
         self.assertIn("Voron 2.4", message.text)
         self.assertIn("Possible print failure", message.text)
@@ -250,11 +294,11 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertEqual(message.actions[0][:2], ("detectionAcknowledge", "Acknowledge"))
         # The button's path is the model's own acknowledgement; an
         # unrelated action leaves the alert standing.
-        with patch.object(model, "acknowledgeDetectionAlert") as ack:
-            model._on_detection_alert_action(message, "somethingElse")
+        with patch.object(model._failure_detection, "acknowledgeDetectionAlert") as ack:
+            model._failure_detection._on_detection_alert_action(message, "somethingElse")
             ack.assert_not_called()
             self.assertEqual(message.hidden, 0)
-            model._on_detection_alert_action(message, "detectionAcknowledge")
+            model._failure_detection._on_detection_alert_action(message, "detectionAcknowledge")
             ack.assert_called_once_with()
         self.assertEqual(message.hidden, 1)
 
@@ -274,11 +318,21 @@ class MonitorQtTests(harness.MonitorQtTests):
             ready = True
             enabled = True
 
-            def sample(self, image, context):
+            def sample(self, image, context, captured_at=None, regions=()):
                 pass
 
-            def evidence_root(self):
-                return str(Path(directory.name, "detection", "evidence"))
+            def storage_root(self):
+                return directory.name
+
+            def reset(self):
+                pass
+
+            def enqueue_io(self, key, callback):
+                try:
+                    callback()
+                except Exception:
+                    pass
+                return True
 
             def close(self):
                 pass
@@ -294,8 +348,9 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.qt.events()
         self.deliver_state("printing")
         self.qt.events()
-        model._detection_policy.restore_baseline({"mean": 0.0, "frames": 7200})
-        context = model._detection_context()
+        model._failure_detection._detection_policy.restore_baseline({"mean": 0.0, "frames": 7200})
+        self.attest(model)
+        context = model._failure_detection._detection_context()
         self.assertIsNotNone(context)
         frame = QImage(24, 16, QImage.Format.Format_RGB888)
         frame.fill(0x336699)
@@ -303,14 +358,15 @@ class MonitorQtTests(harness.MonitorQtTests):
         # result whose context is not the one it computes NOW, and a
         # publish landing mid-loop would otherwise empty the run (the
         # coverage leg's slower clock was enough to do it).
-        with patch.object(model, "_detection_context", lambda: context), \
-                patch.object(model, "_detection_camera_id", lambda: "camera-a"):
+        with patch.object(model._failure_detection, "_detection_context", lambda: context), \
+                patch.object(model._failure_detection, "_detection_camera_id", lambda: "camera-a"):
             # One publish first: its own context latch resets the policy
             # the first time it sees a context, and a publish landing
             # mid-drive (the coverage leg's slower clock) would otherwise
             # empty the back half of the timeline.
             model._publish()
             model.acceptDetectionFrame(frame)
+            model._failure_detection._detection_frame = frame
             fed = 0
             for _ in range(30):
                 model._on_detection_result(context, 0.0)
@@ -336,7 +392,6 @@ class MonitorQtTests(harness.MonitorQtTests):
 
     def test_an_evidence_write_that_raises_never_escapes_the_result_slot(self):
         import tempfile
-        from pathlib import Path
         from unittest.mock import patch
         from PyQt6.QtCore import QObject, pyqtSignal
         from mpf.detection import EvidenceStore
@@ -350,11 +405,21 @@ class MonitorQtTests(harness.MonitorQtTests):
             ready = True
             enabled = True
 
-            def sample(self, image, context):
+            def sample(self, image, context, captured_at=None, regions=()):
                 pass
 
-            def evidence_root(self):
-                return str(Path(directory.name, "detection", "evidence"))
+            def storage_root(self):
+                return directory.name
+
+            def reset(self):
+                pass
+
+            def enqueue_io(self, key, callback):
+                try:
+                    callback()
+                except Exception:
+                    pass
+                return True
 
             def close(self):
                 pass
@@ -370,9 +435,10 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.qt.events()
         self.deliver_state("printing")
         self.qt.events()
-        model._detection_policy.restore_baseline({"mean": 0.0, "frames": 7200})
-        context = model._detection_context()
-        with patch.object(model, "_detection_context", lambda: context), \
+        model._failure_detection._detection_policy.restore_baseline({"mean": 0.0, "frames": 7200})
+        self.attest(model)
+        context = model._failure_detection._detection_context()
+        with patch.object(model._failure_detection, "_detection_context", lambda: context), \
                 patch.object(EvidenceStore, "append_sample",
                              side_effect=RuntimeError("disk gone")), \
                 patch.object(EvidenceStore, "save_frame",
@@ -395,7 +461,7 @@ class MonitorQtTests(harness.MonitorQtTests):
             config, detection_enabled=True, detection_pause_enabled=True,
             camera_url="http://printer-a/webcam"))
         model = self.monitor()
-        model._detection = SimpleNamespace(ready=True, enabled=True)
+        model._failure_detection._detection = SimpleNamespace(ready=True, enabled=True, reset=lambda: None)
         self.deliver()
         self.qt.events()
         self.deliver_state("printing")
@@ -404,23 +470,26 @@ class MonitorQtTests(harness.MonitorQtTests):
             model._data.observation, pause_resume_supported=True)
         model._publish()
         printer_id = self.follower.current_printer_identity()[0]
-        context = (printer_id, 0, model._print_state().job_key)
-        with patch.object(model, "pausePrint", return_value=True) as pause:
-            model._handle_detection_action(context, "failure", time.time())
+        self.attest(model)
+        context = model._failure_detection._detection_context()
+        with patch.object(model._commands, "send", return_value=True) as pause:
+            model._failure_detection._handle_detection_action(context, "failure", time.time())
             model._data.commandChanged.emit({
+                "commandId": model._failure_detection._detection_pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "confirmed",
             })
             self.assertTrue(model.detectionPauseRearmable)
             model.rearmDetectionPause()
             self.assertFalse(model.detectionPauseRearmable)
-            self.assertFalse(model._detection_paused_for_print)
-            self.assertIsNone(model._detection_acknowledged_at)
+            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            self.assertIsNone(model._failure_detection._detection_acknowledged_at)
             self.assertFalse(self.follower.persistence.get_machine_state(printer_id)
                              ["detectionActions"]["paused"])
             self.assertEqual(pause.call_count, 1, "re-arm must not command the printer")
-            model._handle_detection_action(context, "failure", time.time() + 10)
+            context = model._failure_detection._detection_context()
+            model._failure_detection._handle_detection_action(context, "failure", time.time() + 10)
             self.assertEqual(pause.call_count, 2)
-            self.assertTrue(model._detection_pause_pending)
+            self.assertTrue(model._failure_detection._detection_pause_pending)
 
     def test_rearm_works_while_paused_with_a_restored_latch_and_refuses_failed_save(self):
         import time
@@ -430,16 +499,17 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.follower.apply_printer_config(harness.replace(
             config, detection_enabled=True, detection_pause_enabled=True))
         model = self.monitor()
-        model._detection = SimpleNamespace(ready=True, enabled=True)
+        model._failure_detection._detection = SimpleNamespace(ready=True, enabled=True, reset=lambda: None)
         self.deliver()
         self.qt.events()
         self.deliver_state("paused")
         self.qt.events()
         printer_id = self.follower.current_printer_identity()[0]
+        self.attest(model)
         job = model._print_state().job_key
         self.assertIsNotNone(job)
-        model._detection_action_saved = {
-            "print": repr(job), "paused": True,
+        model._failure_detection._detection_action_saved = {
+            "run": model._failure_detection._detection_run_identity.as_dict(), "paused": True,
             "alertedAt": time.time(), "acknowledgedAt": time.time(),
         }
         self.assertTrue(model.detectionPauseRearmable)
@@ -450,7 +520,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         model.rearmDetectionPause()
         self.assertFalse(model.detectionPauseRearmable)
         saved = self.follower.persistence.get_machine_state(printer_id)["detectionActions"]
-        self.assertEqual(saved["print"], repr(job))
+        self.assertEqual(saved["run"], model._failure_detection._detection_run_identity.as_dict())
         self.assertFalse(saved["paused"])
 
     def test_automatic_pause_is_not_latched_when_dispatch_fails_or_state_is_unconfirmed(self):
@@ -468,39 +538,46 @@ class MonitorQtTests(harness.MonitorQtTests):
         model._data._observation = harness.replace(
             model._data.observation, pause_resume_supported=True)
         model._publish()
-        context = ("printer-a", 0, model._print_state().job_key)
+        self.attest(model)
+        context = model._failure_detection._detection_context()
         now = time.time()
-        with patch.object(model, "pausePrint", return_value=False) as pause:
-            model._handle_detection_action(context, "failure", now)
+        with patch.object(model._commands, "send", return_value=False) as pause:
+            model._failure_detection._handle_detection_action(context, "failure", now)
             pause.assert_called_once()
-            self.assertFalse(model._detection_paused_for_print)
-            self.assertFalse(model._detection_pause_pending)
-            self.assertFalse((self.follower.persistence.get_machine_state("printer-a") or {})
+            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            self.assertFalse(model._failure_detection._detection_pause_pending)
+            self.assertFalse((self.follower.persistence.get_machine_state(context[0]) or {})
                              .get("detectionActions", {}).get("paused", False))
-        with patch.object(model, "pausePrint", return_value=True) as pause:
-            model._handle_detection_action(context, "failure", now + 10)
+        self.assertTrue(model._failure_detection._detection_pause_uncertain)
+        model.rearmDetectionPause()
+        with patch.object(model._commands, "send", return_value=True) as pause:
+            context = model._failure_detection._detection_context()
+            model._failure_detection._handle_detection_action(context, "failure", now + 10)
             pause.assert_called_once()
-            self.assertTrue(model._detection_pause_pending)
-            self.assertFalse(model._detection_paused_for_print)
-            model._handle_detection_action(context, "failure", now + 20)
+            self.assertTrue(model._failure_detection._detection_pause_pending)
+            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            model._failure_detection._handle_detection_action(context, "failure", now + 20)
             pause.assert_called_once()
             model._data.commandChanged.emit({
+                "commandId": model._failure_detection._detection_pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "failed",
             })
-            self.assertFalse(model._detection_pause_pending)
-            self.assertFalse(model._detection_paused_for_print)
-            model._handle_detection_action(context, "failure", now + 21)
+            self.assertFalse(model._failure_detection._detection_pause_pending)
+            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            model._failure_detection._handle_detection_action(context, "failure", now + 21)
             self.assertEqual(pause.call_count, 2)
             model._data.commandChanged.emit({
+                "commandId": model._failure_detection._detection_pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "timed_out",
             })
-            self.assertTrue(model._detection_pause_pending)
-            self.assertFalse(model._detection_paused_for_print)
-            model._handle_detection_action(context, "failure", now + 30)
+            self.assertTrue(model._failure_detection._detection_pause_pending)
+            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            model._failure_detection._handle_detection_action(context, "failure", now + 30)
             self.assertEqual(pause.call_count, 2)
-        model._handle_detection_action(
-            ("printer-a", 0, ("next-job",)), "normal", now + 40)
-        self.assertFalse(model._detection_pause_pending)
+        self.deliver_state("complete")
+        self.qt.events()
+        model._publish()
+        self.assertFalse(model.detectionPauseRearmable)
 
     def test_detection_threshold_change_retires_inflight_evidence(self):
         from PyQt6.QtCore import QObject, pyqtSignal
@@ -511,8 +588,18 @@ class MonitorQtTests(harness.MonitorQtTests):
             ready = True
             enabled = True
 
-            def sample(self, image, context):
+            def sample(self, image, context, captured_at=None, regions=()):
                 pass
+
+            def reset(self):
+                pass
+
+            def enqueue_io(self, key, callback):
+                try:
+                    callback()
+                except Exception:
+                    pass
+                return True
 
             def close(self):
                 pass
@@ -525,9 +612,12 @@ class MonitorQtTests(harness.MonitorQtTests):
             camera_url="http://printer-a/webcam", detection_safe_seconds=0))
         model = self.monitor()
         self.deliver_state("printing")
-        old = model._detection_context()
+        self.qt.events()
+        model._publish()
+        model._failure_detection._detection_values()
+        old = model._failure_detection._detection_context()
         self.assertIsNotNone(old)
-        model._detection_policy.restore_baseline({"mean": 0.0, "frames": 7200})
+        model._failure_detection._detection_policy.restore_baseline({"mean": 0.0, "frames": 7200})
         for _ in range(30):
             detector.resultReady.emit(old, 0.0)
             self.qt.events()
@@ -545,9 +635,9 @@ class MonitorQtTests(harness.MonitorQtTests):
         detector.resultReady.emit(old, .9)
         self.qt.events()
         self.assertEqual(model.detectionState, "waiting")
-        self.assertEqual(model._detection_policy.failure_threshold, 60)
-        self.assertEqual(model._detection_policy.safe_seconds, 0)
-        current = model._detection_context()
+        self.assertEqual(model._failure_detection._detection_policy.failure_threshold, 60)
+        self.assertEqual(model._failure_detection._detection_policy.safe_seconds, 0)
+        current = model._failure_detection._detection_context()
         self.assertNotEqual(current, old)
         detector.resultReady.emit(current, .65)
         self.qt.events()
@@ -557,17 +647,17 @@ class MonitorQtTests(harness.MonitorQtTests):
             model.setDetectionSafeSeconds(901)
         model.setDetectionSafeSeconds(900)
         self.assertEqual(self.follower.current_printer_config().detection_safe_seconds, 900)
-        self.assertEqual(model._detection_policy.safe_seconds, 900)
-        self.assertNotEqual(model._detection_context(), current)
+        self.assertEqual(model._failure_detection._detection_policy.safe_seconds, 900)
+        self.assertNotEqual(model._failure_detection._detection_context(), current)
         detector.resultReady.emit(current, 4.0)
         self.qt.events()
         self.assertEqual(model.detectionState, "waiting")
         model.setDetectionThresholds(10, 26)
         self.assertEqual((self.follower.current_printer_config().detection_warning_threshold,
                           self.follower.current_printer_config().detection_failure_threshold), (10, 26))
-        self.assertEqual((model._detection_policy.warning_threshold,
-                          model._detection_policy.failure_threshold), (10, 26))
-        self.assertNotEqual(model._detection_context(), current)
+        self.assertEqual((model._failure_detection._detection_policy.warning_threshold,
+                          model._failure_detection._detection_policy.failure_threshold), (10, 26))
+        self.assertNotEqual(model._failure_detection._detection_context(), current)
 
     def test_detection_samples_decoded_frames_and_retires_stale_or_changed_context(self):
         from PyQt6.QtCore import QObject, pyqtSignal
@@ -583,8 +673,18 @@ class MonitorQtTests(harness.MonitorQtTests):
                 super().__init__()
                 self.samples = []
 
-            def sample(self, image, context):
+            def sample(self, image, context, captured_at=None, regions=()):
                 self.samples.append((image, context))
+
+            def reset(self):
+                pass
+
+            def enqueue_io(self, key, callback):
+                try:
+                    callback()
+                except Exception:
+                    pass
+                return True
 
             def close(self):
                 pass
@@ -614,7 +714,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         detector.stateChanged.emit()
         self.qt.events()
         self.assertFalse(model.detectionGlobalEnabled)
-        self.assertIsNone(model._detection_context())
+        self.assertIsNone(model._failure_detection._detection_context())
         self.assertEqual(model.detectionState, "idle")
         self.assertEqual(model.detectionRawScore, -1.0)
         detector.resultReady.emit(first_context, .9)
@@ -625,9 +725,12 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.qt.events()
         self.assertTrue(model.detectionGlobalEnabled)
         self.assertEqual(model.detectionState, "waiting")
+        retired = first_context
+        first_context = model._failure_detection._detection_context()
+        self.assertNotEqual(retired, first_context)
         detector.resultReady.emit(first_context, .1)
         self.qt.events()
-        model._detection_policy.restore_baseline({"mean": 0.0, "frames": 7200})
+        model._failure_detection._detection_policy.restore_baseline({"mean": 0.0, "frames": 7200})
         for _ in range(29):
             detector.resultReady.emit(first_context, 0.0)
             self.qt.events()
@@ -640,7 +743,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertEqual(model.detectionState, "failure")
         self.assertGreater(model.detectionScore, 66)
         self.assertEqual(model.detectionRawScore, 4.0)
-        model._detection_policy._sample_at -= 31
+        model._failure_detection._detection_policy._sample_at -= 31
         model._refresh_detection()
         self.qt.events()
         self.assertEqual(model.detectionState, "stale")
@@ -3311,6 +3414,10 @@ Item {
             "hoverClockProxy", "root.compact",
         ))
         allowed = {
+            "visible: detectionOverlay.editing",  # explicit user region editor
+            "visible: !detectionOverlay.editing && root.cameraBarFits && root.cameraControlLive",  # edit mode and the existing fitted/live bar rule
+            "visible: advancedButton.expanded",  # explicit user advanced tuning
+            "visible: detectionStatusHover.hovered",  # readout tooltip only
             "visible: root.segmented",
             "visible: !root.segmented",
             # Capability-static gates (the UX panel's ruling): these

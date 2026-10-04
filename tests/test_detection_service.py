@@ -46,6 +46,13 @@ class Model:
         self.block = None
         self.delay = 0.0
 
+    def cancel_current(self):
+        pass
+
+    def detect(self, image, regions=()):
+        from mpf.detection.DetectionObservation import ModelDetections
+        return ModelDetections(self.score(image))
+
     def score(self, image):
         self.calls.append((threading.get_ident(), image.pixelColor(0, 0).red()))
         if self.delay:
@@ -61,6 +68,9 @@ class LocalDetectionServiceTests(unittest.TestCase):
         cls.app = QCoreApplication.instance() or QCoreApplication([])
 
     def setUp(self):
+        cadence = patch("mpf.detection.LocalDetectionService._last_inference", 0.0)
+        cadence.start()
+        self.addCleanup(cadence.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.persistence = Persistence()
@@ -92,6 +102,84 @@ class LocalDetectionServiceTests(unittest.TestCase):
                 return
             time.sleep(.005)
         self.fail("Timed out waiting for detection worker")
+
+    def test_settings_exceptions_are_reported_and_removal_blocks_new_setup(self):
+        service = self.service()
+        with patch.object(self.persistence, "set_global", side_effect=OSError("read only")):
+            with self.assertRaisesRegex(OSError, "Could not save"):
+                service._persist({"enabled": True})
+        service._remove_requested = True
+        service.setup()
+        self.assertEqual(service.phase, "error")
+        self.assertIn("removal", service.error)
+        self.assertFalse(service.enqueue_io("evidence", lambda: None))
+        service._remove_requested = False
+
+    def test_evidence_queue_is_bounded_coalesced_and_recovers_after_failed_write(self):
+        service = self.service()
+        self.until(lambda: service.phase == "uninstalled")
+        with service._condition:
+            for i in range(16):
+                self.assertTrue(service.enqueue_io(str(i), lambda: None))
+            self.assertFalse(service.enqueue_io("overflow", lambda: None))
+            self.assertTrue(service.enqueue_io("0", lambda: (_ for _ in ()).throw(OSError("disk unavailable"))))
+            self.assertEqual(len(service._io_tasks), 16)
+        self.until(lambda: not service._io_tasks)
+        finished = threading.Event()
+        self.assertTrue(service.enqueue_io("next", finished.set))
+        self.assertTrue(finished.wait(1), "a failed evidence write must not kill the worker")
+        self.assertEqual(service.storage_root(), self.directory.name)
+        self.assertEqual(service.evidence_root(), EvidenceStore.evidence_directory(self.directory.name))
+
+    def test_retiring_a_native_run_keeps_the_model_ready(self):
+        service = self.service()
+        with patch.object(AssetInstaller, "install", return_value=installed_paths(self.directory.name)):
+            service.setup()
+            self.until(lambda: service.ready)
+        entered, cancelled = threading.Event(), threading.Event()
+        def detect(image, regions=()):
+            entered.set()
+            cancelled.wait(2)
+            raise TimeoutError("intentional native cancellation")
+        with patch.object(self.model, "detect", side_effect=detect), \
+                patch.object(self.model, "cancel_current", side_effect=cancelled.set), \
+                patch("mpf.detection.LocalDetectionService._CADENCE", .01):
+            image = QImage(8, 8, QImage.Format.Format_RGB888)
+            image.fill(0)
+            service.sample(image, ("run",))
+            self.assertTrue(entered.wait(2))
+            service.reset()
+            self.until(lambda: not service._inferencing)
+            self.app.processEvents()
+            self.assertTrue(service.ready)
+            self.assertIs(service._model, self.model)
+            self.assertEqual(service.error, "")
+
+    def test_disabled_startup_skips_loading_and_failed_enable_is_unavailable(self):
+        self.persistence.record = {"ready_version": ASSET_VERSION, "enabled": False}
+        with patch("mpf.detection.LocalDetectionService.LocalFailureModel.load", return_value=self.model) as load:
+            service = self.service()
+            self.until(lambda: service.ready)
+            load.assert_not_called()
+            self.assertEqual(service.phase, "disabled")
+            with patch.object(service, "_verified", return_value=False):
+                self.assertTrue(service.set_enabled(True))
+                self.until(lambda: service.phase == "error")
+            self.assertFalse(service.ready)
+            self.assertIsNone(service._model)
+
+    def test_accepted_removal_intent_is_durable_before_worker_acquires_lane(self):
+        service = self.service()
+        self.assertTrue(_lane.acquire(timeout=1))
+        try:
+            self.assertTrue(service.remove_assets())
+            self.assertTrue(self.persistence.record["cleanup_pending"])
+            self.assertEqual(self.persistence.record["ready_version"], "")
+            service.close()
+            self.assertTrue(self.persistence.record["cleanup_pending"])
+        finally:
+            _lane.release()
+
 
     def test_offer_decline_and_failed_persistence_are_visible(self):
         service = self.service()
@@ -374,7 +462,7 @@ class LocalDetectionServiceTests(unittest.TestCase):
             self.app.processEvents()
             self.assertEqual(len(received), 2)
         service.close()
-        self.assertFalse(service._worker.is_alive())
+        self.until(lambda: not service._worker.is_alive())
 
     def test_sample_inference_failure_demotes_ready_and_notifies_qml(self):
         service = self.service()
@@ -399,6 +487,58 @@ class LocalDetectionServiceTests(unittest.TestCase):
         service.sample(image, ("print-2",))
         self.app.processEvents()
         self.assertEqual(results, [])
+
+    def test_tiny_region_is_camera_local_and_does_not_drop_shared_model(self):
+        from mpf.detection.DetectionMask import RegionResolutionError
+        service = self.service()
+        with patch.object(AssetInstaller, "install", return_value=installed_paths(self.directory.name)):
+            service.setup()
+            self.until(lambda: service.ready)
+        results = []
+        service.observationReady.connect(results.append)
+        image = QImage(640, 480, QImage.Format.Format_RGB888)
+        image.fill(0)
+        with patch.object(self.model, "detect", side_effect=RegionResolutionError("Enlarge monitored regions")), \
+                patch("mpf.detection.LocalDetectionService._CADENCE", .01):
+            service.sample(image, ("tiny-camera",))
+            self.until(lambda: len(results) == 1)
+        self.assertTrue(service.ready)
+        self.assertIs(service._model, self.model)
+        self.assertIn("Enlarge", results[0].unavailable_reason)
+        with patch("mpf.detection.LocalDetectionService._CADENCE", .01):
+            service.sample(image, ("other-camera",))
+            self.until(lambda: len(results) == 2)
+        self.assertEqual(results[1].unavailable_reason, "")
+        self.assertEqual(results[1].detections.score, .42)
+
+    def test_setup_while_globally_disabled_releases_the_benchmark_session(self):
+        self.persistence.record = {"enabled": False}
+        service = self.service()
+        with patch.object(AssetInstaller, "install", return_value=installed_paths(self.directory.name)):
+            service.setup()
+            self.until(lambda: service.ready)
+        self.assertFalse(service.enabled)
+        self.assertEqual(service.phase, "disabled")
+        self.assertIsNone(service._model)
+        self.assertEqual(self.persistence.record["ready_version"], ASSET_VERSION)
+
+    def test_cancel_during_native_benchmark_is_cancelled_rather_than_a_model_error(self):
+        service = self.service()
+        entered = threading.Event()
+        terminated = threading.Event()
+        def score(_image):
+            entered.set()
+            terminated.wait(1)
+            raise RuntimeError("Exiting due to terminate flag being set to true")
+        with patch.object(AssetInstaller, "install", return_value=installed_paths(self.directory.name)), \
+                patch.object(self.model, "score", side_effect=score), \
+                patch.object(self.model, "cancel_current", side_effect=terminated.set):
+            service.setup()
+            self.until(entered.is_set)
+            service.cancel()
+            self.until(lambda: not service.busy)
+        self.assertEqual(service.phase, "cancelled")
+        self.assertEqual(service.error, "")
 
     def test_remove_assets_runs_on_worker_and_requires_fresh_download(self):
         self.persistence.record = {"ready_version": ASSET_VERSION, "consent": True,
@@ -440,7 +580,7 @@ class LocalDetectionServiceTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(sibling))
         self.assertEqual(self.persistence.record,
                          {"ready_version": "", "consent": False,
-                          "offer_seen": False, "foreign": "kept"})
+                          "offer_seen": False, "foreign": "kept", "cleanup_pending": False})
         self.assertTrue(service.should_offer)
 
     def test_remove_rejects_concurrent_setup_without_deleting_assets(self):
@@ -491,8 +631,8 @@ class LocalDetectionServiceTests(unittest.TestCase):
             self.assertFalse(service.ready)
             self.assertTrue(os.path.isfile(model_path))
             service.setup()
-            self.assertEqual(service.phase, "error")
-            self.assertIn("while asset removal", service.error)
+            self.assertEqual(service.phase, "removing")
+            self.assertIn("Restart Cura", service.error)
             self.assertFalse(service.remove_assets())
             self.assertIn("during setup or removal", service.error)
             self.model.block.set()
@@ -523,13 +663,14 @@ class LocalDetectionServiceTests(unittest.TestCase):
         self.assertEqual(changes[0], ("removing", True, ""))
         self.assertEqual(changes[-1], ("error", False, service.error))
         self.assertTrue(os.path.isfile(model))
-        self.assertEqual(self.persistence.record["ready_version"], ASSET_VERSION)
+        self.assertEqual(self.persistence.record["ready_version"], "")
+        self.assertTrue(self.persistence.record["cleanup_pending"])
         self.assertFalse(service.ready)
 
     def test_removal_settings_failure_reports_error_after_deleting_assets(self):
         service = self.service()
         self.persistence.fail = True
-        self.assertTrue(service.remove_assets())
+        self.assertFalse(service.remove_assets())
         self.until(lambda: not service.busy)
         self.assertEqual(service.phase, "error")
         self.assertIn("Could not save", service.error)
@@ -555,12 +696,13 @@ class LocalDetectionServiceTests(unittest.TestCase):
         finally:
             _lane.release()
         self.assertTrue(os.path.isfile(model))
-        self.assertEqual(self.persistence.record["ready_version"], ASSET_VERSION)
-        self.assertTrue(self.persistence.record["consent"])
+        self.assertEqual(self.persistence.record["ready_version"], "")
+        self.assertTrue(self.persistence.record["cleanup_pending"])
+        self.assertFalse(self.persistence.record["consent"])
         self.assertEqual(states[0], ("removing", True, ""))
-        self.assertEqual(states[-1][0:2], ("error", False))
-        self.assertIn("closed before the worker lane", states[-1][2])
-        self.assertFalse(service._worker.is_alive())
+        self.assertEqual(service.phase, "closed")
+        self.assertFalse(service.busy)
+        self.until(lambda: not service._worker.is_alive())
 
     def test_close_reports_completed_removal_after_worker_acquires_lane(self):
         self.persistence.record = {"ready_version": ASSET_VERSION, "consent": True,
@@ -592,7 +734,7 @@ class LocalDetectionServiceTests(unittest.TestCase):
                 release.set()
                 timer.join()
         self.assertFalse(service.busy)
-        self.assertEqual(service.phase, "uninstalled")
+        self.assertEqual(service.phase, "closed")
         self.assertEqual(service.error, "")
         self.assertFalse(os.path.exists(model))
         self.assertEqual(self.persistence.record["ready_version"], "")
@@ -651,7 +793,7 @@ class LocalDetectionServiceTests(unittest.TestCase):
             service.close()
             service.setup()
         self.assertFalse(service.busy)
-        self.assertEqual(service.phase, "ready")
+        self.assertEqual(service.phase, "closed")
         self.assertEqual(service.error, "")
 
     def test_cancel_is_inert_when_idle_and_during_removal(self):
@@ -694,9 +836,8 @@ class LocalDetectionServiceTests(unittest.TestCase):
         closed.decline_offer()
         self.assertEqual(self.persistence.record, {})
 
-    def test_close_raises_when_the_worker_ignores_the_stop(self):
-        # The six-second budget is the contract: a worker wedged inside a
-        # score must be reported, never silently orphaned.
+    def test_close_returns_promptly_when_native_work_ignores_the_stop(self):
+        # Shutdown retires delivery and leaves native cleanup worker-owned.
         service = self.service()
         with patch.object(AssetInstaller, "install",
                           return_value=installed_paths(self.directory.name)):
@@ -718,14 +859,12 @@ class LocalDetectionServiceTests(unittest.TestCase):
             self.assertTrue(entered.wait(2))
             started = time.monotonic()
             try:
-                with self.assertRaises(RuntimeError) as raised:
-                    service.close()
+                service.close()
+                self.assertLess(time.monotonic() - started, .5)
+                self.assertEqual(service.phase, "closed")
+                self.assertFalse(service.ready)
             finally:
                 release.set()
-            self.assertGreaterEqual(time.monotonic() - started, 6.0)
-        self.assertIn("did not stop within six seconds", str(raised.exception))
-        self.assertEqual(service.phase, "error")
-        self.assertIn("did not stop", service.error)
         self.until(lambda: not service._worker.is_alive())
 
     def test_removal_status_is_only_terminal_when_it_says_so(self):
@@ -844,7 +983,7 @@ class LocalDetectionServiceTests(unittest.TestCase):
             service.setup()
             self.until(lambda: service.phase == "error")
         self.assertIn("archive is corrupt", service.error)
-        self.assertIn("cleanup failed: read-only runtime", service.error)
+        self.assertIn("restart Cura to finish cleanup: read-only runtime", service.error)
         self.assertFalse(os.path.exists(model))
         self.assertTrue(os.path.isdir(runtime))
         self.assertNotEqual(self.persistence.record.get("ready_version"), ASSET_VERSION)
@@ -882,7 +1021,7 @@ class LocalDetectionServiceTests(unittest.TestCase):
         self.assertFalse(service.ready)
         self.assertEqual(service.error, "")
         self.assertEqual(self.model.calls, [])
-        self.assertFalse(service._worker.is_alive())
+        self.until(lambda: not service._worker.is_alive())
 
     def test_setup_that_raced_the_startup_is_absorbed_by_it(self):
         # The user can press Set up before the boot probe finishes; the
@@ -930,7 +1069,7 @@ class LocalDetectionServiceTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(received, [])
         self.assertEqual(len(self.model.calls), 2)
-        self.assertFalse(service._worker.is_alive())
+        self.until(lambda: not service._worker.is_alive())
 
     def test_frame_inside_the_cadence_window_is_kept_for_the_next_beat(self):
         # The cadence anchor is process-wide, so a frame this lane took

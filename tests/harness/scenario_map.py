@@ -1183,3 +1183,32 @@ for _name in (
         "date": "2026-10-03",
         "recheck": "permission-cleared recording replay can exercise the live camera scenario",
     }
+
+# The native detector and camera editor have real Qt/owner contracts; the
+# network-free desktop simulator has no model-generated failure observations.
+for _name in (
+    "MonitorDetection.acknowledgeDetectionAlert", "MonitorDetection.rearmDetectionPause",
+    "MonitorDetection.resetDetectionTuning", "MonitorDetection.saveDetectionRegions",
+    "MonitorDetection.setDetectionEditingRegions", "MonitorDetection.setDetectionEnabled",
+    "MonitorDetection.setDetectionMuted", "MonitorDetection.setDetectionNotifyEnabled",
+    "MonitorDetection.setDetectionPauseEnabled", "MonitorDetection.setDetectionSafeSeconds",
+    "MonitorDetection.setDetectionSensitivity", "MonitorDetection.setDetectionShowBoxes",
+    "MonitorDetection.setDetectionThresholds", "MonitorDetection.validateDetectionRegions",
+    "MoonrakerMonitorModel.resetDetectionTuning", "MoonrakerMonitorModel.saveDetectionRegions",
+    "MoonrakerMonitorModel.setDetectionEditingRegions", "MoonrakerMonitorModel.setDetectionMuted",
+    "MoonrakerMonitorModel.setDetectionSensitivity", "MoonrakerMonitorModel.setDetectionShowBoxes",
+    "MoonrakerMonitorModel.validateDetectionRegions",
+    "detectionAdvancedButton", "detectionAnalysisAgeLabel", "detectionAnalysisAgePill",
+    "detectionCancelRegionsButton", "detectionEditRegionsButton", "detectionAddRegionButton",
+    "detectionFullFrameButton", "detectionMutePrintButton", "detectionOverlay",
+    "detectionRegionEditor", "detectionRegionEditorStatus", "detectionResetTuningButton",
+    "detectionSaveRegionsButton", "detectionSensitivitySlider", "detectionShowBoxesCheckbox",
+    "detectionStatusLabel", "detectionUndoRegionEditButton", "detectionDeleteVertexButton",
+    "detectionDeleteRegionButton",
+):
+    EXCLUSIONS[_name] = {
+        "reason": "local inference and transactional camera regions have no synthetic model feed in the desktop simulator",
+        "evidence": "test_monitor_detection, test_monitor_model_runtime, test_qml_detection_regions and test_qml_dashboard_layout; capture_monitor scenes 12–14",
+        "date": "2026-10-04",
+        "recheck": "the desktop simulator gains a synthetic local detector fixture",
+    }

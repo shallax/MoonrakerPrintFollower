@@ -85,7 +85,10 @@ class ComposedComponentTests(unittest.TestCase):
             deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline and (service._busy or files._leases):
                 self.qt.events(5)
-            os.remove(target)
+            try:
+                os.remove(target)
+            except FileNotFoundError:
+                pass
 
         self.addCleanup(drop_the_download)
         return target
