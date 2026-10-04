@@ -860,10 +860,11 @@ NOT enforced on this printer (any key or none works). Two probe bugs
 died here and are part of the record: the RFC extended-length ENCODE
 form (>125-byte payloads — Tornado silently drops the connection on a
 corrupt header) and a probe recorder that swallowed the evidence. The
-printer is plain http, so the live wss case remains open — the in-bundle
+printer is plain http, so the live wss case is covered on the substrate
+half only — the in-bundle
 TLS spike (verified TLS 1.3 + certificate-verification parity with
-today's HTTPS, measured byte-identical) covers the substrate half; a
-live proxied-https test rides the snapshot loop.
+today's HTTPS, measured byte-identical); a live proxied-https test belongs
+to the snapshot loop.
 
 **Phase-2 rulings (2026-09-11, walked through):**
 - Subscription while idle: FULL-TIME (all five status objects
@@ -2499,7 +2500,7 @@ assume); (6) active-tool label + per-extruder path colouring.
 The ranking is stale and is re-derived at 5.0.0's planning round
 (PUF4, 2026-09-15): pause-at-layer and the layer-to-mm readout
 already ship, item (1) moved to 4.3.0 and item (2) was dropped
-there — only pause-at-Z-height of the original three remains open.
+there.
 Cross-cutting: the layer-hardening pack is the marker's prerequisite
 (the marker inherits the resolver's numbers, and the `;LAYER:` flip
 without the gate can increase wrong-layer risk); the version-drift

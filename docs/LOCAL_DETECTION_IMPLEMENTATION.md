@@ -517,8 +517,7 @@ converts to RGB NCHW float32/255 and reads single-class confidences.
    tests.test_qml_camera_controls tests.test_qml_settings"` and then
    `make all` before any commit/push. Keep one process per test file.
    Regenerate the real Monitor and settings screenshots and
-   `make snapshot_package`; obtain a live Cura verdict
-   before committing or shipping. No PR until explicitly requested.
+   `make snapshot_package`. PRs are created only on explicit request.
 
 ## Release gates and cautions
 

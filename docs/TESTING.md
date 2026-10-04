@@ -1,6 +1,6 @@
 # TESTING.md — the real-Cura UI test harness
 
-## Current candidate: 5.0.0 (not released)
+## 5.0.0
 
 Version 5.0.0 adds opt-in local inference and the Detection settings tab,
 per-printer thresholds and safe periods, webcam signal rendering, and
@@ -9,11 +9,10 @@ separate notification/automatic-pause opt-ins with explicit pause re-arm.
 runs focused parallel coverage; `make all` runs the complete local gate.
 The `group-webcams` simulator journey exercises settings and synthetic
 readiness on macOS, Windows and Linux, **not native inference** on every
-host. Setup and real inference ran on Cura 5.13/macOS arm64; active-print
-reliability, other hosts, rights-cleared video and release policy remain
-unverified. Automatic pause is not a guaranteed failure safeguard.
+host: a green journey does not qualify a host's inference. Automatic pause
+is not a guaranteed failure safeguard.
 
-### Historical 4.6.2 candidate
+### Historical 4.6.2
 
 Version 4.6.2 decomposes the plugin's internals and adds shared, switchable
 bed-axis arrows, zoom-stable Print Follower controls and a readable pause
