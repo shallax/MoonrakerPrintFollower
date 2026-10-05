@@ -91,6 +91,28 @@ class BannerPlacementTests(unittest.TestCase):
 
 
 class BannerHostTests(harness.RealEngineTestCase):
+    def test_hover_only_tooltip_explains_why_the_option_is_disabled(self):
+        host = self.mount("PreviewObjectTagsHost.qml")
+        tooltip = self.find(host, "moonrakerPreviewObjectTagsHoverOnlyTooltip")
+        host.setProperty("projectionAvailable", True)
+        host.setProperty("tagsEnabled", False)
+        host.setProperty("pickAvailable", False)
+        self.pump(10)
+        self.assertEqual(tooltip.property("text"),
+                         "Enable Object name banners to use this option.")
+        host.setProperty("tagsEnabled", True)
+        self.pump(10)
+        self.assertEqual(tooltip.property("text"),
+                         "No object footprints are available for this toolpath.")
+        host.setProperty("pickAvailable", True)
+        host.setProperty("pickMode", "footprint")
+        self.pump(10)
+        self.assertIn("G-code picking is approximate.", tooltip.property("text"))
+        host.setProperty("projectionAvailable", False)
+        self.pump(10)
+        self.assertEqual(tooltip.property("text"),
+                         "This Cura version does not provide camera projection to plugins.")
+
     def test_bottom_bar_expands_upward_when_its_handle_is_clicked(self):
         from PyQt6.QtCore import QPoint, Qt
         from PyQt6.QtTest import QTest

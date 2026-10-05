@@ -297,12 +297,13 @@ Item {
                 enabled: root.tagsEnabled && root.pickAvailable
                 onToggled: root.hoverOnlyRequested(checked)
                 UM.ToolTip {
+                    objectName: "moonrakerPreviewObjectTagsHoverOnlyTooltip"
                     visible: parent.hovered
                     targetPoint: Qt.point(parent.width / 2, 0)
                     x: 0
                     y: parent.height + UM.Theme.getSize("default_margin").height
                     width: UM.Theme.getSize("tooltip").width
-                    text: root.pickMode === "exact" ? "Show a banner only for the front-most object under the pointer." : root.pickMode === "footprint" ? "Show banners for every object footprint under the pointer. G-code picking is approximate." : "No object footprints are available for this toolpath."
+                    text: !root.projectionAvailable ? "This Cura version does not provide camera projection to plugins." : !root.tagsEnabled ? "Enable Object name banners to use this option." : !root.pickAvailable ? "No object footprints are available for this toolpath." : root.pickMode === "exact" ? "Show a banner only for the front-most object under the pointer." : root.pickMode === "footprint" ? "Show banners for every object footprint under the pointer. G-code picking is approximate." : "No object footprints are available for this toolpath."
                 }
             }
         }
