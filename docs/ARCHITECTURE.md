@@ -147,6 +147,8 @@ correct package ownership.
 | `PauseScheduleService.py` | Pure print-local target set and crossing policy | Network commands |
 | `PauseController.py` | Scheduled PAUSE command and acknowledgement lifecycle | Preview rendering |
 | `PreviewPresentation.py` | Preview QML objects, displayed values and user-intent signals | Following or scheduling policy |
+| `ObjectNameProjection.py` | Screen-space object-name banner placement and collision avoidance | Cura camera access, printer commands or QML ownership |
+| `ObjectWork.py` | Bounded per-object extrusion checkpoints, cache validation and finish-time projection | File reading, Qt or presentation |
 | `BedMeshPresenter.py` | Active mesh overlay, visibility preference and Preview mesh controls | Macro execution |
 | `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
 | `MonitorData.py` | Monitor request lifetime, category timers, the frozen `MonitorSnapshot` and the observation record's assembly (the tri-state connection, the two push-ins) | QML declarations |
@@ -401,6 +403,28 @@ It alone changes `PreviewState` using replacement values. External code cannot
 mutate path/ETA/attachment fields. `reset_tracking()` clears index-derived progress
 and anchors while preserving print observation and attachment; `reset_print()`
 clears print-local state without automatically reattaching a manually detached view.
+
+The Preview object-name bar belongs to `PreviewPresentation`. Its banner anchors
+use Cura's public `Camera.projectToViewport()` with the window's viewport rectangle
+and device-pixel ratio. `ObjectNameProjection` places upright QML plates in screen
+space and separates nearby labels while leaving leaders attached to their 3D
+anchors. Crowded and edge positions keep their banners visible. The bar stores
+banner visibility and hovered-only mode in global plugin state. Cura's
+depth-tested `selection` pass selects the front-most scene model mesh under the
+pointer. A G-code-only scene has no per-object toolpath IDs in that pass, so
+hovered-only mode casts a camera ray into indexed object footprints and shows
+every matching object; this is approximate because a footprint can include
+empty space. Hovering fades every unselected banner. The banners use
+Moonraker's object definitions only when the exact plugin-loaded file matches
+the current print. The one-pass index records bounded per-object extrusion totals,
+layer checkpoints, XY bounds and last-work offsets from `EXCLUDE_OBJECT_START/END`
+or `;MESH:` markers. The version-15 cache persists these summaries and can supply
+banner anchors when Moonraker object centres are missing. Unique case variants
+of Moonraker and G-code names are joined without creating duplicate banners.
+Matched objects show filament progress and, when a print-end ETA exists, a
+projected object deadline scaled by slicer elapsed times. Unmatched objects
+omit these estimates. The neighboring Preview card remembers its expanded
+state and keeps its bottom edge aligned with the collapsible banner bar.
 
 Manual Preview changes are detected against remembered plugin-written values.
 `CuraIntegration.writing_preview()` suppresses callbacks from plugin writes, while
@@ -1258,7 +1282,7 @@ material uniform, so mode changes and zoom do not repack or upload geometry.
 The saved 1–8 px override remains independent and an explicit width interaction
 returns to it. Travels and the grid retain their existing widths. The software
 fallback paints per-motion widths through its existing raster and Canvas paths.
-The current index version is 14 and prepared-store version is 6; older
+The current index version is 15 and prepared-store version is 6; older
 cache files are invalidated and rebuilt.
 
 Retraction events are separate from travel boundaries: negative E or firmware
@@ -1284,7 +1308,7 @@ unavailable host colour interfaces retain the last successful palette (or the
 default palette before the first successful read) without
 preventing plugin registration. Theme and material signals refresh the snapshot.
 
-Index cache version 14 records modal feedrate (mm/s) and tool ID per motion,
+Index cache version 15 records modal feedrate (mm/s) and tool ID per motion,
 layer-start seeds and per-tool filament diameters. The compact indexing pass
 aggregates whole-print speed, deposited layer-height, bead-width and flow
 limits without retaining every layer's motion arrays. Prepared cache version 6

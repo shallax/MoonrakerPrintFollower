@@ -9,7 +9,7 @@ the destroyed signal and deleteLater are genuine Qt — and the card is a
 real item carrying the QML signal surface, so the gates, the value push
 and the wiring are asserted as behaviour rather than as source text.
 
-Every line of the module runs under this suite; nothing is left uncovered.
+The adapter's host lifecycle and banner projection paths run under this suite.
 The approximation is on the engine side: Cura builds the hosts
 (createQmlComponent) from its own QML modules, which this container does
 not carry, so the items handed back here are built in-process and mirror
@@ -26,6 +26,7 @@ from qt_runtime_support import QT_AVAILABLE, runtime
 
 PANEL_HOST = "MoonrakerPreviewCardPanelHost.qml"
 OVERLAY_HOST = "MoonrakerPreviewCardOverlayHost.qml"
+TAGS_HOST = "PreviewObjectTagsHost.qml"
 CARD_NAME = "moonrakerPreviewCard"
 NO_CARD = object()
 
@@ -39,6 +40,7 @@ if QT_AVAILABLE:
 
         loadClicked = pyqtSignal()
         pauseClicked = pyqtSignal()
+        cardExpandedRequested = pyqtSignal(bool)
         improveEtaRequested = pyqtSignal()
         pauseAtLayerRequested = pyqtSignal(int)
         printPauseRequested = pyqtSignal()
@@ -100,12 +102,25 @@ if QT_AVAILABLE:
             self.destroy_calls += 1
             super().deleteLater()
 
+    class TagsHost(Host):
+        tagsEnabledRequested = pyqtSignal(bool)
+        hoverOnlyRequested = pyqtSignal(bool)
+        pointerMoved = pyqtSignal(float, float)
+
     class Window:
         def __init__(self, content):
             self._content = content
 
         def contentItem(self):
             return self._content
+
+    class RenderWindow(Window):
+        viewportRect = SimpleNamespace(x=lambda: 0, y=lambda: 0,
+                                       width=lambda: 1, height=lambda: 1)
+
+        def width(self): return 800
+        def height(self): return 600
+        def devicePixelRatio(self): return 1
 
     class HostApplication(QObject):
         """CuraApplication's surface as far as this adapter reaches."""
@@ -206,6 +221,7 @@ else:
     # Qt-marked tests skip before touching them.
     Card = None
     Host = None
+    TagsHost = None
     HostApplication = None
     AddOnlyApplication = None
     SilentApplication = None
@@ -283,6 +299,254 @@ class PreviewPresentationTests(unittest.TestCase):
                                panel_host=panel_host, panel_card=panel_item,
                                overlay_host=overlay_host, overlay_card=overlay_item)
 
+    def test_hover_reads_curas_depth_tested_selection_pass(self):
+        state = self.build(preview_active=True)
+        selected = object()
+        positions = []
+        render_pass = SimpleNamespace(getIdAtPosition=lambda x, y: positions.append((x, y)) or 27)
+        state.app.getRenderer = lambda: SimpleNamespace(getRenderPass=lambda name: render_pass if name == "selection" else None)
+        scene = SimpleNamespace(findObject=lambda object_id: selected if object_id == 27 else None)
+        window = SimpleNamespace(width=lambda: 800, height=lambda: 600)
+        state.presentation._pick_available = True
+        state.presentation._pointer_moved(400, 300)
+        self.assertEqual(state.presentation._pick_hover(window, scene), id(selected))
+        self.assertEqual(positions, [(0.0, 0.0)])
+        state.presentation._pointer_moved(-1, -1)
+        self.assertEqual(state.presentation._pick_hover(window, scene), 0)
+
+    def test_gcode_hover_uses_a_camera_ray_and_keeps_all_shared_footprints(self):
+        state = self.build(preview_active=True)
+        positions = []
+        ray = SimpleNamespace(origin=SimpleNamespace(x=0, y=10, z=0),
+                              direction=SimpleNamespace(x=0, y=-1, z=0))
+        camera = SimpleNamespace(getRay=lambda x, y: positions.append((x, y)) or ray)
+        window = SimpleNamespace(width=lambda: 800, height=lambda: 600)
+        objects = [{"name": name, "footprint": [(-2, -2), (2, -2), (2, 2), (-2, 2)],
+                    "footprintHeight": 0} for name in ("one", "two")]
+        state.presentation._pointer_moved(400, 300)
+        self.assertEqual(state.presentation._pick_footprints(window, camera, objects), ["one", "two"])
+        self.assertEqual(positions, [(0.0, 0.0)])
+        state.presentation._pointer_moved(-1, -1)
+        self.assertEqual(state.presentation._pick_footprints(window, camera, objects), [])
+
+    def test_the_live_tags_host_projects_matching_gcode_and_all_shared_hover_hits(self):
+        import sys
+        from types import ModuleType
+        from unittest.mock import Mock, patch
+
+        content = QQuickItem()
+        app = HostApplication(window=RenderWindow(content))
+        shell = TagsHost()
+        app.components[TAGS_HOST] = shell
+        scene = self.build(application=app, preview_active=True)
+        camera = SimpleNamespace(
+            projectToViewport=lambda position: (position.x, position.z),
+            getViewportWidth=lambda: 800, getViewportHeight=lambda: 600,
+            getRay=lambda x, y: SimpleNamespace(
+                origin=SimpleNamespace(x=0, y=10, z=0),
+                direction=SimpleNamespace(x=0, y=-1, z=0)),
+        )
+        cura_scene = SimpleNamespace(
+            getRoot=lambda: SimpleNamespace(getAllChildren=lambda: []),
+            getActiveCamera=lambda: camera,
+        )
+        scene.cura.controller = SimpleNamespace(getScene=lambda: cura_scene)
+        scene.cura.has_toolpath = True
+        scene.cura.selected_layer = 0
+        scene.cura.heights = [2.0]
+        vector_module = ModuleType("UM.Math.Vector")
+        vector_module.Vector = lambda x, y, z: SimpleNamespace(x=x, y=y, z=z)
+        vector_patch = patch.dict(sys.modules, {"UM.Math": ModuleType("UM.Math"),
+                                                "UM.Math.Vector": vector_module})
+        vector_patch.start()
+        self.addCleanup(vector_patch.stop)
+        saved = Mock()
+        scene.presentation._persistence = SimpleNamespace(merge_state_global=saved)
+        app.getGlobalContainerStack = lambda: SimpleNamespace(getProperty=lambda key, scope: {
+            "machine_width": 220, "machine_depth": 220, "machine_center_is_zero": True}[key])
+        app.getRenderer = lambda: SimpleNamespace(getRenderPass=lambda name: None)
+        definitions = [{"name": name, "center": [0, 0], "bounds": [-2, -2, 2, 2]}
+                       for name in ("one", "two")]
+        metrics = {name: {"progress": 0.5, "deadline": None, "top": 4.0}
+                   for name in ("one", "two")}
+        scene.presentation.publish({"configuredForFollowing": True,
+                                    "previewStageActive": True,
+                                    "objectTagSourceActive": True,
+                                    "objectTagDefinitions": definitions,
+                                    "objectTagMetrics": metrics})
+        self.assertTrue(shell.property("dockVisible"))
+        shell.tagsEnabledRequested.emit(True)
+        saved.assert_called_with({"previewObjectTagsEnabled": True})
+        self.assertEqual(shell.property("pickMode"), "footprint")
+        self.assertEqual(len(shell.property("tagRows")), 2)
+        self.assertEqual(shell.property("tagRows")[0]["progress"], 0.5)
+        shell.pointerMoved.emit(400, 300)
+        shell.hoverOnlyRequested.emit(True)
+        saved.assert_called_with({"previewObjectTagsHoverOnly": True})
+        self.assertEqual(shell.property("hoveredNames"), ["one", "two"])
+        self.assertEqual(len(shell.property("tagRows")), 2)
+        scene.presentation._update_tags()  # same ray and rows reuse the projection
+        scene.panel_card.cardExpandedRequested.emit(False)
+        saved.assert_called_with({"previewCardExpanded": False})
+        scene.presentation.publish({"objectTagSourceActive": False})
+        self.assertEqual(shell.property("tagRows"), [])
+        scene.presentation.publish({"previewStageActive": False})
+        self.assertFalse(shell.property("dockVisible"))
+
+    def test_gcode_fallback_uses_polygon_centres_bounds_and_selected_layer(self):
+        import sys
+        from types import ModuleType
+        from unittest.mock import patch
+
+        state = self.build(preview_active=True)
+        scene = SimpleNamespace(getRoot=lambda: SimpleNamespace(getAllChildren=lambda: []))
+        state.cura.controller = SimpleNamespace(getScene=lambda: scene)
+        state.cura.selected_layer = 0
+        state.cura.heights = [3.0]
+        state.app.getGlobalContainerStack = lambda: SimpleNamespace(
+            getProperty=lambda key, scope: {"machine_width": 200, "machine_depth": 200,
+                                            "machine_center_is_zero": False}[key])
+        state.presentation._values = {
+            "objectTagDefinitions": [
+                {"name": "polygon", "polygon": [(95, 95), (105, 95), (100, 105)]},
+                {"name": "bounds", "center": [50, 50], "bounds": [48, 48, 52, 52],
+                 "excluded": True},
+                {"name": "unplaced"},
+            ],
+            "objectTagMetrics": {"polygon": {"progress": 0.25, "top": 2.0},
+                                 "bounds": {"progress": 0.8}},
+            "objectTagHeight": 1.0,
+        }
+        vector_module = ModuleType("UM.Math.Vector")
+        vector_module.Vector = lambda x, y, z: SimpleNamespace(x=x, y=y, z=z)
+        with patch.dict(sys.modules, {"UM.Math": ModuleType("UM.Math"),
+                                      "UM.Math.Vector": vector_module}):
+            rows, pickable = state.presentation._scene_objects()
+        self.assertFalse(pickable)
+        self.assertEqual([row["name"] for row in rows], ["polygon", "bounds"])
+        self.assertEqual((rows[0]["position"].x, rows[0]["position"].y), (0, 2))
+        self.assertEqual(rows[0]["progress"], 0.25)
+        self.assertEqual(rows[1]["footprint"], [(-52, 52), (-48, 52), (-48, 48), (-52, 48)])
+        self.assertIsNone(rows[1]["progress"])
+
+    def test_scene_mesh_filtering_and_exclusion_keep_only_visible_objects(self):
+        import sys
+        from types import ModuleType
+        from unittest.mock import patch
+
+        state = self.build(preview_active=True)
+        def node(name, *, selected=True, valid=True, broken=False, x=0):
+            if broken:
+                return SimpleNamespace(isSelectable=lambda: (_ for _ in ()).throw(RuntimeError("gone")))
+            box = SimpleNamespace(center=SimpleNamespace(x=x, z=0), top=10, bottom=0,
+                                  height=10, isValid=lambda: valid)
+            return SimpleNamespace(isSelectable=lambda: selected, getMeshData=lambda: object(),
+                                   isVisible=lambda: True, getBoundingBox=lambda: box,
+                                   getName=lambda: name)
+        nodes = [node("hidden", selected=False), node("invalid", valid=False),
+                 node("", x=50), node("mesh", x=50), node("Part"), node("", broken=True)]
+        scene = SimpleNamespace(getRoot=lambda: SimpleNamespace(getAllChildren=lambda: nodes))
+        state.cura.controller = SimpleNamespace(getScene=lambda: scene)
+        state.app.getGlobalContainerStack = lambda: SimpleNamespace(
+            getProperty=lambda key, scope: {"machine_width": 220, "machine_depth": 220,
+                                            "machine_center_is_zero": True}[key])
+        state.presentation._values = {
+            "objectTagDefinitions": [{"name": "Part", "center": [0, 0], "excluded": True}],
+            "objectTagMetrics": {"Part": {"progress": 0.7}},
+        }
+        vector_module = ModuleType("UM.Math.Vector")
+        vector_module.Vector = lambda x, y, z: SimpleNamespace(x=x, y=y, z=z)
+        with patch.dict(sys.modules, {"UM.Math": ModuleType("UM.Math"),
+                                      "UM.Math.Vector": vector_module}):
+            rows, pickable = state.presentation._scene_objects()
+        self.assertTrue(pickable)
+        self.assertEqual([row["name"] for row in rows], ["mesh", "Part"])
+        self.assertIsNone(rows[1]["progress"])
+
+    def test_hover_cache_and_unavailable_renderers_preserve_safe_results(self):
+        from unittest.mock import Mock
+
+        state = self.build(preview_active=True)
+        selected = object()
+        render_pass = SimpleNamespace(getIdAtPosition=Mock(return_value=7))
+        state.app.getRenderer = lambda: SimpleNamespace(getRenderPass=lambda name: render_pass)
+        scene = SimpleNamespace(findObject=lambda node_id: selected)
+        window = SimpleNamespace(width=lambda: 800, height=lambda: 600)
+        state.presentation._pick_available = True
+        state.presentation._pointer_moved(400, 300)
+        self.assertEqual(state.presentation._pick_hover(window, scene), id(selected))
+        self.assertEqual(state.presentation._pick_hover(window, scene), id(selected))
+        render_pass.getIdAtPosition.assert_called_once()
+        state.presentation._pointer_moved(401, 300)
+        state.app.getRenderer = lambda: SimpleNamespace(getRenderPass=lambda name: None)
+        self.assertEqual(state.presentation._pick_hover(window, scene), 0)
+        state.app.getRenderer = lambda: (_ for _ in ()).throw(RuntimeError("renderer gone"))
+        self.assertEqual(state.presentation._pick_hover(window, scene), 0)
+        state.presentation._pointer_moved(400, 300)
+        bad_camera = SimpleNamespace(getRay=lambda x, y: (_ for _ in ()).throw(RuntimeError("ray gone")))
+        self.assertEqual(state.presentation._pick_footprints(window, bad_camera, []), [])
+
+    def test_banners_clear_when_the_loaded_file_is_not_the_active_print(self):
+        from unittest.mock import Mock
+
+        state = self.build(preview_active=True)
+        camera = SimpleNamespace(projectToViewport=lambda position: position,
+                                 getViewportWidth=lambda: 800, getViewportHeight=lambda: 600)
+        state.cura.controller = SimpleNamespace(
+            getScene=lambda: SimpleNamespace(getActiveCamera=lambda: camera))
+        state.cura.has_toolpath = True
+        shell = Host()
+        state.presentation._tags_shell = shell
+        state.presentation._tags_enabled = True
+        state.presentation._projected_rows = [{"name": "stale"}]
+        state.presentation._scene_objects = Mock(side_effect=AssertionError("stale objects must not project"))
+        state.presentation._values["objectTagSourceActive"] = False
+        state.presentation._update_tags()
+        self.assertEqual(shell.property("tagRows"), [])
+        state.presentation._scene_objects.assert_not_called()
+
+    def test_current_object_height_fallback_keeps_the_status_name_after_case_join(self):
+        import sys
+        from types import ModuleType
+        from unittest.mock import patch
+
+        state = self.build(preview_active=True)
+        box = SimpleNamespace(center=SimpleNamespace(x=0, z=0), top=10, bottom=0,
+                              height=10, isValid=lambda: True)
+        node = SimpleNamespace(isSelectable=lambda: True, getMeshData=lambda: object(),
+                               isVisible=lambda: True, getBoundingBox=lambda: box,
+                               getName=lambda: "mesh")
+        scene = SimpleNamespace(getRoot=lambda: SimpleNamespace(getAllChildren=lambda: [node]))
+        state.cura.controller = SimpleNamespace(getScene=lambda: scene)
+        state.app.getGlobalContainerStack = lambda: SimpleNamespace(
+            getProperty=lambda key, scope: {"machine_width": 220, "machine_depth": 220,
+                                            "machine_center_is_zero": True}[key])
+        state.presentation._values = {
+            "objectTagDefinitions": [{"name": "Mixed", "statusName": "UPPER", "center": [0, 0]}],
+            "objectTagMetrics": {"Mixed": {"progress": None}},
+            "objectTagHeight": 5, "objectTagCurrentObject": "UPPER",
+        }
+        vector_module = ModuleType("UM.Math.Vector")
+        vector_module.Vector = lambda x, y, z: SimpleNamespace(x=x, y=y, z=z)
+        with patch.dict(sys.modules, {"UM.Math": ModuleType("UM.Math"),
+                                      "UM.Math.Vector": vector_module}):
+            rows, pickable = state.presentation._scene_objects()
+        self.assertTrue(pickable)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "Mixed")
+        self.assertEqual(rows[0]["progress"], 0.5)
+
+    def test_collapsing_either_card_keeps_both_hosts_in_sync(self):
+        scene = self.build(preview_active=True)
+        self.assertTrue(scene.panel_card.property("cardExpanded"))
+        self.assertTrue(scene.overlay_card.property("cardExpanded"))
+        scene.panel_card.cardExpandedRequested.emit(False)
+        self.assertFalse(scene.panel_card.property("cardExpanded"))
+        self.assertFalse(scene.overlay_card.property("cardExpanded"))
+        scene.overlay_card.cardExpandedRequested.emit(True)
+        self.assertTrue(scene.panel_card.property("cardExpanded"))
+        self.assertTrue(scene.overlay_card.property("cardExpanded"))
+
     def test_the_pause_verdicts_push_to_every_card(self):
         # The single authority (the debt pack's two-clock
         # unification): the monitor model's verdicts land on BOTH
@@ -311,7 +575,7 @@ class PreviewPresentationTests(unittest.TestCase):
         scene = self.build()
         # The panel host is Cura's own action-panel row; the overlay host
         # is parented onto the window's content item, once.
-        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST])
+        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST, TAGS_HOST])
         self.assertEqual(scene.app.joined, [("saveButton", scene.panel_host)])
         self.assertIs(scene.overlay_host.parentItem(), scene.content)
         self.assertIs(scene.overlay_host.parent(), scene.content)
@@ -404,7 +668,7 @@ class PreviewPresentationTests(unittest.TestCase):
         # A value published pre-boot must flush onto the created cards.
         scene.presentation.publish({"configuredForFollowing": True})
         scene.app.initializationFinished.emit()
-        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST])
+        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST, TAGS_HOST])
         self.assertEqual(scene.app.joined, [("saveButton", scene.panel_host)])
         self.assertEqual(scene.presentation.controls, (scene.panel_card, scene.overlay_card))
         self.assertEqual(seen, [1])
@@ -418,7 +682,7 @@ class PreviewPresentationTests(unittest.TestCase):
             started = True
 
         scene = self.build(application=StartedDeferredApplication(window=Window(QQuickItem())))
-        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST])
+        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST, TAGS_HOST])
         self.assertEqual(scene.presentation.controls, (scene.panel_card, scene.overlay_card))
 
     def test_verdicts_published_before_the_boot_replay_onto_the_created_cards(self):

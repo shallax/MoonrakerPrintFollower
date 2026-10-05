@@ -46,10 +46,12 @@ class CuraIntegration(QObject):
         self._writing = self._own_scene_changes = 0
         self._load_lease = None
         self._load_watch_lease = None
+        self._plugin_loaded_path = None
         self._watch = QTimer(self)
         self._watch.setInterval(75)
         self._watch.timeout.connect(self._position_changed)
         self._connect(application, "fileCompleted", self._file_completed)
+        self._connect(application, "workspaceLoaded", self._workspace_loaded)
         self._connect(application, "mainWindowChanged", self._refresh)
         self._connect(self.controller, "activeViewChanged", self._refresh)
         self._connect(self.controller, "activeStageChanged", self._refresh)
@@ -77,6 +79,8 @@ class CuraIntegration(QObject):
     def suspended(self): return self._slicing or self.loading or time.monotonic() < self._settle_until
     @property
     def view(self): return self._view
+    @property
+    def plugin_loaded_path(self): return self._plugin_loaded_path
 
     def nudge_cura_activity(self):
         """Re-run Cura's own platform-activity computation after the
@@ -300,9 +304,21 @@ class CuraIntegration(QObject):
 
     def _scene_changed(self, *_args):
         if self.loading or self._slicing or self._own_scene_changes or self._closed: return
+        # Cura can still alter the scene after fileCompleted (for example
+        # while finishing the G-code model). That must not erase the file
+        # association that fileCompleted just confirmed. New project has
+        # workspaceLoaded; another file has its own fileCompleted edge.
         self._settle_until = time.monotonic() + 0.35
         self.invalidate("Cura scene structure changed")
         self.queue(self._refresh, 360)
+
+    def _workspace_loaded(self, *_args):
+        # Cura's New project emits workspaceLoaded("") even if the old
+        # SimulationView layer data has not been cleared yet.
+        if self._closed: return
+        self._plugin_loaded_path = None
+        self.invalidate("Cura workspace changed")
+        self.changed.emit()
 
     def _slicing_started(self, *_args):
         if self.loading: return
@@ -349,6 +365,7 @@ class CuraIntegration(QObject):
             self._load_watch_lease.close()
             self._load_watch_lease = None
         self._load_lease = lease
+        self._plugin_loaded_path = None
         self._heights = None
         # The application's parse job can outlive this plugin. Keep the file
         # lease on an application-owned callback, not the plugin QObject.
@@ -388,16 +405,20 @@ class CuraIntegration(QObject):
         absorbed = False
         if expected:
             self._load_lease = None
+            self._plugin_loaded_path = os.path.abspath(str(path))
             lease.close()
         elif self._load_watch_lease is not None and os.path.abspath(str(path)) == os.path.abspath(self._load_watch_lease.path):
             # A timed-out load finished late: complete it quietly. The
             # parse has finished, so releasing the temp file is safe.
             absorbed = True
+            self._plugin_loaded_path = os.path.abspath(str(path))
             self._load_watch_lease.close()
             self._load_watch_lease = None
         self._heights = None
         self._settle_until = time.monotonic() + 0.25
-        if not expected and not absorbed: self.invalidate("Cura file replaced")
+        if not expected and not absorbed:
+            self._plugin_loaded_path = None
+            self.invalidate("Cura file replaced")
         self.fileLoaded.emit(str(path))
         self.queue(self._refresh, 260)
 
@@ -426,5 +447,3 @@ class CuraIntegration(QObject):
         if self._load_watch_lease is not None:
             self._load_watch_lease.close()
             self._load_watch_lease = None
-
-

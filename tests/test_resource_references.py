@@ -234,6 +234,7 @@ class ResourceReferenceTests(unittest.TestCase):
             ("cura/MoonrakerFollowerMachineAction.py", "settings/MoonrakerFollowerConfiguration.qml"),
             ("preview/PreviewPresentation.py", "preview/MoonrakerPreviewCardPanelHost.qml"),
             ("preview/PreviewPresentation.py", "preview/MoonrakerPreviewCardOverlayHost.qml"),
+            ("preview/PreviewPresentation.py", "preview/PreviewObjectTagsHost.qml"),
             ("whatsnew/WhatsNewOverlay.py", "whatsnew/WhatsNewOverlay.qml"),
             ("whatsnew/WhatsNewOverlay.py", "detection/DetectionOffer.qml"),
             ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.vert.qsb"),

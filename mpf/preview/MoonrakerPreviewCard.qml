@@ -13,6 +13,7 @@ Item {
     property bool followingEnabled: false
     property bool configuredForFollowing: false
     property bool gateVisible: false
+    property bool cardExpanded: true
     // Declared so the bindings below exist from creation: undeclared
     // dynamic names read as undefined at load time and the bindings
     // are dropped before setProperty can ever reach them.
@@ -101,6 +102,7 @@ Item {
 
     signal loadClicked
     signal pauseClicked
+    signal cardExpandedRequested(bool expanded)
     signal printPauseRequested
     signal improveEtaRequested
     signal bedMeshVisibilityRequested(bool visible)
@@ -160,7 +162,7 @@ Item {
         anchors.bottom: parent.bottom
 
         width: base.contentWidth + 2 * base.horizontalPadding
-        height: contentColumn.implicitHeight + 2 * base.verticalPadding
+        height: contentColumn.height + 2 * base.verticalPadding
         color: UM.Theme.getColor("main_background")
         border.width: UM.Theme.getSize("default_lining").width
         border.color: UM.Theme.getColor("lining")
@@ -174,18 +176,49 @@ Item {
                 verticalCenter: parent.verticalCenter
             }
             width: base.contentWidth
+            height: base.cardExpanded ? implicitHeight : titleBar.height + buttons.height + base.rowSpacing
             spacing: base.rowSpacing
 
-            Cura.IconWithText {
-                id: followerTitle
+            Item {
+                id: titleBar
+                objectName: "moonrakerPreviewCardCollapseToggle"
                 width: parent.width
-                text: "Moonraker Print Follower"
-                source: UM.Theme.getIcon("Nozzle")
-                font: UM.Theme.getFont("medium_bold")
+                height: followerTitle.implicitHeight
+
+                Cura.IconWithText {
+                    id: followerTitle
+                    anchors.left: parent.left
+                    anchors.right: expandIcon.left
+                    anchors.rightMargin: base.buttonSpacing
+                    height: parent.height
+                    text: "Moonraker Print Follower"
+                    source: UM.Theme.getIcon("Nozzle")
+                    font: UM.Theme.getFont("medium_bold")
+                }
+
+                UM.ColorImage {
+                    id: expandIcon
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 22 * screenScaleFactor
+                    height: width
+                    source: UM.Theme.getIcon(base.cardExpanded ? "ChevronSingleDown" : "ChevronSingleUp")
+                    color: UM.Theme.getColor("text")
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        base.cardExpanded = !base.cardExpanded;
+                        base.cardExpandedRequested(base.cardExpanded);
+                    }
+                }
             }
 
             Cura.IconWithText {
                 id: followerStatus
+                visible: base.cardExpanded
                 width: parent.width
                 text: base.activePrinterName + (base.statusText.length > 0 ? " — " + base.statusText : "")
                 source: UM.Theme.getIcon(base.statusIconName)
@@ -195,6 +228,7 @@ Item {
             // The live strip: the pause/resume control and the two
             // readout rows, with the cell state machine that feeds them.
             PreviewStatusStrip {
+                visible: base.cardExpanded
                 width: parent.width
                 spacing: base.rowSpacing
                 previewBlock: base.previewBlock
@@ -275,6 +309,7 @@ Item {
             // indicator's inner bindings on its own properties track.
             LoadProgressIndicator {
                 id: loadIndicator
+                visible: base.cardExpanded
                 width: parent.width
             }
 
@@ -295,12 +330,13 @@ Item {
                 // The selection readout means nothing without a
                 // toolpath (the 2026-09-17 ruling) — it hides with
                 // the pause button.
-                visible: base.hasToolpath
+                visible: base.cardExpanded && base.hasToolpath
             }
 
             // The end-of-layer pause section: the toggle, the hint and
             // the scheduled rows, with its own stable list model.
             PauseAtLayerSection {
+                visible: base.cardExpanded
                 width: parent.width
                 spacing: base.rowSpacing
                 hasToolpath: base.hasToolpath
@@ -326,6 +362,7 @@ Item {
             // The bed-mesh display section: the shared range filter,
             // the exaggeration and the show/hide toggle.
             BedMeshLegend {
+                visible: base.cardExpanded
                 width: parent.width
                 spacing: base.rowSpacing
                 bedMeshAvailable: base.bedMeshAvailable

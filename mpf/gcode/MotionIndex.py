@@ -187,6 +187,8 @@ class LayerMotionIndex:
     # whole point) but never this — a seek to an evicted layer still
     # resolves its FULL split and slider total instantly.
     layer_motion_counts: List[int] = field(default_factory=list)
+    # Bounded filament checkpoints and last-extrusion offsets, by object name.
+    object_work: dict = field(default_factory=dict)
     # The LIVE print's layer — the retention window's anchor, updated
     # by the service every poll even when that layer is already
     # hydrated. Runtime state: never saved to or restored from the

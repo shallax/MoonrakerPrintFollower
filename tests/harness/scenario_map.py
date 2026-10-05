@@ -1214,3 +1214,31 @@ for _name in (
         "date": "2026-10-04",
         "recheck": "the desktop simulator gains a synthetic local detector fixture",
     }
+
+for _name in (
+    "moonrakerObjectNameBanner", "moonrakerObjectNameRepeater",
+    "moonrakerPreviewObjectTags", "moonrakerPreviewObjectTagsDock",
+    "moonrakerPreviewObjectTagsHandle", "moonrakerPreviewObjectTagsTitle",
+    "moonrakerPreviewObjectTagsControls",
+    "moonrakerPreviewObjectTagsEnabled", "moonrakerPreviewObjectTagsHoverOnly",
+):
+    EXCLUSIONS[_name] = {
+        "reason": "the native Preview scenarios do not yet supply per-object G-code and a depth-pickable Cura model scene",
+        "evidence": "test_preview_object_tags exercises the real QML engine; test_preview_presentation exercises Cura's selection-pass boundary; test_object_work verifies index and cache data",
+        "date": "2026-10-04",
+        "recheck": "a native Preview scenario loads an object-marked print with matching model meshes",
+    }
+
+EXCLUSIONS["moonrakerPreviewObjectTagsHoverOnlyTooltip"] = {
+    "reason": "the native Preview scenarios do not hover the disabled Object banners control",
+    "evidence": "test_preview_object_tags checks the tooltip text for disabled banners, unavailable picking and unavailable projection in the real QML engine",
+    "date": "2026-10-05",
+    "recheck": "a native Preview scenario hovers the disabled Object banners control",
+}
+
+EXCLUSIONS["moonrakerPreviewCardCollapseToggle"] = {
+    "reason": "the native Preview scenarios exercise the load controls but do not toggle the card layout",
+    "evidence": "test_qml_dashboard_layout clicks the real QML card and verifies its compact actions",
+    "date": "2026-10-05",
+    "recheck": "a native Preview scenario also exercises the card collapse toggle",
+}

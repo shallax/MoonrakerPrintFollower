@@ -26,6 +26,27 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "5.1.0",
+        "headline": "Version 5.1.0 adds object-name banners and more compact "
+            "controls to Cura Preview.",
+        "items": (
+            "Turn object banners on in the collapsible Object banners bar. "
+            "Choose all banners or show them only while hovering over objects.",
+            "On loaded G-code, hover follows object footprints and shows "
+            "every object under the pointer, including overlapping ones. "
+            "Footprint hover is approximate because Cura does not provide "
+            "per-object picking for toolpaths.",
+            "Hovered banners stand out while the others fade. Crowded "
+            "banners keep their leaders attached to object centres, and "
+            "long names scroll back and forth.",
+            "When the print and G-code provide object data, banners can "
+            "show each object's progress and estimated finish time. "
+            "Banners disappear when the loaded G-code is not the current print.",
+            "Collapse the Moonraker Print Follower Preview card to keep "
+            "Attach or Detach and Load current print in a smaller pane.",
+        ),
+    },
+    {
         "version": "5.0.0",
         "headline": "Version 5.0.0 introduces optional local print-failure "
             "detection using your selected webcam and Cura computer.",

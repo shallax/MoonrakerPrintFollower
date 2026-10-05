@@ -379,9 +379,9 @@ change together:
    and the frozen-history pin in `tests/test_whatsnew.py` recomputed: a
    shipped release's notes are FROZEN — later releases add their own entry,
    never edit the older ones
-6. `ROADMAP.md` — name the active `release/v<version>` branch and its scope;
+6. `docs/ROADMAP.md` — name the active `release/v<version>` branch and its scope;
    keep older release plans as history
-7. `TESTING.md` — keep the current-release testing commands and evidence
+7. `docs/TESTING.md` — keep the current-release testing commands and evidence
    at the top; label older harness audits as historical
 8. At release time, Git tag — `v<version>`; the release workflow validates the
    tag against both version fields and fails on mismatch
@@ -871,7 +871,10 @@ Local checks (the hook runs lint/static checks, not the full suite):
 CI runs the same checks (the `lint` job) plus the full suite including the
 real-Qt tests (PyQt6 6.11.0). The release workflow on tag push additionally
 builds reproducible archives and verifies source/package byte parity and the
-Marketplace layout. Before tagging, run the smoke checks the harness cannot
+Marketplace layout. Its reusable CI runs the artifact scan despite the tag's
+intentionally skipped lint job, then requires the package, scan and full Cura
+gate to succeed before publication; a skipped gate fails the release.
+Before tagging, run the smoke checks the harness cannot
 cover (the full matrix from the panel round, restored after a
 transcription drift):
 

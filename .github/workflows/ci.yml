@@ -454,7 +454,12 @@ jobs:
   artifact-scan:
     name: Scan release artifacts
     needs: ci-package
-    if: github.event_name == 'pull_request' || inputs.release_gate
+    # A tag intentionally skips lint, which is ci-package's predecessor.
+    # Override the implicit success() check so that skip cannot propagate
+    # through a successful ci-package and suppress this scan.
+    if: >-
+      ${{ !cancelled() && needs.ci-package.result == 'success' &&
+      (github.event_name == 'pull_request' || inputs.release_gate) }}
     runs-on: ubuntu-26.04
     steps:
       - name: Check out source
@@ -771,3 +776,19 @@ jobs:
           name: gate-${{ matrix.unit }}-${{ matrix.os }}
           path: ${{ env.GALLERY }}
           if-no-files-found: error
+
+  release-verdict:
+    name: Require completed release checks
+    needs: [ci-package, artifact-scan, gate]
+    # Run even when a dependency failed or was skipped. A skipped verdict
+    # would otherwise let the reusable workflow report success and publish.
+    if: ${{ !cancelled() && inputs.tag_release }}
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require package, artifact scan and Cura gate success
+        env:
+          MPF_RELEASE_PACKAGE_RESULT: ${{ needs.ci-package.result }}
+          MPF_RELEASE_SCAN_RESULT: ${{ needs.artifact-scan.result }}
+          MPF_RELEASE_GATE_RESULT: ${{ needs.gate.result }}
+        run: python tools/release_verdict.py

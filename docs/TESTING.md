@@ -1,6 +1,25 @@
 # TESTING.md — the real-Cura UI test harness
 
-## 5.0.0
+## 5.1.0
+
+Version 5.1.0 adds Preview object banners, footprint hover for loaded G-code,
+per-object progress and finish estimates, and collapsible Preview controls.
+`make test_files FILES='tests.test_preview_object_tags tests.test_preview_presentation tests.test_qml_dashboard_layout tests.test_qt_cura_integration tests.test_whatsnew'`
+checks banner placement, real-QML pane geometry, current-print file identity,
+the collapsible card and release notes. `make lint`, `make run_tests` and
+`make package` are the local source and package gates. The real-Cura UI
+harness below remains the cross-platform release gate.
+
+On Cura 5.13, the active marked G-code was loaded and its banners appeared
+after parsing completed. The expanded Object banners bar and collapsed
+Preview card were also checked in the live window. Cura's G-code toolpath
+does not expose per-object picking, so the hover check uses indexed XY
+footprints; a footprint may cover empty space inside its boundary.
+The final local tree passed 4,829 tests, the 99% overall and 95% per-file
+coverage gates, all nine lint checks, package/source parity verification and
+34 byte-identical light/dark capture scenes across two runs.
+
+## 5.0.0 (historical)
 
 Version 5.0.0 adds opt-in local inference and the Detection settings tab,
 per-printer sensitivity, bounds and safe periods, per-printer/camera monitored

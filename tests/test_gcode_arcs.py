@@ -648,7 +648,7 @@ class ArcCacheTests(unittest.TestCase):
         # nothing about the file it came from: every v9 blob is refused
         # rather than read as an arc-free one.
         blob = self._blob(ARC_SOURCE)
-        self.assertEqual(index_codec_module._CACHE_VERSION, 14,
+        self.assertEqual(index_codec_module._CACHE_VERSION, 15,
                          "the cache version must move past the era that could drop arcs")
         self._rewrite_header(blob, dict(self._header_of(blob), version=9))
         self.assertIsNone(self.cache.load(self.identity),
@@ -729,7 +729,7 @@ class ArcCacheTests(unittest.TestCase):
         # chord. Accepting one would silently regress the geometry, so it
         # is refused and the file is read again.
         blob = self._blob(ARC_SOURCE)
-        self.assertEqual(self._header_of(blob)["version"], 14)
+        self.assertEqual(self._header_of(blob)["version"], 15)
         self._rewrite_header(blob, dict(self._header_of(blob), version=8))
         self.assertIsNone(self.cache.load(self.identity),
                           "a pre-arc cache blob was accepted as arc-aware")

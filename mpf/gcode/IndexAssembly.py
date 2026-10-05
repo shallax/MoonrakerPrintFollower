@@ -30,7 +30,7 @@ def _print_colour_ranges(blocks, heights, diameter, diameters):
                 result[name] = (min(lo, previous[0]), max(hi, previous[1]))
     return result
 
-def assemble_index(blocks, file_end, stats_values, marker_values, pause_offsets, type_names, filament_diameter, filament_diameters, compact, cancel_event) -> LayerMotionIndex:
+def assemble_index(blocks, file_end, stats_values, marker_values, pause_offsets, type_names, filament_diameter, filament_diameters, compact, cancel_event, object_work=None) -> LayerMotionIndex:
     ranges: List[Tuple[int, int]] = []
     motions: List[array] = []
     xs: List[array] = []
@@ -208,4 +208,5 @@ def assemble_index(blocks, file_end, stats_values, marker_values, pause_offsets,
         compact=bool(compact),
         hydrated_layers=hydrated,
         layer_motion_counts=layer_counts,
+        object_work=object_work or {},
     )

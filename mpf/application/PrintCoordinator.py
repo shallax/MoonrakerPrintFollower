@@ -1,8 +1,10 @@
 """Cross-domain orchestration with explicit dependencies; not a shared state bag."""
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import replace
+import os
 import time
 from typing import NamedTuple
 
@@ -23,6 +25,42 @@ from ..preview.PreviewFormatting import (
 from ..printing.PrintIdentity import index_view_for_print
 from ..printing.PrintState import LayerResolver, PrintSnapshot
 from ..printing.RemoteJobService import RemoteJobService
+
+
+def _merge_object_tag_definitions(definitions, metrics):
+    """Join Klipper definitions to G-code metrics without duplicating case variants.
+
+    Klipper's object identifiers can be uppercased while the G-code's
+    MESH/EXCLUDE_OBJECT markers retain the slicer's spelling. Casefold only
+    when the match is unique on both sides; distinct case-sensitive names
+    must never silently inherit one another's progress or exclusion flag.
+    """
+    definition_counts = Counter(row["name"].casefold() for row in definitions)
+    metric_names = {}
+    for name in metrics:
+        metric_names.setdefault(name.casefold(), []).append(name)
+    used = set()
+    rows = []
+    for definition in definitions:
+        status_name = definition["name"]
+        matched = status_name if status_name in metrics else None
+        if matched is None and definition_counts[status_name.casefold()] == 1:
+            candidates = metric_names.get(status_name.casefold(), ())
+            if len(candidates) == 1:
+                matched = candidates[0]
+        metric = metrics.get(matched, {}) if matched is not None else {}
+        row = dict(definition, statusName=status_name,
+                   name=matched or status_name,
+                   center=definition.get("center") or metric.get("center"))
+        if metric.get("bounds") is not None:
+            row["bounds"] = metric["bounds"]
+        rows.append(row)
+        if matched is not None:
+            used.add(matched)
+    rows.extend({"name": name, "center": metric["center"],
+                 "bounds": metric.get("bounds"), "excluded": False}
+                for name, metric in metrics.items() if name not in used)
+    return rows
 
 
 class _PrintFace(NamedTuple):
@@ -1142,6 +1180,31 @@ class PrintCoordinator(QObject):
         self._pause_block = block
         return block
 
+    def _object_tag_values(self, status, snapshot):
+        source = (status if status is not None else self._frame).get("exclude_object") or {}
+        loaded_path = getattr(self._cura, "plugin_loaded_path", None)
+        same_file = (snapshot.active and loaded_path
+                     and self._files.path and os.path.abspath(loaded_path) == os.path.abspath(self._files.path))
+        source_state = (bool(snapshot.active), bool(loaded_path),
+                        bool(self._files.path), bool(same_file))
+        if source_state != getattr(self, "_object_tag_source_state", None):
+            self._object_tag_source_state = source_state
+            Logger.log("i", "Moonraker banner source: active=%s CuraFile=%s download=%s match=%s", *source_state)
+        definitions = list(self._plate_memo.value(source, self._files.job_key)["objects"]) if same_file else []
+        view = self._index.view
+        metrics = {}
+        if same_file and view is not None and view.job_key == self._files.job_key:
+            metrics = view.object_metrics(view.physical_file_offset(snapshot.motion_progress), snapshot.layer_eta)
+            now = time.time()
+            for row in metrics.values():
+                remaining = row.pop("remaining")
+                row["deadline"] = now + remaining if remaining is not None and remaining > 0 else None
+            definitions = _merge_object_tag_definitions(definitions, metrics)
+        return {"objectTagSourceActive": bool(same_file),
+                "objectTagDefinitions": definitions, "objectTagMetrics": metrics,
+                "objectTagCurrentObject": source.get("current_object") if snapshot.active else None,
+                "objectTagHeight": snapshot.layer.height if snapshot.active else None}
+
     def _publish(self, status=None):
         if self._closed: return
         config, state, snapshot = self._binding.config, self._preview.state, self._snapshot
@@ -1207,6 +1270,7 @@ class PrintCoordinator(QObject):
             "previewStageActive": self._cura.preview_active,
             "activePrinterName": self._binding.identity[1], "hasToolpath": self._cura.has_toolpath,
             "sceneHasObjects": self._cura.scene_has_objects,
+            **self._object_tag_values(status, snapshot),
             "statusText": compact, "statusIconName": status_icon(compact),
             "selectedLayerEtaText": state.eta_text,
             **self._pause_values(snapshot),
