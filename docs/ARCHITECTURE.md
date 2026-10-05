@@ -404,22 +404,27 @@ mutate path/ETA/attachment fields. `reset_tracking()` clears index-derived progr
 and anchors while preserving print observation and attachment; `reset_print()`
 clears print-local state without automatically reattaching a manually detached view.
 
-The Preview object-name dock belongs to `PreviewPresentation`. Its banner anchors
+The Preview object-name bar belongs to `PreviewPresentation`. Its banner anchors
 use Cura's public `Camera.projectToViewport()` with the window's viewport rectangle
 and device-pixel ratio. `ObjectNameProjection` places upright QML plates in screen
 space and separates nearby labels while leaving leaders attached to their 3D
-anchors. The dock stores banner visibility and hovered-only mode in global plugin
-state. Cura's depth-tested `selection` pass selects the front-most scene model
-mesh under the pointer; hovered-only mode is unavailable for a G-code-only scene
-because Cura's SimulationPass does not expose per-object toolpath IDs through
-that pass. No 2D footprint is used as a picking substitute. The all-banners mode
-can use Moonraker's object definitions when the exact plugin-loaded file matches
+anchors. Crowded and edge positions keep their banners visible. The bar stores
+banner visibility and hovered-only mode in global plugin state. Cura's
+depth-tested `selection` pass selects the front-most scene model mesh under the
+pointer. A G-code-only scene has no per-object toolpath IDs in that pass, so
+hovered-only mode casts a camera ray into indexed object footprints and shows
+every matching object; this is approximate because a footprint can include
+empty space. Hovering fades every unselected banner. The banners use
+Moonraker's object definitions only when the exact plugin-loaded file matches
 the current print. The one-pass index records bounded per-object extrusion totals,
 layer checkpoints, XY bounds and last-work offsets from `EXCLUDE_OBJECT_START/END`
 or `;MESH:` markers. The version-15 cache persists these summaries and can supply
-banner anchors when Moonraker object centres are missing. Exact-name matches show
-filament progress and, when a print-end ETA exists, a projected object deadline
-scaled by slicer elapsed times. Unmatched objects omit these estimates.
+banner anchors when Moonraker object centres are missing. Unique case variants
+of Moonraker and G-code names are joined without creating duplicate banners.
+Matched objects show filament progress and, when a print-end ETA exists, a
+projected object deadline scaled by slicer elapsed times. Unmatched objects
+omit these estimates. The neighboring Preview card remembers its expanded
+state and keeps its bottom edge aligned with the collapsible banner bar.
 
 Manual Preview changes are detected against remembered plugin-written values.
 `CuraIntegration.writing_preview()` suppresses callbacks from plugin writes, while

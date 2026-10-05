@@ -10,19 +10,26 @@ Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
-## 5.1.0 — Preview physical head (candidate)
+## 5.1.0 — Preview object banners
 
-This Preview work was originally planned for 5.0.0 and deferred when local
-failure detection took that release. Carry it forward as a 5.1.0 candidate,
-subject to proving Cura's Preview camera projection and the layer/foreign-height
-identity gate in a real Cura session. The detailed earlier proposal remains
-below as a planning record.
+The `release/v5.1.0` branch delivers camera-aligned object-name banners for
+the active print. A collapsible bar controls all-banners and hovered-only
+display. Loaded G-code uses indexed footprints for approximate hover and shows
+every object under the pointer; selectable scene models use Cura's selection
+pass. Banners include per-object progress and estimated finish times when the
+print supplies the needed markers and timing data. The Preview card can
+collapse to Attach/Detach and Load current print. The two panes share a bottom
+alignment and reserve space in Cura's action row.
+
+## 5.2.0 — Physical head and Preview controls (planned)
+
+The remaining Preview work moves to 5.2.0. The detailed earlier proposal
+remains below as a planning record; its old version references describe the
+decisions as originally made.
 
 - Show the printer's live physical head position in Cura Preview, mapped from
   machine coordinates into the sliced scene. Include a distinct marker,
   position readout, parked/unhomed explanations and display smoothing.
-- Put object-name tags in Preview using the same camera projection, if that
-  projection is available through a supported Cura interface.
 - Add a Preview control dock with jog, pause/resume and speed/extrusion factors
   beside the toolpath, while retaining existing Monitor controls.
 - Replace the remaining private Cura SimulationPass writes in the native
@@ -2467,10 +2474,11 @@ accelerated timelapses, not necessarily representative of the live camera
 stream. Do not adjust thresholds to force a red result on these clips or
 describe the model as detecting them.
 
-## 5.1.0 planning record — Physical head in the Preview
+## 5.2.0 planning record — Physical head in the Preview
 
-This is the historical 5.0.0 proposal now carried into the 5.1.0 candidate
-above. References to earlier release plans below record their original context.
+This historical 5.0.0 proposal now informs the planned 5.2.0 work above.
+Object-name banners shipped separately in 5.1.0. References to earlier
+release plans below record their original context.
 
 What a web dashboard cannot do: show the real machine inside the slice.
 The 4.3.0 presentation refactor lands first (the 2026-09-14
@@ -2489,7 +2497,7 @@ while the presentation refactor finishes.
 - The nozzle repair's remaining private-state writes (the
   2026-09-16 ruling, backlog): the 4.2.0 NativeNozzleLifecycle
   synchronises Cura's layer-switch suppression through two
-  SimulationPass private fields. 5.0.0 replaces them with the
+  SimulationPass private fields. The 5.2.0 plan replaces them with the
   all-public form — nozzle parenting, setEnabled, setActivity and
   the view's public getCompatibilityMode() — and accepts the
   one-frame nozzle flicker at layer transitions. Until then the
@@ -2511,18 +2519,14 @@ while the presentation refactor finishes.
   head" — drop it. Klipper reports the ACTIVE nozzle, but on
   single-nozzle machines that changes nothing — the real multi-extruder
   feature is an active-tool label and per-tool path colouring.
-- Preview name tags (billboarded object names over the Preview
-  view), moved from 4.6.0's probe-gated stretch (the 2026-09-21
-  ruling): they ship ALONGSIDE the live toolhead marker — the two
-  overlays share the preview-camera projection (a 2D overlay
-  projecting object positions through the preview camera; the open
-  question is camera-matrix exposure), and one camera-matrix
-  answer serves both. Deferred with evidence if unreachable.
+- Preview name tags were proposed alongside the physical-head marker in this
+  original plan. They shipped in 5.1.0 using camera projection, before the
+  physical-head marker. The marker can reuse that projection work.
 - A floating jog pad in the Preview panel, so the head can be moved while
   looking at the actual toolpath. The Preview control dock lands with
   it: the factor sliders ruled out of the 4.3.0 strip (2026-09-15)
   find their Preview home here; z-offset and extrude/retract stay
-  Monitor-side unless 5.0.0's planning re-rules them. When the dock
+  Monitor-side unless 5.2.0 planning re-rules them. When the dock
   lands, the status strip breaks out of the card to its own surface
   (the 2026-09-15 ruling).
 - A shared coordinate-transform module — corrected by the pro-user

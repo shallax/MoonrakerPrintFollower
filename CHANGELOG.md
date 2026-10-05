@@ -2,17 +2,28 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
-## 5.1.0 (in development)
+## 5.1.0
 
-- Add camera-aligned object-name banners to Preview with an on/off dock control
-  and an all-banners or hovered-only choice. Hover raises the front-most Cura
-  model's banner and fades nearby names using Cura's depth-tested selection pass.
-  Loaded G-code without selectable model meshes keeps all-banners mode; Cura does
-  not provide per-object toolpath picking through that pass.
-- Show per-object filament progress and a projected countdown and finish time
-  when object markers, index data and a print ETA are available. The one-pass
-  G-code index and persistent cache now retain bounded per-object work summaries
-  and XY bounds, so marked objects can be positioned without Moonraker centres.
+- Add camera-aligned object-name banners to Cura Preview. The collapsible
+  Object banners bar offers an on/off switch and all-banners or hovered-only
+  display. Its bottom edge aligns with the Preview card, and Cura's action row
+  reserves room for it beside other plugin controls.
+- For loaded G-code, hover uses each object's indexed footprint because Cura
+  does not expose per-object toolpath picking. Every object under the pointer
+  gets a banner, even when footprints overlap. Selectable scene meshes still
+  use Cura's depth-tested object selection. Hovering fades all other banners;
+  crowded labels retain bent leaders and remain visible even near screen edges.
+- Show per-object filament progress and projected finish times when object
+  markers, index data and a print ETA are available. Long names scroll back
+  and forth with easing. The index cache now retains bounded per-object work
+  summaries and XY bounds, so marked objects can be placed without Moonraker
+  centres. Banners are shown only for the current print's matching G-code.
+- Collapse the Moonraker Print Follower Preview card to its title,
+  Attach/Detach and Load current print controls. Both card hosts remember the
+  same state. The expanded Object banners bar now sizes to its controls with
+  matching top and bottom padding.
+- Recognize completion when Cura takes longer than the load watchdog to parse
+  a large G-code file, restoring exact file identity and its object banners.
 
 ## 5.0.0
 

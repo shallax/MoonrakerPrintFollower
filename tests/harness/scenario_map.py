@@ -1218,6 +1218,8 @@ for _name in (
 for _name in (
     "moonrakerObjectNameBanner", "moonrakerObjectNameRepeater",
     "moonrakerPreviewObjectTags", "moonrakerPreviewObjectTagsDock",
+    "moonrakerPreviewObjectTagsHandle", "moonrakerPreviewObjectTagsTitle",
+    "moonrakerPreviewObjectTagsControls",
     "moonrakerPreviewObjectTagsEnabled", "moonrakerPreviewObjectTagsHoverOnly",
 ):
     EXCLUSIONS[_name] = {
@@ -1226,3 +1228,10 @@ for _name in (
         "date": "2026-10-04",
         "recheck": "a native Preview scenario loads an object-marked print with matching model meshes",
     }
+
+EXCLUSIONS["moonrakerPreviewCardCollapseToggle"] = {
+    "reason": "the native Preview scenarios exercise the load controls but do not toggle the card layout",
+    "evidence": "test_qml_dashboard_layout clicks the real QML card and verifies its compact actions",
+    "date": "2026-10-05",
+    "recheck": "a native Preview scenario also exercises the card collapse toggle",
+}

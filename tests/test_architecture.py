@@ -252,7 +252,7 @@ class SourceContractTests(unittest.TestCase):
             'PreviewFormatting': set(),
             'PreviewMotion': {'CuraAdapter', 'PreviewSmoothing'},
             'PreviewPresentation': {'ObjectNameProjection', 'PluginPaths'},
-            'ObjectNameProjection': set(),
+            'ObjectNameProjection': {'Polygons'},
             'PreviewSmoothing': set(),
             'PrintCoordinator': {'LoadStateTracker', 'MonitorFormatting', 'MoonrakerProtocol', 'NextPausePipeline', 'PreviewFormatting', 'PrintIdentity', 'PrintState', 'RemoteJobService'},
             'PrintIdentity': set(),

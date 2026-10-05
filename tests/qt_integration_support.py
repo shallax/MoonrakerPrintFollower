@@ -399,6 +399,7 @@ class CuraIntegrationLoadTests(unittest.TestCase):
 
         class FakeApp(QObject):
             fileCompleted = pyqtSignal(str)
+            workspaceLoaded = pyqtSignal(str)
             def __init__(self):
                 super().__init__()
                 self.loaded = []

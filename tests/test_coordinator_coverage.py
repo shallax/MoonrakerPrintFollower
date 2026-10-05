@@ -2,6 +2,26 @@
 from tests import control_owner_support as harness
 
 class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
+    def test_object_tag_sources_join_unique_case_variants_without_extra_banners(self):
+        from mpf.application.PrintCoordinator import _merge_object_tag_definitions
+
+        definitions = [{"name": "DELETE_DAY_SINGLE_LED", "center": [12, 18],
+                        "polygon": [[10, 16], [14, 16], [14, 20]], "excluded": True}]
+        metrics = {"Delete_Day_Single_LED": {"center": [12, 18],
+                                              "bounds": [10, 16, 14, 20], "progress": 0.6}}
+        rows = _merge_object_tag_definitions(definitions, metrics)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "Delete_Day_Single_LED")
+        self.assertEqual(rows[0]["statusName"], "DELETE_DAY_SINGLE_LED")
+        self.assertTrue(rows[0]["excluded"])
+        self.assertEqual(rows[0]["bounds"], [10, 16, 14, 20])
+
+        # Two case-sensitive metric names have no unique identity match.
+        ambiguous = _merge_object_tag_definitions(
+            [{"name": "PANEL", "center": None}],
+            {"Panel": {"center": [1, 1]}, "panel": {"center": [2, 2]}})
+        self.assertEqual([row["name"] for row in ambiguous], ["PANEL", "Panel", "panel"])
+
     def test_the_anchor_point_fraction_measures_the_selected_point(self):
         # The detached popover's ETA targets the POINT selected inside
         # the layer (the review's ask): a share of the layer's motions
@@ -1158,14 +1178,16 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
         with harness.patch.object(coordinator_module, "Logger") as logger:
             parts.coordinator._publish()
             messages = [str(call) for call in logger.log.call_args_list]
-            # Two diagnostics lines: the card's gates and the phases.
-            self.assertEqual(len(messages), 2)
+            # The source association, card gates and load phases each
+            # report once on a state transition.
+            self.assertEqual(len(messages), 3)
+            self.assertTrue(any("banner source" in message for message in messages))
             self.assertTrue(any("preview card gates" in message
                                 for message in messages))
             self.assertTrue(any("preview card phases" in message
                                 for message in messages))
             parts.coordinator._publish()
-        self.assertEqual(len(logger.log.call_args_list), 2)
+        self.assertEqual(len(logger.log.call_args_list), 3)
         with harness.patch.object(coordinator_module, "Logger") as logger:
             parts.cura.has_toolpath = True
             parts.coordinator._publish()

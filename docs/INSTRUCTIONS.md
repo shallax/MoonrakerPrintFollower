@@ -379,9 +379,9 @@ change together:
    and the frozen-history pin in `tests/test_whatsnew.py` recomputed: a
    shipped release's notes are FROZEN — later releases add their own entry,
    never edit the older ones
-6. `ROADMAP.md` — name the active `release/v<version>` branch and its scope;
+6. `docs/ROADMAP.md` — name the active `release/v<version>` branch and its scope;
    keep older release plans as history
-7. `TESTING.md` — keep the current-release testing commands and evidence
+7. `docs/TESTING.md` — keep the current-release testing commands and evidence
    at the top; label older harness audits as historical
 8. At release time, Git tag — `v<version>`; the release workflow validates the
    tag against both version fields and fails on mismatch

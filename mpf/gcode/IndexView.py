@@ -58,6 +58,7 @@ class IndexView:
         return {name: {"top": row["top"],
                        "center": [(row["bounds"][0] + row["bounds"][2]) / 2,
                                   (row["bounds"][1] + row["bounds"][3]) / 2],
+                       "bounds": list(row["bounds"]),
                        "progress": object_work_fraction(row, offset) if offset is not None else None,
                        "remaining": object_remaining(row, offset, file_end, remaining_end,
                                                       self._index.ranges, self._index.layer_elapsed_times)

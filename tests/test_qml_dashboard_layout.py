@@ -530,6 +530,42 @@ class PaneGutterTests(harness.PaneGutterTests):
                                "controls@%d" % width)
 
 
+class PreviewCardCollapseTests(harness.RealEngineTestCase):
+    def test_collapsed_card_keeps_only_its_title_and_load_actions(self):
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtQuick import QQuickItem
+        from PyQt6.QtTest import QTest
+
+        card = self.mount("MoonrakerPreviewCard.qml")
+        window = harness.QQuickWindow()
+        window.resize(800, 700)
+        card.setParentItem(window.contentItem())
+        card.setProperty("gateVisible", True)
+        card.setProperty("hasToolpath", True)
+        card.setProperty("followingEnabled", True)
+        window.show()
+        self.addCleanup(window.deleteLater)
+        self.pump(20)
+        expanded_height = card.property("panelHeight")
+        title = self.find(card, "moonrakerPreviewCardCollapseToggle")
+        point = title.mapToScene(QPointF(title.width() / 2, title.height() / 2))
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton,
+                         pos=QPoint(round(point.x()), round(point.y())))
+        self.pump(20)
+        self.assertFalse(card.property("cardExpanded"))
+        self.assertLess(card.property("panelHeight"), expanded_height / 2)
+        visible_text = [item.property("text") for item in card.findChildren(QQuickItem)
+                        if item.isVisible() and item.property("text") is not None]
+        self.assertIn("Load current print", visible_text)
+        self.assertIn("Detach", visible_text)
+        self.assertNotIn("Pause print", visible_text)
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton,
+                         pos=QPoint(round(point.x()), round(point.y())))
+        self.pump(20)
+        self.assertTrue(card.property("cardExpanded"))
+        self.assertAlmostEqual(card.property("panelHeight"), expanded_height, delta=2)
+
+
 class PauseRowRoleTests(harness.PauseRowRoleTests):
     def test_rows_without_a_state_or_eta_keep_the_model_roles(self):
         card = self.mount("MoonrakerPreviewCard.qml")

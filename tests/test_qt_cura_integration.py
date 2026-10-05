@@ -2,6 +2,22 @@
 from tests import qt_integration_support as harness
 
 class CuraIntegrationLoadTests(harness.CuraIntegrationLoadTests):
+    def test_scene_update_after_parse_keeps_the_confirmed_file_identity(self):
+        path = self._make_file()
+        self.cura._plugin_loaded_path = path
+        self.cura._scene_changed()
+        self.assertEqual(self.cura.plugin_loaded_path, path)
+
+    def test_external_file_completion_clears_the_plugin_loaded_file_identity(self):
+        self.cura._plugin_loaded_path = self._make_file()
+        self.app.fileCompleted.emit(self._make_file("other.gcode"))
+        self.assertIsNone(self.cura.plugin_loaded_path)
+
+    def test_new_project_clears_file_identity_before_stale_layer_data_disappears(self):
+        self.cura._plugin_loaded_path = self._make_file()
+        self.app.workspaceLoaded.emit("")
+        self.assertIsNone(self.cura.plugin_loaded_path)
+
     def test_heights_do_not_touch_cura_during_load_or_slicing_and_resume_afterwards(self):
         from unittest.mock import Mock
         view = Mock()
@@ -86,5 +102,3 @@ class CuraIntegrationLoadTests(harness.CuraIntegrationLoadTests):
         self.assertEqual(self.cura.plugin_loaded_path, harness.os.path.abspath(path))
         self.assertIn(path, self.releases)  # released once the parse finished
         self.assertFalse(harness.os.path.exists(path))
-
-

@@ -8,8 +8,26 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 5.0.0
+- **Release:** 5.1.0
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 5.1.0
+
+Cura Preview can now show an object-name banner above each object in the
+current print. The collapsible **Object banners** bar beside the Preview card
+lets you turn banners on or show them only while hovering. Hovering over a
+loaded G-code print uses object footprints: if several objects share the point
+under the cursor, all of their banners appear. Hovered banners stand out while
+the others fade. Leaders stay tied to each object's centre, and long names
+scroll back and forth instead of being cut off.
+
+When the G-code has object markers, banners can show per-object progress and
+an estimated finish time. They appear only when Cura has loaded the G-code for
+the active Moonraker print. Cura does not expose per-object picking for a
+G-code toolpath, so footprint hover is approximate; selectable scene models
+still use Cura's object selection. The **Moonraker Print Follower** Preview
+card also collapses to its Attach/Detach and Load current print buttons,
+leaving more of the toolpath visible.
 
 ## What changed in 5.0.0
 

@@ -5,11 +5,11 @@ from __future__ import annotations
 import math
 import time
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QPointF, QTimer, pyqtSignal
 from UM.Logger import Logger
 
 from ..resources.PluginPaths import plugin_path
-from .ObjectNameProjection import place_banners
+from .ObjectNameProjection import footprint_hits, place_banners
 
 
 def _definition_center(row):
@@ -48,12 +48,16 @@ class PreviewPresentation(QObject):
         self._tags_shell = None
         self._persistence = persistence
         saved = persistence.state_global_document() if persistence is not None else {}
+        self._card_expanded = bool(saved.get("previewCardExpanded", True))
         self._tags_enabled = bool(saved.get("previewObjectTagsEnabled", False))
         self._hover_only = bool(saved.get("previewObjectTagsHoverOnly", False))
         self._hover_point = None
         self._hovered_node = 0
+        self._hovered_names = []
         self._picked_point = None
         self._picked_at = 0.0
+        self._footprint_picked_point = None
+        self._footprint_picked_at = 0.0
         self._projected_rows = []
         self._pick_available = False
         self._tag_timer = QTimer(self)
@@ -139,8 +143,11 @@ class PreviewPresentation(QObject):
             gate = configured and preview and (not overlay or not panel_up)
             try: control.setProperty("gateVisible", gate)
             except RuntimeError: pass
+            try: control.setProperty("cardExpanded", self._card_expanded)
+            except RuntimeError: pass
             for name, value in self._values.items():
-                if name in ("gateVisible", "objectTagDefinitions", "objectTagHeight", "objectTagCurrentObject", "objectTagMetrics"): continue
+                if name in ("gateVisible", "objectTagSourceActive", "objectTagDefinitions",
+                            "objectTagHeight", "objectTagCurrentObject", "objectTagMetrics"): continue
                 if name == "replacePromptVisible":
                     # The prompt is a Popup, and a Popup renders in the
                     # WINDOW's overlay: it escapes whatever hidden
@@ -153,7 +160,7 @@ class PreviewPresentation(QObject):
                 try: control.setProperty(name, value)
                 except RuntimeError: pass
         if self._tags_shell is not None:
-            active = preview
+            active = configured and preview
             self._tags_shell.setProperty("dockVisible", active)
             self._tags_shell.setProperty("tagsEnabled", self._tags_enabled)
             self._tags_shell.setProperty("hoverOnly", self._hover_only)
@@ -168,6 +175,14 @@ class PreviewPresentation(QObject):
             self._persistence.merge_state_global({"previewObjectTagsEnabled": self._tags_enabled})
         self._publish_all()
         self._update_tags()
+
+    def _set_card_expanded(self, expanded):
+        self._card_expanded = bool(expanded)
+        if self._persistence is not None:
+            self._persistence.merge_state_global({"previewCardExpanded": self._card_expanded})
+        for control in self.controls:
+            try: control.setProperty("cardExpanded", self._card_expanded)
+            except RuntimeError: pass
 
     def _set_hover_only(self, enabled):
         self._hover_only = bool(enabled)
@@ -207,15 +222,17 @@ class PreviewPresentation(QObject):
                 matched = nearest is not None and math.hypot(px - nearest[1][0], py - nearest[1][1]) < 12.0
                 if matched:
                     name = nearest[0]["name"]
+                    status_name = nearest[0].get("statusName", name)
                 else:
                     name = str(node.getName() or "")
+                    status_name = name
                 if not name:
                     continue
                 metric = metrics.get(name) or {}
                 current_height = self._values.get("objectTagHeight")
                 progress = metric.get("progress")
                 if (progress is None and current_height is not None and box.top > box.bottom
-                        and name == self._values.get("objectTagCurrentObject")):
+                        and status_name == self._values.get("objectTagCurrentObject")):
                     progress = min(1.0, max(0.0, (float(current_height) - box.bottom) / box.height))
                 if matched and nearest[0].get("excluded"):
                     progress = None
@@ -239,9 +256,18 @@ class PreviewPresentation(QObject):
             progress = None if row.get("excluded") else metric.get("progress")
             top = metric.get("top")
             anchor_z = min(z, float(top)) if top is not None else z
+            polygon = row.get("polygon") or ()
+            bounds = row.get("bounds")
+            if len(polygon) < 3 and bounds is not None:
+                xmin, ymin, xmax, ymax = bounds
+                polygon = ((xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax))
+            footprint = [(px if centred else px - width / 2.0,
+                          -py if centred else depth / 2.0 - py)
+                         for px, py in polygon]
             rows.append({"name": row["name"], "nodeId": 0,
                          "position": Vector(scene_x, anchor_z, scene_z), "progress": progress,
-                         "deadline": metric.get("deadline") if progress is not None else None})
+                         "deadline": metric.get("deadline") if progress is not None else None,
+                         "footprint": footprint, "footprintHeight": anchor_z})
         return rows, False
 
     def _pick_hover(self, window, scene):
@@ -250,7 +276,7 @@ class PreviewPresentation(QObject):
             self._picked_point = None
             return 0
         now = time.monotonic()
-        if self._hover_point == self._picked_point or now - self._picked_at < 0.18:
+        if self._hover_point == self._picked_point and now - self._picked_at < 0.18:
             return self._hovered_node
         try:
             x, y = self._hover_point
@@ -267,23 +293,57 @@ class PreviewPresentation(QObject):
         except (AttributeError, RuntimeError, TypeError, ValueError, ZeroDivisionError):
             return 0
 
+    def _pick_footprints(self, window, camera, objects):
+        if self._hover_point is None:
+            self._hovered_names = []
+            self._footprint_picked_point = None
+            return []
+        now = time.monotonic()
+        if self._hover_point == self._footprint_picked_point and now - self._footprint_picked_at < 0.18:
+            return self._hovered_names
+        try:
+            x, y = self._hover_point
+            ray = camera.getRay(2.0 * x / window.width() - 1.0,
+                                2.0 * y / window.height() - 1.0)
+            origin = (ray.origin.x, ray.origin.y, ray.origin.z)
+            direction = (ray.direction.x, ray.direction.y, ray.direction.z)
+            names = footprint_hits(objects, origin, direction)
+            self._footprint_picked_point = self._hover_point
+            self._footprint_picked_at = now
+            self._hovered_names = names
+            return names
+        except (AttributeError, RuntimeError, TypeError, ValueError, ZeroDivisionError):
+            return []
+
     def _update_tags(self):
         shell = self._tags_shell
         if self._closed or shell is None:
             return
         try:
+            card = self._panel_card if self._cura_panel_visible() else self._overlay_card
+            card_left = card.mapToScene(QPointF(0, 0)).x() if card is not None else -1
+            card_bottom = card.mapToScene(QPointF(0, card.height())).y() if card is not None else -1
+            shell.setProperty("previewCardLeft", card_left)
+            shell.setProperty("previewCardBottom", card_bottom)
             window = self._application.getMainWindow()
             camera = self._cura.controller.getScene().getActiveCamera()
             supported = (window is not None and camera is not None
                          and callable(getattr(camera, "projectToViewport", None))
                          and camera.getViewportWidth() > 0 and camera.getViewportHeight() > 0)
             shell.setProperty("projectionAvailable", bool(supported))
-            if not supported or not self._cura.preview_active or not self._tags_enabled or not self._cura.has_toolpath:
+            gate_state = (bool(supported), bool(self._cura.preview_active), bool(self._tags_enabled),
+                          bool(self._cura.has_toolpath), bool(self._values.get("objectTagSourceActive")))
+            if gate_state != getattr(self, "_last_tag_gate_state", None):
+                self._last_tag_gate_state = gate_state
+                Logger.log("i", "Moonraker banner projection: camera=%s preview=%s enabled=%s toolpath=%s source=%s", *gate_state)
+            if not all(gate_state):
                 if self._projected_rows:
                     self._projected_rows = []
                     shell.setProperty("tagRows", [])
                 shell.setProperty("pickAvailable", False)
+                shell.setProperty("pickMode", "none")
                 shell.setProperty("hoveredNode", 0)
+                shell.setProperty("hoveredNames", [])
                 return
             scene = self._cura.controller.getScene()
             objects, pickable = self._scene_objects()
@@ -294,19 +354,32 @@ class PreviewPresentation(QObject):
             def project(position):
                 px, py = camera.projectToViewport(position)
                 return center_x + px / ratio, center_y - py / ratio
-            rows = place_banners(objects, project, window.width(), window.height())
+            self._pick_available = pickable and self._application.getRenderer().getRenderPass("selection") is not None
+            footprint_available = not self._pick_available and any(item.get("footprint") for item in objects)
+            hovered = self._pick_hover(window, scene) if self._pick_available else 0
+            hovered_names = self._pick_footprints(window, camera, objects) if footprint_available else []
+            rows = place_banners(objects, project, window.width(), window.height(),
+                                 hover_only=self._hover_only and (self._pick_available or footprint_available),
+                                 hovered_node=hovered, hovered_names=hovered_names)
+            result_state = (len(objects), len(rows), bool(self._hover_only), bool(self._pick_available),
+                            bool(footprint_available))
+            if result_state != getattr(self, "_last_tag_result_state", None):
+                self._last_tag_result_state = result_state
+                Logger.log("i", "Moonraker banner layout: objects=%s rows=%s hoverOnly=%s exactPick=%s footprintPick=%s", *result_state)
             if rows != self._projected_rows:
                 self._projected_rows = rows
                 shell.setProperty("tagRows", rows)
-            self._pick_available = pickable and self._application.getRenderer().getRenderPass("selection") is not None
-            hovered = self._pick_hover(window, scene)
-            shell.setProperty("pickAvailable", self._pick_available)
+            shell.setProperty("pickAvailable", self._pick_available or footprint_available)
+            shell.setProperty("pickMode", "exact" if self._pick_available else "footprint" if footprint_available else "none")
             shell.setProperty("hoveredNode", hovered)
+            shell.setProperty("hoveredNames", hovered_names)
         except (AttributeError, RuntimeError, TypeError, ValueError, ZeroDivisionError) as error:
             Logger.log("d", "Moonraker object tags unavailable: %s", error)
             self._projected_rows = []
             shell.setProperty("tagRows", [])
             shell.setProperty("pickAvailable", False)
+            shell.setProperty("pickMode", "none")
+            shell.setProperty("hoveredNames", [])
 
     def _cura_panel_visible(self):
         # The panel's own visibility predicate (Cura's
@@ -331,6 +404,7 @@ class PreviewPresentation(QObject):
         for name, target in (
             ("loadClicked", self.loadRequested.emit),
             ("pauseClicked", self.attachmentRequested.emit),
+            ("cardExpandedRequested", self._set_card_expanded),
             ("improveEtaRequested", self.improveEtaRequested.emit),
             ("pauseAtLayerRequested", self.pauseAtLayerRequested.emit),
             ("printPauseRequested", self.printPauseRequested.emit),

@@ -3460,6 +3460,11 @@ Item {
             "visible: root.dockVisible && root.tagsEnabled",
             "visible: root.dockVisible && root.tagsEnabled && (!root.hoverOnly || !root.pickAvailable || selected)",
             "visible: root.dockVisible",
+            "visible: root.controlsExpanded",
+            # The Preview card's own explicit collapse action hides its
+            # details while leaving Attach/Detach and Load in place.
+            "visible: base.cardExpanded",
+            "visible: base.cardExpanded && base.hasToolpath",
             "visible: modelData.deadline != null",
             "visible: modelData.progress !== null",
             "visible: detectionOverlay.editing",  # explicit user region editor

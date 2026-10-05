@@ -11,24 +11,27 @@ Item {
     property bool dockVisible: false
     property bool projectionAvailable: false
     property bool pickAvailable: false
+    property string pickMode: "none"
     property bool tagsEnabled: false
     property bool hoverOnly: false
+    property bool controlsExpanded: false
+    property real previewCardLeft: -1
+    property real previewCardBottom: -1
     property var tagRows: []
     property double hoveredNode: 0
+    property var hoveredNames: []
+    readonly property bool hasHover: root.hoveredNode !== 0 || root.hoveredNames.length > 0
     property double etaNow: Date.now() / 1000
+    property double marqueeClock: 0
+    readonly property real dockVerticalPadding: UM.Theme.getSize("thick_margin").height
+    readonly property real dockContentGap: UM.Theme.getSize("default_margin").height
 
     signal tagsEnabledRequested(bool enabled)
     signal hoverOnlyRequested(bool enabled)
     signal pointerMoved(real x, real y)
 
-    function hoveredDistance(row) {
-        if (root.hoveredNode === 0)
-            return 10000;
-        for (var i = 0; i < root.tagRows.length; ++i) {
-            if (root.tagRows[i].nodeId === root.hoveredNode)
-                return Math.hypot(row.anchorX - root.tagRows[i].anchorX, row.anchorY - root.tagRows[i].anchorY);
-        }
-        return 10000;
+    function isSelected(row) {
+        return (root.hoveredNode !== 0 && row.nodeId === root.hoveredNode) || root.hoveredNames.indexOf(row.name) !== -1;
     }
 
     function etaText(deadline) {
@@ -41,6 +44,28 @@ Item {
         return count + " · " + Qt.formatDateTime(new Date(deadline * 1000), "ddd HH:mm");
     }
 
+    function marqueeOffset(textWidth, viewportWidth) {
+        var travel = Math.max(0, textWidth - viewportWidth);
+        if (travel <= 1)
+            return 0;
+        var duration = Math.max(1800, Math.round(travel * 22));
+        var pause = 550;
+        var phase = root.marqueeClock % (2 * (duration + pause));
+        if (phase < pause)
+            return 0;
+        phase -= pause;
+        if (phase < duration)
+            return -travel * cubicEase(phase / duration);
+        phase -= duration;
+        if (phase < pause)
+            return -travel;
+        return -travel * (1 - cubicEase((phase - pause) / duration));
+    }
+
+    function cubicEase(t) {
+        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
     Timer {
         interval: 1000
         running: root.dockVisible && root.tagsEnabled
@@ -48,11 +73,19 @@ Item {
         onTriggered: root.etaNow = Date.now() / 1000
     }
 
+    Timer {
+        interval: 33
+        running: root.dockVisible && root.tagsEnabled && root.tagRows.length > 0
+        repeat: true
+        onTriggered: root.marqueeClock += interval
+    }
+
     onTagRowsChanged: {
         tagRepeater.model = root.tagRows;
         leaders.requestPaint();
     }
     onHoveredNodeChanged: leaders.requestPaint()
+    onHoveredNamesChanged: leaders.requestPaint()
     onHoverOnlyChanged: leaders.requestPaint()
 
     HoverHandler {
@@ -73,11 +106,10 @@ Item {
             ctx.clearRect(0, 0, width, height);
             for (var i = 0; i < root.tagRows.length; ++i) {
                 var row = root.tagRows[i];
-                var selected = root.hoveredNode !== 0 && row.nodeId === root.hoveredNode;
+                var selected = root.isSelected(row);
                 if (root.hoverOnly && root.pickAvailable && !selected)
                     continue;
-                var distance = root.hoveredDistance(row);
-                ctx.globalAlpha = selected ? 1.0 : (root.hoveredNode !== 0 && distance < 140 ? 0.25 : 0.8);
+                ctx.globalAlpha = selected ? 1.0 : (root.hasHover ? 0.25 : 0.8);
                 ctx.strokeStyle = UM.Theme.getColor("text").toString();
                 ctx.fillStyle = UM.Theme.getColor("text").toString();
                 ctx.lineWidth = selected ? 2 : 1;
@@ -85,7 +117,8 @@ Item {
                 var labelBottom = row.labelY + row.labelHeight;
                 ctx.beginPath();
                 ctx.moveTo(row.anchorX, row.anchorY);
-                ctx.lineTo(row.anchorX, labelBottom + 10);
+                if (Math.abs(labelCenter - row.anchorX) > 0.5)
+                    ctx.lineTo(row.anchorX, labelBottom + 10);
                 ctx.lineTo(labelCenter, labelBottom);
                 ctx.stroke();
                 ctx.beginPath();
@@ -104,32 +137,40 @@ Item {
             id: tag
             objectName: "moonrakerObjectNameBanner"
             required property var modelData
-            readonly property bool selected: root.hoveredNode !== 0 && modelData.nodeId === root.hoveredNode
-            readonly property real hoverDistance: root.hoveredDistance(modelData)
+            readonly property bool selected: root.isSelected(modelData)
             x: modelData.labelX
             y: modelData.labelY
             width: modelData.labelWidth
             height: modelData.labelHeight
             visible: root.dockVisible && root.tagsEnabled && (!root.hoverOnly || !root.pickAvailable || selected)
             z: selected ? 100 : 1
-            opacity: selected ? 1 : (root.hoveredNode !== 0 && hoverDistance < 140 ? 0.25 : 0.85)
+            opacity: selected ? 1 : (root.hasHover ? 0.25 : 0.85)
             color: UM.Theme.getColor("main_background")
             border.color: selected ? MoonrakerTheme.plateCurrent : UM.Theme.getColor("lining")
             border.width: selected ? 2 : 1
             radius: UM.Theme.getSize("default_radius").width
 
-            UM.Label {
+            Item {
+                id: nameViewport
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.leftMargin: 8
                 anchors.rightMargin: 8
                 height: modelData.deadline != null ? 23 : (modelData.progress === null ? parent.height : parent.height - 7)
-                text: modelData.name
-                color: UM.Theme.getColor("text")
-                elide: Text.ElideRight
-                verticalAlignment: Text.AlignVCenter
-                font: UM.Theme.getFont("default")
+                clip: true
+
+                UM.Label {
+                    id: nameText
+                    x: root.marqueeOffset(implicitWidth, nameViewport.width)
+                    width: implicitWidth
+                    height: parent.height
+                    text: modelData.name
+                    color: UM.Theme.getColor("text")
+                    elide: Text.ElideNone
+                    verticalAlignment: Text.AlignVCenter
+                    font: UM.Theme.getFont("default")
+                }
             }
 
             UM.Label {
@@ -170,20 +211,66 @@ Item {
         id: dock
         objectName: "moonrakerPreviewObjectTagsDock"
         visible: root.dockVisible
-        anchors.top: parent.top
-        anchors.topMargin: 100 * screenScaleFactor
-        anchors.right: parent.right
-        anchors.rightMargin: UM.Theme.getSize("thick_margin").width * 2
-        width: 218 * screenScaleFactor
-        height: 84 * screenScaleFactor
+        x: root.previewCardLeft > 0 ? Math.max(8 * screenScaleFactor, root.previewCardLeft - width - 12 * screenScaleFactor) : Math.max(8 * screenScaleFactor, root.width - width - 16 * screenScaleFactor)
+        y: (root.previewCardBottom > 0 ? root.previewCardBottom : root.height - 24 * screenScaleFactor) - height
+        width: 230 * screenScaleFactor
+        height: root.controlsExpanded ? header.height + root.dockContentGap + controlsColumn.implicitHeight + root.dockVerticalPadding : header.height
         color: UM.Theme.getColor("main_background")
         border.color: UM.Theme.getColor("lining")
         border.width: UM.Theme.getSize("default_lining").width
         radius: UM.Theme.getSize("default_radius").width
 
+        Item {
+            id: header
+            objectName: "moonrakerPreviewObjectTagsHandle"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: root.controlsExpanded ? dockTitle.implicitHeight + 2 * root.dockVerticalPadding : 34 * screenScaleFactor
+
+            UM.Label {
+                id: dockTitle
+                objectName: "moonrakerPreviewObjectTagsTitle"
+                anchors.left: parent.left
+                anchors.leftMargin: UM.Theme.getSize("default_margin").width
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Object banners"
+                font: UM.Theme.getFont("medium")
+                color: UM.Theme.getColor("text")
+            }
+            UM.Label {
+                anchors.right: expandIcon.left
+                anchors.rightMargin: UM.Theme.getSize("thin_margin").width
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.tagsEnabled ? "On" : "Off"
+                color: UM.Theme.getColor("text_medium")
+            }
+            UM.ColorImage {
+                id: expandIcon
+                anchors.right: parent.right
+                anchors.rightMargin: UM.Theme.getSize("default_margin").width
+                anchors.verticalCenter: parent.verticalCenter
+                width: UM.Theme.getSize("standard_arrow").width
+                height: UM.Theme.getSize("standard_arrow").height
+                source: UM.Theme.getIcon(root.controlsExpanded ? "ChevronSingleDown" : "ChevronSingleUp")
+                color: UM.Theme.getColor("text")
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.controlsExpanded = !root.controlsExpanded
+            }
+        }
+
         Column {
-            anchors.fill: parent
-            anchors.margins: UM.Theme.getSize("default_margin").width
+            id: controlsColumn
+            objectName: "moonrakerPreviewObjectTagsControls"
+            visible: root.controlsExpanded
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: header.bottom
+            anchors.leftMargin: UM.Theme.getSize("default_margin").width
+            anchors.rightMargin: UM.Theme.getSize("default_margin").width
+            anchors.topMargin: root.dockContentGap
             spacing: UM.Theme.getSize("thin_margin").height
 
             UM.CheckBox {
@@ -215,7 +302,7 @@ Item {
                     x: 0
                     y: parent.height + UM.Theme.getSize("default_margin").height
                     width: UM.Theme.getSize("tooltip").width
-                    text: root.pickAvailable ? "Show a banner only for the front-most object under the pointer." : "Cura does not expose object picking for this loaded toolpath."
+                    text: root.pickMode === "exact" ? "Show a banner only for the front-most object under the pointer." : root.pickMode === "footprint" ? "Show banners for every object footprint under the pointer. G-code picking is approximate." : "No object footprints are available for this toolpath."
                 }
             }
         }

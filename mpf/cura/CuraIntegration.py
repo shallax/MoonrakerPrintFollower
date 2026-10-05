@@ -51,6 +51,7 @@ class CuraIntegration(QObject):
         self._watch.setInterval(75)
         self._watch.timeout.connect(self._position_changed)
         self._connect(application, "fileCompleted", self._file_completed)
+        self._connect(application, "workspaceLoaded", self._workspace_loaded)
         self._connect(application, "mainWindowChanged", self._refresh)
         self._connect(self.controller, "activeViewChanged", self._refresh)
         self._connect(self.controller, "activeStageChanged", self._refresh)
@@ -303,9 +304,21 @@ class CuraIntegration(QObject):
 
     def _scene_changed(self, *_args):
         if self.loading or self._slicing or self._own_scene_changes or self._closed: return
+        # Cura can still alter the scene after fileCompleted (for example
+        # while finishing the G-code model). That must not erase the file
+        # association that fileCompleted just confirmed. New project has
+        # workspaceLoaded; another file has its own fileCompleted edge.
         self._settle_until = time.monotonic() + 0.35
         self.invalidate("Cura scene structure changed")
         self.queue(self._refresh, 360)
+
+    def _workspace_loaded(self, *_args):
+        # Cura's New project emits workspaceLoaded("") even if the old
+        # SimulationView layer data has not been cleared yet.
+        if self._closed: return
+        self._plugin_loaded_path = None
+        self.invalidate("Cura workspace changed")
+        self.changed.emit()
 
     def _slicing_started(self, *_args):
         if self.loading: return
@@ -434,5 +447,3 @@ class CuraIntegration(QObject):
         if self._load_watch_lease is not None:
             self._load_watch_lease.close()
             self._load_watch_lease = None
-
-
