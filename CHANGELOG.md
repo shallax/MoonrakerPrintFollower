@@ -2,6 +2,18 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 5.1.0 (in development)
+
+- Add camera-aligned object-name banners to Preview with an on/off dock control
+  and an all-banners or hovered-only choice. Hover raises the front-most Cura
+  model's banner and fades nearby names using Cura's depth-tested selection pass.
+  Loaded G-code without selectable model meshes keeps all-banners mode; Cura does
+  not provide per-object toolpath picking through that pass.
+- Show per-object filament progress and a projected countdown and finish time
+  when object markers, index data and a print ETA are available. The one-pass
+  G-code index and persistent cache now retain bounded per-object work summaries
+  and XY bounds, so marked objects can be positioned without Moonraker centres.
+
 ## 5.0.0
 
 Local failure detection is optional, runs on the Cura computer and does not

@@ -20,6 +20,7 @@ from .GCodeParser import _ARC_CLOCKWISE, _ARC_COUNTER, _COMMAND, _ELAPSED, _FAST
 from .IndexLimits import _LARGE_FILE_COMPACT_THRESHOLD, _MAX_LAYER_BLOCKS, _MAX_LINE_BYTES, _MAX_MOTIONS_PER_LAYER, _MAX_TYPE_NAMES, _MAX_TYPE_NAME_BYTES
 from .IndexWork import _BUILD_PROGRESS_MASK, _YIELD_CHECK_MASK, passive_yield
 from .MotionIndex import LayerMotionIndex
+from .ObjectWork import ObjectWorkTracker
 
 def _emit_progress(handle: BinaryIO, progress) -> None:
     # The scanner's honest precision: the file offset against the
@@ -65,6 +66,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
     # keeps only each layer's opening state for the hydrator to resume
     # from.
     features = _FeatureTracker()
+    object_work = ObjectWorkTracker()
     type_lookup: Dict[str, int] = {}
     type_names: List[str] = []
 
@@ -96,6 +98,10 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 # are skipped.
                 line = b""
             stripped = line.rstrip(b"\r\n")
+            if stripped[:1] in (b"E", b"e", b";", b" ", b"\t"):
+                marker_head = stripped.lstrip()
+                if marker_head[:1].upper() in (b"E", b";") and marker_head.upper().startswith((b"EXCLUDE_OBJECT_", b";MESH:")):
+                    object_work.marker(stripped)
             # Slicer motion lines cannot be anchored metadata markers. Parse
             # this common shape once, skipping four regex probes per move.
             code = stripped.split(b";", 1)[0]
@@ -150,6 +156,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 finished_firmware = features.firmware_events
                 finished_limits = features.metric_limits
                 features.open_layer()
+                object_work.open_layer()
                 if current is not None:
                     current["features"] = finished
                     current["events"] = finished_events
@@ -329,6 +336,9 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 previous_e = features.e
                 length = ArcGeometry.path_length(arc, motion_start, (x, y, z), xy=True) if arc else math.hypot(x - motion_start[0], y - motion_start[1])
                 features.add(axes, collect_here, length)
+                if (current is not None and current["end"] is None
+                        and moved_xy and features.e > previous_e):
+                    object_work.add(offset, x, y, z, features.e - previous_e)
                 if current is not None and current["end"] is None and current["print_z"] is None and moved_xy and features.e > previous_e:
                     current["print_z"] = z
                 if collect_here:
@@ -357,7 +367,8 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
             current["motion_total"] = features.count
 
     return assemble_index(
-        blocks, file_end, stats_values, marker_values, pause_offsets, type_names, filament_diameter, filament_diameters, compact, cancel_event
+        blocks, file_end, stats_values, marker_values, pause_offsets, type_names, filament_diameter, filament_diameters, compact, cancel_event,
+        object_work.finish(),
     )
 
 

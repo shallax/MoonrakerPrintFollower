@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from bisect import bisect_left
 from itertools import pairwise
 import math
+from .ObjectWork import object_remaining, object_work_fraction
 from types import MappingProxyType
 
 
@@ -29,6 +30,39 @@ class IndexView:
     def compact(self): return self._index.compact
     @property
     def pause_layers(self): return tuple(self._index.pauses)
+
+    def physical_file_offset(self, progress):
+        """Map the accepted nozzle motion boundary to an indexed file offset."""
+        if progress is None or progress.split is None or not 0 <= progress.layer < len(self._index.ranges):
+            return None
+        layer = progress.layer
+        start, end = self._index.ranges[layer]
+        split = max(0, int(progress.split))
+        if split == 0:
+            return start
+        with self._index.cache_lock:
+            offsets = self._index.motion_offsets[layer]
+            if offsets and split <= len(offsets):
+                return int(offsets[split - 1])
+        if progress.motion_total > 0:
+            fraction = min(1.0, (split + progress.partial) / progress.motion_total)
+            return int(start + (end - start) * fraction)
+        return None
+
+    def object_metrics(self, offset, remaining_end=None):
+        """Read-only per-object filament progress and projected finish seconds."""
+        if not self._index.ranges:
+            return {}
+        offset = max(0, int(offset)) if offset is not None else None
+        file_end = self._index.ranges[-1][1]
+        return {name: {"top": row["top"],
+                       "center": [(row["bounds"][0] + row["bounds"][2]) / 2,
+                                  (row["bounds"][1] + row["bounds"][3]) / 2],
+                       "progress": object_work_fraction(row, offset) if offset is not None else None,
+                       "remaining": object_remaining(row, offset, file_end, remaining_end,
+                                                      self._index.ranges, self._index.layer_elapsed_times)
+                       if offset is not None else None}
+                for name, row in self._index.object_work.items()}
 
     def hydrated(self, layer):
         return not self.compact or layer in self._index.hydrated_layers

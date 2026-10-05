@@ -1214,3 +1214,15 @@ for _name in (
         "date": "2026-10-04",
         "recheck": "the desktop simulator gains a synthetic local detector fixture",
     }
+
+for _name in (
+    "moonrakerObjectNameBanner", "moonrakerObjectNameRepeater",
+    "moonrakerPreviewObjectTags", "moonrakerPreviewObjectTagsDock",
+    "moonrakerPreviewObjectTagsEnabled", "moonrakerPreviewObjectTagsHoverOnly",
+):
+    EXCLUSIONS[_name] = {
+        "reason": "the native Preview scenarios do not yet supply per-object G-code and a depth-pickable Cura model scene",
+        "evidence": "test_preview_object_tags exercises the real QML engine; test_preview_presentation exercises Cura's selection-pass boundary; test_object_work verifies index and cache data",
+        "date": "2026-10-04",
+        "recheck": "a native Preview scenario loads an object-marked print with matching model meshes",
+    }

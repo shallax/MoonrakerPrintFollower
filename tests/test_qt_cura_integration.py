@@ -83,6 +83,7 @@ class CuraIntegrationLoadTests(harness.CuraIntegrationLoadTests):
         self.cura.invalidated.connect(invalidated.append)
         self.app.fileCompleted.emit(path)
         self.assertEqual(invalidated, [])  # absorbed, not "file replaced"
+        self.assertEqual(self.cura.plugin_loaded_path, harness.os.path.abspath(path))
         self.assertIn(path, self.releases)  # released once the parse finished
         self.assertFalse(harness.os.path.exists(path))
 

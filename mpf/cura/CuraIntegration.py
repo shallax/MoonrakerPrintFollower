@@ -46,6 +46,7 @@ class CuraIntegration(QObject):
         self._writing = self._own_scene_changes = 0
         self._load_lease = None
         self._load_watch_lease = None
+        self._plugin_loaded_path = None
         self._watch = QTimer(self)
         self._watch.setInterval(75)
         self._watch.timeout.connect(self._position_changed)
@@ -77,6 +78,8 @@ class CuraIntegration(QObject):
     def suspended(self): return self._slicing or self.loading or time.monotonic() < self._settle_until
     @property
     def view(self): return self._view
+    @property
+    def plugin_loaded_path(self): return self._plugin_loaded_path
 
     def nudge_cura_activity(self):
         """Re-run Cura's own platform-activity computation after the
@@ -349,6 +352,7 @@ class CuraIntegration(QObject):
             self._load_watch_lease.close()
             self._load_watch_lease = None
         self._load_lease = lease
+        self._plugin_loaded_path = None
         self._heights = None
         # The application's parse job can outlive this plugin. Keep the file
         # lease on an application-owned callback, not the plugin QObject.
@@ -388,16 +392,20 @@ class CuraIntegration(QObject):
         absorbed = False
         if expected:
             self._load_lease = None
+            self._plugin_loaded_path = os.path.abspath(str(path))
             lease.close()
         elif self._load_watch_lease is not None and os.path.abspath(str(path)) == os.path.abspath(self._load_watch_lease.path):
             # A timed-out load finished late: complete it quietly. The
             # parse has finished, so releasing the temp file is safe.
             absorbed = True
+            self._plugin_loaded_path = os.path.abspath(str(path))
             self._load_watch_lease.close()
             self._load_watch_lease = None
         self._heights = None
         self._settle_until = time.monotonic() + 0.25
-        if not expected and not absorbed: self.invalidate("Cura file replaced")
+        if not expected and not absorbed:
+            self._plugin_loaded_path = None
+            self.invalidate("Cura file replaced")
         self.fileLoaded.emit(str(path))
         self.queue(self._refresh, 260)
 

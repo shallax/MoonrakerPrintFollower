@@ -3455,6 +3455,13 @@ Item {
             "hoverClockProxy", "root.compact",
         ))
         allowed = {
+            # Preview name plates are a user-toggleable scene overlay; their
+            # visibility never changes the Monitor controls' layout.
+            "visible: root.dockVisible && root.tagsEnabled",
+            "visible: root.dockVisible && root.tagsEnabled && (!root.hoverOnly || !root.pickAvailable || selected)",
+            "visible: root.dockVisible",
+            "visible: modelData.deadline != null",
+            "visible: modelData.progress !== null",
             "visible: detectionOverlay.editing",  # explicit user region editor
             # The canvas contains only detection annotations; hide it
             # with the printer's Enable checkbox without reflowing controls.

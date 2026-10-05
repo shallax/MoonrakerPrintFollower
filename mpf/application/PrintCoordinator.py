@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
+import os
 import time
 from typing import NamedTuple
 
@@ -1142,6 +1143,28 @@ class PrintCoordinator(QObject):
         self._pause_block = block
         return block
 
+    def _object_tag_values(self, status, snapshot):
+        source = (status if status is not None else self._frame).get("exclude_object") or {}
+        same_file = (snapshot.active and getattr(self._cura, "plugin_loaded_path", None)
+                     and self._files.path and os.path.abspath(self._cura.plugin_loaded_path) == os.path.abspath(self._files.path))
+        definitions = list(self._plate_memo.value(source, self._files.job_key)["objects"]) if same_file else []
+        view = self._index.view
+        metrics = {}
+        if same_file and view is not None and view.job_key == self._files.job_key:
+            metrics = view.object_metrics(view.physical_file_offset(snapshot.motion_progress), snapshot.layer_eta)
+            now = time.time()
+            for row in metrics.values():
+                remaining = row.pop("remaining")
+                row["deadline"] = now + remaining if remaining is not None and remaining > 0 else None
+            known = {row["name"] for row in definitions}
+            definitions = [dict(row, center=row.get("center") or metrics.get(row["name"], {}).get("center"))
+                           for row in definitions]
+            definitions.extend({"name": name, "center": metric["center"], "excluded": False}
+                               for name, metric in metrics.items() if name not in known)
+        return {"objectTagDefinitions": definitions, "objectTagMetrics": metrics,
+                "objectTagCurrentObject": source.get("current_object") if snapshot.active else None,
+                "objectTagHeight": snapshot.layer.height if snapshot.active else None}
+
     def _publish(self, status=None):
         if self._closed: return
         config, state, snapshot = self._binding.config, self._preview.state, self._snapshot
@@ -1207,6 +1230,7 @@ class PrintCoordinator(QObject):
             "previewStageActive": self._cura.preview_active,
             "activePrinterName": self._binding.identity[1], "hasToolpath": self._cura.has_toolpath,
             "sceneHasObjects": self._cura.scene_has_objects,
+            **self._object_tag_values(status, snapshot),
             "statusText": compact, "statusIconName": status_icon(compact),
             "selectedLayerEtaText": state.eta_text,
             **self._pause_values(snapshot),

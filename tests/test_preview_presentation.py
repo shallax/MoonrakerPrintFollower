@@ -26,6 +26,7 @@ from qt_runtime_support import QT_AVAILABLE, runtime
 
 PANEL_HOST = "MoonrakerPreviewCardPanelHost.qml"
 OVERLAY_HOST = "MoonrakerPreviewCardOverlayHost.qml"
+TAGS_HOST = "PreviewObjectTagsHost.qml"
 CARD_NAME = "moonrakerPreviewCard"
 NO_CARD = object()
 
@@ -283,6 +284,21 @@ class PreviewPresentationTests(unittest.TestCase):
                                panel_host=panel_host, panel_card=panel_item,
                                overlay_host=overlay_host, overlay_card=overlay_item)
 
+    def test_hover_reads_curas_depth_tested_selection_pass(self):
+        state = self.build(preview_active=True)
+        selected = object()
+        positions = []
+        render_pass = SimpleNamespace(getIdAtPosition=lambda x, y: positions.append((x, y)) or 27)
+        state.app.getRenderer = lambda: SimpleNamespace(getRenderPass=lambda name: render_pass if name == "selection" else None)
+        scene = SimpleNamespace(findObject=lambda object_id: selected if object_id == 27 else None)
+        window = SimpleNamespace(width=lambda: 800, height=lambda: 600)
+        state.presentation._pick_available = True
+        state.presentation._pointer_moved(400, 300)
+        self.assertEqual(state.presentation._pick_hover(window, scene), id(selected))
+        self.assertEqual(positions, [(0.0, 0.0)])
+        state.presentation._pointer_moved(-1, -1)
+        self.assertEqual(state.presentation._pick_hover(window, scene), 0)
+
     def test_the_pause_verdicts_push_to_every_card(self):
         # The single authority (the debt pack's two-clock
         # unification): the monitor model's verdicts land on BOTH
@@ -311,7 +327,7 @@ class PreviewPresentationTests(unittest.TestCase):
         scene = self.build()
         # The panel host is Cura's own action-panel row; the overlay host
         # is parented onto the window's content item, once.
-        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST])
+        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST, TAGS_HOST])
         self.assertEqual(scene.app.joined, [("saveButton", scene.panel_host)])
         self.assertIs(scene.overlay_host.parentItem(), scene.content)
         self.assertIs(scene.overlay_host.parent(), scene.content)
@@ -404,7 +420,7 @@ class PreviewPresentationTests(unittest.TestCase):
         # A value published pre-boot must flush onto the created cards.
         scene.presentation.publish({"configuredForFollowing": True})
         scene.app.initializationFinished.emit()
-        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST])
+        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST, TAGS_HOST])
         self.assertEqual(scene.app.joined, [("saveButton", scene.panel_host)])
         self.assertEqual(scene.presentation.controls, (scene.panel_card, scene.overlay_card))
         self.assertEqual(seen, [1])
@@ -418,7 +434,7 @@ class PreviewPresentationTests(unittest.TestCase):
             started = True
 
         scene = self.build(application=StartedDeferredApplication(window=Window(QQuickItem())))
-        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST])
+        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST, TAGS_HOST])
         self.assertEqual(scene.presentation.controls, (scene.panel_card, scene.overlay_card))
 
     def test_verdicts_published_before_the_boot_replay_onto_the_created_cards(self):

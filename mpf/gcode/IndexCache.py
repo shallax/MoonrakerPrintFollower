@@ -24,6 +24,7 @@ from .FeatureTracker import _TYPE_NONE
 from .IndexCodec import _CACHE_MAGIC, _CACHE_VERSION, _MAX_CACHE_HEADER_BYTES, _arc_columns, _arc_entries, _event_columns, _feature_columns, _read_exact
 from .IndexLimits import _MAX_MOTIONS_PER_LAYER
 from .MotionIndex import LayerMotionIndex
+from .ObjectWork import valid_object_work
 
 try:
     from UM.Logger import Logger as _Logger
@@ -126,6 +127,9 @@ class PersistentIndexCache:
                     len(ranges) == len(counts) == len(starts)
                     == len(start_absolute) == len(start_units) == len(elapsed_times)
                 ):
+                    return None
+                object_work = header.get("object_work", {})
+                if not valid_object_work(object_work, ranges[-1][1] if ranges else 0):
                     return None
                 # The feature columns are optional as a whole — a blob
                 # written before they existed still restores its geometry
@@ -318,6 +322,7 @@ class PersistentIndexCache:
                 compact=compact,
                 hydrated_layers=hydrated,
                 layer_motion_counts=motion_counts,
+                object_work=object_work,
             )
         except (OSError, ValueError, json.JSONDecodeError, EOFError, struct.error):
             return None
@@ -390,6 +395,7 @@ class PersistentIndexCache:
                 # a restored index knows a far layer's total before its
                 # first re-hydration.
                 "motion_counts": list(index.layer_motion_counts),
+                "object_work": index.object_work,
             }
             has_extrusions = len(index.motion_extrusion) == layer_count and all(len(index.motion_extrusion[i]) == counts[i] for i in range(layer_count))
             if index.motion_extrusion and not has_extrusions:

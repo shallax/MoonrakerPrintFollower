@@ -1515,6 +1515,7 @@ class CuraIntegrationTests(unittest.TestCase):
         app.fileCompleted.emit(lease.path)
         # The late parse finishes quietly: it is the load we asked for.
         self.assertEqual(invalidated, [])
+        self.assertEqual(integration.plugin_loaded_path, os.path.abspath(lease.path))
         self.assertEqual(released, [lease.path])
         self.assertFalse(os.path.exists(lease.path))
 
