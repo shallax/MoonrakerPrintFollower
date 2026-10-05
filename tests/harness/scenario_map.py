@@ -1229,6 +1229,13 @@ for _name in (
         "recheck": "a native Preview scenario loads an object-marked print with matching model meshes",
     }
 
+EXCLUSIONS["moonrakerPreviewObjectTagsHoverOnlyTooltip"] = {
+    "reason": "the native Preview scenarios do not hover the disabled Object banners control",
+    "evidence": "test_preview_object_tags checks the tooltip text for disabled banners, unavailable picking and unavailable projection in the real QML engine",
+    "date": "2026-10-05",
+    "recheck": "a native Preview scenario hovers the disabled Object banners control",
+}
+
 EXCLUSIONS["moonrakerPreviewCardCollapseToggle"] = {
     "reason": "the native Preview scenarios exercise the load controls but do not toggle the card layout",
     "evidence": "test_qml_dashboard_layout clicks the real QML card and verifies its compact actions",
