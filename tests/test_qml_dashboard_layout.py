@@ -561,7 +561,9 @@ class PreviewCardCollapseTests(harness.RealEngineTestCase):
         self.assertNotIn("Pause print", visible_text)
         QTest.mouseClick(window, Qt.MouseButton.LeftButton,
                          pos=QPoint(round(point.x()), round(point.y())))
-        self.pump(20)
+        self._wait_until(window, lambda _image:
+                         abs(card.property("panelHeight") - expanded_height) <= 2,
+                         timeout=3.0)
         self.assertTrue(card.property("cardExpanded"))
         self.assertAlmostEqual(card.property("panelHeight"), expanded_height, delta=2)
 
