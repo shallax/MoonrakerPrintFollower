@@ -409,6 +409,11 @@ SETTINGS_PROBE = (
     "    result[\"walk_error\"] = repr(exc)\n"
     "with open(" + _scratch("settings_probe.json") + ", 'w') as f:\n"
     "    _json.dump(result, f)\n"
+    # Keep the full tree in the diagnostic file, not the driver's bounded
+    # RPC response. New controls can legitimately grow the dump beyond 4 KB.
+    "result[\"config_item_count\"] = len(result.pop(\"config_items\"))\n"
+    "result[\"action_count\"] = len(result.pop(\"actions\"))\n"
+    "result[\"dump\"] = " + _scratch("settings_probe.json") + "\n"
     "result")
 
 

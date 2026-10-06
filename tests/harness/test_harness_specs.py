@@ -48,6 +48,54 @@ def _inline_code_values(spec):
 
 
 class HarnessSpecTests(unittest.TestCase):
+    def test_settings_probe_keeps_large_tree_in_file_and_bounds_rpc_reply(self):
+        from types import SimpleNamespace
+        from unittest.mock import mock_open, patch
+
+        point = SimpleNamespace(x=lambda: 10, y=lambda: 20)
+        items = [SimpleNamespace(
+            property=lambda key, index=index: f"control-{index}" if key == "objectName" else None,
+            metaObject=lambda: SimpleNamespace(className=lambda: "SettingsControl"),
+            mapToScene=lambda _point: point, width=lambda: 100, height=lambda: 25)
+            for index in range(200)]
+        manager = SimpleNamespace(getMachineActions=lambda: [])
+        app = SimpleNamespace(getMachineActionManager=lambda: manager)
+        application = SimpleNamespace(Application=SimpleNamespace(getInstance=lambda: app))
+        namespace = {"_main_window": lambda: SimpleNamespace(contentItem=lambda: None),
+                     "_walk": lambda *_args, **_kwargs: items, "QPointF": lambda *_args: None}
+        opened = mock_open()
+        with patch.dict(sys.modules, {"UM.Application": application}), patch("builtins.open", opened):
+            exec(_scenarios.SETTINGS_PROBE, namespace)
+        full_dump = "".join(call.args[0] for call in opened().write.call_args_list)
+        self.assertGreater(len(full_dump), 4000)
+        self.assertEqual(len(json.loads(full_dump)["config_items"]), 200)
+        self.assertEqual(namespace["result"]["config_item_count"], 200)
+        self.assertLess(len(json.dumps(namespace["result"])), 4000)
+
+    def test_reported_position_probe_reads_the_render_translation(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        spec = next(spec for spec in _scenarios.SCENARIOS if spec["id"] == "p9")
+        probe = next(step["code"] for step in spec["steps"]
+                     if step["op"] == "wait_exec" and '"position_ok": true' in step.get("contains", ""))
+        node = SimpleNamespace(isVisible=lambda: True,
+            getPosition=lambda: SimpleNamespace(x=0, y=0, z=0),
+            render_position=lambda: SimpleNamespace(x=-25, y=20, z=25))
+        runtime = SimpleNamespace(toolhead=SimpleNamespace(_node=node),
+            presentation=SimpleNamespace(reported_position=True),
+            cura=SimpleNamespace(view=SimpleNamespace(
+                getNozzleNode=lambda: SimpleNamespace(getParent=lambda: None))))
+        extension = type("MoonrakerPrintFollower", (), {"_runtime": runtime})()
+        stack = SimpleNamespace(getProperty=lambda key, _role: False if key == "machine_center_is_zero" else 250)
+        app = SimpleNamespace(getExtensions=lambda: [extension], getGlobalContainerStack=lambda: stack)
+        application = SimpleNamespace(Application=SimpleNamespace(getInstance=lambda: app))
+        namespace = {}
+        with patch.dict(sys.modules, {"UM.Application": application}):
+            exec(probe, namespace)
+        self.assertTrue(namespace["result"]["position_ok"])
+        self.assertEqual(namespace["result"]["actual_position"], [-25, 20, 25])
+
     def test_scheduled_pause_scenarios_hold_the_exact_layer_before_ui_waits(self):
         # The v5.1.0 macOS gate observed layer 5 while p7 waited for layer 1:
         # arming the hold after that wait cannot repair a missed transient.
