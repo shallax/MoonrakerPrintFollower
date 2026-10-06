@@ -95,10 +95,20 @@ class BannerHostTests(harness.RealEngineTestCase):
         host, window = self.mount_window("PreviewObjectTagsHost.qml", 1000, 1000)
         host.setProperty("dockVisible", True)
         host.setProperty("controlsExpanded", True)
-        self._pump_ms(60)
         show = self.find(host, "moonrakerShowToolhead")
         controls = self.find(host, "moonrakerToolheadControls")
         column = self.find(host, "moonrakerPreviewObjectTagsControls")
+
+        def layout_ready(_):
+            children = [child for child in column.childItems()
+                        if child.isVisible() and child.height() > 0]
+            height = sum(child.height() for child in children)
+            height += column.property("spacing") * max(0, len(children) - 1)
+            return abs(column.height() - height) < .01
+
+        # Visibility changes schedule a later Column polish on macOS.
+        self._wait_until(window, layout_ready, timeout=3.0)
+        self.assertTrue(layout_ready(None), "initial View Options layout did not settle")
         compact_height = column.property("height")
         self.assertFalse(show.property("visible"))
         self.assertFalse(controls.property("visible"))
@@ -107,12 +117,14 @@ class BannerHostTests(harness.RealEngineTestCase):
         self.assertTrue(self.find(host, "moonrakerEstimatedToolheadPosition").property("visible"))
         self.assertEqual(show.property("text"), "Show custom toolhead model")
         host.setProperty("customToolheadAvailable", True)
-        self._pump_ms(60)
+        self._wait_until(window, lambda image: layout_ready(image)
+                         and column.height() > compact_height + 100, timeout=3.0)
         self.assertTrue(show.property("visible"))
         self.assertTrue(controls.property("visible"))
         self.assertGreater(column.property("height"), compact_height + 100)
         host.setProperty("customToolheadAvailable", False)
-        self._pump_ms(60)
+        self._wait_until(window, lambda image: layout_ready(image)
+                         and column.height() == compact_height, timeout=3.0)
         self.assertEqual(column.property("height"), compact_height)
         self.assertTrue(self.find(host, "moonrakerPreviewObjectTagsEnabled").property("visible"))
 
