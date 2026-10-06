@@ -991,6 +991,18 @@ tree or internal grab is not proof of current WindowServer pixels. These
 software-rendered CI recordings are evidence of the UI, not physical-Mac
 GPU performance. See TESTING.md for the capture contract and investigation.
 
+The still-frame check compares each sampled picture with both its predecessor
+and the first picture of its candidate static span. Adjacent similarity alone
+can chain gradual card/slider motion into a false freeze. Keep the one-level
+grey tolerance, 60-second floor, 35% share and driven-input requirement; encoder
+dither stays tolerated and genuine frozen recordings still fail.
+
+The toolhead restoration probe must check that the plugin releases both its
+override flag and native suppression owner. Normal SimulationView also requires
+the native nozzle under the current scene root. Cura's OpenGL compatibility mode
+deliberately omits that nozzle; record the mode and ownership diagnostics rather
+than requiring a node that Cura itself does not render there.
+
 For a single native scenario diagnosis, dispatch `leg.yml` with its exact
 scenario ID as `group` (for example `b12`) and `mode=suite`. This uses the
 same runner and assertions as the full group, without running its siblings.

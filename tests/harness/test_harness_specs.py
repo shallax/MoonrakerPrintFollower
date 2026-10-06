@@ -84,8 +84,11 @@ class HarnessSpecTests(unittest.TestCase):
             render_position=lambda: SimpleNamespace(x=-25, y=20, z=25))
         runtime = SimpleNamespace(toolhead=SimpleNamespace(_node=node),
             presentation=SimpleNamespace(reported_position=True),
-            cura=SimpleNamespace(view=SimpleNamespace(
-                getNozzleNode=lambda: SimpleNamespace(getParent=lambda: None))))
+            cura=SimpleNamespace(toolhead_override=True,
+                controller=SimpleNamespace(getScene=lambda: SimpleNamespace(getRoot=lambda: object())),
+                view=SimpleNamespace(getCompatibilityMode=lambda: False,
+                    getNozzleNode=lambda: SimpleNamespace(getParent=lambda: None))))
+        runtime.toolhead._native = object()
         extension = type("MoonrakerPrintFollower", (), {"_runtime": runtime})()
         stack = SimpleNamespace(getProperty=lambda key, _role: False if key == "machine_center_is_zero" else 250)
         app = SimpleNamespace(getExtensions=lambda: [extension], getGlobalContainerStack=lambda: stack)
@@ -95,6 +98,37 @@ class HarnessSpecTests(unittest.TestCase):
             exec(probe, namespace)
         self.assertTrue(namespace["result"]["position_ok"])
         self.assertEqual(namespace["result"]["actual_position"], [-25, 20, 25])
+
+    def test_native_restore_probe_respects_cura_mode_and_suppression_ownership(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        spec = next(spec for spec in _scenarios.SCENARIOS if spec["id"] == "p9")
+        probe = next(step["code"] for step in spec["steps"]
+                     if step.get("contains") == '"reported": false, "visible": false, "native_restored": true')
+        root, other_root = object(), object()
+        for compatibility, parent, override, owned, expected in (
+                (False, root, False, None, True),
+                (False, None, False, None, False),
+                (False, other_root, False, None, False),
+                (True, None, False, None, True),
+                (True, root, True, None, False),
+                (True, None, False, object(), False)):
+            with self.subTest(compatibility=compatibility, parent=parent, override=override, owned=owned):
+                runtime = SimpleNamespace(toolhead=SimpleNamespace(_node=None, _native=owned),
+                    presentation=SimpleNamespace(reported_position=False),
+                    cura=SimpleNamespace(toolhead_override=override,
+                        controller=SimpleNamespace(getScene=lambda: SimpleNamespace(getRoot=lambda: root)),
+                        view=SimpleNamespace(getCompatibilityMode=lambda compatibility=compatibility: compatibility,
+                            getNozzleNode=lambda parent=parent: SimpleNamespace(getParent=lambda: parent))))
+                extension = type("MoonrakerPrintFollower", (), {"_runtime": runtime})()
+                app = SimpleNamespace(getExtensions=lambda extension=extension: [extension])
+                application = SimpleNamespace(Application=SimpleNamespace(getInstance=lambda app=app: app))
+                namespace = {}
+                with patch.dict(sys.modules, {"UM.Application": application}):
+                    exec(probe, namespace)
+                self.assertEqual(namespace["result"]["native_restored"], expected)
+                self.assertEqual(namespace["result"]["compatibility_mode"], compatibility)
 
     def test_scheduled_pause_scenarios_hold_the_exact_layer_before_ui_waits(self):
         # The v5.1.0 macOS gate observed layer 5 while p7 waited for layer 1:

@@ -691,6 +691,32 @@ class StaticLegTests(unittest.TestCase):
         self.assertTrue(verdict["ok"])
         self.assertLess(verdict["span_s"], static_leg.STATIC_LEG_SECONDS)
 
+    def test_gradual_motion_cannot_chain_into_a_frozen_run(self):
+        # Every adjacent pair differs by only 0.5 grey levels, but the
+        # whole picture changes substantially. The macOS printing gate
+        # moved its preview card and slider while the adjacent-only
+        # comparison incorrectly joined 61 seconds into one static run.
+        frames = [bytes([index // 2]) * 8 for index in range(160)]
+        self.assertTrue(all(static_leg.frame_mad(a, b) <= 1.0
+                            for a, b in zip(frames, frames[1:], strict=False)))
+        verdict = static_leg.static_verdict(frames, interactions=[40.0])
+        self.assertTrue(verdict["ok"])
+        self.assertEqual(verdict["span_s"], 4)
+
+    def test_motion_followed_by_a_real_freeze_still_fails(self):
+        frames = [bytes([index // 2]) * 8 for index in range(40)]
+        frames += [bytes([90]) * 8] * 80
+        verdict = static_leg.static_verdict(frames, interactions=[60.0])
+        self.assertFalse(verdict["ok"])
+        self.assertEqual(verdict["start_s"], 40)
+        self.assertEqual(verdict["span_s"], 80)
+
+    def test_a_transient_change_breaks_a_run_even_near_its_anchor(self):
+        # Both later frames are within one level of the first, but they
+        # differ by two levels from each other: that is visible motion.
+        frames = [bytes([90]) * 8, bytes([91]) * 8, bytes([89]) * 8]
+        self.assertEqual(static_leg.static_run(frames), (0, 2))
+
     def test_a_still_span_under_the_absolute_floor_passes(self):
         # Legitimate idle: one step waiting on a model, a budget of
         # 15-30 s. The longest span on a leg that is not one of the

@@ -28,6 +28,40 @@ for window in QGuiApplication.topLevelWindows():
         result["model_controls"] = any(item.objectName() == "toolheadChooseModel" and item.isVisible() and item.isEnabled() for item in _walk(window.contentItem()))
 '''
 
+TOOLHEAD_POSITION_READ = '''
+from UM.Application import Application
+result = {}
+for extension in Application.getInstance().getExtensions():
+    if "MoonrakerPrintFollower" in type(extension).__name__:
+        runtime = extension._runtime
+        node = runtime.toolhead._node
+        view = runtime.cura.view
+        root = runtime.cura.controller.getScene().getRoot()
+        compatibility = bool(view and view.getCompatibilityMode())
+        native_parented = bool(view and view.getNozzleNode().getParent() is root)
+        released = not runtime.cura.toolhead_override and runtime.toolhead._native is None
+        # Cura's legacy SimulationPass intentionally omits its nozzle,
+        # and NativeNozzleLifecycle leaves that mode alone. Normal mode
+        # must restore the nozzle to this scene; both must release our
+        # suppression owner and hide our reported-position node.
+        result = {"reported": runtime.presentation.reported_position,
+                  "visible": bool(node and node.isVisible()),
+                  "native_restored": bool(view and released and (native_parented or compatibility))}
+        if node:
+            point = node.render_position()
+            stack = Application.getInstance().getGlobalContainerStack()
+            width, depth = [float(stack.getProperty(key, "value")) for key in ("machine_width", "machine_depth")]
+            centred = bool(stack.getProperty("machine_center_is_zero", "value"))
+            expected = (100 if centred else 100-width/2, 20, -100 if centred else depth/2-100)
+            result["position_ok"] = all(abs(actual-target) < .01 for actual, target in zip((point.x, point.y, point.z), expected))
+            result["actual_position"] = [point.x, point.y, point.z]
+            result["expected_position"] = list(expected)
+        result["compatibility_mode"] = compatibility
+        result["native_parented"] = native_parented
+        result["override_released"] = released
+        break
+'''
+
 SCENARIOS = [
     {"id": "p1", "group": "preview",
      "name": "the load renders the real toolpath, the indicator, and the card",
@@ -143,7 +177,7 @@ SCENARIOS = [
         {'op': 'wait_rect', 'objectName': 'moonrakerPreviewCard', 'budget': 240},
         {'op': 'wait_rect', 'objectName': 'loadIndicatorContent', 'absent': True, 'budget': 60},
         {'op': 'exec_code', 'verbs': ['clicked.emit'], 'code': P_ATTACH_EMIT},
-        {'op': 'wait_exec', 'code': P_FOLLOW_READ, 'contains': '"attached": true', 'budget': 20}, {'op': 'exec_code', 'verbs': ['setProperty'], 'code': 'result = {}\nfor item in _walk(_main_window().contentItem()):\n    if item.objectName() == "moonrakerPreviewObjectTags":\n        item.setProperty("controlsExpanded", True)\n        result["expanded"] = True'}, {'op': 'wait_rect', 'objectName': 'moonrakerReportedToolheadPosition', 'budget': 20}, {'op': 'deliver_click', 'objectName': 'moonrakerReportedToolheadPosition'}, {'op': 'sim_set', 'state': {'print_stats': {'state': 'complete'}, 'motion_report': {'live_position': [100, 100, 20, 0]}, 'gcode_move': {'homing_origin': [0, 0, 0, 0], 'position': [100, 100, 20, 0], 'gcode_position': [100, 100, 20, 0]}, 'toolhead': {'homed_axes': 'xyz'}}}, {'op': 'wait_exec', 'code': 'from UM.Application import Application\nresult = {}\nfor extension in Application.getInstance().getExtensions():\n    if "MoonrakerPrintFollower" in type(extension).__name__:\n        runtime = extension._runtime\n        node = runtime.toolhead._node\n        view = runtime.cura.view\n        result = {"reported": runtime.presentation.reported_position,\n                  "visible": bool(node and node.isVisible()),\n                  "native_restored": bool(view and view.getNozzleNode().getParent() is not None)}\n        if node:\n            point = node.render_position()\n            stack = Application.getInstance().getGlobalContainerStack()\n            width, depth = [float(stack.getProperty(key, "value")) for key in ("machine_width", "machine_depth")]\n            centred = bool(stack.getProperty("machine_center_is_zero", "value"))\n            expected = (100 if centred else 100-width/2, 20, -100 if centred else depth/2-100)\n            result["position_ok"] = all(abs(actual-target) < .01 for actual, target in zip((point.x, point.y, point.z), expected))\n            result["actual_position"] = [point.x, point.y, point.z]\n            result["expected_position"] = list(expected)\n        break\n', 'contains': '"reported": true, "visible": true, "native_restored": false, "position_ok": true', 'budget': 30}, {'op': 'deliver_click', 'objectName': 'moonrakerEstimatedToolheadPosition'}, {'op': 'wait_exec', 'code': 'from UM.Application import Application\nresult = {}\nfor extension in Application.getInstance().getExtensions():\n    if "MoonrakerPrintFollower" in type(extension).__name__:\n        runtime = extension._runtime\n        node = runtime.toolhead._node\n        view = runtime.cura.view\n        result = {"reported": runtime.presentation.reported_position,\n                  "visible": bool(node and node.isVisible()),\n                  "native_restored": bool(view and view.getNozzleNode().getParent() is not None)}\n        if node:\n            point = node.render_position()\n            stack = Application.getInstance().getGlobalContainerStack()\n            width, depth = [float(stack.getProperty(key, "value")) for key in ("machine_width", "machine_depth")]\n            centred = bool(stack.getProperty("machine_center_is_zero", "value"))\n            expected = (100 if centred else 100-width/2, 20, -100 if centred else depth/2-100)\n            result["position_ok"] = all(abs(actual-target) < .01 for actual, target in zip((point.x, point.y, point.z), expected))\n            result["actual_position"] = [point.x, point.y, point.z]\n            result["expected_position"] = list(expected)\n        break\n', 'contains': '"reported": false, "visible": false, "native_restored": true', 'budget': 20}, {'op': 'wait_exec', 'code': P_FOLLOW_READ, 'contains': '"attached": true', 'budget': 20}, {'op': 'deliver_click', 'objectName': 'moonrakerPreviewObjectTagsHandle'}]},
+        {'op': 'wait_exec', 'code': P_FOLLOW_READ, 'contains': '"attached": true', 'budget': 20}, {'op': 'exec_code', 'verbs': ['setProperty'], 'code': 'result = {}\nfor item in _walk(_main_window().contentItem()):\n    if item.objectName() == "moonrakerPreviewObjectTags":\n        item.setProperty("controlsExpanded", True)\n        result["expanded"] = True'}, {'op': 'wait_rect', 'objectName': 'moonrakerReportedToolheadPosition', 'budget': 20}, {'op': 'deliver_click', 'objectName': 'moonrakerReportedToolheadPosition'}, {'op': 'sim_set', 'state': {'print_stats': {'state': 'complete'}, 'motion_report': {'live_position': [100, 100, 20, 0]}, 'gcode_move': {'homing_origin': [0, 0, 0, 0], 'position': [100, 100, 20, 0], 'gcode_position': [100, 100, 20, 0]}, 'toolhead': {'homed_axes': 'xyz'}}}, {'op': 'wait_exec', 'code': TOOLHEAD_POSITION_READ, 'contains': '"reported": true, "visible": true, "native_restored": false, "position_ok": true', 'budget': 30}, {'op': 'deliver_click', 'objectName': 'moonrakerEstimatedToolheadPosition'}, {'op': 'wait_exec', 'code': TOOLHEAD_POSITION_READ, 'contains': '"reported": false, "visible": false, "native_restored": true', 'budget': 20}, {'op': 'wait_exec', 'code': P_FOLLOW_READ, 'contains': '"attached": true', 'budget': 20}, {'op': 'deliver_click', 'objectName': 'moonrakerPreviewObjectTagsHandle'}]},
 
     {"id": "p8", "group": "preview",
      "version_skip": {"5.11": "5.11 cannot retain a loaded G-code toolpath in SimulationView; the continuous attached Preview premise requires 5.12+"},
