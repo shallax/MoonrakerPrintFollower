@@ -172,7 +172,7 @@ class SimulationPassTests(unittest.TestCase):
     def test_warmup_then_exact_three_ranges_with_native_shaders_and_cull_modes(self):
         self.activate()
         self.assertEqual(self.original.render.call_count, 2)
-        self.assertEqual(self.shader_factory.call_args_list, [call("/native/shaders/layers3d.shader"), call("/native/shaders/layers3d_shadow.shader")])
+        self.assertEqual(self.shader_factory.call_args_list, [call(str(Path("/native/shaders") / name)) for name in ("layers3d.shader", "layers3d_shadow.shader")])
         self.assertEqual(self.geometry.render.call_args_list, [
             call(self.shadow, self.camera, "world", [(0, 6)], self.gl),
             call(self.normal, self.camera, "world", [(6, 8)], self.gl)])

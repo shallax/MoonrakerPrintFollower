@@ -79,6 +79,10 @@ def extract_wheel(path, destination):
         if len(wheel.infolist()) > 10000: raise ValueError("CAD runtime archive has too many entries")
         for member in wheel.infolist():
             name = member.filename
+            # ZipInfo normalises backslashes on Windows and truncates NULs.
+            # Reject altered names before trusting the extraction path.
+            if name != member.orig_filename:
+                raise ValueError("Invalid CAD runtime archive")
             parts = name.split("/")
             total += member.file_size
             mode = member.external_attr >> 16

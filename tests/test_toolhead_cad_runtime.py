@@ -23,7 +23,13 @@ def wheel_bytes(entries):
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
         for name, body in entries:
-            archive.writestr(name, body)
+            if isinstance(name, str):
+                member = zipfile.ZipInfo(name)
+                # Keep the hostile bytes even when the writer runs on Windows.
+                member.filename = name
+            else:
+                member = name
+            archive.writestr(member, body)
     return output.getvalue()
 
 
@@ -215,16 +221,18 @@ class ToolheadCadRuntimeTests(unittest.TestCase):
         device.create_system, device.external_attr = 3, (stat.S_IFIFO | 0o600) << 16
         unsafe = ("OCP/../../escaped", "OCP/./alias.py", "/OCP/absolute",
                   "OCP/back\\slash", "OCP/library:stream", "unexpected/module.py", link, device)
-        for name in unsafe:
-            with self.subTest(name=str(name)):
-                archive = self.root / "invalid.whl"
-                archive.write_bytes(wheel_bytes([("OCP/valid.py", b"safe"), (name, b"unsafe")]))
-                destination = self.root / "extracted"
-                destination.mkdir(exist_ok=True)
-                with self.assertRaises(ValueError):
-                    CadRuntime.extract_wheel(archive, destination)
-                self.assertEqual(list(destination.iterdir()), [])
-                self.assertFalse((self.root / "escaped").exists())
+        for index, name in enumerate(unsafe):
+            for separator in ("/", "\\"):
+                with self.subTest(name=str(name), separator=separator):
+                    archive = self.root / "invalid.whl"
+                    archive.write_bytes(wheel_bytes([("OCP/valid.py", b"safe"), (name, b"unsafe")]))
+                    destination = self.root / ("extracted-%d-%d" % (index, ord(separator)))
+                    destination.mkdir()
+                    # Exercise the ZIP reader's Windows normalisation on every host.
+                    with patch.object(zipfile.os, "sep", separator), self.assertRaises(ValueError):
+                        CadRuntime.extract_wheel(archive, destination)
+                    self.assertEqual(list(destination.iterdir()), [])
+                    self.assertFalse((self.root / "escaped").exists())
 
     def test_helper_rejects_escape_hardlink_and_special_files_before_any_write(self):
         unsafe = (tar_member("python/../../escaped", b"bad"),

@@ -22,7 +22,9 @@ class SelectionResetTests(harness.QtRuntimeTests):
         integration.positionChanged.connect(lambda: outcomes.append(follower.detect_override()))
         module = ModuleType("UM.Scene.ToolHandle")
         module.ToolHandle = type("ToolHandle", (), {})
-        self.enterContext(patch.dict(sys.modules, {"UM.Scene.ToolHandle": module}))
+        modules = patch.dict(sys.modules, {"UM.Scene.ToolHandle": module})
+        modules.start()
+        self.addCleanup(modules.stop)
         return integration, follower, view, outcomes, module.ToolHandle
 
     def scene_stack(self, integration, view, child, *, removal=True):

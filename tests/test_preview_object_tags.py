@@ -208,7 +208,8 @@ class BannerHostTests(harness.RealEngineTestCase):
             host.setProperty("lightingEnabled", False)
             self._pump_ms(100)
             host.setProperty("lightingEnabled", True)
-            self._pump_ms(100)
+            self._wait_until(window, lambda _: background(models) == expected and background(bed) == expected,
+                             timeout=3.0)
             self.assertTrue(models.property("enabled"))
             self.assertEqual(background(models), expected)
             self.assertEqual(background(bed), expected)
@@ -217,7 +218,7 @@ class BannerHostTests(harness.RealEngineTestCase):
         self.assertEqual(background(models), background(bed))
         self.assertNotEqual(background(models), expected)
         host.setProperty("toolheadVisible", True)
-        self._pump_ms(100)
+        self._wait_until(window, lambda _: background(models) == expected, timeout=3.0)
         self.assertEqual(background(models), expected)
 
     def test_view_options_reservation_keeps_native_extension_chain_clear(self):

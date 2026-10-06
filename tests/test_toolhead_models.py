@@ -336,11 +336,14 @@ class ToolheadModelsTests(unittest.TestCase):
 
     def test_import_elapsed_timer_updates_without_rebuilding_draft_and_stops_on_completion(self):
         self.assertEqual(self.model.elapsedText, "")
-        self.blocked_import()
+        # Exact clock values avoid flooring a rounded 184.999999-second delta.
+        # Patch the owner's module reference, never the process-wide clock.
+        with patch('mpf.toolhead.ToolheadModels.time', SimpleNamespace(monotonic=lambda: 1000.0)):
+            self.blocked_import()
         self.assertTrue(self.model._elapsed_timer.isActive())
-        with patch('mpf.toolhead.ToolheadModels.time.monotonic', return_value=self.model._started + 3661):
+        with patch('mpf.toolhead.ToolheadModels.time', SimpleNamespace(monotonic=lambda: 4661.0)):
             self.assertEqual(self.model.elapsedText, "Elapsed: 1:01:01")
-        with patch('mpf.toolhead.ToolheadModels.time.monotonic', return_value=self.model._started + 185):
+        with patch('mpf.toolhead.ToolheadModels.time', SimpleNamespace(monotonic=lambda: 1185.0)):
             self.assertEqual(self.model.elapsedText, "Elapsed: 3:05")
         changed, elapsed = [], []
         self.model.changed.connect(lambda: changed.append(True))

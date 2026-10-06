@@ -1,12 +1,15 @@
 """Real Qt preview pixels, demand scheduling and visible-surface nozzle picking."""
 from __future__ import annotations
 
+import os
 import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
 
 import numpy as np
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     from PyQt6.QtCore import QObject, Qt, pyqtSignal
