@@ -212,14 +212,17 @@ print supplies the needed markers and timing data. The Preview card can
 collapse to Attach/Detach and Load current print. The two panes share a bottom
 alignment and reserve space in Cura's action row.
 
-## 5.2.0 — Actual toolhead position and custom models (implemented; release validation)
+## 5.2.0 — Actual toolhead position and custom models (validated; release via PR)
 
 The persistent **Enable lighting** master switch disables perimeter, attached and
 scene illumination together, retaining base colours and face paint. It disables
 the bed/model checkboxes without losing their selections. Followed normal-mode
 previews use retained native path indices and completed colour/depth to avoid
 whole-print copies and repeated geometry work; unsupported scenes retain Cura's
-native renderer. Live loaded-print testing has accepted performance as comparable with the custom toolhead disabled. Automated release validation remains pending.
+native renderer. Live loaded-print testing has accepted performance as comparable
+with the custom toolhead disabled. Branch CI and the full 112-job Cura 5.7–5.13
+UI Version Sweep passed on 6 October 2026 at `8da5d38c`; the release PR and
+tag workflow retain their own full release gates.
 
 Repeated unchanged banner publications retain their absolute finish deadlines,
 avoiding delegate reconstruction on the idle handle watcher. Fixed Stealthburner

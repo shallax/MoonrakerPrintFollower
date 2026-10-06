@@ -23,19 +23,24 @@ contours, not a sliced printer job. `make verify_captures` checks 38 light/dark
 scenes across two runs. Refresh committed PNGs with the amd64 Docker backend;
 host-native GPU output is smoke evidence rather than the canonical baseline.
 
-On 6 October 2026, the final native `make all JOBS=4` passed 5,296 tests in
+On 6 October 2026, the final native `make all JOBS=4` passed 5,298 tests in
 214 isolated processes, all nine lint checks, shader compilation, 21 capture
 scenes, 38 byte-identical light/dark scenes across two runs, and exact
 package/source parity. Coverage passed at 98% overall, with every non-exempt
 file clearing the 95% bar. The added import UI and surface-map checks also
 passed in the pinned amd64 Linux environment (13 tests). Canonical Linux
 screenshots were regenerated and all 38 light/dark scenes were byte-identical
-across two runs. These results do not qualify Windows runtime execution or
-replace the real-Cura release gate.
+across two runs. [Branch CI](https://github.com/shallax/MoonrakerPrintFollower/actions/runs/37510365393)
+passed at `8da5d38c`, including native macOS/Windows checks, the Python 3.10–3.12
+matrix, all ten native CAD conversion jobs and Cura repeat-boot smoke.
+The [UI Version Sweep](https://github.com/shallax/MoonrakerPrintFollower/actions/runs/37514314119)
+then passed all 112 jobs across Cura 5.7–5.13 for that same commit. The release
+PR and tag workflow still enforce their own full Cura release gate.
 
 Live macOS Cura checks exercised STEP colours, nozzle picking, saved lights,
 opacity, pane layering and a large loaded print. The user accepted final
 live-print performance as comparable with the custom toolhead disabled.
+The user also tested the plugin locally on Windows and accepted its appearance.
 Profiling was affected by disk pressure and desktop screen capture; there is
 no final uncontaminated FPS comparison or claim that all intermittent hitches
 are eliminated.
