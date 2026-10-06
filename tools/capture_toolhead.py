@@ -220,6 +220,10 @@ frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_col
             vaos[label, shader] = context.vertex_array(shader, [(buffer, layout, *attrs)])
     framebuffer = context.simple_framebuffer(SIZE, components=4, samples=4)
     resolved = context.simple_framebuffer(SIZE, components=4)
+    # Share depth storage, but give the depth prepass no colour attachment.
+    # Native MSAA drivers must not be able to leak its zero fragment output
+    # into the final colour samples, even if a colour write mask is ignored.
+    depth_only = context.framebuffer(depth_attachment=framebuffer.depth_attachment)
     framebuffer.use()
     context.enable(moderngl.DEPTH_TEST)
     context.disable(moderngl.CULL_FACE)
@@ -244,10 +248,11 @@ frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_col
                 vaos[label, base_shader].render()
         # The nearest head surface receives its intrinsic CAD alpha exactly as
         # in the settings preview; no geometry order dependent double blending.
-        framebuffer.color_mask = (False, False, False, False)
+        depth_only.use()
+        depth_only.depth_mask = True
         head_shader["u_depthOnly"].value = 1
         vaos["head", head_shader].render()
-        framebuffer.color_mask = (True, True, True, True)
+        framebuffer.use()
         context.depth_func = "<="
         framebuffer.depth_mask = False
         context.enable(moderngl.BLEND)
@@ -258,6 +263,8 @@ frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_col
         raw = resolved.read(components=4, alignment=1)
         image = QImage(raw, *SIZE, SIZE[0]*4, QImage.Format.Format_RGBA8888).flipped()
         pixels = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 4)
+        if np.any(pixels[:, 3] != 255):
+            raise RuntimeError("Opaque toolhead capture contains transparent samples")
         if np.count_nonzero(pixels[:, 0] > pixels[:, 1]*1.5) < 1000:
             raise RuntimeError("Toolhead render lacks the expected red CAD body")
         if not image.save(str(output_dir / filename)):
@@ -269,6 +276,7 @@ frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_col
         buffer.release()
     for shader in (head_shader, base_shader):
         shader.release()
+    depth_only.release()
     framebuffer.release()
     resolved.release()
     context.release()
