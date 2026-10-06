@@ -94,7 +94,10 @@ class ToolheadImportTests(unittest.TestCase):
         # Keep the production flags, argument layout, environment, private cwd
         # and stream ownership. Replace only the interpreter and converter so
         # this test can run offline on any supported development host.
-        process = self.real_popen([sys.executable, *args[1:3], str(self.child), *args[4:]], **options)
+        # Windows venv python.exe launches another process; killing its wrapper
+        # races that child's file-handle cleanup. Production uses a direct helper.
+        executable = getattr(sys, "_base_executable", sys.executable) if os.name == "nt" else sys.executable
+        process = self.real_popen([executable, *args[1:3], str(self.child), *args[4:]], **options)
         self.spawned.append(process)
         if "diagnostic-exit" in Path(args[4]).read_text():
             process.wait(timeout=5)  # deterministic completed-before-first-poll case
@@ -109,6 +112,8 @@ class ToolheadImportTests(unittest.TestCase):
 
     def assert_reaped(self):
         self.assertEqual(len(self.spawned), 1)
+        self.assertEqual(int((self.runtime / "started").read_text()), self.spawned[0].pid,
+                         "the fixture must launch the worker directly, without a wrapper")
         self.assertIsNotNone(self.spawned[0].returncode)
         self.assertIsNotNone(self.spawned[0].poll())
         self.assertFalse(Path(self.calls[0][1]["cwd"]).exists())

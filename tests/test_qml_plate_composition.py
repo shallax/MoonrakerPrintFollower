@@ -603,13 +603,12 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                                        int(origin.y()) + row),
                            direct.pixel(int(origin.x()) + col,
                                         int(origin.y()) + row)))
-        # The settled single-owner composition (the review's finding
-        # #2): the canvas's coverage record names ONE owner — the
-        # prefix's own split (the tail-only canvas) — and the
-        # delivery has landed. A settled FULL bitmap under the prefix
-        # would keep the record at 0.
-        self.assertEqual(face.property("_vectorCoversFrom"), layer.prefixSplit,
+        # Compare the delivered frame's coverage, not the next in-flight
+        # paint's scratch record. A full bitmap would report coverage from 0.
+        self.assertEqual(face.property("_vectorCoversShown"), layer.prefixSplit,
                          "the settled canvas never trimmed to the tail")
+        self.assertEqual(face.property("_vectorSplitShown"), target,
+                         "the settled canvas delivered the wrong scrub position")
         self.assertTrue(face.property("_textureReady"),
                         "the settled canvas never delivered")
         print("reverse-scrub settled diffs vs direct:", diffs)
@@ -635,4 +634,3 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.pump(30)
         self._printer.setLayers(harness.PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
-
