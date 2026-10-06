@@ -132,6 +132,7 @@ jobs:
             dist/screenshots/
             .determinism-check/
           if-no-files-found: ignore
+          include-hidden-files: true
       - name: Upload native test logs on failure
         if: failure()
         uses: actions/upload-artifact@v7

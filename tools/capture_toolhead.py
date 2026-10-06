@@ -176,6 +176,11 @@ def capture(output_dir):
     dll_directory = None
     if sys.platform == "win32" and os.environ.get("GLCONTEXT_WIN_LIBGL"):
         dll_directory = os.add_dll_directory(str(Path(os.environ["GLCONTEXT_WIN_LIBGL"]).parent))
+        # The headless runner otherwise selects Mesa's D3D12 adapter over
+        # Microsoft's Basic Render Driver, which crashes during rendering.
+        # Use Mesa's CPU rasteriser for capture evidence, as Linux does.
+        os.environ["GALLIUM_DRIVER"] = "llvmpipe"
+        os.environ["LP_NUM_THREADS"] = "1"
     if sys.platform.startswith("linux"):
         os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
         os.environ["GALLIUM_DRIVER"] = "llvmpipe"

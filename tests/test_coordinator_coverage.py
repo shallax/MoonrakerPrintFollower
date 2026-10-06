@@ -916,24 +916,27 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
             self.assertEqual(len(calls), cold + 4,
                              "the restarted job reused the previous definition")
 
-    def test_the_memoised_refresh_costs_a_fraction_of_the_re_walk(self):
-        # The same refresh path both ways: with the pre-fix call site (a
-        # stand-in that normalises every poll) and with the memo. The
-        # structural assertion lives in the ring-walk spy above; this
-        # one pins the ORDER of the win, with a margin wide enough that
-        # no plausible machine inverts it. The pre-fix cost is the
-        # review's own: ~14 ms a poll at this geometry against a 750 ms
-        # cadence, paid on the owner thread.
+    def test_the_memoised_refresh_skips_ring_work_with_identical_output(self):
+        # Compare the real refresh paths rather than wall-clock ratios:
+        # shared runners can pause either measurement independently.
+        # The cache must remove repeated polygon processing while serving
+        # exactly the rows the uncached implementation would produce.
         geometry = harness._plate_geometry(80, 300)
-        raw_cold, raw_steady = self._refresh_cost(geometry, passthrough=True)
-        memo_cold, memo_steady = self._refresh_cost(geometry)
-        print("plate projection per refresh (80 x 300): "
-              "re-walk cold %.2f ms steady %.2f ms; "
-              "memoised cold %.2f ms steady %.2f ms"
-              % (raw_cold, raw_steady, memo_cold, memo_steady))
-        self.assertLess(memo_steady, raw_steady * 0.25,
-                        "the memoised refresh cost %.2f ms against the re-walk's %.2f ms"
-                        % (memo_steady, raw_steady))
+        raw = self._plate_parts()
+        raw.coordinator._plate_memo = harness._AlwaysWalk()
+        memo = self._plate_parts()
+        for step in range(5):
+            kwargs = {"position": 4500.0 + step * 100.0, "duration": 120.0 + step}
+            calls, spy = harness._normalisation_spy()
+            with spy:
+                self._plate_poll(raw, geometry, **kwargs)
+            self.assertGreaterEqual(len(calls), 80)
+            calls, spy = harness._normalisation_spy()
+            with spy:
+                self._plate_poll(memo, geometry, **kwargs)
+            self.assertEqual(len(calls), 80 if step == 0 else 0)
+            self.assertEqual(memo.index.plate_visited_rows[-1],
+                             raw.index.plate_visited_rows[-1])
 
     def test_a_missing_or_invalid_file_position_resolves_to_none(self):
         # Missing, null and non-numeric fields all resolve to None —

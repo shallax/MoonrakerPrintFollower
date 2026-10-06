@@ -147,7 +147,8 @@ are visible; a Python 3.14 patch release difference is acceptable.
   reads a developer's Cura settings. It compiles the production GLSL with
   ModernGL 5.12.0/glcontext 3.0.0 (development dependencies only). Linux uses
   the pinned Mesa EGL rasteriser; Windows CI provides Mesa through MSYS2 and
-  `GLCONTEXT_WIN_LIBGL`, while native GPU captures remain smoke evidence.
+  `GLCONTEXT_WIN_LIBGL`; those Windows captures select LLVMpipe rather than
+  the headless runner's D3D12 adapter. Native GPU captures remain smoke evidence.
   Both new images participate in `make generate_screenshots` and
   `make verify_captures`; only amd64 container output goes in `screenshots/`.
 - Deterministic captures: the harness freezes EVERY live input the
