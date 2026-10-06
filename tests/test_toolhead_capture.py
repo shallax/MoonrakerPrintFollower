@@ -13,6 +13,8 @@ class ToolheadCaptureTests(unittest.TestCase):
     def test_mesh_is_losslessly_the_reference_step_import(self):
         with np.load(capture.FIXTURE / "stealthburner.npz", allow_pickle=False) as data:
             count = len(data["triangles"])
+            self.assertTrue(np.all(data["colours"][:, 3] == 1.0),
+                            "the showcase single-pass render requires opaque CAD materials")
             packed = (struct.pack("<8sI", b"MPFHEAD2", count)
                       + data["triangles"].astype("<f4").tobytes()
                       + data["colours"].astype("<f4").tobytes()

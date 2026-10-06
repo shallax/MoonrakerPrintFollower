@@ -193,6 +193,8 @@ def capture(output_dir):
         context = moderngl.create_context(standalone=True, require=410)
     print("Toolhead capture renderer:", context.info["GL_RENDERER"], flush=True)
     head, paths, bed, lights = scene_meshes()
+    if np.any(head.colours[:, 3] != 1.0):
+        raise ValueError("The showcase capture requires opaque CAD materials")
     head_shader = program(context, "toolhead.shader")
     # Base receiver shading is a neutral deterministic stand-in for native
     # SimulationView's material palette; additive lighting is production GLSL.
@@ -220,10 +222,6 @@ frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_col
             vaos[label, shader] = context.vertex_array(shader, [(buffer, layout, *attrs)])
     framebuffer = context.simple_framebuffer(SIZE, components=4, samples=4)
     resolved = context.simple_framebuffer(SIZE, components=4)
-    # Share depth storage, but give the depth prepass no colour attachment.
-    # Native MSAA drivers must not be able to leak its zero fragment output
-    # into the final colour samples, even if a colour write mask is ignored.
-    depth_only = context.framebuffer(depth_attachment=framebuffer.depth_attachment)
     framebuffer.use()
     context.enable(moderngl.DEPTH_TEST)
     context.disable(moderngl.CULL_FACE)
@@ -246,17 +244,10 @@ frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_col
         if receivers:
             for label in ("bed", "paths"):
                 vaos[label, base_shader].render()
-        # The nearest head surface receives its intrinsic CAD alpha exactly as
-        # in the settings preview; no geometry order dependent double blending.
-        depth_only.use()
-        depth_only.depth_mask = True
-        head_shader["u_depthOnly"].value = 1
-        vaos["head", head_shader].render()
-        framebuffer.use()
+        # The reference CAD materials are opaque. A single shaded,
+        # depth-writing pass avoids cross-pass MSAA coverage mismatches on
+        # Apple's software renderer; equal-depth faces retain draw order.
         context.depth_func = "<="
-        framebuffer.depth_mask = False
-        context.enable(moderngl.BLEND)
-        context.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA, moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
         head_shader["u_depthOnly"].value = 0
         vaos["head", head_shader].render()
         context.copy_framebuffer(resolved, framebuffer)
@@ -276,7 +267,6 @@ frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_col
         buffer.release()
     for shader in (head_shader, base_shader):
         shader.release()
-    depth_only.release()
     framebuffer.release()
     resolved.release()
     context.release()
