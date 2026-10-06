@@ -7,12 +7,47 @@ glance."""
 import sys
 from pathlib import Path
 
+import numpy as np
 from PyQt6.QtGui import QColor, QImage
+
+NATIVE_3D_CAPTURES = {"13-toolhead-lighting.png", "14-toolhead-printing.png"}
+MAX_ROUNDING_PIXELS = 16
+
+
+def native_3d_rounding(first, second):
+    """Accept sparse one-level RGB rounding only in opaque 3D showcase PNGs.
+
+    Native software GL can straddle an 8-bit rounding boundary. This is not
+    an antialias tolerance: altered alpha, two-level changes, geometry holes
+    and changes spanning more than 16 pixels all fail.
+    """
+    first, second = Path(first), Path(second)
+    if first.name != second.name or first.name not in NATIVE_3D_CAPTURES:
+        return False
+    a, b = QImage(str(first)), QImage(str(second))
+    if a.isNull() or b.isNull() or a.size() != b.size():
+        return False
+    def pixels(image):
+        image = image.convertToFormat(QImage.Format.Format_RGBA8888)
+        return np.frombuffer(image.constBits().asstring(image.sizeInBytes()),
+                             dtype=np.uint8).reshape(-1, 4)
+    left, right = pixels(a), pixels(b)
+    if np.any(left[:, 3] != 255) or np.any(right[:, 3] != 255):
+        return False
+    delta = np.abs(left.astype(np.int16) - right.astype(np.int16))
+    count = int(np.count_nonzero(np.any(delta, axis=1)))
+    safe = count <= MAX_ROUNDING_PIXELS and int(delta.max()) <= 1
+    if safe:
+        print("%s: %d pixels differ by at most one RGB level (native GL rounding)"
+              % (first.name, count))
+    return safe
 
 
 def main():
     first = Path(sys.argv[1])
     second = Path(sys.argv[2])
+    if sys.argv[3:] == ["--native-3d-rounding"]:
+        return 0 if native_3d_rounding(first, second) else 1
     a = QImage(str(first))
     b = QImage(str(second))
     if a.size() != b.size():

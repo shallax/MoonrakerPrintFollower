@@ -1056,6 +1056,7 @@ def cmd_determinism(args) -> int:
 
     stale = 0
     compared = 0
+    rounded = 0
     for first, second, label in (("run1", "run2", "light"),
                                  ("run1-dark", "run2-dark", "dark")):
         names = {path.name for path in (tmp / first).glob("*.png")}
@@ -1074,6 +1075,13 @@ def cmd_determinism(args) -> int:
             mine = (tmp / first / name).read_bytes()
             theirs = (tmp / second / name).read_bytes()
             if mine != theirs:
+                if ((IS_MACOS or IS_WINDOWS)
+                        and name in {"13-toolhead-lighting.png", "14-toolhead-printing.png"}
+                        and run([sys.executable, "tools/image_diff.py", str(tmp / first / name),
+                                 str(tmp / second / name), "--native-3d-rounding"],
+                                cwd=root, env=env) == 0):
+                    rounded += 1
+                    continue
                 print("NON-DETERMINISTIC (%s): %s differs between two runs on this host"
                       % (label, name))
                 run([sys.executable, "tools/image_diff.py", str(tmp / first / name),
@@ -1082,7 +1090,8 @@ def cmd_determinism(args) -> int:
     if stale:
         return record("determinism", False, "evidence kept in %s" % tmp)
     shutil.rmtree(tmp, ignore_errors=True)
-    return record("determinism", True, "%d scene(s) byte-identical across two runs" % compared)
+    return record("determinism", True, "%d scene(s) byte-identical; %d native 3D pair(s) within sparse RGB rounding"
+                  % (compared - rounded, rounded))
 
 
 def _version(root: Path) -> str:

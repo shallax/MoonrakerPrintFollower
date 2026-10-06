@@ -259,7 +259,11 @@ What differs on this leg, and why:
   `make generate_screenshots` renders `dist/screenshots` for a look;
   it does not copy into `screenshots/`, because the CI sync job
   compares against renders made with the container's pinned fonts.
-  `make verify_captures` (two runs, byte-compared) does work natively.
+  `make verify_captures` does work natively. UI captures remain byte-exact.
+  Only the two native 3D toolhead showcase images allow at most 16 changed
+  pixels, each differing by no more than one 8-bit RGB level, with fully
+  opaque alpha. This bounds native OpenGL rounding without accepting holes
+  or geometry changes. Canonical Linux captures remain byte-exact.
 - **`make ui_test MODE=suite` and `make ui_release_gate` use the native
   desktop harness.** They stage Cura, the plugin and the driver, then
   invoke `tests/harness/runner.py` using the harness environment (see
