@@ -32,6 +32,9 @@ from .cura.PrinterBinding import PrinterBinding
 from .files.transfers.RemoteFileService import RemoteFileService
 from .files.transfers.FileDownload import FileDownload
 from .whatsnew.WhatsNew import should_show as whats_new_should_show
+from .toolhead.ToolheadAssetStore import ToolheadAssetStore
+from .toolhead.ToolheadModels import ToolheadModels
+from .toolhead.ToolheadPresenter import ToolheadPresenter
 
 
 def _savefile_write(path, text):
@@ -136,6 +139,10 @@ class FollowerRuntime:
             parent=parent,
         )
         self.cura = CuraIntegration(application, parent)
+        self.toolhead_store = ToolheadAssetStore(os.path.join(persistence_root, "toolhead-models"))
+        self.toolhead_models = ToolheadModels(self.toolhead_store,
+            os.path.join(persistence_root, "cad-runtime"), lambda: self.binding.config,
+            lambda: self.binding.identity, parent)
         self.files = RemoteFileService(self.client.transport, parent)
         self.file_download = FileDownload(self.files, self.cura, parent,
             active_identity=lambda: self.binding.identity,
@@ -196,11 +203,16 @@ class FollowerRuntime:
         self.preview.bind_motion(self.motion)
         self.pauses = PauseController(self.client, parent)
         self.presentation = PreviewPresentation(application, self.cura, parent, persistence=self.persistence)
+        self.preview.bind_position_mode(lambda: self.presentation.reported_position)
+        self.toolhead = ToolheadPresenter(application, self.cura, self.client, self.binding,
+            self.presentation, self.toolhead_store, parent)
         self.bed_mesh = BedMeshPresenter(application, self.cura, self.presentation, parent,
                                          persistence=self.persistence)
         self.coordinator = PrintCoordinator(client=self.client, binding=self.binding,
             files=self.files, index=self.index, cura=self.cura, preview=self.preview,
             pauses=self.pauses, presentation=self.presentation, bed_mesh=self.bed_mesh, parent=parent)
+        self.presentation.reportedPositionRequested.connect(lambda _reported: self.motion.reset())
+        self.presentation.reportedPositionRequested.connect(lambda _reported: self.coordinator.refresh())
         self._closed = False
         # The migration notice (the UX spec): the toast raises once
         # per failure, after the What's-New sequence, from ONE
@@ -246,6 +258,8 @@ class FollowerRuntime:
         self.binding.close()
         self.coordinator.close()
         self.pauses.close()
+        self.toolhead.close()
+        self.toolhead_models.close()
         self.bed_mesh.close()
         self.presentation.close()
         self.motion.close()

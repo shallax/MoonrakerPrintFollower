@@ -1242,3 +1242,50 @@ EXCLUSIONS["moonrakerPreviewCardCollapseToggle"] = {
     "date": "2026-10-05",
     "recheck": "a native Preview scenario also exercises the card collapse toggle",
 }
+
+# Import requires a local picker and download consent, outside the simulator's
+# native suite. Real Qt draft/preview tests and captures provide evidence.
+for _name in (
+    "MoonrakerFollowerMachineAction.cancelToolheadModel",
+    "ToolheadModelPreview.orbit", "ToolheadModelPreview.pick", "ToolheadModelPreview.resetCamera", "ToolheadModelPreview.zoomBy",
+    "ToolheadModels.automatic", "ToolheadModels.cancel", "ToolheadModels.choose", "ToolheadModels.downloadAndImport",
+    "ToolheadModels.reset", "ToolheadModels.setTip", "ToolheadModels.useDefault",
+    "ToolheadModels.beginEdit", "ToolheadModels.endEdit", "ToolheadModels.removeLight",
+    "ToolheadModels.previewLightBrightness", "ToolheadModels.setLightBrightness", "ToolheadModels.setLightColour", "ToolheadModels.setLightPaint",
+    "ToolheadModelPreview.pan", "moonrakerToolheadControls", "moonrakerViewOptionsDivider", "moonrakerBedMeshDivider", "moonrakerViewOptionsBedMesh", "moonrakerLightBed", "moonrakerLightModels", "moonrakerShowToolhead", "moonrakerEstimatedToolheadPosition", "moonrakerToolheadOpacity", "toolheadAddLight", "toolheadConfigureModel",
+    "toolheadEditorCancel", "toolheadEditorDone", "toolheadLightBrightness", "toolheadLightColour",
+    "toolheadLightPaint", "toolheadLightsScroll", "toolheadLightsScrollbar", "toolheadModelEditorDialog",
+    "toolheadModelInteraction", "toolheadRemoveLight",
+    "toolheadAutomaticTip", "toolheadChooseModel", "toolheadImportStatus", "toolheadModelPreview", "toolheadPickTip",
+    "toolheadTipX", "toolheadTipY", "toolheadTipZ", "toolheadUseDefault",
+):
+    EXCLUSIONS[_name] = {
+        "reason": "native simulator scenarios do not choose local CAD files or consent to optional runtime downloads",
+        "evidence": "test_toolhead_models, test_toolhead_geometry, test_toolhead_settings, test_preview_object_tags and test_qml_toolhead_editor exercise drafts, visibility, disabled controls and previews; test_cad_runtime loads coloured assemblies",
+        "date": "2026-10-05",
+        "recheck": "native settings scenarios exercise a local custom model picker and preview surface alignment",
+    }
+SCENARIO_MAP["moonrakerReportedToolheadPosition"] = "p9"
+SCENARIO_MAP["moonrakerEstimatedToolheadPosition"] = "p9"
+EXCLUSIONS.pop("moonrakerEstimatedToolheadPosition", None)
+SCENARIO_MAP["moonrakerSetupToolhead"] = "p10"
+SCENARIO_MAP["moonrakerToolheadSetupDialog"] = "p10"
+EXCLUSIONS["moonrakerBannerCountdown"] = {
+    "reason": "a nonvisual timer has no native input rectangle",
+    "evidence": "test_preview_object_tags.test_hidden_banner_countdowns_sleep_and_refresh_when_rows_return verifies idle stop and visible restart in real QML",
+    "date": "2026-10-06",
+    "recheck": "native banner journeys also observe timer lifecycle",
+}
+for _name in ("toolheadImportElapsed", "toolheadCancelImport"):
+    EXCLUSIONS[_name] = {
+        "reason": "native journeys do not install the optional CAD reader or hold an opaque conversion in progress",
+        "evidence": "test_qml_toolhead_editor.test_elapsed_and_triangle_progress_stay_visible_and_cancel_preserves_model clicks Cancel in real QML; test_toolhead_import terminates and reaps a stalled child process",
+        "date": "2026-10-06",
+        "recheck": "native settings journeys include cancellable CAD conversion fixtures",
+    }
+EXCLUSIONS["moonrakerEnableLighting"] = {
+    "reason": "native simulator journeys do not yet exercise the new lighting master and retained receiver choices",
+    "evidence": "test_preview_presentation tests persistence and signal delivery; test_toolhead_presenter and test_toolhead_scene verify renderer propagation and bypass; test_toolhead_shader pins unlit paint/alpha; live Cura verified disabled receiver controls on 2026-10-06",
+    "date": "2026-10-06",
+    "recheck": "a native Preview scenario exercises master off/on and retained bed/model selections",
+}

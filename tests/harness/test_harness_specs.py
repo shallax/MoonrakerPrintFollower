@@ -48,6 +48,25 @@ def _inline_code_values(spec):
 
 
 class HarnessSpecTests(unittest.TestCase):
+    def test_scheduled_pause_scenarios_hold_the_exact_layer_before_ui_waits(self):
+        # The v5.1.0 macOS gate observed layer 5 while p7 waited for layer 1:
+        # arming the hold after that wait cannot repair a missed transient.
+        # Both flows must seed and hold in their initial print transaction.
+        for scenario_id in ("p6", "p7"):
+            spec = next(spec for spec in _scenarios.SCENARIOS if spec["id"] == scenario_id)
+            steps = spec["steps"]
+            seed_index = next(index for index, step in enumerate(steps)
+                              if step["op"] == "sim_set_current_print")
+            with self.subTest(scenario=scenario_id):
+                self.assertEqual(steps[seed_index]["current_layer"], 1)
+                self.assertEqual(steps[seed_index]["layer_clock_interval_s"], 3600)
+                self.assertFalse(any(step["op"].startswith("wait_") for step in steps[:seed_index]))
+                scheduled_index = next(index for index, step in enumerate(steps)
+                                       if step["op"] == "wait_exec" and '"End of layer 2' in step.get("contains", ""))
+                release_index = next(index for index, step in enumerate(steps)
+                                     if step["op"] == "sim_arm" and step.get("arms", {}).get("layer_clock_interval_s") == 6)
+                self.assertGreater(release_index, scheduled_index)
+
     def test_inline_input_rectangles_account_for_a_displaced_window(self):
         from types import SimpleNamespace
         for x, y in ((0, 0), (40, 59), (-900, 31)):

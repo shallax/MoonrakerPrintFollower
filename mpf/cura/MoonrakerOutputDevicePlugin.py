@@ -212,6 +212,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 client=self._follower.client,
                 print_state=lambda: self._follower.print_state,
                 config=self._follower.current_printer_config,
+                motion_smoothing=getattr(self._follower, "motionSmoothing", None),
                 apply_config=self._follower.apply_printer_config,
                 bed_mesh=self._follower.bed_mesh,
                 request_load=self._follower.confirmForceLoadCurrentPrint,

@@ -71,7 +71,7 @@ TOOLCHAIN = {
     "fonts-dejavu-core": "2.37",
 }
 PYPI_PINS = ("PyQt6==%(PyQt6)s", "PyQt6-Qt6==%(PyQt6-Qt6)s", "ruff==%(ruff)s",
-             "coverage")
+             "coverage", "moderngl==5.12.0", "glcontext==3.0.0")
 # PySide6 6.10.2 ships Qt 6.10.2's qmlformat and qsb on native hosts.
 QMLFORMAT_PIN = "PySide6-Essentials==%(qmlformat)s"
 QSB_PIN = "PySide6-Addons==%(qmlformat)s"
@@ -135,7 +135,7 @@ HARNESS_MODULES = (
     "tests/harness/test_harness_native.py",
 )
 DETERMINISM_SCRIPTS = ("capture_monitor.py", "capture_preview.py",
-                       "capture_settings.py", "capture_upload.py")
+                       "capture_settings.py", "capture_upload.py", "capture_toolhead.py")
 CAPTURE_SCRIPTS = DETERMINISM_SCRIPTS + ("capture_whatsnew.py",
                                          "capture_filemanager.py")
 COVERAGE_BAR = 95.0

@@ -14,6 +14,7 @@ PLUGIN_ROOT = ROOT / "mpf"
 PACKAGE_JSON = ROOT / "package.json"
 LICENSE_FILE = ROOT / "LICENSE"
 CHANGELOG_FILE = ROOT / "CHANGELOG.md"
+THIRD_PARTY_FILE = ROOT / "docs" / "THIRDPARTYSOFTWARE.md"
 
 FORBIDDEN_SUFFIXES = {".curapackage", ".pyc", ".pyo", ".orig", ".rej", ".swp", ".swo", ".tmp", ".bak"}
 FORBIDDEN_NAMES = {".DS_Store"}
@@ -88,7 +89,15 @@ def is_packaged_source(path: pathlib.Path) -> bool:
     return True
 
 
+def plugin_relative_path(path: pathlib.Path) -> str:
+    """Map the shared notice document into the installed plugin root."""
+    if path == THIRD_PARTY_FILE:
+        return path.name
+    return path.relative_to(PLUGIN_ROOT).as_posix()
+
+
 def iter_plugin_sources() -> Iterable[pathlib.Path]:
+    yield THIRD_PARTY_FILE
     for path in sorted(PLUGIN_ROOT.rglob("*")):
         if is_packaged_source(path):
             yield path
@@ -137,7 +146,7 @@ def verify_archive(
         for source in iter_plugin_sources():
             name = archive_names(source)
             if archive.read(name) != source.read_bytes():
-                raise RuntimeError(f"{label} packaged bytes differ from source: {source.relative_to(PLUGIN_ROOT)}")
+                raise RuntimeError(f"{label} packaged bytes differ from source: {plugin_relative_path(source)}")
         forbidden = [
             name for name in names
             if "__pycache__" in name
@@ -156,7 +165,7 @@ def verify_archive(
 
 
 def archive_name(path: pathlib.Path, package_id: str) -> str:
-    relative = path.relative_to(PLUGIN_ROOT).as_posix()
+    relative = plugin_relative_path(path)
     return f"files/plugins/{package_id}/{relative}"
 
 

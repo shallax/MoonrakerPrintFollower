@@ -141,6 +141,15 @@ are visible; a Python 3.14 patch release difference is acceptable.
   the driver's evidence rectangles are desktop-relative. The macOS
   available-desktop fit moves the content below the menu/title bars,
   so assuming a window origin of (0, 0) misses controls and drag handles.
+- The toolhead showcase is part of the same capture commands, through
+  `tools/capture_toolhead.py`. Its attributed model, cube, and exact saved light
+  configuration live in `tests/fixtures/toolhead/showcase/`; generation never
+  reads a developer's Cura settings. It compiles the production GLSL with
+  ModernGL 5.12.0/glcontext 3.0.0 (development dependencies only). Linux uses
+  the pinned Mesa EGL rasteriser; Windows CI provides Mesa through MSYS2 and
+  `GLCONTEXT_WIN_LIBGL`, while native GPU captures remain smoke evidence.
+  Both new images participate in `make generate_screenshots` and
+  `make verify_captures`; only amd64 container output goes in `screenshots/`.
 - Deterministic captures: the harness freezes EVERY live input the
   scenes render — the formatter's wall clock is patched to a fixed
   instant (`FrozenDatetime`, patching every module object loaded from
@@ -315,6 +324,9 @@ needed. This is the same distinction as the Windows native leg.
 `make ui_release_gate` use the native real-Cura harness through the
 same targets as the other hosts (see TESTING.md). They need an
 interactive desktop session and are separate from `make all`.
+The macOS harness replaces Cura and deletes/reseeds its user profile;
+run it only on a disposable test host. Outside GitHub Actions,
+`HARNESS_DISPOSABLE_HOST=1` is required before it can make those changes.
 
 ## Repo hygiene — the standing rule on addresses
 
@@ -873,7 +885,9 @@ real-Qt tests (PyQt6 6.11.0). The release workflow on tag push additionally
 builds reproducible archives and verifies source/package byte parity and the
 Marketplace layout. Its reusable CI runs the artifact scan despite the tag's
 intentionally skipped lint job, then requires the package, scan and full Cura
-gate to succeed before publication; a skipped gate fails the release.
+gate and the native CAD conversion matrix to succeed before publication; a
+skipped required check fails the release. The CAD matrix runs on tags even
+though lint is intentionally skipped.
 Before tagging, run the smoke checks the harness cannot
 cover (the full matrix from the panel round, restored after a
 transcription drift):

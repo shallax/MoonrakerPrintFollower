@@ -48,6 +48,16 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
+      - name: Mesa for headless Windows lighting captures
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-mesa
+      - name: Select the capture-only OpenGL library
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: echo "GLCONTEXT_WIN_LIBGL=$(cygpath -w /mingw64/bin/opengl32.dll)" >> "$GITHUB_ENV"
       - name: Pin the harness font (the dev container pins fonts-dejavu 2.37)
         shell: bash
         run: |
@@ -779,16 +789,39 @@ jobs:
 
   release-verdict:
     name: Require completed release checks
-    needs: [ci-package, artifact-scan, gate]
+    needs: [ci-package, artifact-scan, gate, cad-runtime-smoke]
     # Run even when a dependency failed or was skipped. A skipped verdict
     # would otherwise let the reusable workflow report success and publish.
     if: ${{ !cancelled() && inputs.tag_release }}
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
-      - name: Require package, artifact scan and Cura gate success
+      - name: Require package, artifact scan, Cura gate and CAD runtime success
         env:
           MPF_RELEASE_PACKAGE_RESULT: ${{ needs.ci-package.result }}
           MPF_RELEASE_SCAN_RESULT: ${{ needs.artifact-scan.result }}
           MPF_RELEASE_GATE_RESULT: ${{ needs.gate.result }}
+          MPF_RELEASE_CAD_RESULT: ${{ needs.cad-runtime-smoke.result }}
         run: python tools/release_verdict.py
+
+  cad-runtime-smoke:
+    name: CAD import (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: lint
+    # Tag releases deliberately skip lint; CAD conversion must still run.
+    if: ${{ !cancelled() && (inputs.tag_release || needs.lint.result == 'success') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2022]
+        python: ["3.10", "3.14"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install geometry and host coverage dependencies
+        run: python -m pip install numpy coverage==7.16.2
+      - name: Verify pinned CAD runtime, coloured STEP fixtures and isolated worker coverage
+        run: python tools/test_cad_runtime.py --runtime-root "${{ runner.temp }}/mpf/cad-smoke" --coverage-worker

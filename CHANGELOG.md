@@ -2,6 +2,77 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 5.2.0
+
+- Rename Preview's Object banners card to **View Options** and add reported
+  toolhead positioning. It follows finite live printer telemetry, including
+  travel and parking, independently of loaded-file matching and toolpath following. Unavailable, stale,
+  unhomed and disconnected positions show a reason and hide the indicator.
+- Make True position and Smooth path available with the native nozzle or a custom model.
+  Smooth path enables smooth progress; True uses unmodified live machine coordinates.
+  Remove the separate Smooth path progress setting.
+- Import a custom toolhead in Following settings from STL or coloured STEP/STP.
+  STEP uses an optional, verified local OpenCASCADE reader downloaded with
+  consent. Models are converted to cached triangle meshes and stay local.
+  Show conversion stages, elapsed time and growing triangle counts, with
+  cancellation and no automatic timeout; accept source files up to 128 MiB.
+- Centre the nozzle anchor on the lowest surface, including nozzles with a
+  centre hole. Override it by picking a visible surface or entering model XYZ
+  coordinates; reset to automatic at any time. Changes apply only on Save.
+- Configure the model in a GPU preview with right-button rotation, middle-button
+  panning, surface picking and Cura controls. Add up to eight outward-facing
+  coloured lights, adjust brightness live, remove lights and optionally paint
+  their selected face. Model, nozzle and lights persist for each printer.
+- Shade the toolhead with perimeter lighting and let its lights illuminate the
+  bed and visible G-code. View Options groups model visibility, True position/Smooth path,
+  opacity, separate bed/model lighting, banners and bed-mesh controls.
+  True position also works without a loaded toolpath; opacity fades illumination.
+- Preserve greyed-out past-layer materials under coloured lighting, and restore
+  line colours when the native view leaves shadow mode. Use compatible cached
+  scene depth to occlude custom toolheads behind paths and the bed.
+- Restore Cura's default nozzle when **Show custom toolhead model** is off.
+  Hide custom controls until a model is uploaded, and offer a setup button that
+  opens the current printer's Following settings at the model controls.
+- Retain unchanged object-banner rows and finish deadlines across status updates,
+  avoiding repeated QML delegate construction while their countdowns continue.
+- Generate the Stealthburner lighting and partial Voron cube illustrations in
+  the normal screenshot pipeline, with attributed fixtures and saved lights.
+- Fade the completed toolhead image once, preventing overlapping faces from
+  accumulating opacity and avoiding geometry redraws when adjusting the slider.
+- Add a persistent master lighting switch. It disables perimeter, toolhead and
+  scene illumination together, retains base colours and face paint, and disables
+  the bed/model lighting controls while preserving their selections.
+- Reuse shaded images and geometry buffers, append completed path depth and
+  restrict older lit G-code to outer and hole walls while retaining top-layer
+  paths. Unchanged UI redraws reuse illumination; hidden heads and zero-energy
+  lights skip their lighting work. Moving lights reuse visible surface data on
+  supported OpenGL hosts, retaining outer walls and holes without re-extruding
+  completed G-code. Cache banner camera calculations between camera changes.
+- Retain native G-code index buffers and completed colour/depth while showing the toolhead
+  on supported normal-mode previews, avoiding whole-print copies and repeated
+  extrusion of completed geometry on each path update.
+- Instance a small reusable tube mesh for older shadowed G-code on qualified
+  OpenGL hosts, reducing camera-redraw work without expanding the entire print
+  into a triangle mesh. Unsupported shaders and visible travel retain native
+  rendering; current-layer and partial paths keep their existing shaders.
+- Keep the toolhead visible if optional scene lighting fails, and read Cura's
+  native line-category attribute correctly.
+- Expand lighting receivers only once when rebuilding a camera view, retaining
+  depth occlusion and coplanar wall ordering. Reuse equivalent completed native
+  depth on supported previews to skip another hidden-path geometry pass.
+- Share immutable status fields between printer updates and plugin consumers,
+  avoiding repeated polygon copies and the resulting garbage-collection work.
+  Public mutable status snapshots retain their defensive-copy behaviour.
+- Reserve the full View Options width in Cura's plugin row, prevent object hover
+  picking through UI panes, and keep lighting checkbox colours consistent after
+  enabling or disabling their parent controls.
+- Collapse the Preview loading row when idle. Stage software progress textures
+  so superseded scrub uploads cannot flash intermediate or empty compositions.
+- Require native CAD conversion checks on release tags as well as branch CI,
+  including when the tag workflow intentionally skips lint.
+- Fix the macOS scheduled-pause harness race by seeding and holding layer 1
+  before waiting for the UI, preserving the layer-target and refusal assertions.
+
 ## 5.1.0
 
 - Add camera-aligned object-name banners to Cura Preview. The collapsible

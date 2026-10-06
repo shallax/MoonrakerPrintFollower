@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 from qt_runtime_support import QT_AVAILABLE, runtime
@@ -103,7 +104,17 @@ if QT_AVAILABLE:
             super().deleteLater()
 
     class TagsHost(Host):
+        lightingEnabledRequested = pyqtSignal(bool)
+        lightBedRequested = pyqtSignal(bool)
+        lightModelsRequested = pyqtSignal(bool)
+        bedMeshVisibilityRequested = pyqtSignal(bool)
+        bedMeshThresholdsRequested = pyqtSignal(float, float)
+        bedMeshExaggerationRequested = pyqtSignal(float)
         tagsEnabledRequested = pyqtSignal(bool)
+        toolheadVisibilityRequested = pyqtSignal(bool)
+        toolheadSetupRequested = pyqtSignal()
+        reportedPositionRequested = pyqtSignal(bool)
+        toolheadOpacityRequested = pyqtSignal(float)
         hoverOnlyRequested = pyqtSignal(bool)
         pointerMoved = pyqtSignal(float, float)
 
@@ -203,6 +214,7 @@ if QT_AVAILABLE:
         initializationFinished = pyqtSignal()
 
     class CuraDouble(QObject):
+        has_toolpath = False
         """CuraIntegration's surface here: the changed edge and the stage flag."""
 
         changed = pyqtSignal()
@@ -247,11 +259,101 @@ class PreviewPresentationTests(unittest.TestCase):
         self.module = self.qt.load("PreviewPresentation")
         self.Logger = self.module.Logger
 
-    def presentation(self, application, *, cura=None, preview_active=False):
+    def presentation(self, application, *, cura=None, preview_active=False, persistence=None):
         cura = CuraDouble(preview_active) if cura is None else cura
-        adapter = self.module.PreviewPresentation(application, cura)
+        adapter = self.module.PreviewPresentation(application, cura, persistence=persistence)
         self.addCleanup(self._retire, adapter)
         return adapter
+
+    def test_toolhead_visibility_persists_and_restores_without_losing_other_view_choices(self):
+        document = {"previewReportedToolhead": True, "previewToolheadOpacity": .6}
+        persistence = SimpleNamespace(state_global_document=lambda: dict(document), merge_state_global=document.update)
+        adapter = self.presentation(HostApplication(), persistence=persistence)
+        self.assertTrue(adapter.toolhead_visible)
+        signals = []
+        adapter.toolheadVisibilityRequested.connect(signals.append)
+        adapter._set_toolhead_visible(False)
+        self.assertEqual(signals, [False])
+        self.assertFalse(document["previewToolheadVisible"])
+        restored = self.presentation(HostApplication(), persistence=persistence)
+        self.assertFalse(restored.toolhead_visible)
+        self.assertTrue(restored.reported_position)
+        self.assertAlmostEqual(restored.toolhead_opacity, .6)
+        restored._set_toolhead_visible(True)
+        self.assertTrue(document["previewToolheadVisible"])
+
+    def test_custom_model_availability_reaches_view_options_on_configuration_change(self):
+        app = HostApplication(window=Window(QQuickItem()))
+        tags = TagsHost()
+        app.components["PreviewObjectTagsHost.qml"] = tags
+        adapter = self.presentation(app)
+        self.assertFalse(tags.property("customToolheadAvailable"))
+        adapter.publish({"customToolheadAvailable": True})
+        self.assertTrue(tags.property("customToolheadAvailable"))
+        adapter.publish({"customToolheadAvailable": False})
+        self.assertFalse(tags.property("customToolheadAvailable"))
+
+    def test_setup_opens_current_printer_machine_action_and_reuses_dialog(self):
+        app = HostApplication(window=Window(QQuickItem()))
+        action, dialog = Mock(), Mock()
+        app.getMachineActionManager = lambda: SimpleNamespace(getMachineAction=lambda key: action)
+        adapter = self.presentation(app)
+        app.createQmlComponent = Mock(return_value=dialog)
+        with patch.object(self.module.QMetaObject, "invokeMethod") as invoke:
+            adapter._open_toolhead_settings()
+            adapter._open_toolhead_settings()
+        self.assertEqual(invoke.call_count, 2)
+        invoke.assert_called_with(dialog, "openToolheadSettings")
+        app.createQmlComponent.assert_called_once()
+        self.assertEqual(app.createQmlComponent.call_args.args[1], {"configurationManager": action})
+
+    def test_lighting_master_persists_without_erasing_receiver_choices(self):
+        document = {"previewLightBed": False, "previewLightModels": True}
+        persistence = SimpleNamespace(state_global_document=lambda: dict(document), merge_state_global=document.update)
+        app = HostApplication(window=Window(QQuickItem()))
+        tags = TagsHost()
+        app.components["PreviewObjectTagsHost.qml"] = tags
+        adapter = self.presentation(app, persistence=persistence)
+        changes = []
+        adapter.sceneLightingRequested.connect(lambda: changes.append(adapter.lighting_enabled))
+        self.assertTrue(adapter.lighting_enabled)
+        self.assertTrue(tags.property("lightingEnabled"))
+        tags.lightingEnabledRequested.emit(False)
+        self.assertFalse(tags.property("lightingEnabled"))
+        self.assertFalse(adapter.light_bed)
+        self.assertTrue(adapter.light_models)
+        restored = self.presentation(HostApplication(), persistence=persistence)
+        self.assertFalse(restored.lighting_enabled)
+        tags.lightingEnabledRequested.emit(True)
+        self.assertEqual(changes, [False, True])
+        self.assertEqual(document, {"previewLightingEnabled": True, "previewLightBed": False, "previewLightModels": True})
+
+    def test_scene_lighting_choices_persist_and_bed_mesh_requests_route_from_view_options(self):
+        document = {}
+        persistence = SimpleNamespace(state_global_document=lambda: dict(document), merge_state_global=document.update)
+        app = HostApplication(window=Window(QQuickItem()))
+        tags = TagsHost()
+        app.components["PreviewObjectTagsHost.qml"] = tags
+        adapter = self.presentation(app, persistence=persistence)
+        changes = []
+        adapter.sceneLightingRequested.connect(lambda: changes.append(True))
+        tags.lightBedRequested.emit(False)
+        tags.lightModelsRequested.emit(False)
+        self.assertEqual(len(changes), 2)
+        self.assertEqual(document, {"previewLightBed": False, "previewLightModels": False})
+        restored = self.presentation(HostApplication(), persistence=persistence)
+        self.assertFalse(restored.light_bed)
+        self.assertFalse(restored.light_models)
+        adapter.publish({"bedMeshAvailable": True, "bedMeshExaggeration": 50.0})
+        self.assertTrue(tags.property("bedMeshAvailable"))
+        self.assertEqual(tags.property("bedMeshExaggeration"), 50.0)
+        for signal, args in (("bedMeshVisibilityRequested", (False,)),
+                             ("bedMeshThresholdsRequested", (-.1, .2)),
+                             ("bedMeshExaggerationRequested", (35.0,))):
+            calls = []
+            getattr(adapter, signal).connect(lambda *values, calls=calls: calls.append(values))
+            getattr(tags, signal).emit(*args)
+            self.assertEqual(calls, [args])
 
     def _retire(self, adapter):
         # Qt destroys any surviving shell at interpreter exit, long after the
@@ -385,6 +487,13 @@ class PreviewPresentationTests(unittest.TestCase):
         saved.assert_called_with({"previewObjectTagsHoverOnly": True})
         self.assertEqual(shell.property("hoveredNames"), ["one", "two"])
         self.assertEqual(len(shell.property("tagRows")), 2)
+        with patch.object(scene.presentation._viewport_hover, "blocked", return_value=True):
+            scene.presentation._update_tags()
+            self.assertEqual(shell.property("hoveredNames"), [])
+            self.assertEqual(shell.property("tagRows"), [])
+            self.assertIsNone(scene.presentation._footprint_picked_point)
+        scene.presentation._update_tags()
+        self.assertEqual(shell.property("hoveredNames"), ["one", "two"])
         scene.presentation._update_tags()  # same ray and rows reuse the projection
         scene.panel_card.cardExpandedRequested.emit(False)
         saved.assert_called_with({"previewCardExpanded": False})
@@ -392,6 +501,43 @@ class PreviewPresentationTests(unittest.TestCase):
         self.assertEqual(shell.property("tagRows"), [])
         scene.presentation.publish({"previewStageActive": False})
         self.assertFalse(shell.property("dockVisible"))
+
+    def test_idle_banner_objects_reuse_data_until_scene_or_authoritative_inputs_change(self):
+        class Scene(QObject):
+            sceneChanged = pyqtSignal(object)
+
+        state = self.build(preview_active=True)
+        host_scene = Scene()
+        root = object()
+        host_scene.getRoot = lambda: root
+        dimensions = {"machine_width": 250, "machine_depth": 250, "machine_center_is_zero": False}
+        stack = SimpleNamespace(getProperty=lambda name, _role: dimensions[name])
+        state.presentation._application.getGlobalContainerStack = lambda: stack
+        state.cura.controller = SimpleNamespace(getScene=lambda: host_scene)
+        state.cura.selected_layer, state.cura.heights = 0, [0.2, 0.4]
+        presentation = state.presentation
+        rows = ([{"name": "part"}], False)
+        with patch.object(presentation, "_build_scene_objects", return_value=rows) as build:
+            for _ in range(30):
+                self.assertIs(presentation._scene_objects(), rows)
+            build.assert_called_once()
+            presentation.publish({"objectTagMetrics": {"part": {"progress": 0.2}}})
+            presentation._scene_objects()
+            self.assertEqual(build.call_count, 2)
+            presentation.publish({"objectTagMetrics": {"part": {"progress": 0.2}}})
+            presentation._scene_objects()
+            self.assertEqual(build.call_count, 2)
+            host_scene.sceneChanged.emit(root)
+            presentation._scene_objects()
+            self.assertEqual(build.call_count, 3)
+            state.cura.selected_layer = 1
+            presentation._scene_objects()
+            self.assertEqual(build.call_count, 4)
+            dimensions["machine_width"] = 300
+            presentation._scene_objects()
+            self.assertEqual(build.call_count, 5)
+            presentation.close()
+            self.assertEqual(host_scene.receivers(host_scene.sceneChanged), 0)
 
     def test_gcode_fallback_uses_polygon_centres_bounds_and_selected_layer(self):
         import sys

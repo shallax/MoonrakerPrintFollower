@@ -181,6 +181,9 @@ class PrintCoordinator(QObject):
         # core poll, and only the job boundary, a late DEFINE or
         # changed geometry may invalidate it.
         self._plate_memo = PlateProjectionMemo()
+        self._object_tag_metric_key = None
+        self._object_tag_metric_owner = None
+        self._object_tag_metrics = {}
         self._snapshot = PrintSnapshot()
         self._status = {}
         # The frame the current snapshot was built from: _publish composes
@@ -235,7 +238,7 @@ class PrintCoordinator(QObject):
         self._publish_at = 0.0
         self._processing = self._closed = False
         self._had_toolpath = False
-        client.statusReceived.connect(self.observe)
+        getattr(client, "statusSnapshotReceived", client.statusReceived).connect(self.observe)
         client.connectionChanged.connect(self._connection_changed)
         client.sessionInvalidated.connect(self.reset_binding)
         binding.changed.connect(self.refresh)
@@ -288,14 +291,15 @@ class PrintCoordinator(QObject):
     def snapshot(self): return self._snapshot
 
     def observe(self, status):
-        if self._closed or not isinstance(status, dict): return
+        if self._closed or not isinstance(status, Mapping): return
         self._processing = True
         try:
-            # The session boundary already publishes a fully detached copy.
+            # The session boundary publishes an immutable shared frame (or a
+            # detached legacy frame from older clients).
             self._status = status
             stats = status.get("print_stats")
             sd = status.get("virtual_sdcard")
-            stats, sd = stats if isinstance(stats, dict) else {}, sd if isinstance(sd, dict) else {}
+            stats, sd = stats if isinstance(stats, Mapping) else {}, sd if isinstance(sd, Mapping) else {}
             transition = self._jobs.observe(stats, sd)
             active = self._jobs.printer_state in {"printing", "paused"}
             job = transition.key if active else None
@@ -331,7 +335,7 @@ class PrintCoordinator(QObject):
             # mix two instants — a new layer with the old position — into
             # one snapshot. The observation is pinned with it: it is an
             # immutable value object, one per observed frame.
-            status = self._status if isinstance(self._status, dict) else {}
+            status = self._status if isinstance(self._status, Mapping) else {}
             observation = self._jobs.observation
             # The request flags age out against the snapshot's own
             # print state — a standby printer never sends the frame
@@ -845,6 +849,8 @@ class PrintCoordinator(QObject):
     def reset_binding(self):
         self._processing = True
         try:
+            self._object_tag_metric_key = self._object_tag_metric_owner = None
+            self._object_tag_metrics = {}
             self._loads.reset()
             self._mr_meta = {}
             self._mr_meta_key = ("", "")
@@ -944,7 +950,7 @@ class PrintCoordinator(QObject):
         refresh's stale copy would end an hourglass whose load is
         still running."""
         if self._closed or self._processing: return
-        status = self._status if isinstance(self._status, dict) else {}
+        status = self._status if isinstance(self._status, Mapping) else {}
         filename = str((status.get("print_stats") or {}).get("filename") or "")
         view = index_view_for_print(self._index.view, filename)
         indexing = self._index.phase == "indexing"
@@ -1190,16 +1196,39 @@ class PrintCoordinator(QObject):
         if source_state != getattr(self, "_object_tag_source_state", None):
             self._object_tag_source_state = source_state
             Logger.log("i", "Moonraker banner source: active=%s CuraFile=%s download=%s match=%s", *source_state)
-        definitions = list(self._plate_memo.value(source, self._files.job_key)["objects"]) if same_file else []
+        projection = self._plate_memo.value(source, self._files.job_key) if same_file else None
+        definitions = list(projection["objects"]) if projection is not None else []
         view = self._index.view
         metrics = {}
         if same_file and view is not None and view.job_key == self._files.job_key:
-            metrics = view.object_metrics(view.physical_file_offset(snapshot.motion_progress), snapshot.layer_eta)
-            now = time.time()
-            for row in metrics.values():
-                remaining = row.pop("remaining")
-                row["deadline"] = now + remaining if remaining is not None and remaining > 0 else None
+            offset = view.physical_file_offset(snapshot.motion_progress)
+            print_state = snapshot.observation.state if snapshot.observation is not None else ""
+            key = (self._binding.identity, print_state, snapshot.job_key, self._files.job_key,
+                   loaded_path, self._files.path, offset, snapshot.layer_eta)
+            owner = self._object_tag_metric_owner
+            # Paused ETAs previously held their remaining duration by rebasing
+            # the deadline. Preserve that behaviour rather than counting down
+            # while no extrusion can complete; resume establishes a new anchor.
+            if (print_state == "paused" or key != self._object_tag_metric_key or owner is None
+                    or owner[0] is not view or owner[1] is not projection):
+                metrics = view.object_metrics(offset, snapshot.layer_eta)
+                now = time.time()
+                for row in metrics.values():
+                    remaining = row.pop("remaining")
+                    row["deadline"] = now + remaining if remaining is not None and remaining > 0 else None
+                self._object_tag_metric_key = key
+                self._object_tag_metric_owner = (view, projection)
+                self._object_tag_metrics = metrics
+            else:
+                # The 75 ms handle watcher also publishes stationary views.
+                # Keep the authoritative absolute finish time until progress
+                # or ETA changes; QML's own clock counts down without rebuilding
+                # every banner delegate on each otherwise identical publish.
+                metrics = self._object_tag_metrics
             definitions = _merge_object_tag_definitions(definitions, metrics)
+        else:
+            self._object_tag_metric_key = self._object_tag_metric_owner = None
+            self._object_tag_metrics = {}
         return {"objectTagSourceActive": bool(same_file),
                 "objectTagDefinitions": definitions, "objectTagMetrics": metrics,
                 "objectTagCurrentObject": source.get("current_object") if snapshot.active else None,
@@ -1242,6 +1271,7 @@ class PrintCoordinator(QObject):
                        phase[0], phase[1], phase[2], phase[3])
         self._presentation.publish({
             "followingPaused": not state.attached, "followingEnabled": config.enabled,
+            "customToolheadAvailable": bool(config.toolhead_model),
             # The preview's load feedback: busy until the load reaches a
             # terminal state (requested, downloading, indexing, rendering),
             # with the same determinate/indeterminate progress contract as
@@ -1315,3 +1345,5 @@ class PrintCoordinator(QObject):
 
     def close(self):
         self._closed = True
+        self._object_tag_metric_key = self._object_tag_metric_owner = None
+        self._object_tag_metrics = {}

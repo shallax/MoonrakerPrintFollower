@@ -147,9 +147,34 @@ correct package ownership.
 | `PauseScheduleService.py` | Pure print-local target set and crossing policy | Network commands |
 | `PauseController.py` | Scheduled PAUSE command and acknowledgement lifecycle | Preview rendering |
 | `PreviewPresentation.py` | Preview QML objects, displayed values and user-intent signals | Following or scheduling policy |
+| `RenderTiming.py` | Opt-in bounded asynchronous GPU queries for plugin draw commands, never system-wide GPU utilisation | Profile settings writes, synchronous GPU waits or native timer ownership |
+| `CameraProjection.py` | Camera-keyed banner projection matrices and hover rays; unchanged telemetry reuses camera-only work | Native camera mutation or settings |
+| `ViewportHover.py` | Public Qt hover routing and visible control bounds prevent scene picking through UI panes | Input interception or native UI mutation |
 | `ObjectNameProjection.py` | Screen-space object-name banner placement and collision avoidance | Cura camera access, printer commands or QML ownership |
 | `ObjectWork.py` | Bounded per-object extrusion checkpoints, cache validation and finish-time projection | File reading, Qt or presentation |
 | `BedMeshPresenter.py` | Active mesh overlay, visibility preference and Preview mesh controls | Macro execution |
+| `ToolheadGeometry.py` | Immutable canonical Z-up millimetre triangles, lowest-surface bounds anchor and isolated projection/picking | Qt, I/O or printer state |
+| `ToolheadAssetStore.py` | Atomic content-addressed triangle/colour assets with bounded checksum-verified reads | Settings adoption or CAD conversion |
+| `ToolheadLighting.py` | Bounded model-local emitters, outward normals, colour/brightness validation and light-origin offset | Qt, settings writes or scene objects |
+| `ToolheadImport.py` | Local bounded STL parsing and isolated STEP process ownership, source snapshot, stage progress, cancellation and mesh validation | Cura scene or configuration writes |
+| `StepWorker.py` | Stdlib-only isolated native STEP process, flattened millimetre triangles and colours | Cura, Qt, NumPy or parent-process configuration |
+| `CadRuntime.py` | Optional platform-pinned CAD and CPython 3.12 helper downloads, safe extraction and verification of every cached runtime file against retained pinned archives | Printer credentials, model upload or pip |
+| `ToolheadModels.py` | One CAD worker and per-active-printer settings draft; retired results never adopt after Cancel or rebind | Live scene rendering |
+| `ToolheadModelPreview.py` | Preview camera, immutable background mesh packing, nearest-surface picking and software-only capture fallback | Printer scene or settings commit |
+| `ToolheadPreviewGL.py` | Qt Quick framebuffer renderer, current-context shader/buffers and depth-tested CAD lighting; camera-only updates reuse uploaded geometry | Cura OpenGL singleton, settings draft writes or imports |
+| `ToolheadInstancedShadow.py` | Fingerprint-guarded instanced native shadow tubes over cached vertex storage with owned bounded indices and context-safe GL cleanup | Current/fractional paths, visible travel, native shader mutation or telemetry |
+| `ToolheadPathGeometry.py` | Stable owned indices and per-shader VAOs over native vertex buffers, compact boundary indices and conservative spatial rejection | Native mesh mutation or telemetry |
+| `ToolheadDepthCache.py` | Private depth framebuffer retention and incremental completed-prefix updates, rebuilt on backward progress or scene/camera changes | Native framebuffer storage or colour composition |
+| `ToolheadFrameCache.py` | Private premultiplied image retention for the shaded head and additive illumination; camera/state invalidation and cropped head storage | Native shader mutation, telemetry or settings |
+| `ToolheadTransparency.py` | Blend native transparent surfaces ahead of the cropped head, preserving its premultiplied colour and alpha | G-code rasterization or native shader changes |
+| `ToolheadOcclusion.py` | Seed custom-head crops from the owned complete native path depth and small public solid/bed batches; retain depth provenance and retry failed acquisition | Native private FBO access, duplicate G-code rasterization or settings |
+| `ToolheadSurfaceCache.py` | Private visible-surface framebuffer, incremental completed paths and moving-light shading with bounded storage | Native framebuffer mutation or telemetry |
+| `ToolheadSimulationPass.py` | Public render-pass adapter for eligible previews with a visible custom head; retained native index storage, guarded shadow instancing and native fallback | Native class patches or scene mutation |
+| `ToolheadSimulationCache.py` | Retained native path colour/depth with completed-prefix append and bounded storage | Fractional paths, telemetry or native framebuffer mutation |
+| `ToolheadSceneLighting.py` | Owned additive bed/path illumination using light-independent surfaces; legacy/compatibility forward fallback | Host shader mutation, settings writes or telemetry |
+| `ToolheadOpaqueShader.py` | Shared toolhead shader variant without alpha discard for the fully opaque single-pass path | Shader formula duplication, settings or telemetry |
+| `ToolheadSceneNode.py` | Non-selectable lit triangle node; private head depth above final scene composition, cleared before Qt controls; opaque single pass and completed-image opacity | Telemetry or nozzle suppression |
+| `ToolheadPresenter.py` | Reported-position freshness/homing gate, estimated public LayerData adapter and one native-nozzle suppression owner | Print progress matching or native class patches |
 | `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
 | `MonitorData.py` | Monitor request lifetime, category timers, the frozen `MonitorSnapshot` and the observation record's assembly (the tri-state connection, the two push-ins) | QML declarations |
 | `MoonrakerMonitorModel.py` | The single Qt Monitor model: explicit property declarations, collaborator composition and the one publication transaction | Domain policy or networking |
@@ -313,9 +338,17 @@ request builder/pool but own their replies directly — they are never
 registered in the JSON lane registry, and `cancel_owner` stays
 JSON-only. Each operation retires its reply on every terminal path.
 
-`SessionSnapshot` publishes fully detached status copies and stores defensive
-copies of merged patches, so no consumer can mutate session internals through a
-published snapshot.
+`SessionSnapshot` copies incoming patches into a deeply immutable `FrozenStatus`.
+Merges replace changed fields while sharing unchanged branches, including object
+polygons. Owned consumers subscribe to `statusSnapshotReceived`; they retain the
+same immutable data instead of copying and freezing the entire status on every
+position update. The public `status` property and legacy `statusReceived` signal
+still provide detached mutable copies. Legacy signal copies are constructed only
+when that signal has subscribers. Session invalidation retires both publication
+paths, including rebinds triggered synchronously by a subscriber.
+Synchronous nested admissions are queued until the current frame's consumers
+and command notifications finish. Connection republishing cannot replay an
+older frame after a newer observation or an emergency-stop overlay.
 
 The Machine Action may create an isolated instance of the same transport for
 unsaved credentials; a probe must not reconfigure the live binding.
@@ -380,6 +413,22 @@ closures on network signals are banned — the live crash was a SIGSEGV in
 opened (2026-09-10); `test_network_replies_connect_into_bound_handlers_not_bare_closures`
 pins the pattern.
 
+`CadRuntime.py` has a separate, narrowly scoped HTTPS downloader for optional
+pinned PyPI CAD wheels and Astral's CPython 3.12.15 standalone helper release
+20261003. The five supported platform pairs are macOS ARM64/x86-64, Linux glibc
+ARM64/x86-64, and Windows x86-64. OCP always uses its cp312 ABI, independently
+of Cura's Python version. The downloader carries no printer credentials,
+rejects insecure redirects and verifies byte counts and SHA-256 before bounded
+extraction. Cached runtime verification derives expected file hashes from
+retained archives whose complete hashes match committed pins; a writable
+installation marker never establishes trust. It does not create a second
+Moonraker status feed. Downloads require explicit first-use consent and are
+excluded from MPF release archives. Component licences, selected compatible
+licence options and upstream source references are grouped in
+`docs/THIRDPARTYSOFTWARE.md`, including Obico and the helper interpreter. Both
+package formats include that document at the installed plugin root. Repackaging
+the downloaded binaries would require meeting their additional redistribution obligations.
+
 ## 5. Physical state and Preview
 
 The coordinator observes a print through `RemoteJobService`, then resolves its
@@ -426,9 +475,83 @@ projected object deadline scaled by slicer elapsed times. Unmatched objects
 omit these estimates. The neighboring Preview card remembers its expanded
 state and keeps its bottom edge aligned with the collapsible banner bar.
 
+Toolhead-only motion requests cached native composition through a private pose;
+it does not propagate native scene transformations. The head retains a cropped,
+tile-sized colour/depth image and re-shades only when its pose, camera, model
+or lights change. Global opacity fades this premultiplied image once at composition,
+so coincident CAD faces do not accumulate alpha and opacity changes do not rerun
+geometry. Opaque models use one shaded depth-tested draw at every global opacity;
+models with intrinsically translucent materials retain their depth prepass.
+
+The View Options master lighting switch persists independently of the bed/model
+choices. Disabling it bypasses scene illumination and displays the head's base
+colours, including optional saved face paint, without perimeter lighting, attached
+illumination or emission. The bed/model controls remain disabled until it is
+enabled again. The model editor keeps its lighting available for configuration.
+
+While showing a custom head, eligible normal-mode Preview rendering uses
+an owned public simulation-pass adapter. Native shader resources and lower,
+current and fractional draw order are preserved. Immutable indices stay in a GPU
+buffer instead of serializing and uploading the entire print on each range draw.
+Completed paths retain colour and depth; advancing progress appends only new
+segments, with the fractional segment drawn into a separate working image.
+Camera, filters, layer, minimum layer, shading mode or backwards progress rebuild
+the cache. Compatibility mode and unsupported scene contents use the original
+native pass; disabling the adapter restores that pass and requests a full frame.
+
+The native simulation adapter may instance only the older-layer shadow range.
+Admission requires the tested stock `layers3d_shadow.shader` content fingerprint,
+desktop OpenGL 4.1, BACK/CCW culling, buffer-texture and instanced-draw entry points, native
+contiguous float32 SOA attributes and nonnegative paired int32/uint32 indices.
+Visible travel, unknown layouts/shaders and unsupported capabilities retain
+the native geometry shader. The normal current and fractional ranges remain
+on their existing shaders. Native shadow tubes retain helper/skin/infill and
+extruder-opacity filters, including the native shadow prime-tower distinction.
+The helper shares the public cached vertex buffer, owns at most 128 MiB of line
+indices plus a 192-byte tube template, and restores program/VAO/array-buffer
+and both buffer-texture bindings. A failed owned draw delegates the entire
+frame to the original native pass. Admission logging remains opt-in through
+the existing rendering diagnostic marker, once per context.
+
+Scene illumination retains a full-viewport additive image independently of
+native scene textures. Camera, filters, receiving mesh transforms, print prefix,
+fractional motion and lighting changes invalidate it. Unrelated Qt composition
+frames submit one image quad rather than re-extruding G-code. Stable index buffers
+and per-shader VAOs reuse Cura's public vertex buffers. A compact boundary index
+buffer lights older outer and hole walls; every selected top-layer category is
+retained, subject to native visibility filters. Other older paths still contribute
+to occlusion. Conservative light bounds reject distant blocks before vertex
+submission, then the geometry shader rejects distant lines before tubular
+extrusion. Static lower-layer depth is retained; completed top-layer depth appends
+new segments while fractional segments remain transient. Backward scrubbing,
+minimum-layer changes and camera/filter changes rebuild the appropriate depth.
+On a camera rebuild, older non-receiving paths write depth first. Receiving paths
+then write depth and surface attributes together with an inclusive depth test,
+preserving receiver priority at coplanar boundaries while avoiding a second
+extrusion of those paths.
+When the owned simulation adapter has an equivalent completed depth image, a
+guarded depth-only copy replaces the older non-receiver draw. Admission checks
+the camera, transform, completed prefix, native visibility/shadow state, opaque
+geometry and matching single-sample depth storage. Unsupported travel, support
+or helper cases retain the partitioned draw. Only owned framebuffers participate;
+the adapter never reads or changes native framebuffer storage. Profiling can log
+the first successful admission in each graphics context.
+Hosts unable to copy depth use the uncached depth path. Zero-opacity heads and
+zero-energy lights submit no scene illumination.
+
 Manual Preview changes are detected against remembered plugin-written values.
 `CuraIntegration.writing_preview()` suppresses callbacks from plugin writes, while
-user writes detach the follower. Preview view reads and writes go through typed
+user writes detach the follower. Selection tools also add/remove decorative
+`ToolHandle` nodes: native SimulationView recomputes path limits and resets the
+current path to its maximum synchronously. Integration identifies the exact
+native scene-reset call chain, requires identical armed LayerData and unchanged
+layer/minimum handles, restores the armed path through the public write guard,
+and preserves attachment. Decorative ToolHandle root mutations also avoid scene
+invalidation. Root topology signals
+omit the changed child, so this host compatibility check uses bounded synchronous
+frame inspection without retaining frames; unknown origins fail closed. Genuine
+slider changes, including dragging to the maximum, still detach immediately.
+Preview view reads and writes go through typed
 `CuraAdapter` accessors rather than stringly-named view methods. Physical
 observation and scheduled PAUSE continue while Preview is detached. ETA uses
 slicer layer timing, speed, path progress and observed duration anchors—not
@@ -475,6 +598,79 @@ Compact-layer refinement rejects segment motion ranges outside the search window
 and edges whose bounding boxes cannot improve or tie the current nearest match.
 Its spatial bound includes the existing candidate comparator's tolerance. Search
 windows, travel acceptance and motion tie-breaking remain the same.
+
+### Toolhead position and custom models (5.2.0)
+
+The global View Options preferences select True position or Smooth path with either the native nozzle or a custom model. Smooth path enables smooth path progress in Preview and Monitor; True position resets the animation and uses discrete progress updates. The legacy per-printer path_smoothing field remains readable for compatibility but no longer controls production presentation. Hiding the custom toolhead restores the native nozzle, hides attached illumination and disables only custom appearance controls; position radios remain available and choices remain retained. Smooth path is disabled without a loaded toolpath. Named Toolhead, Object Name Banners and Bedmesh sections with dividers separate the position and appearance controls, independent object-name banners and bed-mesh display controls. View Options owns the mesh range filter, exaggeration scale and visibility button. Separate persisted Light bed/Light models switches govern attached illumination, and are disabled with the toolhead controls when the model is hidden.
+Reported positioning observes the existing session feed independently of the
+index and Preview attachment. `statusAdmitted` supplies admission provenance;
+synthetic status re-emissions cannot refresh its age. XYZ homing and finite
+`motion_report.live_position` are required. True position uses machine-space XYZ directly, with only Cura axis/bed-origin
+conversion. G-code-origin corrections remain confined to path matching. Missing fields in a complete sync, a disconnect,
+a rebind, or polling telemetry older than three effective core cadences (minimum
+two seconds) hide the node with an explicit reason. A healthy changes-only
+websocket retains stationary positions; socket keepalive owns its liveness.
+Loaded-file provenance, path matching and Preview attachment never gate True
+position; unrelated G-code cannot move or suppress the live indicator.
+
+`ToolheadPresenter` suppresses the native nozzle through public parenting APIs
+and `CuraIntegration.show_nozzle` respects its lease. The plugin uses an ordinary
+SceneNode because SimulationPass rewrites native NozzleNode positions every
+frame. Scene decoration restores public view activity and all four layer/path
+handles under the Preview write guard after childrenChanged, so toggling the
+indicator cannot be mistaken for a manual slider adjustment.
+Estimated custom models use public LayerData interpolation and follow scrubbing.
+Source mesh XYZ is Z-up millimetres; its anchor is subtracted before the single
+Cura rotation (x,z,-y). Automatic alignment centres the XY bounds at minimum Z,
+including an annular nozzle face; manual XYZ or surface picking overrides it.
+
+STEP styles inherit through compound/solid/shell/face topology with instance placement, visibility and sRGB conversion. Four white sources on the top perimeter of the build volume aim 45° inward/down. View Options persists whole-model opacity as a global view preference; an independent scene-lighting uniform fades attached illumination with the same opacity without changing saved light intensities. Per-printer configuration persists up to eight attached emitters with model-local position, outward normal, RGB colour, brightness and range. Picking uses the visible surface normal and offsets the source outside the face; the shader excludes the inward hemisphere. Add/colour/brightness/remove edits share the settings Save/Cancel draft. An owned additive pass lights the native plate geometry and the visible G-code prefix using the installed SimulationView vertex/geometry sources and an owned lighting fragment. A depth prepass prevents bed illumination leaking through rendered paths. Its unchanged lower-layer depth is cached in an owned framebuffer and invalidated by camera, viewport, layer bounds, visibility filters or receiver changes; the current path prefix is drawn separately on every frame. Owned path indices are uploaded once, sharing Cura’s public cached vertex buffer. Conservative block bounds and a geometry-stage sphere check skip distant paths before tubular extrusion, and depth-only fragments skip lighting calculations. Toolhead-only position changes request cached composition without propagating scene-transform changes through Cura’s native G-code rendering. Zero opacity or disabling both receiving surfaces bypasses scene lighting entirely. Native receiver batches are retained across QtRenderer cached redraws, whose getBatches list is empty after endRendering; a full frame replaces them and scene/view/dimension changes invalidate them. Native shaders and classes are not patched. Brightness uses 0–100% UI values mapped to the existing 0–5 intensity; a renderer-only draft signal gives live updates without rebuilding the lights list. The custom head crop is seeded from the owned simulation pass’s complete visible depth, including fractional paths, plus public solid batches. Transparent bed and printer-frame geometry does not write that occlusion depth. Transparent model surfaces participate alongside the bed and frame; the head depth and coverage mask preserve opaque printed paths and prevent double blending outside the head. Geometry is not excluded merely because it belongs to a sliceable model. Its native shaders blend only foreground surfaces into a separate cropped image; a premultiplied resolve preserves the head’s coverage and opacity without double-drawing those surfaces outside it. Unchanged compositions reuse the result. Matching camera, viewport, source, path and depth-format checks prevent stale occluders; cache identity includes that depth revision. Warm/native fallback frames retain the previous overlay behaviour until compatible owned depth is available. Destination depth is cleared after composition so Qt controls stay above the head; line overlays do not occlude it. The transparency helper reuses native vertex buffers and never rerenders G-code. Native True-position nozzles still use the simpler native-mesh overlay without this custom-head depth seed.
+
+Scene-light receivers use the native display material: older shadowed paths use
+Cura’s grey and alpha, while current and unshadowed paths retain line colours.
+The public simulation-mode capability invalidates retained materials on mode
+changes; lighting never restores hidden line colours to greyed-out layers. An
+unknown native mode remains a distinct cache identity but does not disable
+model illumination. Selection handles retain the cached path pass and its
+material observation; their small native overlay batch draws after paths.
+
+Print-sized XYZ transforms in the depth-equivalence proof and light receiver
+bounds use direct NumPy contraction (`einsum`, `optimize=False`). They do not
+enter a BLAS worker pool: a large float32 transform stalled Cura's main thread
+inside its bundled OpenBLAS `exec_blas` during a live large-print load. Proof
+chunks remain bounded at 65,536 lines and unchanged geometry reuses the proof.
+
+STL/STEP imports produce one immutable flattened mesh with per-triangle colours,
+at most one million triangles and a 128 MiB source-file limit. Source deletion
+after Save is harmless. Asset publication precedes the existing settings commit;
+failed saves and cancelled drafts preserve the previously saved selection.
+STEP external references are refused before native Transfer. A background worker
+owns one disposable CPython 3.12 child process running `StepWorker.py`, with no
+Cura, Qt or NumPy imports. It receives a private, bounded regular-file snapshot;
+isolated Python mode (`-I -B`) and a sanitized environment prevent host Python
+and loader settings from contaminating the helper. Conversion has no elapsed-time
+cutoff. The parent terminates and waits for the child on cancellation or excessive
+diagnostics/output, and validates the canonical mesh before adoption. The child
+atomically replaces a small private progress file with stage names and actual
+triangle counts during mesh construction; the parent reads at most 513 characters
+at 4 Hz and publishes changed reports through the generation-guarded signal.
+ToolheadModels owns a monotonic elapsed timer with a separate notification, so
+ticks do not rebuild the model/light draft. Completion, reset and close stop it.
+Opaque CAD stages show their names and elapsed time, not an invented percentage.
+Native faults and calls holding the GIL stay in the child. Geometry/source limits
+bound accepted data, not native allocations before conversion checks; the child
+has no hard memory limit or filesystem sandbox. Demand-rendered QImages and
+camera changes run off the UI thread; live rendering loads cached triangles
+without CAD.
+
+`tools/test_cad_runtime.py --coverage-worker` measures the isolated worker
+against the actual pinned native libraries. A temporary stdlib `trace` bootstrap
+records executed worker lines in the helper; the host coverage API checks its
+statement coverage against the same 95% bar. No instrumentation is installed
+into or written into the verified runtime. Mandatory CAD CI runs this check,
+and the release verdict requires its success. Only `StepWorker.py` is exempt
+from the ordinary host-process per-file report because its compiled helper ABI
+and execution live in a separate process; it retains this dedicated threshold.
 
 ## 6. Remote files, leases and bounded indexing
 
@@ -943,6 +1139,15 @@ previous incarnation must never claim ownership of the current scene.
 ### Exact-scene compositor
 
 Canonical screenshot captures pin the amd64 container architecture as well
+as the Mesa/EGL rasteriser for the toolhead showcase. `capture_toolhead.py`
+loads checked-in, attributed Stealthburner/Cube geometry and the five-light
+reference configuration, compiles the production head/scene-light GLSL and
+captures fixed views. Cube contours are a documented partial-print illustration;
+the receiver base palette is neutral. The normal capture and repeatability
+entry points include both images; no live profile or CuraApplication is used.
+Native smoke captures use host OpenGL (Mesa on headless Windows CI).
+
+Canonical QML screenshot captures pin the amd64 container architecture as well
 as Qt and fonts, and disable optional AVX/FMA raster paths for parity between
 native CI and emulation on Apple Silicon. `tools/run_captures.sh` is the shared
 entry point. Native test gates may use the host architecture; `make build`
@@ -953,7 +1158,13 @@ Byte comparison and independent light/dark determinism checks remain strict.
 Canvas delivery transaction, the attached/detached split acceptance rule, the
 exact-picture readiness policy and the layer payload's own asset validity —
 the raster, base and travel predicates those decisions are taken over. The QML
-face now adapts this policy to actual Canvas/Image objects.
+face now adapts this policy to actual Canvas/Image objects. Its software progress
+surface has two bounded Canvas textures: a committed front and an offscreen
+staging buffer. A staging upload can replace the front only when its receipt
+matches the current demand; receipt, front texture and prefix ownership switch
+together. Superseded uploads retain the committed image and coalesce a new
+request. Each staging paint rebuilds only its eligible retained-prefix tail.
+The native GPU renderer bypasses this software staging work.
 
 Two further Qt-free libraries sit beside it. `PlateViewPolicy.js` owns the
 camera's arithmetic: the one printer-to-widget bed transform every consumer
@@ -1038,11 +1249,11 @@ Partial-layer scrub geometry has a dedicated notification for each surface.
 Each face retains it in a separate QML binding, so split advances and raster
 delivery rebuild the small progress object without converting the full Python
 geometry to JavaScript again. Geometry replacement still invalidates that binding.
-An obsolete Canvas upload remains accounted for across a world change. The
-preparing composition covers its buffer while the current paint is queued;
-the old bitmap cannot remain visible merely because its upload has not yet
-delivered. This cover leaves Canvas active, avoiding a readiness cycle caused
-by hiding the producer itself.
+An obsolete Canvas upload remains accounted for across a world change. Its
+staging texture cannot replace the committed picture. The preparing composition
+covers incompatible committed worlds while current work is queued. Staging
+remains renderable outside the clip, avoiding a readiness cycle caused by hiding
+the producer itself.
 
 The split tracker separates search stalls from corrective physical evidence.
 Only consecutive below-floor physical matches permit backward correction;
@@ -1229,7 +1440,9 @@ zoom; the direct pass uses the window viewport. All passes carry the same
 layer-generation frame hold. Software rendering keeps its existing compositor.
 
 
-Attached GPU motion smoothing uses the existing `path_smoothing` setting.
+Attached GPU motion smoothing follows the global Smooth path mode.
+True position disables that animation; the legacy `path_smoothing` value is
+retained only for configuration compatibility.
 The shared accepted motion record includes projection onto its single unfinished
 motion; this never searches ahead or changes the accepted completed-motion floor.
 A linear presentation animation trails observed progress, with immediate resets

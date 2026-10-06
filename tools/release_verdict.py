@@ -8,6 +8,7 @@ REQUIRED = (
     ("package", "MPF_RELEASE_PACKAGE_RESULT"),
     ("artifact scan", "MPF_RELEASE_SCAN_RESULT"),
     ("Cura gate", "MPF_RELEASE_GATE_RESULT"),
+    ("CAD import", "MPF_RELEASE_CAD_RESULT"),
 )
 
 
@@ -19,7 +20,7 @@ def main() -> int:
         details = ", ".join(f"{name}={result}" for name, result in incomplete)
         print(f"::error::Release checks incomplete: {details}")
         return 1
-    print("Release package, artifact scan and Cura gate all succeeded.")
+    print("Release package, artifact scan, Cura gate and CAD import all succeeded.")
     return 0
 
 

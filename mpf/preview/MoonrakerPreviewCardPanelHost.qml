@@ -15,8 +15,11 @@ Item {
 
     property real externalGap: UM.Theme.getSize("default_margin").width
     property real verticalPadding: UM.Theme.getSize("thick_margin").height
-    property real bannerWidth: 230 * screenScaleFactor
-    property real bannerGap: 12 * screenScaleFactor
+    ViewOptionsDockMetrics {
+        id: dockMetrics
+    }
+    property real bannerWidth: dockMetrics.width
+    property real bannerGap: dockMetrics.gap
 
     // Cura measures this width in its additional-components row. Reserve
     // the banner control's space here so other plugins move to its left.

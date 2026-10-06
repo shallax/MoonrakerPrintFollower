@@ -1505,6 +1505,39 @@ class CaptureGateTests(unittest.TestCase):
         self.assertIn("export HARNESS_CAPTURE_REASON=%q", script)
         self.assertIn("${HARNESS_CAPTURE_REASON:-}", script)
 
+    @unittest.skipUnless(sys.platform != "win32" and shutil.which("bash"), "macOS shell harness requires bash")
+    def test_native_harness_refuses_non_disposable_host_before_mutation(self):
+        import subprocess
+        env = {key: value for key, value in os.environ.items()
+               if key not in ("GITHUB_ACTIONS", "HARNESS_DISPOSABLE_HOST")}
+        proc = subprocess.run(["bash", str(ROOT / "tools/native_harness.sh"),
+                               "macos", "5.13.0", "preview"], env=env,
+                              capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("deletes/reseeds its user profile", proc.stderr)
+        script = (ROOT / "tools/native_harness.sh").read_text(encoding="utf-8")
+        self.assertLess(script.index('if [ "${GITHUB_ACTIONS:-}"'), script.index('sudo rm -rf "$APP"'))
+
+
+
+class AtomicPrintSeedTests(unittest.TestCase):
+    def test_layer_seed_and_clock_hold_precede_all_ui_waits(self):
+        state = {"print_stats": {"info": {"current_layer": 9}}, "virtual_sdcard": {}}
+        posted = []
+        def http(path, method="GET", body=None):
+            if path == "/harness/state": return {"result": state}
+            if path.startswith("/server/files"): return {"result": {"files": [{"size": 500}]}}
+            posted.append((path, method, body))
+            return {}
+        with patch.object(runner, "sim_http", side_effect=http):
+            verdict = runner.suite_step({"op": "sim_set_current_print", "current_layer": 1, "layer_clock_interval_s": 3600})
+        self.assertTrue(verdict[0])
+        self.assertEqual(len(posted), 1)
+        path, method, body = posted[0]
+        self.assertEqual((path, method), ("/harness/scenario", "POST"))
+        self.assertEqual(body["print_stats"]["info"]["current_layer"], 1)
+        self.assertEqual(body["layer_clock_interval_s"], 3600)
+        self.assertEqual(body["virtual_sdcard"]["file_size"], 500)
 
 
 class CensusReadinessTests(unittest.TestCase):

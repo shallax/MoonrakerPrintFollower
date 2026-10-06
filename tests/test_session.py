@@ -12,6 +12,8 @@ from mpf.moonraker.MoonrakerSession import (
     PollPolicy,
     RequestCategory,
     RequestCoalescer,
+    SessionSnapshot,
+    mutable_status,
 )
 
 
@@ -204,6 +206,36 @@ class SessionStateTests(unittest.TestCase):
         changes = session.commands.observe("paused", now=15.1)
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes[0].outcome, "timed_out")
+
+    def test_immutable_frames_share_unchanged_fields_and_preserve_old_frames(self):
+        snapshot = SessionSnapshot()
+        patch = {"exclude_object": {"objects": [{"name": "part", "polygon": [[1, 2], [3, 4]]}], "current_object": "part"},
+                 "motion_report": {"live_position": [1, 2, 3, 4]}}
+        before = snapshot.merge_status(patch, immutable=True, now=1)
+        patch["exclude_object"]["objects"][0]["polygon"][0][0] = 99
+        after = snapshot.merge_status({"exclude_object": {"current_object": "other"},
+                                       "motion_report": {"live_position": [5, 6, 7, 8]}}, immutable=True, now=2)
+        self.assertIs(before["exclude_object"]["objects"], after["exclude_object"]["objects"])
+        self.assertEqual(before["exclude_object"]["current_object"], "part")
+        self.assertEqual(after["exclude_object"]["current_object"], "other")
+        self.assertEqual(before["motion_report"]["live_position"], (1, 2, 3, 4))
+        self.assertEqual(before["exclude_object"]["objects"][0]["polygon"][0][0], 1)
+        with self.assertRaises(TypeError): after["exclude_object"]["objects"][0]["polygon"][0][0] = 42
+        with self.assertRaises(TypeError): after["motion_report"]["live_position"] = ()
+        with self.assertRaises(AttributeError): after._values = {}
+        self.assertEqual(snapshot.revision, 2)
+        self.assertEqual(snapshot.updated_at, 2)
+
+    def test_immutable_snapshot_legacy_copies_keep_list_and_tuple_shapes(self):
+        snapshot = SessionSnapshot()
+        frozen = snapshot.merge_status({"object": {"list": [[1]], "tuple": (2, 3)}}, immutable=True)
+        legacy = mutable_status(frozen)
+        self.assertIsInstance(legacy["object"]["list"], list)
+        self.assertIsInstance(legacy["object"]["tuple"], tuple)
+        legacy["object"]["list"][0][0] = 99
+        self.assertEqual(snapshot.copy_status()["object"]["list"], [[1]])
+        self.assertIs(snapshot.merge_status(None, immutable=True), frozen)
+        self.assertEqual(snapshot.merge_status(None), {"object": {"list": [[1]], "tuple": (2, 3)}})
 
     def test_published_snapshot_is_detached_from_session_internals(self):
         session = MoonrakerSessionState()

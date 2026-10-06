@@ -5,11 +5,13 @@ from __future__ import annotations
 import math
 import time
 
-from PyQt6.QtCore import QObject, QPointF, QTimer, pyqtSignal
+from PyQt6.QtCore import QMetaObject, QObject, QPointF, QTimer, pyqtSignal
 from UM.Logger import Logger
 
 from ..resources.PluginPaths import plugin_path
 from .ObjectNameProjection import footprint_hits, place_banners
+from .CameraProjection import CameraProjection
+from .ViewportHover import ViewportHover
 
 
 def _definition_center(row):
@@ -37,6 +39,10 @@ class PreviewPresentation(QObject):
     bedMeshThresholdsRequested = pyqtSignal(float, float)
     bedMeshExaggerationRequested = pyqtSignal(float)
     controlsChanged = pyqtSignal()
+    sceneLightingRequested = pyqtSignal()
+    toolheadVisibilityRequested = pyqtSignal(bool)
+    reportedPositionRequested = pyqtSignal(bool)
+    toolheadOpacityRequested = pyqtSignal(float)
 
     def __init__(self, application, cura, parent=None, persistence=None):
         super().__init__(parent)
@@ -46,11 +52,21 @@ class PreviewPresentation(QObject):
         self._panel_card = None
         self._overlay_card = None
         self._tags_shell = None
+        self._toolhead_setup_dialog = None
         self._persistence = persistence
         saved = persistence.state_global_document() if persistence is not None else {}
         self._card_expanded = bool(saved.get("previewCardExpanded", True))
         self._tags_enabled = bool(saved.get("previewObjectTagsEnabled", False))
         self._hover_only = bool(saved.get("previewObjectTagsHoverOnly", False))
+        self.lighting_enabled = bool(saved.get("previewLightingEnabled", True))
+        self.light_bed = bool(saved.get("previewLightBed", True))
+        self.light_models = bool(saved.get("previewLightModels", True))
+        self.toolhead_visible = bool(saved.get("previewToolheadVisible", True))
+        self.reported_position = bool(saved.get("previewReportedToolhead", False))
+        self.toolhead_opacity = self._opacity_value(saved.get("previewToolheadOpacity", 1.0))
+        self._toolhead_status = "Estimated along toolpath"
+        self._camera_projection = CameraProjection()
+        self._viewport_hover = ViewportHover()
         self._hover_point = None
         self._hovered_node = 0
         self._hovered_names = []
@@ -60,6 +76,8 @@ class PreviewPresentation(QObject):
         self._footprint_picked_at = 0.0
         self._projected_rows = []
         self._pick_available = False
+        self._tag_scene = self._tag_scene_signal = None
+        self._tag_objects_key = self._tag_objects = None
         self._tag_timer = QTimer(self)
         self._tag_timer.setInterval(100)
         self._tag_timer.timeout.connect(self._update_tags)
@@ -105,6 +123,9 @@ class PreviewPresentation(QObject):
     def controls(self): return tuple(control for control in (self._panel_card, self._overlay_card) if control is not None)
 
     def publish(self, values):
+        if any(name in values and values[name] != self._values.get(name) for name in (
+                "objectTagDefinitions", "objectTagMetrics", "objectTagHeight", "objectTagCurrentObject")):
+            self._invalidate_tag_objects()
         self._values.update(values)
         self._publish_all()
         self._update_tags()
@@ -164,10 +185,83 @@ class PreviewPresentation(QObject):
             self._tags_shell.setProperty("dockVisible", active)
             self._tags_shell.setProperty("tagsEnabled", self._tags_enabled)
             self._tags_shell.setProperty("hoverOnly", self._hover_only)
+            self._tags_shell.setProperty("toolheadVisible", self.toolhead_visible)
+            self._tags_shell.setProperty("customToolheadAvailable", bool(self._values.get("customToolheadAvailable")))
+            self._tags_shell.setProperty("lightingEnabled", self.lighting_enabled)
+            self._tags_shell.setProperty("lightBed", self.light_bed)
+            self._tags_shell.setProperty("lightModels", self.light_models)
+            for name, value in self._values.items():
+                if name.startswith("bedMesh"):
+                    self._tags_shell.setProperty(name, value)
+            self._tags_shell.setProperty("reportedPosition", self.reported_position)
+            self._tags_shell.setProperty("estimatedPositionAvailable", bool(self._cura.has_toolpath))
+            self._tags_shell.setProperty("toolheadOpacity", self.toolhead_opacity)
+            self._tags_shell.setProperty("toolheadStatus", self._toolhead_status)
             if active and not self._tag_timer.isActive():
                 self._tag_timer.start()
             elif not active:
                 self._tag_timer.stop()
+
+    def publish_toolhead(self, status):
+        self._toolhead_status = str(status)
+        if self._tags_shell is not None:
+            self._tags_shell.setProperty("toolheadStatus", self._toolhead_status)
+
+    def _set_toolhead_visible(self, enabled):
+        self.toolhead_visible = bool(enabled)
+        if self._persistence is not None:
+            self._persistence.merge_state_global({"previewToolheadVisible": self.toolhead_visible})
+        self.toolheadVisibilityRequested.emit(self.toolhead_visible)
+        self._publish_all()
+
+    def _open_toolhead_settings(self):
+        action = self._application.getMachineActionManager().getMachineAction("MoonrakerPrintFollowerConfigureAction")
+        if action is None: return
+        if self._toolhead_setup_dialog is None:
+            self._toolhead_setup_dialog = self._application.createQmlComponent(
+                plugin_path("settings", "ToolheadSetupDialog.qml"), {"configurationManager": action})
+        if self._toolhead_setup_dialog is not None:
+            QMetaObject.invokeMethod(self._toolhead_setup_dialog, "openToolheadSettings")
+
+    def _set_lighting_enabled(self, enabled):
+        self.lighting_enabled = bool(enabled)
+        self._set_scene_lighting("previewLightingEnabled", self.lighting_enabled)
+
+    def _set_light_bed(self, enabled):
+        self.light_bed = bool(enabled)
+        self._set_scene_lighting("previewLightBed", self.light_bed)
+
+    def _set_light_models(self, enabled):
+        self.light_models = bool(enabled)
+        self._set_scene_lighting("previewLightModels", self.light_models)
+
+    def _set_scene_lighting(self, key, value):
+        if self._persistence is not None:
+            self._persistence.merge_state_global({key: value})
+        self.sceneLightingRequested.emit()
+        self._publish_all()
+
+    def _set_reported_position(self, enabled):
+        self.reported_position = bool(enabled)
+        if self._persistence is not None:
+            self._persistence.merge_state_global({"previewReportedToolhead": self.reported_position})
+        self.reportedPositionRequested.emit(self.reported_position)
+        self._publish_all()
+
+    @staticmethod
+    def _opacity_value(value):
+        try:
+            value = float(value)
+            return max(0.0, min(1.0, value)) if math.isfinite(value) else 1.0
+        except (TypeError, ValueError):
+            return 1.0
+
+    def _set_toolhead_opacity(self, value):
+        self.toolhead_opacity = self._opacity_value(value)
+        if self._persistence is not None:
+            self._persistence.merge_state_global({"previewToolheadOpacity": self.toolhead_opacity})
+        self.toolheadOpacityRequested.emit(self.toolhead_opacity)
+        self._publish_all()
 
     def _set_tags_enabled(self, enabled):
         self._tags_enabled = bool(enabled)
@@ -194,7 +288,36 @@ class PreviewPresentation(QObject):
     def _pointer_moved(self, x, y):
         self._hover_point = (float(x), float(y)) if x >= 0 and y >= 0 else None
 
+    def _invalidate_tag_objects(self, *_args):
+        self._tag_objects_key = self._tag_objects = None
+
     def _scene_objects(self):
+        scene = self._cura.controller.getScene()
+        if scene is not self._tag_scene:
+            if self._tag_scene_signal is not None:
+                try: self._tag_scene_signal.disconnect(self._invalidate_tag_objects)
+                except (RuntimeError, TypeError): pass
+            self._tag_scene, self._tag_scene_signal = scene, getattr(scene, "sceneChanged", None)
+            if self._tag_scene_signal is not None:
+                self._tag_scene_signal.connect(self._invalidate_tag_objects)
+            self._invalidate_tag_objects()
+        # Without host invalidation, keep the uncached behaviour rather than
+        # risk stale anchors after a scene edit. Camera motion still projects
+        # the retained world anchors normally; hover is evaluated separately.
+        if self._tag_scene_signal is None:
+            return self._build_scene_objects()
+        stack = self._application.getGlobalContainerStack()
+        selected, heights = self._cura.selected_layer, self._cura.heights
+        height = heights[selected] if selected is not None and 0 <= selected < len(heights) else None
+        key = (id(scene.getRoot()), id(stack), selected, height,
+               stack.getProperty("machine_width", "value"), stack.getProperty("machine_depth", "value"),
+               stack.getProperty("machine_center_is_zero", "value"))
+        if key != self._tag_objects_key or self._tag_objects is None:
+            self._tag_objects = self._build_scene_objects()
+            self._tag_objects_key = key
+        return self._tag_objects
+
+    def _build_scene_objects(self):
         from UM.Math.Vector import Vector
         scene = self._cura.controller.getScene()
         root = scene.getRoot()
@@ -303,8 +426,7 @@ class PreviewPresentation(QObject):
             return self._hovered_names
         try:
             x, y = self._hover_point
-            ray = camera.getRay(2.0 * x / window.width() - 1.0,
-                                2.0 * y / window.height() - 1.0)
+            ray = self._camera_projection.ray(camera, x, y, window.width(), window.height())
             origin = (ray.origin.x, ray.origin.y, ray.origin.z)
             direction = (ray.direction.x, ray.direction.y, ray.direction.z)
             names = footprint_hits(objects, origin, direction)
@@ -351,13 +473,19 @@ class PreviewPresentation(QObject):
             rect = window.viewportRect
             center_x = window.width() * (rect.x() + rect.width() / 2.0)
             center_y = window.height() * (rect.y() + rect.height() / 2.0)
+            camera_project = self._camera_projection.projector(camera)
             def project(position):
-                px, py = camera.projectToViewport(position)
+                px, py = camera_project(position)
                 return center_x + px / ratio, center_y - py / ratio
             self._pick_available = pickable and self._application.getRenderer().getRenderPass("selection") is not None
             footprint_available = not self._pick_available and any(item.get("footprint") for item in objects)
-            hovered = self._pick_hover(window, scene) if self._pick_available else 0
-            hovered_names = self._pick_footprints(window, camera, objects) if footprint_available else []
+            dock = shell.findChild(QObject, "moonrakerPreviewObjectTagsDock")
+            blocked = self._viewport_hover.blocked(window, self._hover_point, (*self.controls, dock))
+            if blocked:
+                self._hovered_node, self._hovered_names = 0, []
+                self._picked_point = self._footprint_picked_point = None
+            hovered = self._pick_hover(window, scene) if self._pick_available and not blocked else 0
+            hovered_names = self._pick_footprints(window, camera, objects) if footprint_available and not blocked else []
             rows = place_banners(objects, project, window.width(), window.height(),
                                  hover_only=self._hover_only and (self._pick_available or footprint_available),
                                  hovered_node=hovered, hovered_names=hovered_names)
@@ -465,6 +593,14 @@ class PreviewPresentation(QObject):
                     shell.setParentItem(content)
                     shell.setParent(content)
                     shell.tagsEnabledRequested.connect(self._set_tags_enabled)
+                    shell.lightingEnabledRequested.connect(self._set_lighting_enabled)
+                    shell.lightBedRequested.connect(self._set_light_bed)
+                    shell.lightModelsRequested.connect(self._set_light_models)
+                    self._wire(shell)
+                    shell.toolheadVisibilityRequested.connect(self._set_toolhead_visible)
+                    shell.toolheadSetupRequested.connect(self._open_toolhead_settings)
+                    shell.reportedPositionRequested.connect(self._set_reported_position)
+                    shell.toolheadOpacityRequested.connect(self._set_toolhead_opacity)
                     shell.hoverOnlyRequested.connect(self._set_hover_only)
                     shell.pointerMoved.connect(self._pointer_moved)
                     shell.destroyed.connect(lambda: setattr(self, "_tags_shell", None))
@@ -500,7 +636,16 @@ class PreviewPresentation(QObject):
             if signal is not None: signal.emit("saveButton")
 
     def close(self):
+        if self._tag_scene_signal is not None:
+            try: self._tag_scene_signal.disconnect(self._invalidate_tag_objects)
+            except (RuntimeError, TypeError): pass
+        self._tag_scene = self._tag_scene_signal = None
+        self._invalidate_tag_objects()
         self._closed = True
+        if self._toolhead_setup_dialog is not None:
+            self._toolhead_setup_dialog.close()
+            self._toolhead_setup_dialog.deleteLater()
+            self._toolhead_setup_dialog = None
         self._tag_timer.stop()
         finished = getattr(self._application, "initializationFinished", None)
         if finished is not None:

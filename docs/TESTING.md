@@ -1,6 +1,78 @@
 # TESTING.md — the real-Cura UI test harness
 
-## 5.1.0
+## 5.2.0 — current validation
+
+Version 5.2.0 adds custom STL/STEP toolheads, True position/Smooth path modes, a
+GPU model editor with nozzle and light placement, and View Options controls
+for opacity, lighting, object banners and bed mesh. Disabling the custom model
+restores Cura's default nozzle; without an uploaded model, the setup action
+opens the active printer's Following settings at the model section.
+
+Use `make all` for the complete source, real-Qt, shader, capture, determinism
+and package gates. Focused checks run through `make test_files`, for example:
+
+```sh
+make test_files FILES="tests.test_toolhead_presenter tests.test_toolhead_settings tests.test_qml_toolhead_editor tests.test_preview_object_tags tests.test_preview_presentation tests.test_coordinator_coverage tests.test_toolhead_capture tests.test_whatsnew"
+```
+
+`make generate_screenshots` includes the Stealthburner lighting and partial
+Voron cube scenes. Their pinned, licensed fixtures and saved five-light setup
+live in `tests/fixtures/toolhead/showcase/`; they use production shaders without
+opening Cura or reading a user's profile. The cube depicts illustrative layer
+contours, not a sliced printer job. `make verify_captures` checks 38 light/dark
+scenes across two runs. Refresh committed PNGs with the amd64 Docker backend;
+host-native GPU output is smoke evidence rather than the canonical baseline.
+
+On 6 October 2026, the final native `make all JOBS=4` passed 5,296 tests in
+214 isolated processes, all nine lint checks, shader compilation, 21 capture
+scenes, 38 byte-identical light/dark scenes across two runs, and exact
+package/source parity. Coverage passed at 98% overall, with every non-exempt
+file clearing the 95% bar. The added import UI and surface-map checks also
+passed in the pinned amd64 Linux environment (13 tests). Canonical Linux
+screenshots were regenerated and all 38 light/dark scenes were byte-identical
+across two runs. These results do not qualify Windows runtime execution or
+replace the real-Cura release gate.
+
+Live macOS Cura checks exercised STEP colours, nozzle picking, saved lights,
+opacity, pane layering and a large loaded print. The user accepted final
+live-print performance as comparable with the custom toolhead disabled.
+Profiling was affected by disk pressure and desktop screen capture; there is
+no final uncontaminated FPS comparison or claim that all intermittent hitches
+are eliminated.
+
+A later large-print load completed parsing but left the main thread spinning
+in NumPy float32 matrix multiplication / OpenBLAS `exec_blas` in two separated
+CPU samples. Print-sized depth-proof and receiver-bound transforms now use
+direct single-threaded contraction. The 68 simulation-pass/path-geometry tests
+and all nine lint checks pass, including float32 chunk boundaries, transformed
+bounds and oblique-path rejection. Subsequent live-print testing included this
+fix.
+
+STEP imports now have a 128 MiB
+source limit and no automatic conversion timeout, with stage reports, elapsed
+time, triangle counts during mesh construction and cancellation. The 102 focused
+import/model/settings/architecture tests and nine lint checks passed. Native CAD
+fixtures passed with 96.90% isolated-worker statement coverage; a generated sphere
+reported 32,768 triangles during construction and completed with 40,220. This is
+progress-reporting evidence, not a prediction of conversion time for other CAD.
+
+The real-Cura Preview journeys cover switching True position back to Smooth
+path (`p9`) and the View Options section labels and toolhead setup dialog
+(`p10`). The isolated real-QML import test delivers a mouse click to Cancel,
+checks elapsed time beyond three minutes and a changing triangle-count status,
+and verifies that cancellation preserves the prior model and restores the
+import controls. Native converter termination is covered separately by the
+worker-process tests. New desktop journeys still require the disposable-host
+CI gate; the local QML checks do not stand in for those runs.
+
+The v5.1.0 scheduled-pause CI race is fixed forward by seeding and holding the
+simulator layer before UI waits. Native CAD conversion has dedicated platform
+CI jobs; cross-platform CI and the real-Cura release gate remain required for
+publication. Run any local native harness only with an explicitly disposable
+profile. Never reset, reseed or restore a user's live Cura configuration to test
+this release.
+
+## 5.1.0 (historical)
 
 Version 5.1.0 adds Preview object banners, footprint hover for loaded G-code,
 per-object progress and finish estimates, and collapsible Preview controls.

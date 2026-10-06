@@ -88,17 +88,203 @@ class ClientFeedTests(unittest.TestCase):
             self.app.processEvents()
             time.sleep(0.01)
 
+    def test_nested_admission_keeps_multiple_owned_and_legacy_consumers_in_frame_order(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        events, queued = [], []
+        def first(frame):
+            position = frame["motion_report"]["live_position"][0]
+            events.append(("first", position))
+            if position == 1 and not queued:
+                queued.append(True)
+                patch = {"motion_report": {"live_position": [2, 0, 0, 0]}}
+                self.client.admit_status(patch, origin="sync", stamp=2, generation=self.client._generation)
+                patch["motion_report"]["live_position"][0] = 99
+        self.client.statusSnapshotReceived.connect(first)
+        self.client.statusSnapshotReceived.connect(lambda frame: events.append(("second", frame["motion_report"]["live_position"][0])))
+        self.client.statusReceived.connect(lambda frame: events.append(("legacy", frame["motion_report"]["live_position"][0])))
+        self.client.admit_status({"motion_report": {"live_position": [1, 0, 0, 0]}}, origin="sync", stamp=1, generation=self.client._generation)
+        self.assertEqual(events, [(consumer, position) for position in (1, 1, 2) for consumer in ("first", "second", "legacy")])
+        self.assertEqual(self.client.status_snapshot["motion_report"]["live_position"][0], 2)
+        self.assertFalse(self.client._pending_admissions)
+        self.assertFalse(self.client._pending_publications)
+
+    def test_rebind_discards_queued_old_admissions_and_legacy_publications(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        frames, legacy = [], []
+        def first(frame):
+            frames.append(frame)
+            self.client.assume_print_stopped()
+            self.client.admit_status({"motion_report": {"live_position": [2, 0, 0, 0]}}, origin="sync", stamp=2, generation=self.client._generation)
+            self.client.configure("http://other", "new", 750, feed_mode="websocket")
+        self.client.statusSnapshotReceived.connect(first)
+        self.client.statusReceived.connect(legacy.append)
+        self.client.admit_status({"motion_report": {"live_position": [1, 0, 0, 0]}, "print_stats": {"state": "printing"}}, origin="sync", stamp=1, generation=self.client._generation)
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(legacy, [])
+        self.assertEqual(dict(self.client.status_snapshot), {})
+        self.assertFalse(self.client._pending_admissions)
+
+    def test_nested_e_stop_overlay_cannot_be_undone_by_first_connection_republish(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        owned, legacy = [], []
+        def stop(frame):
+            if frame["print_stats"]["state"] == "printing": self.client.assume_print_stopped()
+        self.client.statusSnapshotReceived.connect(stop)
+        self.client.statusSnapshotReceived.connect(lambda frame: owned.append(frame["print_stats"]["state"]))
+        self.client.statusReceived.connect(lambda frame: legacy.append(frame["print_stats"]["state"]))
+        self.client.admit_status({"print_stats": {"state": "printing", "print_duration": 5}}, origin="sync", stamp=1, generation=self.client._generation)
+        self.assertEqual(owned, ["printing", "cancelled"])
+        self.assertEqual(legacy, owned)
+
+    def test_nested_admission_delivers_status_before_command_confirmation_once(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.client.admit_status({"print_stats": {"state": "printing"}}, origin="sync", stamp=1, generation=self.client._generation)
+        self.session.commands.issue("Pause", {"paused"})
+        self.session.commands.accepted("Pause")
+        events = []
+        def nested(frame):
+            state = frame["print_stats"]["state"]
+            events.append(("status", state))
+            if state == "paused":
+                self.client.admit_status({"print_stats": {"state": "printing"}}, origin="sync", stamp=3, generation=self.client._generation)
+        self.client.statusSnapshotReceived.connect(nested)
+        self.client.commandChanged.connect(lambda command: events.append(("command", command["outcome"])))
+        self.client.admit_status({"print_stats": {"state": "paused"}}, origin="sync", stamp=2, generation=self.client._generation)
+        self.assertEqual(events, [("status", "paused"), ("command", "confirmed"), ("status", "printing")])
+        self.assertEqual(self.session.commands.get("Pause").outcome, "confirmed")
+
+    def test_publication_and_admission_queues_reset_after_callback_failure(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from mpf.moonraker.MoonrakerSession import FrozenStatus
+        frame = FrozenStatus({"print_stats": {"state": "printing"}})
+        def broken_emit(value):
+            self.client._publish_status(value)
+            raise RuntimeError("subscriber failed")
+        with patch.object(self.client, "statusSnapshotReceived", SimpleNamespace(emit=broken_emit)):
+            with self.assertRaisesRegex(RuntimeError, "subscriber failed"): self.client._publish_status(frame)
+        self.assertFalse(self.client._publishing_status)
+        self.assertFalse(self.client._pending_publications)
+        frames = []
+        self.client.statusSnapshotReceived.connect(frames.append)
+        self.client._publish_status(frame)
+        self.assertEqual(frames, [frame])
+        def broken_admission(value, **kwargs):
+            self.client.admit_status(value, **kwargs)
+            raise RuntimeError("admission failed")
+        with patch.object(self.client, "_admit_status", side_effect=broken_admission):
+            with self.assertRaisesRegex(RuntimeError, "admission failed"):
+                self.client.admit_status({}, origin="sync", stamp=1, generation=self.client._generation)
+        self.assertFalse(self.client._admitting_status)
+        self.assertFalse(self.client._pending_admissions)
+
+    def test_owned_monitor_consumes_frozen_fields_without_comparison_copy(self):
+        from unittest.mock import patch
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        monitor = MonitorData(self.client)
+        monitor._active = True
+        with patch("mpf.monitor.MonitorData._status_copy", side_effect=AssertionError("raw comparison copy")):
+            self.socket.syncSnapshot.emit({"exclude_object": {"objects": [{"polygon": [[1, 2]]}], "current_object": "one"},
+                                          "print_stats": {"state": "printing"}}, 1.0)
+            before = monitor.snapshot.core
+            self.socket.syncSnapshot.emit({"exclude_object": {"current_object": "two"}}, 2.0)
+        self.assertIs(before["exclude_object"]["objects"], monitor.snapshot.core["exclude_object"]["objects"])
+        self.assertEqual(before["exclude_object"]["current_object"], "one")
+        self.assertEqual(monitor.snapshot.core["exclude_object"]["current_object"], "two")
+        self.assertEqual(monitor._core_memo._rows, {})
+        monitor.deleteLater()
+
+    def test_owned_status_publication_skips_full_copy_and_shares_unchanged_polygons(self):
+        from unittest.mock import patch
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        frames = []
+        self.client.statusSnapshotReceived.connect(frames.append)
+        with patch.object(self.session.snapshot, "copy_status", side_effect=AssertionError("full status copy")):
+            self.socket.syncSnapshot.emit({"exclude_object": {"objects": [{"polygon": [[1, 2]]}], "current_object": "one"},
+                                          "print_stats": {"state": "printing"}}, 1.0)
+            before = frames[-1]
+            self.socket.syncSnapshot.emit({"exclude_object": {"current_object": "two"},
+                                          "motion_report": {"live_position": [1, 2, 3, 4]}}, 2.0)
+        after = frames[-1]
+        self.assertIs(before["exclude_object"]["objects"], after["exclude_object"]["objects"])
+        self.assertEqual(before["exclude_object"]["current_object"], "one")
+        self.assertIs(self.client.status_snapshot, after)
+        legacy = []
+        self.client.statusReceived.connect(legacy.append)
+        self.socket.syncSnapshot.emit({"print_stats": {"state": "paused"}}, 3.0)
+        legacy[-1]["exclude_object"]["objects"][0]["polygon"][0][0] = 99
+        self.assertEqual(self.client.status_snapshot["exclude_object"]["objects"][0]["polygon"][0][0], 1)
+        self.assertEqual(self.client.status["exclude_object"]["objects"][0]["polygon"], [[1, 2]])
+
+    def test_immutable_e_stop_overlay_preserves_session_and_legacy_observation(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        frames, legacy = [], []
+        self.client.statusSnapshotReceived.connect(frames.append)
+        self.client.statusReceived.connect(legacy.append)
+        self.socket.syncSnapshot.emit({"print_stats": {"state": "printing", "print_duration": 20},
+                                      "exclude_object": {"objects": [{"polygon": [[1, 2]]}]}}, 1.0)
+        before = frames[-1]
+        self.client.assume_print_stopped()
+        self.assertEqual(frames[-1]["print_stats"]["state"], "cancelled")
+        self.assertEqual(legacy[-1]["print_stats"]["state"], "cancelled")
+        self.assertEqual(before["print_stats"]["state"], "printing")
+        self.assertEqual(self.client.status_snapshot["print_stats"]["state"], "printing")
+        self.assertIs(before["exclude_object"], frames[-1]["exclude_object"])
+        self.socket.syncSnapshot.emit({"print_stats": {"state": "printing", "print_duration": 21}}, 2.0)
+        self.assertEqual(frames[-1]["print_stats"]["state"], "cancelled")
+        self.socket.syncSnapshot.emit({"print_stats": {"state": "printing", "print_duration": 1}}, 3.0)
+        self.assertEqual(frames[-1]["print_stats"]["state"], "printing")
+
+    def test_rebind_during_immutable_delivery_cannot_publish_old_legacy_frame(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        immutable, legacy = [], []
+        def replace(frame):
+            immutable.append(frame)
+            self.client.configure("http://other", "new", 750, feed_mode="websocket")
+        self.client.statusSnapshotReceived.connect(replace)
+        self.client.statusReceived.connect(legacy.append)
+        self.socket.syncSnapshot.emit({"print_stats": {"state": "printing"}}, 1.0)
+        self.assertEqual(len(immutable), 1)
+        self.assertEqual(legacy, [])
+        self.assertEqual(dict(self.client.status_snapshot), {})
+        self.assertEqual(self.client.status, {})
+        self.assertEqual(immutable[0]["print_stats"]["state"], "printing")
+
+    def test_immutable_frame_order_rejects_old_sync_and_disconnect_keeps_old_value_safe(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        frames = []
+        self.client.statusSnapshotReceived.connect(frames.append)
+        self.socket.syncSnapshot.emit({"print_stats": {"state": "printing"}, "motion_report": {"live_position": [1, 2, 3, 4]}}, 2.0)
+        before = frames[-1]
+        count = len(frames)
+        self.socket.syncSnapshot.emit({"motion_report": {"live_position": [9, 9, 9, 9]}}, 1.0)
+        self.assertEqual(len(frames), count)
+        self.socket.klippyLost.emit("disconnected")
+        self.assertFalse(self.client.connected)
+        self.assertEqual(before["motion_report"]["live_position"], (1, 2, 3, 4))
+        self.client.configure("http://other", "new", 750, feed_mode="websocket")
+        self.assertEqual(dict(self.client.status_snapshot), {})
+
     def test_websocket_start_connects_with_the_mapped_url_and_merged_set(self):
         self.client.configure("https://printer.local", "key", 750, feed_mode="websocket")
         self.client.start()
         url, key, core, aux = self.socket.starts[0]
         self.assertEqual(url, "wss://printer.local/websocket")
         self.assertEqual(key, "key")
-        self.assertEqual(core, {"print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh", "pause_resume", "exclude_object"})
+        self.assertEqual(core, {"print_stats", "gcode_move", "virtual_sdcard", "motion_report", "toolhead", "bed_mesh", "pause_resume", "exclude_object"})
         self.assertEqual(self.socket.subscriptions[0], {
             "bed_mesh": None, "exclude_object": None, "gcode_move": None,
             "motion_report": None, "pause_resume": None, "print_stats": None,
-            "virtual_sdcard": None,
+            "virtual_sdcard": None, "toolhead": None,
         })
 
     def test_idle_floor_does_not_gate_the_first_connection(self):
@@ -520,6 +706,10 @@ if QT_AVAILABLE:
 if QT_AVAILABLE:
 
     class PauseControllerLifecycleTests(unittest.TestCase):
+        def setUp(self):
+            # Retain the Qt application across constructor-time collections.
+            self.app = QCoreApplication.instance() or QCoreApplication([])
+
         def test_confirmed_pause_stays_listed_as_passed_and_removable(self):
             # The 2026-09-16 ruling: a confirmed pause STAYS in the
             # list, dimmed "passed" (the rows never vanish mid-print),

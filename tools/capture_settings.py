@@ -53,7 +53,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 from PyQt6.QtCore import QObject, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtQml import QQmlComponent, QQmlEngine
+from PyQt6.QtQml import QQmlComponent, QQmlEngine, qmlRegisterType
 from PyQt6.QtQuick import QQuickItem, QQuickWindow
 
 import capture_contrast
@@ -63,7 +63,8 @@ import capture_settle
 # already taller than the fixed 600-px frame (813 px fitted); a page
 # that outgrows this is a capture failure to look at, never a silently
 # cropped image.
-CAPTURE_HEIGHT_LIMIT = 1200
+# Following now measures 1322 px natively with the toolhead alignment group.
+CAPTURE_HEIGHT_LIMIT = 1600
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +88,31 @@ class SettingsManager(QObject):
         self._test_status = "Not tested"
         self._test_busy = False
         self._detection_ready = False
+        from mpf.settings.PrinterConfig import PrinterConfig
+        from mpf.toolhead.ToolheadAssetStore import ToolheadAssetStore
+        from mpf.toolhead.ToolheadModels import ToolheadModels
+        scratch = os.path.join(tempfile.gettempdir(), "mpf", "capture-toolhead")
+        self._toolhead = ToolheadModels(ToolheadAssetStore(os.path.join(scratch, "models")),
+            os.path.join(scratch, "cad"), PrinterConfig, lambda: "capture", self)
+        if os.environ.get("MPF_CAPTURE_TOOLHEAD_CUSTOM") == "1":
+            import numpy as np
+            from mpf.geometry.ToolheadGeometry import default_mesh, mesh_from_arrays
+            nozzle = default_mesh().triangles
+            body = nozzle * (2.5, 2.5, 1.5) + (0, 0, 8)
+            points = np.concatenate((nozzle, body))
+            colours = np.concatenate((np.tile((0.85, 0.62, 0.22, 1), (len(nozzle), 1)),
+                                      np.tile((0.16, 0.32, 0.72, 1), (len(body), 1))))
+            self._toolhead._mesh = mesh_from_arrays(points, colours)
+            self._toolhead._name = "Custom coloured toolhead.step"
+            self._toolhead.automatic()
+
+    @pyqtProperty(QObject, constant=True)
+    def toolheadModel(self):
+        return self._toolhead
+
+    @pyqtSlot()
+    def cancelToolheadModel(self):
+        self._toolhead.cancel()
 
     @pyqtProperty(bool, notify=settingsChanged)
     def finished(self):
@@ -602,6 +628,8 @@ def main():
     theme_import = _shared_materialise(
         os.environ.get("CAPTURE_THEME_TREE") or os.path.join(ROOT, "dist", ".capture-theme"), theme_backend)
     try:
+        from mpf.toolhead.ToolheadModelPreview import ToolheadModelPreview
+        qmlRegisterType(ToolheadModelPreview, "MoonrakerPrintFollower", 1, 0, "ToolheadModelPreview")
         engine = QQmlEngine()
         # Qt 6.11 searches import paths newest-first and resolves a module
         # from a single directory, so the fallbacks are added first: the

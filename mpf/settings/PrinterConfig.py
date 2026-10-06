@@ -8,6 +8,8 @@ from math import isfinite
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
+from ..geometry.ToolheadLighting import validated_lights
+
 # ConsolePolicy owns these bounds; PrinterConfig may not import it
 # (module-layering pin), so the coercion repeats the numbers. Drift is
 # harmless: the controller re-trims the transcript on load regardless.
@@ -158,6 +160,10 @@ class PrinterConfig:
     eta_learn: bool = False
     path_smoothing: bool = True
     show_toolhead_indicator: bool = True
+    toolhead_model: str = ""
+    toolhead_model_name: str = ""
+    toolhead_tip: List[float] = field(default_factory=list)
+    toolhead_lights: List[dict] = field(default_factory=list)
     follow_mode: str = "exact"
 
     # Integrated Moonraker upload settings.
@@ -241,6 +247,8 @@ class PrinterConfig:
             data["poll_interval_ms"] = max(1, min(3_600_000, int(data["poll_interval_ms"])))
         except (TypeError, ValueError):
             data["poll_interval_ms"] = defaults.poll_interval_ms
+        data["toolhead_lights"] = validated_lights(data["toolhead_lights"])
+
         try:
             tolerance = float(data["z_tolerance"])
             if not isfinite(tolerance) or not (0.005 <= tolerance <= 0.250):
@@ -315,11 +323,21 @@ class PrinterConfig:
         data["url"] = normalise_url(data.get("url"))
 
         for key in (
-            "api_key", "follow_mode", "frontend_url", "output_format",
+            "api_key", "follow_mode", "frontend_url", "output_format", "toolhead_model", "toolhead_model_name",
             "upload_path", "power_devices", "filename_translate_input",
             "filename_translate_output", "filename_translate_remove", "camera_url", "camera_selected",
         ):
             data[key] = str(data.get(key) or getattr(defaults, key))
+
+        key = data["toolhead_model"]
+        if len(key) != 64 or any(char not in "0123456789abcdef" for char in key):
+            data["toolhead_model"] = ""
+        data["toolhead_model_name"] = data["toolhead_model_name"][:255]
+        try:
+            tip = [float(value) for value in data["toolhead_tip"]]
+            data["toolhead_tip"] = tip if len(tip) == 3 and all(isfinite(v) and abs(v) <= 10000 for v in tip) else []
+        except (TypeError, ValueError):
+            data["toolhead_tip"] = []
 
         paths = data.get("upload_paths")
         if isinstance(paths, (list, tuple)):

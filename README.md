@@ -8,8 +8,60 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 5.1.0
+- **Release:** 5.2.0
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 5.2.0
+
+**View Options** groups the toolhead, object banners and bed-mesh controls beside
+the Preview card. Choose **True position** to follow live travel and parking,
+even with no G-code or an unrelated file loaded, or **Smooth path** to
+follow the toolpath smoothly. Both choices work with Cura’s standard nozzle or
+a custom model. This replaces the separate Smooth path progress setting.
+Untick **Show custom toolhead model** to restore Cura's standard nozzle, adjust
+opacity to fade both the custom model and its lights, or toggle lighting on the
+bed and models. Without an uploaded model, **Set up custom toolhead…** opens
+the current printer's Following settings at the upload controls.
+**Enable lighting** switches all toolhead and scene lights off together, including
+the perimeter lights. It preserves the bed/model choices and disables their
+controls while off; the model remains visible in its base colours.
+Unavailable live positions show a reason; estimated positioning requires a toolpath.
+
+Choose a custom toolhead under **Configure Moonraker → Following → Toolhead
+model**. STL uses millimetres with Z pointing up. STEP/STP preserves colours
+and placed assembly parts, then converts them into one cached mesh. The first
+STEP import offers a local CAD reader download; your model stays on your
+computer. The reader supports macOS 11+ (Apple Silicon and Intel), Windows
+x86-64, and Linux glibc 2.31+ (x86-64 and ARM64). It uses a pinned CPython
+3.12 helper independently of Cura's Python version.
+
+The automatic nozzle anchor is the centre of the lowest surface's XY bounds,
+so a nozzle hole keeps its centre alignment. Right-drag the preview to rotate,
+middle-drag to pan, scroll to zoom, or left-click in picking mode to select the
+nozzle. Model XYZ fields also provide a precise manual override.
+**Reset automatic** restores the detected anchor. **Save** adopts the model for
+this printer; **Cancel** keeps the saved selection. Import limits are 128 MiB
+and one million triangles. STEP conversion runs in a separate process, with
+the current stage, elapsed time and a live triangle count during display-mesh
+construction. There is no automatic time cutoff; **Cancel import** terminates
+the converter and discards its result. Native CAD faults are isolated from Cura. The converter has no hard
+memory limit or filesystem sandbox.
+
+The configuration preview also places coloured lights on model surfaces. Each
+light points outward, has live brightness and reach controls, and can optionally
+paint its face. Removing the light restores the original face colour. Save keeps
+the model, nozzle and lights for this printer. The same lights illuminate the
+bed and G-code; older outer walls and hole walls remain lit alongside the selected
+top layer. The toolhead stays below interface panes and above the bed outline.
+
+Rendering retains unchanged geometry, completed toolpaths and lighting buffers
+to reduce repeated work. Object banners avoid unnecessary rebuilds, hovering
+over interface panes no longer selects objects behind them, and the loading
+row disappears when idle. Detailed toolpaths and lighting can still increase
+GPU load; the lighting switches let you control which surfaces are illuminated.
+
+Runtime licences, source references and GPLv3 compatibility notes, including
+Obico, are listed in [Third-party software](docs/THIRDPARTYSOFTWARE.md).
 
 ## What changed in 5.1.0
 
@@ -600,7 +652,6 @@ Settings include:
 - enable or disable automatic following
 - follow mode
 - within-layer path following
-- **Smooth path progress** (display-only; can be disabled)
 - native Cura live printhead fallback
 - fallback layer-number convention
 - automatic switching to Preview
@@ -715,7 +766,9 @@ uses 1.75 mm filament; invalid width estimates use 0.4 mm.
 **Anti-aliasing**, **Retractions** and **Priming** are saved checkbox choices.
 The latter two show hollow up/down arrows only after the events occur, and
 thin dense markers when zoomed out. Exclude Object is always antialiased and
-has no additional rendering controls. With **Smooth path progress** enabled in Settings → Following, the GPU follower animates line progress and toolhead position
+has no additional rendering controls. **Smooth path** in Preview’s
+View Options enables smooth progress in both views. The GPU follower animates
+line progress and toolhead position
 along the indexed path between observations. The software fallback keeps its
 discrete presentation. Preview and Monitor use the same accepted live motion
 progress.
@@ -773,15 +826,36 @@ The follower controls live in their own Cura-styled action-panel card in Preview
 - **Detach/Attach** and **Load print** actions
 - **Scheduled pause** — pause at the end of a selected layer, with multiple pauses allowed, each showing its own ETA, and one-click removal or clear-all. Polling tightens to 250 ms as the target layer approaches, so the pause fires as close to the layer boundary as HTTP polling allows. The schedule is print-local: it never persists into printer configuration and clears when the print changes.
 
-The panel uses a fixed layout so status changes do not resize it. If the currently active Cura printer is not enabled and configured with a usable Moonraker URL, the follower card is hidden. A configured printer that is temporarily offline still shows the card with its disconnected state.
+The panel keeps status changes from shifting its controls and reserves loading progress space only while loading. If the currently active Cura printer is not enabled and configured with a usable Moonraker URL, the follower card is hidden. A configured printer that is temporarily offline still shows the card with its disconnected state.
 
-When exact within-layer following is active, the plugin can keep **Cura's own native SimulationView nozzle** visible when Cura's Preview lifecycle would otherwise leave it uninitialised or suppress it during a live layer change. The plugin does not draw a second nozzle model, so Cura's normal mesh, visibility, depth and transparency behaviour are preserved.
+When exact within-layer following is active, the plugin can keep **Cura's own native SimulationView nozzle** visible when Cura's Preview lifecycle would otherwise leave it uninitialised or suppress it during a live layer change. When a custom toolhead is enabled, it replaces that native nozzle. **View Options** controls its position mode, opacity and lighting, alongside object banners and the bed-mesh overlay.
+
+Untick **Show custom toolhead model** to return to Cura's standard nozzle.
+The custom controls appear only after a model has been configured; otherwise
+**Set up custom toolhead…** opens the current printer's Following settings
+at the model upload controls.
 
 ## Screenshots
 
-The screenshots are captured deterministically from the plugin's real
-QML with the real cura-light theme (see `docs/INSTRUCTIONS.md`), so they
-always match the checked-out code.
+The interface screenshots are captured deterministically from the plugin's real
+QML with the real cura-light theme (see `docs/INSTRUCTIONS.md`). The toolhead
+showcase uses the production lighting shaders and fixed model, lighting and
+camera fixtures in the same screenshot generation and repeatability checks.
+
+![Stealthburner with amber nozzle lights and purple logo lights](screenshots/13-toolhead-lighting.png)
+
+A coloured STEP Stealthburner with two amber nozzle LEDs and three purple
+logo LEDs. Light placement, colour, brightness and painted surfaces are saved
+with the model configuration.
+
+![Toolhead lights illuminating a partially printed Voron cube and the bed](screenshots/14-toolhead-printing.png)
+
+The same configuration lights the walls and logo recesses of an 18 mm-high
+partial Voron cube, and the bed beneath it. This reproducible render uses
+layer contours derived from the original cube STL and a neutral receiver
+palette, so the lighting is easy to see. Models by
+[Voron Design](https://github.com/VoronDesign); source revisions, licences and
+capture details are in [the showcase fixtures](tests/fixtures/toolhead/showcase/README.txt).
 
 ![Monitor dashboard](screenshots/01-dashboard-default.png)
 

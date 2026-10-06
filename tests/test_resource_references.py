@@ -235,8 +235,13 @@ class ResourceReferenceTests(unittest.TestCase):
             ("preview/PreviewPresentation.py", "preview/MoonrakerPreviewCardPanelHost.qml"),
             ("preview/PreviewPresentation.py", "preview/MoonrakerPreviewCardOverlayHost.qml"),
             ("preview/PreviewPresentation.py", "preview/PreviewObjectTagsHost.qml"),
+            ("preview/PreviewPresentation.py", "settings/ToolheadSetupDialog.qml"),
             ("whatsnew/WhatsNewOverlay.py", "whatsnew/WhatsNewOverlay.qml"),
             ("whatsnew/WhatsNewOverlay.py", "detection/DetectionOffer.qml"),
+            ("toolhead/ToolheadPreviewGL.py", "toolhead/toolhead.shader"),
+            ("toolhead/ToolheadOpaqueShader.py", "toolhead/toolhead.shader"),
+            ("toolhead/ToolheadSceneNode.py", "toolhead/toolhead.shader"),
+            ("toolhead/ToolheadSceneLighting.py", "toolhead/scene-lighting.shader"),
             ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.vert.qsb"),
             ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.frag.qsb"),
         })

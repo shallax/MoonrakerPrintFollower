@@ -1239,6 +1239,14 @@ Item {
     // prefix admitted on the committed record stacks its ink over
     // the not-yet-trimmed bitmap for one frame (the additive-AA
     // doubling at the body columns).
+    // A threaded upload never mutates the committed texture. The staging
+    // item remains renderable outside the clip until the current demand
+    // admits its receipt, then texture and prefix ownership change together.
+    property int _frontBuffer: 0
+    property int _paintBuffer: -1
+    function _stageCanvas() {
+        return root._frontBuffer === 0 ? progressBackLoader.item : progressFrontLoader.item;
+    }
     property var _deliveredComposition: null
     readonly property int _vectorCoversShown: _deliveredComposition != null ? _deliveredComposition.from : -2
     readonly property bool _prefixHold: root._presentation.prefix === "retained"
@@ -1370,15 +1378,29 @@ Item {
     }
 
     function _deliverProgressPaint() {
+        return _deliverStagedPaint();
+    }
+
+    function _deliverStagedPaint(bufferIndex) {
         // Qt can notify delivery again without a new onPaint. That
         // notification cannot revoke the receipt for the standing
         // bitmap. Retrying an unfulfilled request still coalesces
         // through the transaction's pending bit.
         var hadPaint = root._canvasTransaction.count > 0;
         var result = ExactComposition.delivered(root._canvasTransaction, root._progressWorldEpoch, _worldKeyOf());
+        // onPainted certifies an upload, not a displayed frame. A newer
+        // demand must discard the staging pixels before they can surface.
+        if (result.accepted && bufferIndex !== undefined && result.receipt.paintKey !== _progressKeyOf()) {
+            result.accepted = false;
+            result.state.pending = true;
+        }
         root._canvasTransaction = result.state;
-        if (hadPaint)
-            root._deliveredComposition = result.accepted ? result.receipt : null;
+        if (hadPaint && result.accepted) {
+            root._deliveredComposition = result.receipt;
+            if (bufferIndex !== undefined)
+                root._frontBuffer = bufferIndex;
+        }
+        root._paintBuffer = -1;
         if (hadPaint && !result.accepted)
             root._progressDirty = true;
         if (result.accepted && _prefixViewValid(result.receipt.prefixSource) && result.receipt.from > 0 && typeof result.receipt.prefixSource === "string" && result.receipt.prefixSource !== "") {
@@ -1414,7 +1436,8 @@ Item {
         // prefix; a full-history QML fallback here would stall the drag.
         if (_prefixPreparationPending())
             return;
-        if (!ExactComposition.needsPaint(root._canvasTransaction) || !progressCanvas.available)
+        var staged = _stageCanvas();
+        if (!ExactComposition.needsPaint(root._canvasTransaction) || staged == null || !staged.available)
             return;
         if (_progressPaintSatisfied()) {
             root._canvasTransaction = ExactComposition.unchanged(root._canvasTransaction);
@@ -1422,8 +1445,13 @@ Item {
         }
         var next = ExactComposition.request(root._canvasTransaction);
         root._canvasTransaction = next.state;
-        if (next.start)
-            progressCanvas.requestPaint();
+        if (next.start) {
+            root._paintBuffer = root._frontBuffer === 0 ? 1 : 0;
+            // The other buffer holds an earlier composition. Rebuild its
+            // bounded prefix tail rather than appending to unrelated pixels.
+            root._progressDirty = true;
+            staged.requestPaint();
+        }
     }
 
     function _progressKeyOf() {
@@ -2087,257 +2115,277 @@ Item {
             smooth: false
         }
 
-        Canvas {
-            id: progressCanvas
-            objectName: "moonrakerPlateProgressCanvas"
-            onAvailableChanged: root._flushProgressPaint()
-            anchors.fill: parent
-            renderTarget: Canvas.Image
-            renderStrategy: Canvas.Threaded
-            // The full state's handover in ONE beat: the standing
-            // bitmap is the picture until the replacement's texture is
-            // HERE, and the swap is then a compositing change, so the
-            // frame that first shows the raster is the frame that
-            // drops the canvas. Withdrawing on the predicate alone
-            // blanked the whole printed history for the decode;
-            // withdrawing on the paint beat left the old ink over the
-            // new texture (the liveness control's doubling). Opacity,
-            // never visibility: hiding a Canvas discards its buffer.
-            // Withdrawing waits for the whole exact pair: the travels'
-            // texture is the second half of the same bake, and the
-            // canvas is the only producer holding the travels' ink
-            // while it decodes.
-            // Never make a new world's Canvas invisible while waiting for its
-            // FIRST painted receipt. In Qt's threaded Canvas, a culled
-            // paint surface may not deliver onPainted at opacity zero:
-            // waiting for that receipt to show it is a circular wait.
-            // The warm raster fronts interactions; the renderer's epoch
-            // still refuses obsolete coverage at delivery.
-            opacity: _exactFullStanding() ? 0 : 1
-            onPainted: {
-                // A delivered texture is authoritative ONLY when one
-                // paint from this world can be unambiguously identified.
-                if (!root._deliverProgressPaint()) {
+        Component {
+            id: progressBufferComponent
+            Canvas {
+                id: progressCanvas
+                property int bufferIndex: parent.bufferIndex
+                objectName: "moonrakerPlateProgressCanvas"
+                onAvailableChanged: root._flushProgressPaint()
+                width: exactScene.width
+                height: exactScene.height
+                x: bufferIndex === root._frontBuffer ? 0 : width * 2
+                renderTarget: Canvas.Image
+                renderStrategy: Canvas.Threaded
+                // The full state's handover in ONE beat: the standing
+                // bitmap is the picture until the replacement's texture is
+                // HERE, and the swap is then a compositing change, so the
+                // frame that first shows the raster is the frame that
+                // drops the canvas. Withdrawing on the predicate alone
+                // blanked the whole printed history for the decode;
+                // withdrawing on the paint beat left the old ink over the
+                // new texture (the liveness control's doubling). Opacity,
+                // never visibility: hiding a Canvas discards its buffer.
+                // Withdrawing waits for the whole exact pair: the travels'
+                // texture is the second half of the same bake, and the
+                // canvas is the only producer holding the travels' ink
+                // while it decodes.
+                // Never make a new world's Canvas invisible while waiting for its
+                // FIRST painted receipt. In Qt's threaded Canvas, a culled
+                // paint surface may not deliver onPainted at opacity zero:
+                // waiting for that receipt to show it is a circular wait.
+                // The warm raster fronts interactions; the renderer's epoch
+                // still refuses obsolete coverage at delivery.
+                opacity: _exactFullStanding() ? 0 : 1
+                onPainted: {
+                    if (bufferIndex !== root._paintBuffer)
+                        return;
+                    // A delivered texture is authoritative ONLY when one
+                    // paint from this world can be unambiguously identified.
+                    if (!root._deliverStagedPaint(bufferIndex)) {
+                        root._flushProgressPaint();
+                        return;
+                    }
                     root._flushProgressPaint();
-                    return;
                 }
-                root._flushProgressPaint();
-            }
-            onPaint: {
-                // Implicit Qt paints must not mutate a bitmap whose upload
-                // still owns the delivery slot. Coalesce into the next paint.
-                if (root._canvasTransaction.count > 0) {
-                    root._canvasTransaction = ExactComposition.enqueue(root._canvasTransaction);
-                    return;
-                }
-                if (_prefixPreparationPending()) {
-                    root._canvasTransaction = ExactComposition.enqueue(ExactComposition.unchanged(root._canvasTransaction));
-                    return;
-                }
-                // An unchanged bitmap may produce no painted() signal.
-                // Its standing receipt is already proof; do not strand a
-                // queue slot waiting for a texture upload Qt can omit.
-                if (root._progressPaintSatisfied()) {
-                    root._canvasTransaction = ExactComposition.unchanged(root._canvasTransaction);
-                    return;
-                }
-                var paintEpoch = root._progressWorldEpoch;
-                var paintWorld = _worldKeyOf();
-                var paintKey = _progressKeyOf();
-                var bitmapChanged = false;
-                try {
-                    var ctx = getContext("2d");
-                    // The full state's HOLD: the model says the raster owns
-                    // the picture, but its texture is still decoding, so
-                    // the accumulated ink stands rather than blanking the
-                    // printed history for the decode's length. A new
-                    // layer's world never reaches here (its reset dropped
-                    // the accumulation), nor does another view's: the
-                    // standing ink was baked for the view it was painted
-                    // at, and a pan holds nothing. The mirror ends the
-                    // hold in the same beat the texture lands.
-                    if (_fullRaster() && !root._rasterStatusReady && !root._rasterStatusFailed && root._lastSplit >= 0 && root._vectorCoversFrom !== -1 && _viewKey() === root._accumViewKey) {
+                onPaint: {
+                    if (bufferIndex !== root._paintBuffer)
+                        return;
+                    // Implicit Qt paints must not mutate a bitmap whose upload
+                    // still owns the delivery slot. Coalesce into the next paint.
+                    if (root._canvasTransaction.count > 0) {
+                        root._canvasTransaction = ExactComposition.enqueue(root._canvasTransaction);
                         return;
                     }
-                    // The previous delivery remains the standing bitmap until
-                    // this paint is uploaded. The compositor owns its assets.
-                    if (!root.available() || mapping._plot == null) {
-                        // The unavailable surface clears its own ink — the
-                        // old raster must never read through the loading text
-                        // (the live report).
-                        bitmapChanged = true;
-                        ctx.reset();
-                        ctx.clearRect(0, 0, width, height);
-                        root._lastSplit = -1;
-                        root._paintsSinceReset = 0;
-                        root._vectorCoversFrom = -1;
+                    if (_prefixPreparationPending()) {
+                        root._canvasTransaction = ExactComposition.enqueue(ExactComposition.unchanged(root._canvasTransaction));
                         return;
                     }
-                    var layer = root.progress.layers.current;
-                    if (layer == null) {
-                        bitmapChanged = true;
-                        ctx.reset();
-                        ctx.clearRect(0, 0, width, height);
-                        root._lastSplit = -1;
-                        root._paintsSinceReset = 0;
-                        root._vectorCoversFrom = -1;
+                    // An unchanged bitmap may produce no painted() signal.
+                    // Its standing receipt is already proof; do not strand a
+                    // queue slot waiting for a texture upload Qt can omit.
+                    if (root._progressPaintSatisfied()) {
+                        root._canvasTransaction = ExactComposition.unchanged(root._canvasTransaction);
                         return;
                     }
-                    var split = root.progress.split;
-                    // The FULL-layer case: the
-                    // PlateLayer's OWN motions are the boundary, and the
-                    // scene-graph Images own the picture — scrubVector is
-                    // null by design here (a 100% seek, a detached whole
-                    // layer), so a full raster hit never depends on the
-                    // giant vector. The vector canvas clears so nothing
-                    // doubles up.
-                    //
-                    // The clear waits for the raster's own TEXTURE: the
-                    // image's decode is off-thread, so a clear on the
-                    // predicate alone withdrew the whole printed history
-                    // for the length of the decode (measured: the frame at
-                    // the full split was bit-identical to the face with no
-                    // raster at all). Until the texture lands the canvas IS
-                    // the picture — the vector places the same stroke at
-                    // the same row (the invariance sweep) — and the slot's
-                    // own onStatusChanged repaints this canvas the moment
-                    // it does.
-                    if (_exactFullStanding()) {
-                        bitmapChanged = true;
-                        ctx.reset();
-                        ctx.clearRect(0, 0, width, height);
-                        root._lastSplit = split;
-                        root._paintsSinceReset += 1;
-                        root._vectorCoversFrom = -1;
-                        return;
-                    }
-                    var current = _scrubVector();
-                    if (current == null) {
-                        // A full-state payload carries no vector, so this
-                        // paint can only clear. While the travels' texture
-                        // decodes the standing ink is the picture's other
-                        // half — hold it for the same view it was painted
-                        // at, and let the travels' arrival end the hold.
-                        if (_travelsPending() && _viewKey() === root._accumViewKey) {
+                    var paintEpoch = root._progressWorldEpoch;
+                    var paintWorld = _worldKeyOf();
+                    var paintKey = _progressKeyOf();
+                    var bitmapChanged = false;
+                    try {
+                        var ctx = getContext("2d");
+                        // The full state's HOLD: the model says the raster owns
+                        // the picture, but its texture is still decoding, so
+                        // the accumulated ink stands rather than blanking the
+                        // printed history for the decode's length. A new
+                        // layer's world never reaches here (its reset dropped
+                        // the accumulation), nor does another view's: the
+                        // standing ink was baked for the view it was painted
+                        // at, and a pan holds nothing. The mirror ends the
+                        // hold in the same beat the texture lands.
+                        if (_fullRaster() && !root._rasterStatusReady && !root._rasterStatusFailed && root._lastSplit >= 0 && root._vectorCoversFrom !== -1 && _viewKey() === root._accumViewKey) {
                             return;
                         }
-                        // No vector and no full raster yet (a cold full seek,
-                        // a 0% state): nothing to accumulate.
-                        bitmapChanged = true;
-                        ctx.reset();
-                        ctx.clearRect(0, 0, width, height);
-                        root._lastSplit = -1;
-                        root._paintsSinceReset = 0;
-                        root._vectorCoversFrom = -1;
-                        return;
+                        // The previous delivery remains the standing bitmap until
+                        // this paint is uploaded. The compositor owns its assets.
+                        if (!root.available() || mapping._plot == null) {
+                            // The unavailable surface clears its own ink — the
+                            // old raster must never read through the loading text
+                            // (the live report).
+                            bitmapChanged = true;
+                            ctx.reset();
+                            ctx.clearRect(0, 0, width, height);
+                            root._lastSplit = -1;
+                            root._paintsSinceReset = 0;
+                            root._vectorCoversFrom = -1;
+                            return;
+                        }
+                        var layer = root.progress.layers.current;
+                        if (layer == null) {
+                            bitmapChanged = true;
+                            ctx.reset();
+                            ctx.clearRect(0, 0, width, height);
+                            root._lastSplit = -1;
+                            root._paintsSinceReset = 0;
+                            root._vectorCoversFrom = -1;
+                            return;
+                        }
+                        var split = root.progress.split;
+                        // The FULL-layer case: the
+                        // PlateLayer's OWN motions are the boundary, and the
+                        // scene-graph Images own the picture — scrubVector is
+                        // null by design here (a 100% seek, a detached whole
+                        // layer), so a full raster hit never depends on the
+                        // giant vector. The vector canvas clears so nothing
+                        // doubles up.
+                        //
+                        // The clear waits for the raster's own TEXTURE: the
+                        // image's decode is off-thread, so a clear on the
+                        // predicate alone withdrew the whole printed history
+                        // for the length of the decode (measured: the frame at
+                        // the full split was bit-identical to the face with no
+                        // raster at all). Until the texture lands the canvas IS
+                        // the picture — the vector places the same stroke at
+                        // the same row (the invariance sweep) — and the slot's
+                        // own onStatusChanged repaints this canvas the moment
+                        // it does.
+                        if (_exactFullStanding()) {
+                            bitmapChanged = true;
+                            ctx.reset();
+                            ctx.clearRect(0, 0, width, height);
+                            root._lastSplit = split;
+                            root._paintsSinceReset += 1;
+                            root._vectorCoversFrom = -1;
+                            return;
+                        }
+                        var current = _scrubVector();
+                        if (current == null) {
+                            // A full-state payload carries no vector, so this
+                            // paint can only clear. While the travels' texture
+                            // decodes the standing ink is the picture's other
+                            // half — hold it for the same view it was painted
+                            // at, and let the travels' arrival end the hold.
+                            if (_travelsPending() && _viewKey() === root._accumViewKey) {
+                                return;
+                            }
+                            // No vector and no full raster yet (a cold full seek,
+                            // a 0% state): nothing to accumulate.
+                            bitmapChanged = true;
+                            ctx.reset();
+                            ctx.clearRect(0, 0, width, height);
+                            root._lastSplit = -1;
+                            root._paintsSinceReset = 0;
+                            root._vectorCoversFrom = -1;
+                            return;
+                        }
+                        if (split == null) {
+                            // No boundary to draw at — a print without a
+                            // position. The layer is its whole base and any
+                            // accumulated fill goes with the split.
+                            bitmapChanged = true;
+                            ctx.reset();
+                            ctx.clearRect(0, 0, width, height);
+                            root._lastSplit = -1;
+                            root._paintsSinceReset = 0;
+                            root._progressDirty = false;
+                            root._vectorCoversFrom = -1;
+                            return;
+                        }
+                        // A backward split (a restart), a toggle flip, an anchor
+                        // change or a SAME-ANCHOR payload swap clears the image
+                        // (the delta path assumes the bitmap holds the previous
+                        // vector's ink — a swapped source never drew it); the
+                        // accumulation also re-rasters fully on its own cadence
+                        // so it cannot drift. Otherwise the canvas keeps its
+                        // image and only the new delta is stroked on top.
+                        var vectorMotions = ExactComposition.motionsOf(current);
+                        var vectorClasses = current.classes !== undefined ? Object.keys(current.classes).join("|") : "";
+                        var vectorSourceChanged = vectorMotions !== root._vectorSourceMotions || vectorClasses !== root._vectorSourceClasses;
+                        root._vectorSourceMotions = vectorMotions;
+                        root._vectorSourceClasses = vectorClasses;
+                        var chosenPrefix = ExactComposition.choosePrefix(_prefixCandidate(), _retainedCandidate(), split);
+                        var prefixFrom = chosenPrefix.from;
+                        var plan = ExactComposition.tailPlan({
+                            dirty: root._progressDirty,
+                            split: root._lastSplit,
+                            paints: root._paintsSinceReset,
+                            source: vectorSourceChanged ? "changed" : "same",
+                            view: root._accumViewKey,
+                            from: root._vectorCoversFrom,
+                            prefixSource: root._paintedPrefixSource
+                        }, {
+                            split: split,
+                            source: "same",
+                            view: _viewKey(),
+                            prefix: chosenPrefix,
+                            cadence: prefixFrom > 0 ? 200 : 20
+                        });
+                        root._accumViewKey = _viewKey();
+                        var resetPainted = plan.reset;
+                        if (resetPainted) {
+                            bitmapChanged = true;
+                            ctx.reset();
+                            ctx.clearRect(0, 0, width, height);
+                            root._lastSplit = -1;
+                            root._paintsSinceReset = 0;
+                            root._progressDirty = false;
+                        }
+                        var fresh = resetPainted || root._lastSplit < 0;
+                        var from = plan.from;
+                        bitmapChanged = bitmapChanged || fresh || split !== root._lastSplit;
+                        var style = _paintStyle();
+                        Painter.drawLayer(ctx, current, 1.0, split, false, from, style);
+                        // The bitmap's coverage below this paint's start: a full
+                        // paint covers from the layer's start, a tail paint
+                        // relies on the prefix for the rest, a delta paint
+                        // extends the existing coverage. A vector with no
+                        // geometry records nothing: an empty bitmap must never
+                        // read as a full one (the prefix would trust a hole).
+                        if (fresh) {
+                            root._vectorCoversFrom = plan.coverage;
+                            root._paintedPrefixSource = root._vectorCoversFrom > 0 ? chosenPrefix.source : "";
+                        }
+                        // The travels: the lines only. CURRENT layer only, and
+                        // only where the toolhead has already passed (the live
+                        // rulings). The prefix carries NO travels, so a cleared
+                        // canvas redraws them from the layer's start — the
+                        // travels below the prefix boundary stay visible. The
+                        // accumulated delta path keeps its own start (the
+                        // canvas already holds the printed travels).
+                        if (root.showTravels) {
+                            // The prefix carries NO travels: a cleared canvas
+                            // redraws them from the layer's start, and a NEW
+                            // travel source does too — the delta path alone
+                            // would assume ink the canvas never drew (the
+                            // travels arriving with the prefix already in
+                            // place).
+                            var sourceMotions = root.progress.layers != null ? ExactComposition.motionsOf(root.progress.layers.current) : -1;
+                            var sourceReady = ExactComposition.travelsOf(root.progress.layers.current) ? 1 : 0;
+                            var travelsChanged = sourceMotions !== root._travelsSourceMotions || sourceReady !== root._travelsSourceReady;
+                            root._travelsSourceMotions = sourceMotions;
+                            root._travelsSourceReady = sourceReady;
+                            var travelFrom = (resetPainted || travelsChanged) ? -1 : root._lastSplit;
+                            bitmapChanged = bitmapChanged || resetPainted || travelsChanged || split !== root._lastSplit;
+                            Painter.drawTravelClasses(ctx, current, split, travelFrom, style);
+                        }
+                        root._lastSplit = split;
+                        root._paintsSinceReset += 1;
+                    } finally {
+                        // A return that retained the previous bitmap is
+                        // still a paint delivery, with the same coverage.
+                        var nextReceipt = {
+                            epoch: paintEpoch,
+                            world: paintWorld,
+                            valid: _worldKeyOf() === paintWorld,
+                            from: root._vectorCoversFrom,
+                            split: root._lastSplit,
+                            paintKey: paintKey,
+                            prefixSource: root._vectorCoversFrom > 0 ? root._paintedPrefixSource : ""
+                        };
+                        root._canvasTransaction = bitmapChanged ? ExactComposition.painted(root._canvasTransaction, nextReceipt) : ExactComposition.unchanged(root._canvasTransaction);
                     }
-                    if (split == null) {
-                        // No boundary to draw at — a print without a
-                        // position. The layer is its whole base and any
-                        // accumulated fill goes with the split.
-                        bitmapChanged = true;
-                        ctx.reset();
-                        ctx.clearRect(0, 0, width, height);
-                        root._lastSplit = -1;
-                        root._paintsSinceReset = 0;
-                        root._progressDirty = false;
-                        root._vectorCoversFrom = -1;
-                        return;
-                    }
-                    // A backward split (a restart), a toggle flip, an anchor
-                    // change or a SAME-ANCHOR payload swap clears the image
-                    // (the delta path assumes the bitmap holds the previous
-                    // vector's ink — a swapped source never drew it); the
-                    // accumulation also re-rasters fully on its own cadence
-                    // so it cannot drift. Otherwise the canvas keeps its
-                    // image and only the new delta is stroked on top.
-                    var vectorMotions = ExactComposition.motionsOf(current);
-                    var vectorClasses = current.classes !== undefined ? Object.keys(current.classes).join("|") : "";
-                    var vectorSourceChanged = vectorMotions !== root._vectorSourceMotions || vectorClasses !== root._vectorSourceClasses;
-                    root._vectorSourceMotions = vectorMotions;
-                    root._vectorSourceClasses = vectorClasses;
-                    var chosenPrefix = ExactComposition.choosePrefix(_prefixCandidate(), _retainedCandidate(), split);
-                    var prefixFrom = chosenPrefix.from;
-                    var plan = ExactComposition.tailPlan({
-                        dirty: root._progressDirty,
-                        split: root._lastSplit,
-                        paints: root._paintsSinceReset,
-                        source: vectorSourceChanged ? "changed" : "same",
-                        view: root._accumViewKey,
-                        from: root._vectorCoversFrom,
-                        prefixSource: root._paintedPrefixSource
-                    }, {
-                        split: split,
-                        source: "same",
-                        view: _viewKey(),
-                        prefix: chosenPrefix,
-                        cadence: prefixFrom > 0 ? 200 : 20
-                    });
-                    root._accumViewKey = _viewKey();
-                    var resetPainted = plan.reset;
-                    if (resetPainted) {
-                        bitmapChanged = true;
-                        ctx.reset();
-                        ctx.clearRect(0, 0, width, height);
-                        root._lastSplit = -1;
-                        root._paintsSinceReset = 0;
-                        root._progressDirty = false;
-                    }
-                    var fresh = resetPainted || root._lastSplit < 0;
-                    var from = plan.from;
-                    bitmapChanged = bitmapChanged || fresh || split !== root._lastSplit;
-                    var style = _paintStyle();
-                    Painter.drawLayer(ctx, current, 1.0, split, false, from, style);
-                    // The bitmap's coverage below this paint's start: a full
-                    // paint covers from the layer's start, a tail paint
-                    // relies on the prefix for the rest, a delta paint
-                    // extends the existing coverage. A vector with no
-                    // geometry records nothing: an empty bitmap must never
-                    // read as a full one (the prefix would trust a hole).
-                    if (fresh) {
-                        root._vectorCoversFrom = plan.coverage;
-                        root._paintedPrefixSource = root._vectorCoversFrom > 0 ? chosenPrefix.source : "";
-                    }
-                    // The travels: the lines only. CURRENT layer only, and
-                    // only where the toolhead has already passed (the live
-                    // rulings). The prefix carries NO travels, so a cleared
-                    // canvas redraws them from the layer's start — the
-                    // travels below the prefix boundary stay visible. The
-                    // accumulated delta path keeps its own start (the
-                    // canvas already holds the printed travels).
-                    if (root.showTravels) {
-                        // The prefix carries NO travels: a cleared canvas
-                        // redraws them from the layer's start, and a NEW
-                        // travel source does too — the delta path alone
-                        // would assume ink the canvas never drew (the
-                        // travels arriving with the prefix already in
-                        // place).
-                        var sourceMotions = root.progress.layers != null ? ExactComposition.motionsOf(root.progress.layers.current) : -1;
-                        var sourceReady = ExactComposition.travelsOf(root.progress.layers.current) ? 1 : 0;
-                        var travelsChanged = sourceMotions !== root._travelsSourceMotions || sourceReady !== root._travelsSourceReady;
-                        root._travelsSourceMotions = sourceMotions;
-                        root._travelsSourceReady = sourceReady;
-                        var travelFrom = (resetPainted || travelsChanged) ? -1 : root._lastSplit;
-                        bitmapChanged = bitmapChanged || resetPainted || travelsChanged || split !== root._lastSplit;
-                        Painter.drawTravelClasses(ctx, current, split, travelFrom, style);
-                    }
-                    root._lastSplit = split;
-                    root._paintsSinceReset += 1;
-                } finally {
-                    // A return that retained the previous bitmap is
-                    // still a paint delivery, with the same coverage.
-                    var nextReceipt = {
-                        epoch: paintEpoch,
-                        world: paintWorld,
-                        valid: _worldKeyOf() === paintWorld,
-                        from: root._vectorCoversFrom,
-                        split: root._lastSplit,
-                        paintKey: paintKey,
-                        prefixSource: root._vectorCoversFrom > 0 ? root._paintedPrefixSource : ""
-                    };
-                    root._canvasTransaction = bitmapChanged ? ExactComposition.painted(root._canvasTransaction, nextReceipt) : ExactComposition.unchanged(root._canvasTransaction);
                 }
             }
+        }
+        Loader {
+            id: progressFrontLoader
+            property int bufferIndex: 0
+            sourceComponent: progressBufferComponent
+        }
+        Loader {
+            id: progressBackLoader
+            property int bufferIndex: 1
+            sourceComponent: progressBufferComponent
         }
     }
 

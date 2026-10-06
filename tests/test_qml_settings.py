@@ -253,7 +253,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         pages = self.pages(document)
         expected = {
             "ConnectionSettings": {"url", "api_key", "feed_mode", "poll_interval_ms", "aux_interval_ms", "console_interval_ms"},
-            "FollowingSettings": {"enabled", "follow_mode", "moonraker_layer_is_one_based", "path_follow", "path_smoothing", "eta_learn", "auto_preview", "show_toolhead_indicator", "z_fallback", "z_tolerance"},
+            "FollowingSettings": {"enabled", "follow_mode", "moonraker_layer_is_one_based", "path_follow", "eta_learn", "auto_preview", "show_toolhead_indicator", "z_fallback", "z_tolerance"},
             "UploadSettings": {"frontend_url", "output_format", "upload_dialog", "upload_path", "upload_start_print", "upload_remember_state", "upload_autohide_message", "power_devices", "ready_retry_interval_s", "filename_translate_input", "filename_translate_output", "filename_translate_remove"},
             "DiagnosticsSettings": {"cache_max_mb", "trace_layer", "trace_http", "seek_trace", "memory_diagnostics_log", "memory_diagnostics_trace", "camera_disabled", "software_follower_renderer"},
             "DetectionSettings": set(),
@@ -264,7 +264,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
             self.assertEqual(set(values), expected[name])
             self.assertFalse(seen.intersection(values), "two tabs own the same setting")
             seen.update(values)
-        self.assertEqual(len(seen), 36)
+        self.assertEqual(len(seen), 35)
         for index in (4, 3, 1, 2, 0):
             self.show_tab(document, index)
             self.assertEqual(self.pages(document), pages, "a tab switch recreated a draft owner")

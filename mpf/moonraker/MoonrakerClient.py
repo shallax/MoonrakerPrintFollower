@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import copy
 import time
+from collections import deque
+from collections.abc import Mapping
 from typing import Any, Dict, Iterable, Optional
 
 from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
@@ -11,13 +14,15 @@ except ImportError:  # the stdlib-only host suite has no Uranium
     Logger = None
 
 from .MoonrakerProtocol import CORE_OBJECTS, moonraker_error_text, status_endpoint, websocket_endpoint
-from .MoonrakerSession import MoonrakerSession, MoonrakerSessionState, RequestCategory
+from .MoonrakerSession import MoonrakerSession, MoonrakerSessionState, RequestCategory, mutable_status
 
 
 class MoonrakerClient(QObject):
     """Shared resilient HTTP-only core poller over one MoonrakerSession."""
 
     statusReceived = pyqtSignal(object)
+    statusSnapshotReceived = pyqtSignal(object)
+    statusAdmitted = pyqtSignal(object, str, float)
     connectionChanged = pyqtSignal(bool, str)
     capabilitiesChanged = pyqtSignal(object)
     commandChanged = pyqtSignal(object)
@@ -42,6 +47,11 @@ class MoonrakerClient(QObject):
         self._retry_delay_ms = 0
         self._retry_not_before = 0.0
         self._generation = 0
+        self._pending_admissions = deque()
+        self._admitting_status = False
+        self._pending_publications = deque()
+        self._publishing_status = False
+        self._publication_sequence = 0
         self._aux_names: set = set()
         self._effective_feed_mode = "http"
         self._aux_interval_ms = 2500
@@ -107,6 +117,28 @@ class MoonrakerClient(QObject):
     @property
     def status(self) -> Dict[str, Any]:
         return self._session.snapshot.copy_status()
+
+    @property
+    def status_snapshot(self):
+        return self._session.snapshot.immutable_status
+
+    def _publish_status(self, status):
+        self._publication_sequence += 1
+        sequence = self._publication_sequence
+        self._pending_publications.append((self._generation, status))
+        if self._publishing_status: return sequence
+        self._publishing_status = True
+        try:
+            while self._pending_publications:
+                generation, frame = self._pending_publications.popleft()
+                if generation != self._generation: continue
+                self.statusSnapshotReceived.emit(frame)
+                if generation == self._generation and self.receivers(self.statusReceived):
+                    self.statusReceived.emit(mutable_status(frame))
+        finally:
+            self._publishing_status = False
+            self._pending_publications.clear()
+        return sequence
 
     def configure(self, base_url: str, api_key: str, poll_interval_ms: int, *, feed_mode=None,
                   aux_interval_ms=None, console_interval_ms=None) -> None:
@@ -466,14 +498,14 @@ class MoonrakerClient(QObject):
         if state.assume_print_stopped:
             return
         state.assume_print_stopped = True
-        merged = self._session.snapshot.copy_status()
+        merged = self._session.snapshot.immutable_status
         if merged and str((merged.get("print_stats") or {}).get("state") or "").lower() in {"printing", "paused"}:
             try:
                 state.assume_print_duration = float((merged.get("print_stats") or {}).get("print_duration") or 0)
             except (TypeError, ValueError):
                 state.assume_print_duration = None
-            merged["print_stats"]["state"] = "cancelled"
-            self.statusReceived.emit(merged)
+            merged = merged.with_fields("print_stats", {"state": "cancelled"})
+            self._publish_status(merged)
 
     def _handle_http_status(
         self,
@@ -508,6 +540,23 @@ class MoonrakerClient(QObject):
                     self._queue_refresh(generation)
 
     def admit_status(self, patch: Dict[str, Any], *, origin: str, stamp: float, generation: int) -> None:
+        if generation != self._generation: return
+        # Qt delivers slots synchronously. Defer a reentrant admission until
+        # every consumer and command lifecycle event for this frame finishes.
+        if self._admitting_status:
+            self._pending_admissions.append((copy.deepcopy(patch), origin, stamp, generation))
+            return
+        self._pending_admissions.append((patch, origin, stamp, generation))
+        self._admitting_status = True
+        try:
+            while self._pending_admissions:
+                pending, pending_origin, pending_stamp, pending_generation = self._pending_admissions.popleft()
+                self._admit_status(pending, origin=pending_origin, stamp=pending_stamp, generation=pending_generation)
+        finally:
+            self._admitting_status = False
+            self._pending_admissions.clear()
+
+    def _admit_status(self, patch: Dict[str, Any], *, origin: str, stamp: float, generation: int) -> None:
         """The single admission point for both feeds (A2/A7).
 
         Ordering: a sync (a complete object set) applies whole or is
@@ -530,7 +579,8 @@ class MoonrakerClient(QObject):
         if origin == "sync" and stamp < self._last_applied_stamp:
             return
         previous_state = self._session.snapshot.printer_state
-        merged, changed_commands = self._session.merge_status(patch)
+        merged, changed_commands = self._session.merge_status(patch, immutable=True)
+        revision = self._session.snapshot.revision
         self._last_applied_stamp = max(self._last_applied_stamp, stamp)
         connected_now = self._handle_success()
         if generation != self._generation:
@@ -561,7 +611,7 @@ class MoonrakerClient(QObject):
                     self._session.state.assume_print_stopped = False
                     self._session.state.assume_print_duration = None
                 else:
-                    merged["print_stats"]["state"] = "cancelled"
+                    merged = merged.with_fields("print_stats", {"state": "cancelled"})
             else:
                 self._session.state.assume_print_stopped = False
                 self._session.state.assume_print_duration = None
@@ -572,8 +622,13 @@ class MoonrakerClient(QObject):
             if current in {"printing", "paused"}:
                 for command in self._session.commands.expire_non_terminal("superseded by a new print"):
                     self.commandChanged.emit(command.as_dict())
-        self.statusReceived.emit(merged)
-        if connected_now:
+        self.statusAdmitted.emit(patch, origin, stamp)
+        if generation != self._generation:
+            return
+        publication = self._publish_status(merged)
+        if generation != self._generation:
+            return
+        if connected_now and revision == self._session.snapshot.revision and publication == self._publication_sequence:
             # The connect transition re-broadcasts the accumulated
             # snapshot to every listener (the ruling): the
             # sync may have landed while a listener was not yet
@@ -583,7 +638,7 @@ class MoonrakerClient(QObject):
             # sits AFTER the generation guard, so a same-tick rebind
             # discards the old session's broadcast like every other
             # old-generation emission.
-            self.statusReceived.emit(merged)
+            self._publish_status(merged)
         for command in changed_commands:
             if generation != self._generation:
                 break
@@ -708,14 +763,14 @@ class MoonrakerClient(QObject):
             self._command_timer.stop()
 
     def _update_status_capabilities(self, status: Optional[Dict[str, Any]] = None) -> None:
-        status = status if isinstance(status, dict) else self._session.snapshot.copy_status()
+        status = status if isinstance(status, Mapping) else self._session.snapshot.immutable_status
         objects = set(self._capabilities.get("objects") or [])
         objects.update(str(key) for key in status.keys())
         self._capabilities["objects"] = sorted(objects)
         print_stats = status.get("print_stats") or {}
-        info = print_stats.get("info") if isinstance(print_stats, dict) else {}
+        info = print_stats.get("info") if isinstance(print_stats, Mapping) else {}
         virtual_sdcard = status.get("virtual_sdcard") or {}
-        self._capabilities["current_layer"] = isinstance(info, dict) and info.get("current_layer") is not None
-        self._capabilities["file_position"] = isinstance(virtual_sdcard, dict) and virtual_sdcard.get("file_position") is not None
+        self._capabilities["current_layer"] = isinstance(info, Mapping) and info.get("current_layer") is not None
+        self._capabilities["file_position"] = isinstance(virtual_sdcard, Mapping) and virtual_sdcard.get("file_position") is not None
         self._capabilities["motion_report"] = "motion_report" in status
         self.capabilitiesChanged.emit(dict(self._capabilities))

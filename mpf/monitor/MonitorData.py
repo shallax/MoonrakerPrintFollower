@@ -11,13 +11,48 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from .console.ConsolePolicy import MAX_LINE
 from .MonitorFormatting import number, preview_block, result, wanted_object
 from .MonitorPermissions import Observation
-from ..moonraker.MoonrakerSession import RequestCategory
+from ..moonraker.MoonrakerSession import RequestCategory, FrozenStatus
 
 
 def freeze(value):
     if isinstance(value, dict): return MappingProxyType({key: freeze(item) for key, item in value.items()})
     if isinstance(value, (list, tuple)): return tuple(freeze(item) for item in value)
     return value
+
+
+def _status_copy(value):
+    """Private JSON-shaped comparison copy; preserve list/tuple equality."""
+    if isinstance(value, Mapping): return {key: _status_copy(item) for key, item in value.items()}
+    if isinstance(value, list): return [_status_copy(item) for item in value]
+    if isinstance(value, tuple): return tuple(_status_copy(item) for item in value)
+    return value
+
+
+
+class _CoreMemo:
+    """One current core snapshot, reusing each unchanged frozen object row.
+
+    Moonraker publishes defensive copies of its merged status. Identity cannot
+    identify unchanged polygon definitions; compare private raw-shaped copies
+    instead. Equal rows need no recursive tuple/MappingProxy reconstruction.
+    """
+    def __init__(self):
+        self._rows = {}
+
+    def value(self, status):
+        if isinstance(status, FrozenStatus):
+            self._rows = {}
+            return status
+        rows, projected = {}, {}
+        for name, value in status.items():
+            previous = self._rows.get(name)
+            if previous is None or previous[0] != value:
+                raw = _status_copy(value)
+                previous = raw, freeze(raw)
+            rows[name] = previous
+            projected[name] = previous[1]
+        self._rows = rows  # Departed objects cannot retain old snapshots.
+        return MappingProxyType(projected)
 
 
 @dataclass(frozen=True)
@@ -108,7 +143,7 @@ class MonitorData(QObject):
         # Use QObject-bound receivers rather than lambdas that capture ``self``.
         # PyQt can automatically disconnect bound QObject receivers when this MonitorData
         # is destroyed; a lambda would outlive the C++ object on the long-lived client.
-        client.statusReceived.connect(self.observe)
+        getattr(client, "statusSnapshotReceived", client.statusReceived).connect(self.observe)
         client.commandChanged.connect(self.commandChanged.emit)
         client.sessionInvalidated.connect(self._session_invalidated)
         client.connectionChanged.connect(self._connection_changed)
@@ -180,6 +215,7 @@ class MonitorData(QObject):
         return self._connection_detail
 
     def _clear(self):
+        self._core_memo = _CoreMemo()
         empty = freeze({})
         self._snapshot = MonitorSnapshot(empty, empty, (), empty, empty, (), (), empty, empty)
         # The sentinel: a cleared monitor publishes the explicit
@@ -386,7 +422,7 @@ class MonitorData(QObject):
         mark("T0", "monitor active")
         self._intervals()
         for timer in self._timers.values(): timer.start()
-        self.observe(self._client.status)
+        self.observe(self._client.status_snapshot if hasattr(self._client, "status_snapshot") else self._client.status)
         self.refresh_all()
         self._rebuild_observation()
 
@@ -463,9 +499,10 @@ class MonitorData(QObject):
 
     def observe(self, status):
         if not self._active or not isinstance(status, Mapping): return
-        status = {name: value for name, value in status.items() if isinstance(value, Mapping)}
+        rows = {name: value for name, value in status.items() if isinstance(value, Mapping)}
+        status = FrozenStatus._from_frozen(rows) if isinstance(status, FrozenStatus) else rows
         self._intervals()
-        self._update(core=dict(status))
+        self._update(core=self._core_memo.value(status))
 
     def refresh_all(self):
         if not self._active: return

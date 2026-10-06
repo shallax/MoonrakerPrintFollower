@@ -25,6 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-dejavu-core=2.37-8build1 \
         libegl1=1.7.0-3 \
         libgl1=1.7.0-3 \
+        libegl-mesa0=26.0.8-1ubuntu0.3 \
+        libgl1-mesa-dri=26.0.8-1ubuntu0.3 \
         libxkbcommon0=1.13.1-1 \
         qt6-declarative-dev-tools=6.10.2+dfsg-3 \
         shellcheck=0.11.0-2 \
@@ -40,6 +42,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir PyQt6==6.11.0 PyQt6-Qt6==6.11.2 PySide6-Addons==6.10.2 ruff==0.16.6 coverage numpy
+
+# These capture-only extensions currently build from source on Python 3.14.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        g++=4:15.2.0-5ubuntu1 \
+        libx11-dev=2:1.8.13-1 \
+        python3-dev=3.14.3-0ubuntu2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && /opt/venv/bin/pip install --no-cache-dir moderngl==5.12.0 glcontext==3.0.0
 
 ENV PATH="/opt/venv/bin:$PATH" \
     QT_QPA_PLATFORM=offscreen

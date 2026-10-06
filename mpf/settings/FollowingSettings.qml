@@ -8,12 +8,12 @@ Item {
     id: base
     required property var settings
     property bool validZTolerance: settings.validZTolerance(zToleranceField.text)
+    readonly property bool validToolhead: !settings.toolheadModel || settings.toolheadModel.valid
     readonly property var values: ({
             "enabled": enabledBox.checked,
             "follow_mode": followMode(),
             "moonraker_layer_is_one_based": oneBasedBox.checked,
             "path_follow": pathFollowBox.checked,
-            "path_smoothing": pathSmoothingBox.checked,
             "eta_learn": etaLearnBox.checked,
             "auto_preview": autoPreviewBox.checked,
             "show_toolhead_indicator": toolheadIndicatorBox.checked,
@@ -30,11 +30,25 @@ Item {
             return "window";
         return "exact";
     }
+    property bool toolheadScrollPending: false
+    function showToolhead() {
+        toolheadScrollPending = true;
+        positionToolhead();
+    }
+    function positionToolhead() {
+        if (!toolheadScrollPending || followingScroll.height <= 0 || toolheadSettings.y <= 0 || toolheadSettings.height <= 0 || followingScroll.contentHeight < toolheadSettings.y + toolheadSettings.height)
+            return;
+        followingScroll.contentY = Math.max(0, Math.min(toolheadSettings.y, followingScroll.contentHeight - followingScroll.height));
+        toolheadScrollPending = false;
+    }
     Flickable {
+        id: followingScroll
         anchors.fill: parent
         anchors.margins: UM.Theme.getSize("default_margin").width
         contentWidth: width
         contentHeight: followingColumn.implicitHeight
+        onContentHeightChanged: base.positionToolhead()
+        onHeightChanged: base.positionToolhead()
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: UM.ScrollBar {
@@ -89,12 +103,7 @@ Item {
                 text: "Follow progress through each layer"
                 checked: settings.settingsPathFollow
             }
-            UM.CheckBox {
-                id: pathSmoothingBox
-                text: "Smooth path progress"
-                enabled: pathFollowBox.checked
-                checked: settings.settingsPathSmoothing
-            }
+
             UM.CheckBox {
                 id: etaLearnBox
                 text: "Learn ETA drift from observed progress"
@@ -148,6 +157,13 @@ Item {
                 text: "Z-height tolerance must be between 0.005 and 0.250 mm."
                 color: UM.Theme.getColor("error")
                 font: UM.Theme.getFont("default_italic")
+            }
+            ToolheadModelSettings {
+                id: toolheadSettings
+                onYChanged: base.positionToolhead()
+                onHeightChanged: base.positionToolhead()
+                width: parent.width
+                model: settings.toolheadModel
             }
         }
     }

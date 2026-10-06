@@ -1,0 +1,8 @@
+{
+  "stealthburner_source": "https://raw.githubusercontent.com/VoronDesign/Voron-Stealthburner/8bcb9c246fac19d8ac03931ef97fa07c5e5f0f2b/CAD/Stealthburner_CW2_Assembly.step",
+  "stealthburner_source_sha256": "526fe18bd11c046deba0a2b193fa3874e8f6d6e5a282fbdc25f06fe5acb3021d",
+  "stealthburner_mesh_sha256": "3163991782bdb303a619e6c6a695d4f25d54e84f1ba089d55fcac91575460d9e",
+  "cube_source": "https://raw.githubusercontent.com/VoronDesign/Voron-2/a192410e27ea345644ae5c4b29b4c9c40cbe1a73/STLs/Test_Prints/Voron_Design_Cube_v7.stl",
+  "cube_sha256": "e30c299b773bd1e1134c40edda44683ed7d35c6d12c7e9470891d94d354729ab",
+  "lighting_description": "Two amber nozzle LEDs, three purple Voron logo LEDs; captured configuration 2026-10-06"
+}

@@ -34,6 +34,7 @@ class MoonrakerPrintFollower(QObject, Extension):
     def download_progress(self): return self._runtime.file_download.progress()
     def cancel_file_download(self): self._runtime.file_download.cancel()
 
+    def motionSmoothing(self): return not self._runtime.presentation.reported_position
     def current_printer_config(self): return self._runtime.binding.config
     def current_printer_identity(self): return self._runtime.binding.identity
     def apply_printer_config(self, config): return self._runtime.binding.apply(config)
@@ -42,6 +43,8 @@ class MoonrakerPrintFollower(QObject, Extension):
     def persistence(self): return self._runtime.persistence
     @property
     def detection(self): return self._runtime.detection
+    @property
+    def toolhead_models(self): return self._runtime.toolhead_models
     def notice(self): return self._runtime.notice
     def whats_new(self): return self._runtime.whats_new
     @pyqtSlot()
@@ -59,7 +62,6 @@ class MoonrakerPrintFollower(QObject, Extension):
     def pauseAtLayerBlock(self): return self._runtime.coordinator.pause_block
 
     def invalidateIndex(self): self._runtime.index.invalidate()
-
     def deinitialize(self):
         # The leak probe stops with the plugin (no dead runtime, no re-stacked timer).
         from ..diagnostics.LeakProbe import stop_leak_probe

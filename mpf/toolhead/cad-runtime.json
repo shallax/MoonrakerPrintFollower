@@ -1,0 +1,132 @@
+{
+  "cadquery_ocp_novtk-7.9.3.1.1-cp310-cp310-macosx_11_0_arm64.whl": {
+    "url": "https://files.pythonhosted.org/packages/88/ce/287c003e8a96771854cac6563ca209a13a1b22a9bc012e32aafed2d5ebe5/cadquery_ocp_novtk-7.9.3.1.1-cp310-cp310-macosx_11_0_arm64.whl",
+    "size": 61702081,
+    "sha256": "cee061a62066e58b366d1b0647d7148ffa2b3a7cec08e0e612a59a25b019791a"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp310-cp310-macosx_11_0_x86_64.whl": {
+    "url": "https://files.pythonhosted.org/packages/dd/18/801428d5be43a76f90d3a3327a4990c4955d6717fa35ad7485395f4e3954/cadquery_ocp_novtk-7.9.3.1.1-cp310-cp310-macosx_11_0_x86_64.whl",
+    "size": 66324787,
+    "sha256": "13e33a0c86171e517a3f5d6e191322ec8e69916051fd224ca78b6cc0e49878a7"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp310-cp310-manylinux_2_31_aarch64.whl": {
+    "url": "https://files.pythonhosted.org/packages/b8/b1/8b22847370096e400436cb241ad66e1c8062f35b4068666ee132219d0fa7/cadquery_ocp_novtk-7.9.3.1.1-cp310-cp310-manylinux_2_31_aarch64.whl",
+    "size": 62101524,
+    "sha256": "50b269de006ad2cdb1e3ffd5740fdf1d3920913352ece0b68f6f6d4fcb6dfdc7"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp310-cp310-manylinux_2_31_x86_64.whl": {
+    "url": "https://files.pythonhosted.org/packages/23/6f/ee5ad24ecdf60b575aedc96ca49c0819fa64fdb09596b4fbc1182fd871f7/cadquery_ocp_novtk-7.9.3.1.1-cp310-cp310-manylinux_2_31_x86_64.whl",
+    "size": 67561530,
+    "sha256": "235c66c8e0a793ae329a4c22e2f63b80a3a706494b431ec4f9608f69ee7c9664"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp310-cp310-win_amd64.whl": {
+    "url": "https://files.pythonhosted.org/packages/11/47/978175357b3c377e1ad91feaf8d68d254760e77fa3ffc565c2fc2df84681/cadquery_ocp_novtk-7.9.3.1.1-cp310-cp310-win_amd64.whl",
+    "size": 46102878,
+    "sha256": "db50a67cb2a0976200526aa12d2ca5ca331d2e8b27f9c7f2ba688aa8d624af23"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp311-cp311-macosx_11_0_arm64.whl": {
+    "url": "https://files.pythonhosted.org/packages/85/ea/54168cbd1f49de64634e5bca2bdf759095d7093f0e985eb28655f530fa90/cadquery_ocp_novtk-7.9.3.1.1-cp311-cp311-macosx_11_0_arm64.whl",
+    "size": 61745628,
+    "sha256": "2dc157f6ff3ecf28f1b1b43daa908b79a2f934b2d26390e40a04d9ed38387527"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp311-cp311-macosx_11_0_x86_64.whl": {
+    "url": "https://files.pythonhosted.org/packages/5e/0c/fd9ca136b6199a6cf07a944898d03f9517fc75351920265788bb632942ec/cadquery_ocp_novtk-7.9.3.1.1-cp311-cp311-macosx_11_0_x86_64.whl",
+    "size": 66398032,
+    "sha256": "7eb101093a84bbbbc40d93a4f8726ae3b14f85b49d0087212efe3afdea69c852"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp311-cp311-manylinux_2_31_aarch64.whl": {
+    "url": "https://files.pythonhosted.org/packages/7c/2b/554474defd6f051f71d5d93a2cebecfce863f833ce997a1484b080b1f77c/cadquery_ocp_novtk-7.9.3.1.1-cp311-cp311-manylinux_2_31_aarch64.whl",
+    "size": 62178457,
+    "sha256": "0b566f9e00f0e4255996b2bcb18b580dc758f451fd2b7546542fae08261db535"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp311-cp311-manylinux_2_31_x86_64.whl": {
+    "url": "https://files.pythonhosted.org/packages/b7/f5/1d1b07c6b4436fd0f889143086899294710e8ce7f97864ced455477773de/cadquery_ocp_novtk-7.9.3.1.1-cp311-cp311-manylinux_2_31_x86_64.whl",
+    "size": 67631036,
+    "sha256": "860649d3d2c2d43eb2068ff604bce198dbebf402eedae496829d12de4107a2f5"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp311-cp311-win_amd64.whl": {
+    "url": "https://files.pythonhosted.org/packages/44/bb/13561649828a657499b1121a2dccb67e9c1861769ab5515a84c0db4598cc/cadquery_ocp_novtk-7.9.3.1.1-cp311-cp311-win_amd64.whl",
+    "size": 46150439,
+    "sha256": "46ca650c78372a05d91db79c66a4f28d5cd7ec674f5347ddbf94e927ef6e4090"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp312-cp312-macosx_11_0_arm64.whl": {
+    "url": "https://files.pythonhosted.org/packages/e2/ee/1f86553953ba4a511e2b324b6101fe42fd323d7feef6089fb3137fc36dc4/cadquery_ocp_novtk-7.9.3.1.1-cp312-cp312-macosx_11_0_arm64.whl",
+    "size": 62300338,
+    "sha256": "50931ba2d20aa57d5e3fe2bac790093fc65c8257f7899ec5071b9e8d13dbf4bd"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp312-cp312-macosx_11_0_x86_64.whl": {
+    "url": "https://files.pythonhosted.org/packages/ed/8a/48a995811dbbf08e5b32337ff4e5f1bf3213d692b7ab43c47fa107346ce3/cadquery_ocp_novtk-7.9.3.1.1-cp312-cp312-macosx_11_0_x86_64.whl",
+    "size": 67131956,
+    "sha256": "17f707744671367a20271fc10826d1ff13ebb835345288c9377d10cd7768eeca"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp312-cp312-manylinux_2_31_aarch64.whl": {
+    "url": "https://files.pythonhosted.org/packages/36/26/32dc553e7f177976c16c085a20b6e67c782bc9ea7dcd130abdba28ee4c55/cadquery_ocp_novtk-7.9.3.1.1-cp312-cp312-manylinux_2_31_aarch64.whl",
+    "size": 61980056,
+    "sha256": "847ce78339ce2860f25a3d3109852c9c7746f4450293f359f69ecaa57967752f"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp312-cp312-manylinux_2_31_x86_64.whl": {
+    "url": "https://files.pythonhosted.org/packages/4d/32/8907aae7ee5c5c968a50a1d382a01854ca3abdc830a486e79dda64a66746/cadquery_ocp_novtk-7.9.3.1.1-cp312-cp312-manylinux_2_31_x86_64.whl",
+    "size": 67452403,
+    "sha256": "60497cf42419dd2000d323ab772937f61539f2f0a5d3ef1b288611b13254c587"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp312-cp312-win_amd64.whl": {
+    "url": "https://files.pythonhosted.org/packages/b5/03/3cc50b5a68dbe16456eccbd2c5128bcef62783c9a809d36cf11f4d1120ed/cadquery_ocp_novtk-7.9.3.1.1-cp312-cp312-win_amd64.whl",
+    "size": 46364919,
+    "sha256": "5d22339cdaac64c396f0658de8728915acfac9b868406f0078e52f50a3c25c65"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp314-cp314-macosx_11_0_arm64.whl": {
+    "url": "https://files.pythonhosted.org/packages/54/a9/7df2cc07e9820cbc8f34b5457be69573bf5c5f8bff09f5991132af090746/cadquery_ocp_novtk-7.9.3.1.1-cp314-cp314-macosx_11_0_arm64.whl",
+    "size": 62346733,
+    "sha256": "ce1f014fc4a88b3d45bf7560a5e276fb30ed4edd3d788760512b1af49eb13041"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp314-cp314-macosx_11_0_x86_64.whl": {
+    "url": "https://files.pythonhosted.org/packages/bd/75/4df5714e816ab22256e50a314350d65047c4dad3fbe184407cba72497ba9/cadquery_ocp_novtk-7.9.3.1.1-cp314-cp314-macosx_11_0_x86_64.whl",
+    "size": 67096609,
+    "sha256": "4609e82725cd52015167d14d930d8ead437465c39136581694fe97c8965ab0ee"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp314-cp314-manylinux_2_31_aarch64.whl": {
+    "url": "https://files.pythonhosted.org/packages/41/34/4b7de51963e69b1f63e55045295122663e53032da7c2d25e6132c86771c4/cadquery_ocp_novtk-7.9.3.1.1-cp314-cp314-manylinux_2_31_aarch64.whl",
+    "size": 62228268,
+    "sha256": "6c0135fee7e5f215b42178d65d448dd795317f523827031823cfa56529bf5ca1"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp314-cp314-manylinux_2_31_x86_64.whl": {
+    "url": "https://files.pythonhosted.org/packages/f6/b4/ccc1e60868e5b42838dbf5abf2a3a8dfcf2c92127a89f92835d5fd30fc23/cadquery_ocp_novtk-7.9.3.1.1-cp314-cp314-manylinux_2_31_x86_64.whl",
+    "size": 67554702,
+    "sha256": "156dd9233d90b520103d9dc7c8854ba0b9e891b4f6e604546cde20a795122247"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp314-cp314-win_amd64.whl": {
+    "url": "https://files.pythonhosted.org/packages/ee/8a/8423862301a23078f3f34612c058f0c121fc7749182811f903a78445e77a/cadquery_ocp_novtk-7.9.3.1.1-cp314-cp314-win_amd64.whl",
+    "size": 46508391,
+    "sha256": "eabb9e4eceb4d44b1555981aec8821c3b133300ed4a3929e4fea4510b6737cd5"
+  },
+  "cadquery_ocp_proxy-7.9.3.1.1-py3-none-any.whl": {
+    "url": "https://files.pythonhosted.org/packages/30/c0/04e9363a99fee892de2776820e3dcf04f8825b6edc9580efe3416c9465a7/cadquery_ocp_proxy-7.9.3.1.1-py3-none-any.whl",
+    "size": 3322,
+    "sha256": "ca4164ec4b54956d9fc3e68c67d555b5486cb963c2f71e18df005ba16b921c91"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp313-cp313-macosx_11_0_arm64.whl": {
+    "url": "https://files.pythonhosted.org/packages/f7/80/dc46dac2ebb6ae6bcce27bc7f717438b99897199be25323cda559a76e0a1/cadquery_ocp_novtk-7.9.3.1.1-cp313-cp313-macosx_11_0_arm64.whl",
+    "size": 62295929,
+    "sha256": "2287812f213af7020f8bbc69b07d6039e529f5e0e154c0192221aff3fdac6676"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp313-cp313-macosx_11_0_x86_64.whl": {
+    "url": "https://files.pythonhosted.org/packages/97/55/93f76eb2a1874b2d51c98e6cad1b55ae7562fc9b6eb36365e3b0597d25c4/cadquery_ocp_novtk-7.9.3.1.1-cp313-cp313-macosx_11_0_x86_64.whl",
+    "size": 67126917,
+    "sha256": "e2969d2129bf21067f44953117cc18f1426f5aacaed8bcc074228eb50f3179b2"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp313-cp313-manylinux_2_31_aarch64.whl": {
+    "url": "https://files.pythonhosted.org/packages/6a/bc/3eb58a3b7513309d665e0a65c00da93fc825dc930744cd8ab23626cd2e1f/cadquery_ocp_novtk-7.9.3.1.1-cp313-cp313-manylinux_2_31_aarch64.whl",
+    "size": 61978120,
+    "sha256": "d8f68b05c2917fb0f5ea569ed88c697d47cc57a7b293929d863b52c99ace9312"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp313-cp313-manylinux_2_31_x86_64.whl": {
+    "url": "https://files.pythonhosted.org/packages/f3/31/82baf17406c0a13f2eb98c1d46d09a640795fc7d6b373a69bc5f44344db3/cadquery_ocp_novtk-7.9.3.1.1-cp313-cp313-manylinux_2_31_x86_64.whl",
+    "size": 67466562,
+    "sha256": "ffcd04d4efa087d3aa942360020265a1ac0e12407bd7bcfeb37e70b4d1ee72df"
+  },
+  "cadquery_ocp_novtk-7.9.3.1.1-cp313-cp313-win_amd64.whl": {
+    "url": "https://files.pythonhosted.org/packages/57/48/4595c22b0ae1b4759f209a13d21dadd229db6c374d9b0a95afa7ed0c4714/cadquery_ocp_novtk-7.9.3.1.1-cp313-cp313-win_amd64.whl",
+    "size": 46364506,
+    "sha256": "3390be6d8199a50b01ae0137a60f56d0cfecd8753dbee08532bbbeb8b7169682"
+  }
+}

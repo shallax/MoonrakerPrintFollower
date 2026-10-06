@@ -26,6 +26,19 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "5.2.0",
+        "headline": "Version 5.2.0 brings your toolhead into Cura Preview, with live positioning, custom models and coloured lighting.",
+        "items": (
+            "Import STL or coloured STEP/STP in Following settings, or use Set up custom toolhead in View Options. STEP offers an optional local CAD reader download.",
+            "Choose True position for live travel and parking, regardless of loaded G-code. Smooth path follows the toolpath smoothly. Both work with Cura’s standard nozzle or a custom model.",
+            "Configure the model in a shaded preview: right-drag to rotate, middle-drag to pan and scroll to zoom. Keep the automatic nozzle anchor or place it with a left-click or precise XYZ coordinates.",
+            "Add outward-facing coloured lights, adjust their brightness live and optionally paint their faces. Remove a light to restore its face colour. Save keeps the model, nozzle and lights for each printer.",
+            "View Options groups opacity, lighting, object banners and bed mesh. Fade the model and its lights together, switch all lighting off, or choose whether lights affect the bed and printed models.",
+            "Untick Show custom toolhead model to restore Cura's standard nozzle. Custom controls stay out of the way until you upload a model.",
+            "Rendering reuses unchanged geometry and lighting, object banners avoid unnecessary rebuilds, and the loading row disappears when idle.",
+        ),
+    },
+    {
         "version": "5.1.0",
         "headline": "Version 5.1.0 adds object-name banners and more compact "
             "controls to Cura Preview.",

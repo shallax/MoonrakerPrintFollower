@@ -1378,7 +1378,7 @@ for extension in app.getExtensions():
     if "MoonrakerPrintFollower" in type(extension).__name__:
         rt = extension._runtime
         state = rt.preview._state
-        result["ready"] = bool(state.attached and rt.binding.config.path_smoothing and rt.preview._motion is not None and view is not None and hasattr(view, "getLayerData") and view.getLayerData() is not None and view.getMaxLayers() == 2)
+        result["ready"] = bool(state.attached and not rt.presentation.reported_position and rt.preview._motion is not None and view is not None and hasattr(view, "getLayerData") and view.getLayerData() is not None and view.getMaxLayers() == 2)
         result["layer"] = state.expected_layer
         result["path"] = state.expected_path
         result["moving"] = bool(result["ready"] and state.expected_path is not None and state.expected_path > 0 and view.getCurrentLayer() == state.expected_layer)

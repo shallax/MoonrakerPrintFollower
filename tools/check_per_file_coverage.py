@@ -32,7 +32,19 @@ SOURCE = ROOT / "mpf"
 # Per-file excuses: path -> {reason, evidence, date, recheck}. The
 # validation below runs before anything is judged, so an excuse
 # without its justification fails the gate itself.
-EXCLUSIONS = {}
+EXCLUSIONS = {
+    "mpf/toolhead/StepWorker.py": {
+        "reason": "Native STEP conversion executes in a separate pinned CPython 3.12 process, "
+                  "outside the ordinary Cura-host ABI coverage process. It retains a dedicated 95% bar.",
+        "evidence": "tools/test_cad_runtime.py --coverage-worker traces real pinned OCP calls in the helper "
+                    "and checks measured statement coverage >=95%; .github/workflows/ci.yml runs this "
+                    "in mandatory cad-runtime-smoke, which release-verdict requires to succeed.",
+        "date": "2026-10-05",
+        "recheck": "Recheck when the helper ABI/process model or CAD fixtures change. Remove this "
+                   "separate-process exemption if the regular coverage runner gains the same compiled "
+                   "helper ABI and combines its native execution data; keep the dedicated threshold.",
+    },
+}
 
 
 def has_code(path: pathlib.Path) -> bool:

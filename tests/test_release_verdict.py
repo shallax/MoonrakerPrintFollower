@@ -25,11 +25,11 @@ def job_block(workflow: str, name: str) -> str:
 
 
 class ReleaseVerdictTests(unittest.TestCase):
-    def run_verdict(self, package: str, scan: str, gate: str):
+    def run_verdict(self, package: str, scan: str, gate: str, cad: str = "success"):
         env = os.environ.copy()
         env.update(MPF_RELEASE_PACKAGE_RESULT=package,
                    MPF_RELEASE_SCAN_RESULT=scan,
-                   MPF_RELEASE_GATE_RESULT=gate)
+                   MPF_RELEASE_GATE_RESULT=gate, MPF_RELEASE_CAD_RESULT=cad)
         return subprocess.run([sys.executable, str(SCRIPT)], cwd=ROOT,
                               env=env, capture_output=True, text=True,
                               check=False)
@@ -42,7 +42,9 @@ class ReleaseVerdictTests(unittest.TestCase):
         for states in (("success", "skipped", "skipped"),
                        ("success", "failure", "skipped"),
                        ("success", "success", "failure"),
-                       ("", "success", "success")):
+                       ("", "success", "success"),
+                       ("success", "success", "success", "failure"),
+                       ("success", "success", "success", "skipped")):
             with self.subTest(states=states):
                 result = self.run_verdict(*states)
                 self.assertNotEqual(result.returncode, 0)
@@ -52,8 +54,11 @@ class ReleaseVerdictTests(unittest.TestCase):
         scan = job_block(CI, "artifact-scan")
         self.assertIn("!cancelled()", scan)
         self.assertIn("needs.ci-package.result == 'success'", scan)
+        cad = job_block(CI, "cad-runtime-smoke")
+        self.assertIn("needs: lint", cad)
+        self.assertIn("!cancelled() && (inputs.tag_release || needs.lint.result == 'success')", cad)
         verdict = job_block(CI, "release-verdict")
-        self.assertIn("needs: [ci-package, artifact-scan, gate]", verdict)
+        self.assertIn("needs: [ci-package, artifact-scan, gate, cad-runtime-smoke]", verdict)
         self.assertIn("!cancelled() && inputs.tag_release", verdict)
         self.assertIn("run: python tools/release_verdict.py", verdict)
         self.assertIn("needs: ci", job_block(RELEASE, "publish"))

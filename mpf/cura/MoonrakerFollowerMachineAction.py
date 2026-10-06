@@ -50,6 +50,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
         self._application = application
         self._follower = follower
         self._output_plugin = output_plugin
+        self._toolhead_models = getattr(follower, "toolhead_models", None)
         self._detection = getattr(follower, "detection", None)
         self._detection_refusal = ""
         if self._detection is not None:
@@ -98,18 +99,27 @@ class MoonrakerFollowerMachineAction(MachineAction):
 
     def _on_global_stack_changed(self, *_args: Any) -> None:
         self.cancelTest()
+        if self._toolhead_models is not None: self._toolhead_models.reset()
         self._test_status = "Not tested"
         self.testStatusChanged.emit()
         self.settingsChanged.emit()
 
     def _reset(self) -> None:
         self.cancelTest()
+        if self._toolhead_models is not None: self._toolhead_models.reset()
         self._test_status = "Not tested"
         self.testStatusChanged.emit()
         self.settingsChanged.emit()
 
     def _config(self) -> PrinterConfig:
         return self._follower.current_printer_config()
+
+    @pyqtProperty(QObject, constant=True)
+    def toolheadModel(self): return self._toolhead_models
+
+    @pyqtSlot()
+    def cancelToolheadModel(self):
+        if self._toolhead_models is not None: self._toolhead_models.reset()
 
     # ------------------------------------------------------------------
     # The migration failure surfaces (the settings page's mirror — the
@@ -734,6 +744,8 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "filename_translate_output": trans_output,
                 "filename_translate_remove": str(raw.get("filename_translate_remove") or ""),
             })
+            if self._toolhead_models is not None:
+                data.update(self._toolhead_models.fields())
             config = PrinterConfig.from_dict(data)
             saved = self._follower.apply_printer_config(config)
             if saved is False:

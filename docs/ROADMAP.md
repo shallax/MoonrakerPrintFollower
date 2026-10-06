@@ -21,7 +21,71 @@ print supplies the needed markers and timing data. The Preview card can
 collapse to Attach/Detach and Load current print. The two panes share a bottom
 alignment and reserve space in Cura's action row.
 
-## 5.2.0 — Physical head and Preview controls (planned)
+## 5.2.0 — Actual toolhead position and custom models (implemented; release validation)
+
+The persistent **Enable lighting** master switch disables perimeter, attached and
+scene illumination together, retaining base colours and face paint. It disables
+the bed/model checkboxes without losing their selections. Followed normal-mode
+previews use retained native path indices and completed colour/depth to avoid
+whole-print copies and repeated geometry work; unsupported scenes retain Cura's
+native renderer. Live loaded-print testing has accepted performance as comparable with the custom toolhead disabled. Automated release validation remains pending.
+
+Repeated unchanged banner publications retain their absolute finish deadlines,
+avoiding delegate reconstruction on the idle handle watcher. Fixed Stealthburner
+lighting and partially printed Voron cube scenes now join the regular screenshot
+generation, repeatability checks and README gallery.
+
+View Options groups persisted toolhead visibility, position, opacity and separate bed/model illumination switches, object-name banners, and the relocated bed-mesh display controls with dividers. Lighting must remain usable on detailed G-code: retain shaded-head and additive-light images between unchanged compositions; cache static lower-layer depth and append completed top-layer depth; use compact older boundary indices for outer and hole walls; reject distant paths before tubular extrusion; and avoid native scene redraws for toolhead-only motion. The loading indicator collapses when idle.
+
+The custom toolhead section appears only with an uploaded model. Otherwise a
+setup button opens the current printer's Following settings at the upload
+controls. Turning off **Show custom toolhead model** restores Cura's native
+nozzle and disables the custom controls, preserving the user's choices.
+
+The active branch is `release/v5.2.0`, created from `origin/main` at
+`5438a722e70d3e39d4e14df699092b3709751172`.
+
+The requested release scope is:
+
+- Rename the Preview **Object banners** card to **View Options** and add
+  **True position** / **Smooth path** choice for both native and custom models. True
+  position follows `motion_report.live_position` independently of estimated
+  progress through Cura's toolpath, including without loaded G-code. Smooth
+  path requires a loaded toolpath.
+- Add a custom toolhead model picker in Following settings, with STL and
+  STEP/STP support. STEP import preserves available model colours; the
+  conversion runs locally and needs an explicitly managed CAD runtime.
+- Anchor the imported model at the centre of its lowest surface, treating
+  that location as the nozzle tip. STL is Z-up millimetres; STEP units are converted to millimetres. Models are limited to 128 MiB and one million triangles. Conversion reports its stage, elapsed time and triangle counts during mesh construction, with cancellation and no automatic time cutoff.
+- Automatic anchoring is the default. Provide a manual override for models
+  whose lowest geometry is a probe or duct: the accepted interaction is
+  surface picking in an isolated model preview, precise XYZ fields in millimetres,
+  and Reset to automatic.
+- Preserve settings drafts until Save, retain the previous working model
+  after a failed import, and keep printer bindings and render lifetimes
+  separate from physical progress tracking.
+
+Implementation uses a pinned, optional OpenCASCADE reader and independent
+CPython 3.12 helper on macOS ARM64/x86-64, Linux ARM64/x86-64 and Windows
+x86-64. Conversion runs in a disposable child process; cancellation terminates
+it. The flattened content-addressed mesh retains colours and assembly placements,
+so subsequent loads require neither the source file nor the CAD reader. All
+runtime notices and upstream source references are shipped with the plugin.
+
+Reported motion uses admitted live machine-space telemetry, freshness and XYZ
+homing checks. It is independent of the loaded file, matching and attachment.
+Smooth path enables smooth toolpath progress in both views and replaces
+the separate Smooth path progress setting. Native Cura nozzle restoration
+uses public scene/view methods. Import and alignment drafts remain transactional.
+
+The v5.1.0 macOS Preview CI failure is fixed forward: p6/p7 atomically seed
+layer 1 and hold the simulator clock before UI waits, preventing slow startup
+from skipping a transient layer. The full critic, seven-persona panel,
+re-review and fresh adversarial rounds were completed; decisions are recorded
+in the local review audit. The following older proposals are planning history,
+not additional scope for this request.
+
+### Earlier Preview controls proposal
 
 The remaining Preview work moves to 5.2.0. The detailed earlier proposal
 remains below as a planning record; its old version references describe the

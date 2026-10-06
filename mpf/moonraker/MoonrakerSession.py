@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
+from types import MappingProxyType
 from dataclasses import dataclass, field
 from enum import Enum
 import time
@@ -138,30 +140,90 @@ class BindingIdentity:
     feed_mode: str = "http"
 
 
+class _FrozenList(tuple):
+    """Immutable JSON list retaining its mutable-copy representation."""
+
+
+def _freeze_status(value):
+    if isinstance(value, FrozenStatus): return value
+    if isinstance(value, Mapping): return FrozenStatus(value)
+    if isinstance(value, list): return _FrozenList(_freeze_status(item) for item in value)
+    if isinstance(value, tuple): return tuple(_freeze_status(item) for item in value)
+    return copy.deepcopy(value)
+
+
+def mutable_status(value):
+    """Materialise a detached legacy value without changing list/tuple shapes."""
+    if isinstance(value, Mapping): return {key: mutable_status(item) for key, item in value.items()}
+    if isinstance(value, _FrozenList): return [mutable_status(item) for item in value]
+    if isinstance(value, tuple): return tuple(mutable_status(item) for item in value)
+    return copy.deepcopy(value)
+
+
+@dataclass(frozen=True, init=False, eq=False)
+class FrozenStatus(Mapping):
+    """Recursively immutable status with shared unchanged fields across frames."""
+    _values: Mapping
+
+    def __init__(self, values=()):
+        object.__setattr__(self, "_values", MappingProxyType({key: _freeze_status(value) for key, value in dict(values).items()}))
+
+    @classmethod
+    def _from_frozen(cls, values):
+        result = cls.__new__(cls)
+        object.__setattr__(result, "_values", MappingProxyType(dict(values)))
+        return result
+
+    def __getitem__(self, key): return self._values[key]
+    def __iter__(self): return iter(self._values)
+    def __len__(self): return len(self._values)
+
+    def with_fields(self, object_name, patch):
+        """Overlay one observation row without mutating its source frame."""
+        rows = dict(self)
+        row = dict(self.get(object_name) or {})
+        row.update({key: _freeze_status(value) for key, value in patch.items()})
+        rows[object_name] = self._from_frozen(row)
+        return self._from_frozen(rows)
+
+
 @dataclass
 class SessionSnapshot:
     status: Dict[str, Any] = field(default_factory=dict)
     revision: int = 0
     updated_at: float = 0.0
+    _immutable: FrozenStatus = field(init=False, repr=False)
 
-    def merge_status(self, patch: Dict[str, Any], *, now: Optional[float] = None) -> Dict[str, Any]:
+    def __post_init__(self):
+        self._immutable = FrozenStatus(self.status)
+
+    @property
+    def immutable_status(self): return self._immutable
+
+    def merge_status(self, patch: Dict[str, Any], *, now: Optional[float] = None, immutable=False):
         if not isinstance(patch, dict):
-            return self.copy_status()
+            return self._immutable if immutable else self.copy_status()
+        rows = dict(self._immutable)
         for object_name, value in patch.items():
+            current = self.status.get(object_name)
             if isinstance(value, dict):
-                current = self.status.get(object_name)
-                if not isinstance(current, dict):
-                    current = {}
+                current = current if isinstance(current, dict) else {}
                 merged = dict(current)
-                merged.update(copy.deepcopy(value))
+                frozen_row = dict(rows.get(object_name) or {}) if isinstance(rows.get(object_name), Mapping) else {}
+                for key, item in value.items():
+                    if key in current and current[key] == item: continue
+                    stored = copy.deepcopy(item)
+                    merged[key] = stored
+                    frozen_row[key] = _freeze_status(stored)
                 self.status[object_name] = merged
-            else:
-                # Store a defensive copy so callers cannot mutate the snapshot
-                # through objects they still hold.
+                rows[object_name] = FrozenStatus._from_frozen(frozen_row)
+            elif object_name not in self.status or current != value:
                 self.status[object_name] = copy.deepcopy(value)
+                rows[object_name] = _freeze_status(self.status[object_name])
+        self._immutable = FrozenStatus._from_frozen(rows)
         self.revision += 1
         self.updated_at = time.monotonic() if now is None else float(now)
-        return self.copy_status()
+        return self._immutable if immutable else self.copy_status()
 
     def copy_status(self) -> Dict[str, Any]:
         """Return a fully detached copy; nested mutation cannot reach internals."""
@@ -363,8 +425,8 @@ class MoonrakerSessionState:
         self.toolhead_guard = active
         return True
 
-    def merge_status(self, patch: Dict[str, Any], *, now: Optional[float] = None) -> tuple[Dict[str, Any], list[CommandAcknowledgement]]:
-        status = self.snapshot.merge_status(patch, now=now)
+    def merge_status(self, patch: Dict[str, Any], *, now: Optional[float] = None, immutable=False):
+        status = self.snapshot.merge_status(patch, now=now, immutable=immutable)
         # Only a fresh print_stats.state can confirm a command. An unrelated
         # partial patch must not confirm it using an old merged state.
         stats = patch.get("print_stats") if isinstance(patch, dict) else None
@@ -487,5 +549,5 @@ class MoonrakerSession:
     def set_toolhead_guard(self, active: bool) -> bool:
         return self._state.set_toolhead_guard(active)
 
-    def merge_status(self, patch: Dict[str, Any], *, now: Optional[float] = None):
-        return self._state.merge_status(patch, now=now)
+    def merge_status(self, patch: Dict[str, Any], *, now: Optional[float] = None, immutable=False):
+        return self._state.merge_status(patch, now=now, immutable=immutable)

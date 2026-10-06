@@ -9,9 +9,9 @@ from build_curapackage import (
     CHANGELOG_FILE,
     LICENSE_FILE,
     PACKAGE_JSON,
-    PLUGIN_ROOT,
     ROOT,
     iter_plugin_sources,
+    plugin_relative_path,
     reproducible_zip_timestamp,
     write_deterministic_file,
 )
@@ -19,7 +19,7 @@ from build_curapackage import (
 
 def archive_name(path: pathlib.Path, package_id: str) -> str:
     # Marketplace entries live at the ZIP root: "<package_id>/<relative>".
-    relative = path.relative_to(PLUGIN_ROOT).as_posix()
+    relative = plugin_relative_path(path)
     return f"{package_id}/{relative}"
 
 

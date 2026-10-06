@@ -12,4 +12,5 @@
 # Assets that must never be normalised.
 *.png binary
 *.stl binary
+*.npz binary
 *.ico binary
