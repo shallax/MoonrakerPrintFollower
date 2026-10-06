@@ -370,10 +370,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             adjusted["offsetX"] += pan_x
             return adjusted
 
-        contexts = [("lineScale", 12.0, 1.0, 0.0),
-                    ("viewScale", 1.2, 1.2, 0.0),
-                    ("viewPanX", -20.0, 1.0, -20.0)]
-        for index, (name, value, scale, pan_x) in enumerate(contexts):
+        contexts = [("lineScale", 12.0), ("viewScale", 1.2), ("viewPanX", -20.0)]
+        for index, (name, value) in enumerate(contexts):
             # The production ordering: the context change settles
             # FIRST (the 150 ms timer consumes the view key and feeds
             # the model), and only THEN does the model's invalidation
@@ -382,6 +380,10 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             # the render-key flip IS the production mechanism.
             face.setProperty(name, value)
             self._pump_ms(200)  # the settle consumes the view key
+            # A pan retains the preceding zoom; the replacement asset and
+            # pixel census must use the same view as the live renderer.
+            scale = float(face.property("viewScale"))
+            pan_x = float(face.property("viewPanX"))
             layer.set_expected_key("invalidated-%d" % index)
             self._printer.setLayers({"prev": None, "current": layer, "next": None})
             new_plot = view_plot(self._bed_point(face, 0.0, 0.0), scale, pan_x)
@@ -633,5 +635,4 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.pump(30)
         self._printer.setLayers(harness.PlateFaceRenderTests.PAYLOAD["layers"])
         self.pump(20)
-
 
