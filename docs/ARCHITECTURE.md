@@ -146,6 +146,9 @@ correct package ownership.
 | `PreviewMotion.py` | The Qt tick driver for the smoothed displayed path and its view writes | Physical observations |
 | `PauseScheduleService.py` | Pure print-local target set and crossing policy | Network commands |
 | `PauseController.py` | Scheduled PAUSE command and acknowledgement lifecycle | Preview rendering |
+| `PreviewToolheadPresentation.py` | Preview Toolhead host, readouts, local chrome and epoch-fenced selected-machine intents | G-code, polling or physical-motion policy |
+| `ToolheadReadout.py` | Pure physical-position, Z offset and firmware-capability readouts | Qt, transport or movement permission |
+| `PhysicalMotion.py` | Pure physical path/travel guard, G92/base-coordinate conversion, conservative mesh bounds and validated manual-move scripts | Qt, telemetry acquisition or command transport |
 | `PreviewPresentation.py` | Preview QML objects, displayed values and user-intent signals | Following or scheduling policy |
 | `RenderTiming.py` | Opt-in bounded asynchronous GPU queries for plugin draw commands, never system-wide GPU utilisation | Profile settings writes, synchronous GPU waits or native timer ownership |
 | `CameraProjection.py` | Camera-keyed banner projection matrices and hover rays; unchanged telemetry reuses camera-only work | Native camera mutation or settings |
@@ -187,13 +190,14 @@ correct package ownership.
 | `ToolheadPolicy.py` | Pure jog/home/extrude G-code, the DISPATCH-time jog gate and the stepwise jog queue — every command executes as its own move, never merged or cancelled (the 2026-09-17 ruling; the click-time gate is `MonitorPermissions.can_jog`) | Qt, timers or networking |
 | `MonitorPermissions.py` | Pure permission policy: the frozen observation record and the action rulings table (can_jog, can_power, can_restart, can_start_print, can_pause, can_resume, …) with disabled reasons; `is_paused` (the authoritative paused bit) and `pause_resume_supported` (the capability signal) ride the observation | Qt, networking or mutable state |
 | `StateStore.py` | The plugin JSON documents' file-semantics owner: the read-modify-write merge, the pretty atomic replace (the injected save primitive — Cura's SaveFile in production), the fsync, the optional cross-process lock and the rate-limited failure reporting | Qt, networking or value coercion |
-| `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
+| `ToolheadController.py` | Shared Monitor/Preview motion queue, fresh dispatch queries, timeout/session/revision fencing and pause-first sequencing | Model inheritance or mesh/coordinate mathematics |
 | `PauseAtLayerPresentation.py` | The pause-at-layer block the popover reads: its candidate at the follower's own layer, and the button gates re-derived with the card's own helpers | The schedule itself, the coordinator's rows or the live print state |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
 | `CameraSourceIdentity.py` | Pure stable feed identity retaining arbitrary camera selectors and ignoring known rotating transport parameters | Camera transport or credentials in diagnostics |
 | `CameraRecovery.py` | The webcam stream's freshness policy: the reload nonce every recovery path moves, the recovery veil and the stream URL's transition rules | Publishing a frame, the bridge transport or the camera's own configuration |
 | `MonitorCamera.py` | Camera selection, transforms, per-printer selection and FPS persistence; chooses the bridged MJPEG stream or snapshot URL at 5 FPS and below when supported | Private configuration store |
+| `CameraControlBar.qml` | Webcam zoom/FPS faces and their shared dock/park rhythm; zoom width is fixed by a measured `800%`, while the FPS face fits its longer rate readout | Camera decoding or persistent configuration |
 | `CameraBridge.py` | The key-carrying camera republisher: an ephemeral loopback listener for configured stream and snapshot requests with the X-Api-Key header, same-origin redirects only, per-connection upstreams | MoonrakerMonitorModel |
 | `MoonrakerMJPGImage.py` | Latest-frame MJPEG presentation and bounded snapshot polling; one decode worker uses QImageReader.read, releasing Python's execution lock during native decoding; UI-owned receive, installation and painting | QML camera item |
 | `DetectionAssets.py` | Pinned model and CPU runtime matrix, with host preflight | Network transfers or Qt presentation |
@@ -452,6 +456,60 @@ It alone changes `PreviewState` using replacement values. External code cannot
 mutate path/ETA/attachment fields. `reset_tracking()` clears index-derived progress
 and anchors while preserving print observation and attachment; `reset_print()`
 clears print-local state without automatically reattaching a manually detached view.
+
+Selected-layer deadlines are formatted by the pure
+`PreviewFormatting.layer_deadline_clock` projection. It uses one captured local
+time for both the arrival clock and the calendar-day suffix (`+1`, `+2`, etc.),
+matching the Monitor Finish convention without a second clock read at midnight.
+
+The 5.3.0 Toolhead pane is attached in Preview by
+`PreviewToolheadPresentation`. Typed intents route through the selected Monitor
+owner; route epochs fence retired bindings. Jog/move-to require the shared jog
+permission, home/calibration/motors require idle permission, and Z-offset has a
+separate gate that permits printing. `ToolheadReadout` projects finite physical
+`motion_report.live_position` readings, observed Z offset and firmware
+capabilities from the Monitor's existing lanes. Missing or disconnected
+readings remain em dashes. `MoonrakerOutputDevicePlugin` grants the readout
+route to the selected machine only, revokes it before deactivation, and clears
+readouts, target and distance drafts, motion focus and the open menu at a machine switch. The pane has
+no transport, command owner or extra poller.
+
+`PreviewToolheadHost.qml` anchors at the top left below Cura's actual stage
+menu, reserving the lower-left perspective controls, job summary and object
+selector through their QML context IDs. It
+binds resizing and stage changes without reparenting on ordinary refreshes;
+an unsupported host has no guessed placement. Collapse persists separately
+from rendered-toolhead visibility. Its collapsed tab restores keyboard focus,
+and a wrapping status strip stays outside the scroll area.
+`PreviewJogDistance.qml` separates numeric drafts from the committed distance:
+editing previews the interpolated slider position, while finishing the edit
+commits a valid value. Owner reset/rebind discards unfinished edits and retires
+keyboard focus to the non-motion header/tab, including disabled retained focus.
+Values above the slider's 125 mm endpoint keep their
+exact distance. `PreviewToolheadButton.qml` supplies compact two-line labels
+and a theme-aware keyboard focus outline. The isolated
+`tools/capture_preview_toolhead.py` scene uses real theme assets and synthetic
+values; real-QML host tests prove placement, stage gating, ownership cleanup
+and disabled controls without a printer. `ToolheadController` obtains a bounded
+fresh status query before position-move dispatch through the existing command lane;
+`PhysicalMotion` validates physical path, coordinate base and travel/bed bounds.
+The guard supports Cartesian/CoreXY-family kinematics with reported XYZ limits;
+it rejects unreported coordinate transforms and overridden movement commands.
+The three-second status-query deadline, connection/session identity, command
+revision and exact queue head must still match before dispatch. Each position
+script saves firmware G-code state, restores it with `MOVE=0`, and never moves
+back to the saved position. Offset commands bypass that query but serialize
+through the same tracked command lane, including synchronous acknowledgements.
+Z-offset nudges and resets are operator calibration controls: they bypass the
+geometry guard and its status query, including bed-mesh, homing and travel bounds.
+They remain on the shared command lane with connection, ownership, control-lock
+and input-validation checks, and remain available while printing. Firmware owns
+whether a calibration command can execute; the client does not claim to know the
+nozzle's physical clearance. Missing or unsupported transforms, malformed/stale
+replies and changed ownership or command revision still fail closed for position
+moves. Whole-mesh bounds and numeric uncertainty may conservatively refuse
+near-bed position moves; the client cannot make its query/script atomic against
+unrelated external G-code. Firmware owns its homing/probing paths.
 
 The Preview object-name bar belongs to `PreviewPresentation`. Its banner anchors
 use Cura's public `Camera.projectToViewport()` with the window's viewport rectangle
@@ -880,9 +938,9 @@ the settings document and the global chrome take the cross-process lock,
 while the per-machine shards have a single writer by construction.
 
 Manual toolhead control is pure policy plus one queue owner: `ToolheadPolicy`
-generates every G-code string and classifies the print state at DISPATCH
+classifies the print state at DISPATCH
 (disabled in unknown states, allowed while idle, paused or error — error
-unlocks recovery moves) and coalesces adjacent same-axis jog taps; the
+unlocks recovery moves) and retains each jog tap as its own move; the
 CLICK-time gate is `MonitorPermissions.can_jog` (4.2.0), the same mapping
 plus the fail-closed prelude. The motion controls are exposed only when
 moves are immediately allowed — while printing the user must pause
@@ -898,7 +956,12 @@ emergency stop clears the script queue, the jog queue and the busy gate
 so power toggles and restart controls respond immediately. The
 transport's replace lane is never used for motion because replacement
 aborts an in-flight request whose G-code may or may not have executed.
-Live Z-offset nudges stay enabled during prints by design.
+`PhysicalMotion` validates and formats guarded jog/Move-to/centre/Z-zero moves
+against one fresh firmware query per dispatch. `ToolheadPolicy` formats the
+remaining homing/extrusion actions; firmware owns homing/probing paths.
+Live Z-offset nudges and resets stay enabled during prints by design, without
+client geometry or homing requirements. They retain the shared lane and
+connection/ownership/control-lock/input gates.
 The adjacent Apply control stages the current nonzero G-code Z offset for
 the configured probe or mechanical Z endstop; it is disabled when the
 reference cannot be identified unambiguously. It uses Klipper's
@@ -1153,6 +1216,13 @@ native CI and emulation on Apple Silicon. `tools/run_captures.sh` is the shared
 entry point. Native test gates may use the host architecture; `make build`
 regenerates canonical captures afterward rather than copying those test images.
 Byte comparison and independent light/dark determinism checks remain strict.
+The Preview Toolhead capture renders the real pane in four seeded states
+(ready, collapsed, printing and disconnected), with no Monitor model or
+transport. It participates in the same entry points and contrast checks;
+the normal refresh also emits dark-suffixed illustrations for the README.
+Its capture-only icon provider applies the production alpha-mask tint in
+software; the generic offscreen stub's untinted black icons are not used in
+these light/dark scenes. No production render path is altered.
 
 `PlateExactComposition.js` is the single Qt-free owner of the asynchronous
 Canvas delivery transaction, the attached/detached split acceptance rule, the

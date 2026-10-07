@@ -2,6 +2,43 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 5.3.0
+
+- Add a collapsible **Toolhead** pane at the top left of Cura Preview, beneath
+  the stage menu and clear of the object list, job summary and perspective
+  controls. Its nozzle icon and right-pointing expansion tab work in light
+  and dark themes. The pane is hidden in Prepare and Monitor.
+- Show physical XYZ position and Z-offset, with a compass jog pad, individual
+  and all-axis homing, absolute G-code Move-to fields and a capability-based
+  actions menu for levelling, bed-mesh calibration and motor release.
+  Empty Move-to axes retain their current coordinates. Calibration actions
+  remain separate from the bed-mesh display switches in View Options.
+- Select jog distances with a snapping slider from 0.1 to 125 mm, or enter
+  an exact distance from 0.01 to 300 mm. Custom values interpolate the handle
+  between stops; values outside the slider range retain their exact value.
+- Share the Monitor's manual-motion queue and command lane. Jog and Move-to
+  fetch fresh firmware state before each dispatch, validate physical travel
+  and conservative bed-mesh bounds, and preserve coordinate mode/feedrate.
+  Unsupported transforms, stale replies and missing position/limits refuse
+  position moves with an explanation. Preview never pauses a print to jog.
+- Treat Z-offset nudges and reset as operator calibration controls in both
+  Preview and Monitor. Both directions remain available during printing,
+  without client geometry, bed-clearance or homing checks. Retain connection,
+  ownership, control-lock, numeric-input and command-lane checks; firmware
+  decides whether each immediate `SET_GCODE_OFFSET ... MOVE=1` can execute.
+- Invalidate queued intents, unfinished target/distance edits, menus and
+  motion-control focus when the selected printer or connection changes.
+  Retired owners cannot send commands to the replacement printer.
+- Give Toolhead, View Options and Print Follower matching boxed titles with
+  hover/focus highlighting. Use the Monitor's stalk arrows for Z-offset,
+  group units beside related values and preserve keyboard access when folded.
+- Include additional calendar days in selected-layer ETA clocks, matching
+  Print job Finish, and narrow the webcam zoom face to fit `800%`.
+- Add synthetic light/dark Toolhead captures to the regular capture,
+  contrast and determinism checks. No live printer controls are used.
+- Document the optional runtime-mirror inventory and redistribution work.
+  Detection and CAD downloads retain their existing upstream URLs.
+
 ## 5.2.0
 
 - Rename Preview's Object banners card to **View Options** and add reported

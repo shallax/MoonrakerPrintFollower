@@ -291,7 +291,7 @@ class BannerHostTests(harness.RealEngineTestCase):
         dock = self.find(host, "moonrakerPreviewObjectTagsDock")
         self.assertLessEqual(dock.x() + dock.width(), 1060 - 12)
         self.assertAlmostEqual(dock.y() + dock.height(), 620, delta=1)
-        self.assertAlmostEqual(dock.height(), 34, delta=1)
+        self.assertAlmostEqual(dock.height(), 40, delta=1)
         collapsed_bottom = dock.y() + dock.height()
         QTest.mouseClick(window, Qt.MouseButton.LeftButton,
                          pos=QPoint(round(dock.x() + dock.width() / 2), round(dock.y() + 17)))
@@ -302,8 +302,8 @@ class BannerHostTests(harness.RealEngineTestCase):
         title = self.find(host, "moonrakerPreviewObjectTagsTitle")
         controls = self.find(host, "moonrakerPreviewObjectTagsControls")
         padding = host.property("dockVerticalPadding")
-        self.assertAlmostEqual(title.mapToItem(dock, harness.QPointF(0, 0)).y(),
-                               padding, delta=1)
+        self.assertAlmostEqual(title.mapToItem(dock, harness.QPointF(0, title.height() / 2)).y(),
+                               20, delta=1)
         self.assertAlmostEqual(dock.height() - controls.mapToItem(
             dock, harness.QPointF(0, controls.implicitHeight())).y(), padding, delta=1)
 

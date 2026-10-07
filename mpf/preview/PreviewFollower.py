@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 from ..cura.CuraAdapter import (
@@ -16,6 +16,7 @@ from ..cura.CuraAdapter import (
     set_preview_path,
 )
 from .FollowController import decide_layers
+from .PreviewFormatting import layer_deadline_clock
 
 
 def preview_override_kind(
@@ -403,7 +404,6 @@ class PreviewFollower:
                 remaining = self.remaining(selected, index)
                 if remaining is None: text = prefix + "ETA unavailable (no layer timing)"
                 else:
-                    finish = datetime.now().astimezone() + timedelta(seconds=remaining)
-                    clock = finish.strftime("%a %H:%M" if remaining >= 20 * 3600 else "%H:%M")
+                    clock = layer_deadline_clock(remaining, datetime.now().astimezone())
                     text = prefix + f"in {self.format_duration(remaining)} · ≈{clock}"
         self._state = replace(self._state, eta_text=text)

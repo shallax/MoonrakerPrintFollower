@@ -21,7 +21,11 @@ import time
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from ..MonitorPermissions import R_UNKNOWN, Verdict, can_jog
+from dataclasses import replace
+import math
+
+from ..MonitorPermissions import R_UNKNOWN, Verdict, can_jog, can_z_offset, can_restart
+from .PhysicalMotion import UnsafeMotion, finite, prepare, target_fields, telemetry_object
 from .ToolheadPolicy import (
     EXTRUDE_DISTANCE_DEFAULT,
     EXTRUDE_SPEED_DEFAULT,
@@ -45,6 +49,7 @@ from .ToolheadPolicy import (
     make_motors_off_op,
     position_mode_text,
     push_op,
+    JogOp,
 )
 
 
@@ -92,6 +97,13 @@ class ToolheadController(QObject):
         self._guard_latched = False
         self._status = ""
         self._values = {}
+        self._query_token = 0
+        self._querying = False
+        self._closed = False
+        self._query_deadline = QTimer(self)
+        self._query_deadline.setSingleShot(True)
+        self._query_deadline.setInterval(3000)
+        self._query_deadline.timeout.connect(self._query_expired)
         self._deadline = QTimer(self)
         self._deadline.setSingleShot(True)
         self._deadline.setInterval(int(PAUSE_WAIT_TIMEOUT_S * 1000))
@@ -225,7 +237,7 @@ class ToolheadController(QObject):
         self._values["extrudeSpeed"] = self._extrude_speed
         self.changed.emit()
 
-    def jog(self, axis, direction):
+    def jog(self, axis, direction, distance=None):
         try:
             direction = int(direction)
         except (TypeError, ValueError):
@@ -233,17 +245,27 @@ class ToolheadController(QObject):
         if direction not in (-1, 1) or not axis_ok(str(axis)):
             return
         axis = str(axis)
-        distance = self._clamp_jog(axis, self._jog_distance * direction)
+        selected = self._jog_distance if distance is None else distance
+        if not jog_distance_ok(selected) or float(selected) <= 0:
+            return
+        distance = self._clamp_jog(axis, float(selected) * direction)
         if distance == 0.0:
-            if axis == "z" and direction == -1:
+            if axis == "z" and direction == -1 and self._last_clamp_reason == "limit":
                 # The clamp rejected the move (the live
                 # request): the jog status says so, and the console
                 # gets a local note — once per burst, so a flurry of
                 # taps cannot flood the feed.
-                self._set_status("Z nudge rejected — the head would go below 0.00 Z")
+                minimum_z = self._data.snapshot.auxiliary["toolhead"]["axis_minimum"][2]
+                note = "Z nudge rejected — minimum Z travel limit" if float(minimum_z) > 0 else \
+                    "Z nudge rejected — the head would go below 0.00 Z"
+                self._set_status(note)
                 if not self._z_rejection_noted:
                     self._z_rejection_noted = True
-                    self.rejectedNote.emit("Z nudge rejected — the head would go below 0.00 Z.")
+                    self.rejectedNote.emit(note + ".")
+            else:
+                self._reject(f"{axis.upper()} nudge refused — " +
+                             ("already at the travel limit" if self._last_clamp_reason == "limit" else
+                              "physical position or travel limits are unavailable"))
             return  # already at the limit: nothing to move
         if axis == "z":
             self._z_rejection_noted = False
@@ -310,22 +332,16 @@ class ToolheadController(QObject):
         self._pending = ()
 
     def _polled_axis(self, axis):
-        """The freshest axis value the poll knows: the live motion
-        report when present, else the gcode position (the Position
-        readout's own source — the live report: the plugin KNOWS
-        the position and must guard with it)."""
+        """Physical readout only; G-code position may have a different origin.
+
+        Dispatch separately checks the fresh firmware planned endpoint.
+        """
         index = {"x": 0, "y": 1, "z": 2}[axis]
         core = self._data.snapshot.core
         live = (core.get("motion_report") or {}).get("live_position") or ()
         if len(live) > index:
             try:
-                return float(live[index])
-            except (TypeError, ValueError):
-                pass
-        position = (core.get("gcode_move") or {}).get("gcode_position") or ()
-        if len(position) > index:
-            try:
-                return float(position[index])
+                return finite(live[index])
             except (TypeError, ValueError):
                 pass
         return None
@@ -334,11 +350,11 @@ class ToolheadController(QObject):
         """Keep relative jogs inside the toolhead's axis limits.
 
         The live position comes from the core motion report; the limits
-        from the toolhead auxiliary object. Without position data, any
-        move toward the axis minimum is forbidden outright — the head may
-        already be at zero.
+        from the toolhead auxiliary object. Missing position or limits
+        refuse both directions; dispatch separately rechecks fresh state.
         """
         index = {"x": 0, "y": 1, "z": 2}[axis]
+        self._last_clamp_reason = "unavailable"
         live = (self._data.snapshot.core.get("motion_report") or {}).get("live_position") or ()
         toolhead = self._data.snapshot.auxiliary.get("toolhead") or {}
         try:
@@ -357,7 +373,7 @@ class ToolheadController(QObject):
             maximum = toolhead.get("axis_maximum") or ()
             minimum = float(minimum[index]) if len(minimum) > index else None
             maximum = float(maximum[index]) if len(maximum) > index else None
-            if axis == "z" and (minimum is None or minimum < 0.0):
+            if axis == "z" and minimum is not None and minimum < 0.0:
                 # The Z floor is ZERO, whatever the configured
                 # position_min says (the live ruling:
                 # "you know what clicking nudge would move to. Why
@@ -365,13 +381,52 @@ class ToolheadController(QObject):
                 # negative Z minimum for probe travel, but the jog
                 # pad must never send the head below 0.00).
                 minimum = 0.0
+            if minimum is None or maximum is None or not all(math.isfinite(v) for v in (current, minimum, maximum)):
+                return 0.0
         except (TypeError, ValueError, IndexError):
-            return distance if distance > 0 else 0.0
+            return 0.0
+        self._last_clamp_reason = "limit"
         return clamp_relative_move(distance, current, minimum, maximum)
 
-    def home(self, axis=""):
+    def move_to(self, x, y, z):
+        try:
+            targets = target_fields(x, y, z)
+        except UnsafeMotion as error:
+            self._reject(str(error))
+            return
+        self._push(JogOp(kind="move-to", targets=targets, label="Move toolhead"))
+
+    def z_offset(self, amount=None):
+        try:
+            if amount is not None and not 0.0001 <= abs(finite(amount)) <= 5:
+                return
+        except UnsafeMotion:
+            return
+        observation = getattr(self._data, "observation", None)
+        if observation is None or can_z_offset(observation).mode != "allowed":
+            return
+        self._push(JogOp(kind="offset", distance=0.0 if amount is None else float(amount),
+                         reset=amount is None, label="Z offset"))
+
+    def calibration(self, key):
+        scripts = {"quad_gantry_level": ("QGL", "QUAD_GANTRY_LEVEL"),
+                   "bed_mesh": ("Bed mesh", "BED_MESH_CALIBRATE"),
+                   "z_tilt": ("Z tilt", "Z_TILT_ADJUST"),
+                   "screws_tilt_adjust": ("Screw adjustments", "SCREWS_TILT_CALCULATE"),
+                   "bed_screws": ("Bed screws", "BED_SCREWS_ADJUST"),
+                   "delta_calibrate": ("Delta calibration", "DELTA_CALIBRATE")}
+        if key not in scripts:
+            return
+        config = (self._data.snapshot.auxiliary.get("configfile") or {}).get("config") or {}
+        if key not in config:
+            return
+        label, script = scripts[key]
+        self._push(JogOp(kind="calibration", axis=key, label=label, script=script))
+
+    def home(self, axis="", *, idle_only=False):
         try:
             op = make_home_op(str(axis))
+            op = replace(op, idle_only=idle_only)
         except ValueError:
             return
         self._push(op)
@@ -493,7 +548,7 @@ class ToolheadController(QObject):
         # The nested dispatch must not re-run the pump before this frame's
         # handlers have finished; the commandChanged handler drops the
         # queue on the failure, which is the only correct follow-up.
-        if self._pumping:
+        if self._closed or self._pumping or self._querying:
             return
         self._pumping = True
         try:
@@ -507,13 +562,19 @@ class ToolheadController(QObject):
         # was lock-blind — a move queued before the padlock went down
         # dispatched after it. One derivation, both edges.
         observation = getattr(self._data, "observation", None)
-        verdict = can_jog(observation) if observation is not None \
+        head = self._pending[0] if self._pending else None
+        rule = can_z_offset if head is not None and head.kind == "offset" else \
+            can_restart if head is not None and (head.idle_only or head.kind in {"calibration", "motors-off"}) else can_jog
+        # Busy disables new offset clicks, but must not cancel offsets
+        # already accepted into this shared queue while a prior move runs.
+        gate_observation = replace(observation, busy=False) if observation is not None and head is not None \
+            and head.kind == "offset" else observation
+        verdict = rule(gate_observation) if gate_observation is not None \
             else Verdict("disabled", R_UNKNOWN)
         gate = verdict.mode
         if not self._pending:
             self._pause_waiting = self._pause_in_flight = self._draining = False
             self._deadline.stop()
-            self._set_status("")
             # The queue just went empty (drained or dropped): keep the fast
             # poll floor briefly so the readout settles on the final
             # position, then release the guard. Only the transition arms
@@ -552,16 +613,116 @@ class ToolheadController(QObject):
             self._pause_waiting = self._pause_in_flight = False
             self._deadline.stop()
             self._set_status(STATUS_PAUSED_MOVING)
-        while self._pending and not self._commands.busy:
-            op = self._pending[0]
-            if self._commands.send(op.label, "printer/gcode/script", {"script": op.script}):
-                self._pending = self._pending[1:]
-                self._draining = True
+        if self._pending and not self._commands.busy and not self._querying:
+            if self._pending[0].kind == "offset":
+                self._dispatch_offset(self._pending[0])
             else:
-                break
+                self._check_dispatch(self._pending[0], rule)
         if not self._pending:
             self._draining = False
             self._set_status("")
+
+    def _reject(self, message):
+        self._set_status(message)
+        self.rejectedNote.emit(message)
+
+    def _dispatch_offset(self, op):
+        # The pump has checked connection, ownership, lock and lane state.
+        # Calibration nudges deliberately do not query/prove bed geometry.
+        self._query_token += 1
+        token = self._query_token
+        self._querying = True  # Hold through synchronous send notifications.
+        try:
+            if self._commands.send(op.label, "printer/gcode/script", {"script": prepare(op, None)}) \
+                    and token == self._query_token and self._pending and self._pending[0] is op:
+                self._pending = self._pending[1:]
+                self._draining = True
+                self._set_status("")
+        finally:
+            if token == self._query_token:
+                self._querying = False
+                if self._pending and not self._commands.busy:
+                    self._data.later(0, self._pump)
+
+    def _query_expired(self):
+        if not self._querying:
+            return
+        self._query_token += 1
+        self._querying = False
+        self._drop_queue()
+        self._reject("Move cancelled — fresh printer state did not arrive")
+
+    def _check_dispatch(self, op, rule):
+        # Guarded operations read a new planned endpoint
+        # after its predecessor's acknowledgement, including any offset.
+        self._querying = True
+        self._query_token += 1
+        token = self._query_token
+        started_at = time.monotonic()
+        revision = getattr(self._commands, "dispatch_revision", 0)
+        self._set_status("Checking safe toolhead travel…")
+        self._query_deadline.start()
+        objects = {name: None for name in ("toolhead", "gcode_move", "configfile", "print_stats")}
+        config = (self._data.snapshot.auxiliary.get("configfile") or {}).get("config") or {}
+        if "bed_mesh" in config or "bed_mesh" in getattr(self._data.snapshot, "objects", ()):
+            objects["bed_mesh"] = None
+
+        def checked(payload, error):
+            if token != self._query_token or not self._querying:
+                return
+            self._query_deadline.stop()
+            # Hold the latch through send(): synchronous command signals
+            # must not start a second query for the same queue head.
+            try:
+                current = getattr(self._data, "observation", None)
+                if not self._pending or self._pending[0] is not op:
+                    return
+                if time.monotonic() - started_at >= 3.0:
+                    raise UnsafeMotion("Move cancelled — fresh printer state arrived too late")
+                if error or not isinstance(payload, dict):
+                    raise UnsafeMotion("Fresh printer state is unavailable")
+                status = telemetry_object(payload.get("result")).get("status")
+                if not isinstance(status, dict) or current is None:
+                    raise UnsafeMotion("Fresh printer state is unavailable")
+                fresh_state = str(telemetry_object(status.get("print_stats")).get("state") or "")
+                homed = str(telemetry_object(status.get("toolhead")).get("homed_axes") or "")
+                if fresh_state not in {"standby", "printing", "paused", "complete", "cancelled", "error"}:
+                    raise UnsafeMotion("Move cancelled — printer state is unknown")
+                observed = replace(current, state=fresh_state, homed_axes=homed)
+                # Busy prevents new clicks, not an already accepted intent.
+                # Revalidate permissions independently of the shared lane.
+                gate_current = replace(current, busy=False) if op.kind == "offset" else current
+                gate_observed = replace(observed, busy=False) if op.kind == "offset" else observed
+                if rule(gate_current).mode != "allowed" or rule(gate_observed).mode != "allowed":
+                    raise UnsafeMotion("Move cancelled — printer state or controls permission changed")
+                if self._commands.busy or revision != getattr(self._commands, "dispatch_revision", 0):
+                    self._data.later(0, self._pump)
+                    return  # Another one-shot won the lane; re-query when it finishes.
+                if op.kind == "calibration" and op.axis not in telemetry_object(
+                        telemetry_object(status.get("configfile")).get("config")):
+                    raise UnsafeMotion("Calibration is not available on this printer")
+                script = prepare(op, status)
+                if self._commands.send(op.label, "printer/gcode/script", {"script": script}) \
+                        and token == self._query_token and self._pending and self._pending[0] is op:
+                    self._pending = self._pending[1:]
+                    self._draining = True
+                    self._set_status("")
+            except (UnsafeMotion, TypeError, ValueError) as fault:
+                self._drop_queue()
+                self._reject(str(fault))
+            finally:
+                if token == self._query_token:
+                    self._querying = False
+                    if self._pending and not self._commands.busy:
+                        later = getattr(self._data, "later", None)
+                        if later is not None:
+                            later(0, self._pump)
+
+        requester = getattr(self._data, "request", None)
+        started = requester("manual-motion-check", "POST", "printer/objects/query", checked,
+                            body={"objects": objects}, timeout_ms=3000) if requester is not None else False
+        if not started and self._querying:
+            checked(None, "unavailable")
 
     def _command_changed(self, event):
         if event.get("name") != "Pause" or not (self._pause_waiting or self._pause_in_flight):
@@ -593,6 +754,9 @@ class ToolheadController(QObject):
         # later _pump simply finds an empty queue.
 
     def _reset(self):
+        self._query_token += 1
+        self._querying = False
+        self._query_deadline.stop()
         self._drop_queue()
         self._pause_waiting = self._pause_in_flight = self._draining = False
         self._deadline.stop()
@@ -623,5 +787,9 @@ class ToolheadController(QObject):
         self.changed.emit()
 
     def close(self):
+        self._closed = True
+        self._query_token += 1
+        self._querying = False
+        self._query_deadline.stop()
         self._deadline.stop()
         self._guard_cooldown.stop()

@@ -26,6 +26,19 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "5.3.0",
+        "headline": "Version 5.3.0 adds a collapsible Toolhead control pane to Cura Preview.",
+        "items": (
+            "Find Toolhead at the top left beneath the Preview stage menu. Collapse it left and reopen it with the right-pointing arrow; Cura's object list and perspective controls remain available.",
+            "Jog with the compass and Z arrows. Select a preset on the snapping distance slider or type an exact distance; the handle follows values between presets.",
+            "Read physical XYZ positions and move to absolute G-code coordinates. Leave target axes blank to keep them unchanged. Homing and supported levelling, bed-mesh and motor actions are available while idle.",
+            "Jog and Move-to share Monitor's queue and check fresh firmware position, travel limits and bed compensation before each move. Pause a print explicitly before jogging; unavailable checks show a reason.",
+            "Z-offset down/up nudges and reset remain available during printing. These are operator calibration controls without client bed-clearance or homing checks; firmware decides whether the adjustment can execute.",
+            "Toolhead, View Options and Print Follower have matching boxed titles with hover and keyboard-focus highlighting, in light and dark themes.",
+            "Selected-layer ETA clocks now show additional days, and the webcam zoom control is narrower while still fitting 800%.",
+        ),
+    },
+    {
         "version": "5.2.0",
         "headline": "Version 5.2.0 brings your toolhead into Cura Preview, with live positioning, custom models and coloured lighting.",
         "items": (

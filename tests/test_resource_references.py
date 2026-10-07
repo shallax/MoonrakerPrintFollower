@@ -228,6 +228,7 @@ class ResourceReferenceTests(unittest.TestCase):
         entrypoints = {(source.relative_to(PLUGINS.root).as_posix(), target.relative_to(PLUGINS.root).as_posix())
                        for source, _line, target in runtime_paths()}
         self.assertEqual(entrypoints, {
+            ("preview/PreviewToolheadPresentation.py", "preview/PreviewToolheadHost.qml"),
             ("cura/MoonrakerOutputDevice.py", "files/transfers/MoonrakerUploadDialog.qml"),
             ("cura/MoonrakerOutputDevicePlugin.py", "monitor/MoonrakerMonitorDashboard.qml"),
             ("cura/MoonrakerOutputDevicePlugin.py", "monitor/MoonrakerMonitorBedMesh.qml"),

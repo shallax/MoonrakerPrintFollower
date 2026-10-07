@@ -608,8 +608,8 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
 
     def test_the_bar_carries_the_rate_floor_without_cutting_it_off(self):
         # The live report: at the floor the readout "0.50 fps" ran out of
-        # the bar. That readout — the widest either face shows — is what
-        # sets the bar's width, and the zoom face rides the same box.
+        # the bar. The rate face must retain room for its widest readout
+        # even though the zoom face now has its own narrower width.
         pane, _window, model, _image, _frame = self._fps_pane(700, 700)
         model.setCameraFps(0.5)
         self.pump(30)
@@ -620,7 +620,29 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
                                 "the widest readout must sit inside the bar")
         zoom_readout = self.find(pane, "cameraZoomReadout")
         self.assertLessEqual(zoom_readout.property("contentWidth") + 4.0, bar.width(),
-                             "the zoom face rides the same width and must fit too")
+                             "the hidden zoom readout must fit the rate face too")
+
+    def test_zoom_face_fits_800_percent_in_a_narrower_box(self):
+        pane, _window, model, _image, _frame = self._fps_pane(700, 700)
+        model.setCameraFps(0.5)
+        self._pump_ms(500)
+        bar = self.find(pane, "cameraBar")
+        bar.setProperty("cameraBarMode", "fps")
+        self.pump()
+        rate_width = bar.width()
+        viewport = self.find(pane, "cameraViewport")
+        viewport.setProperty("cameraZoom", 8.0)
+        bar.setProperty("cameraBarMode", "zoom")
+        self.pump()
+        readout = self.find(pane, "cameraZoomReadout")
+        self.assertEqual(readout.property("text"), "800%")
+        self.assertGreaterEqual(bar.width() - readout.property("contentWidth"), 4.0)
+        self.assertLess(bar.width(), rate_width)
+        width_at_maximum = bar.width()
+        viewport.setProperty("cameraZoom", 1.0)
+        self.pump()
+        self.assertEqual(bar.width(), width_at_maximum,
+                         "zooming must not resize the control")
 
     def test_the_shift_wheel_changes_the_rate_with_no_scale_on_screen(self):
         # The spec's own line: the control must not show up when the

@@ -83,15 +83,14 @@ Rectangle {
     // a resized view has to move the docked control with the picture's
     // edge in the same frame instead of dragging it there over 180 ms
     // (the live report: the bar floated and caught up).
-    // Wide enough for the widest readout either face shows — the rate's
-    // own floor, "0.50 fps" (44.5 px of small font on the capture theme),
-    // is what sets it (the live report: the floor's value ran out of the
-    // bar). One width for both faces, so the zoom scale's readout rides
-    // the same box. The 6 is the bar's own 1px border each side plus the
-    // 4 the readout keeps clear; the 52 is the floor the graduations
-    // need, and it still wins on the capture font — a host whose font is
-    // wider takes the bar past it instead of clipping the readout.
-    readonly property real cameraBarWidth: Math.max(52 * screenScaleFactor, cameraFpsReadoutLabel.contentWidth + 6 * screenScaleFactor, cameraZoomReadoutLabel.contentWidth + 6 * screenScaleFactor)
+    // Zoom needs room for 800%, not the wider rate readout. The face
+    // swaps while parked, so each can use its own measured width.
+    TextMetrics {
+        id: zoomWidthMetrics
+        text: "800%"
+        font: UM.Theme.getFont("small")
+    }
+    readonly property real cameraBarWidth: root.cameraBarMode === "fps" ? Math.max(52 * screenScaleFactor, cameraFpsReadoutLabel.contentWidth + 6 * screenScaleFactor) : Math.max(30 * screenScaleFactor, Math.ceil(zoomWidthMetrics.advanceWidth) + 6 * screenScaleFactor)
     // As tall as the picture carries it — half of a tall pane, the
     // baseline on a picture that only just fits the bar — and never into
     // the chip's band, so the taller bar cannot reach the decode readout.

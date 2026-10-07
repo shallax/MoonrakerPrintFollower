@@ -1,14 +1,16 @@
 """Preview domain: follower behaviour, formatting, presentation and QML UX."""
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
+from datetime import datetime, timezone
 import pathlib
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import unittest
 
 from mpf.preview.PreviewFollower import PreviewFollower, preview_override_kind
 from mpf.preview.PreviewSmoothing import advance_display, interpolate_target
 from mpf.preview.PreviewFormatting import (
+    layer_deadline_clock,
     pause_can_toggle,
     pause_eta,
     pause_summary,
@@ -216,6 +218,15 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.service.update_eta(self.observe(4), self.index)
         self.assertIn("current print layer", self.service.state.eta_text)
 
+    def test_selected_layer_deadline_includes_additional_calendar_days(self):
+        snapshot = self.observe(4)
+        self.cura.view.layer = 8
+        fixed_now = datetime(2026, 10, 7, 23, 30, tzinfo=timezone.utc)
+        with patch("mpf.preview.PreviewFollower.datetime") as clock, patch.object(self.service, "remaining", return_value=3 * 86400):
+            clock.now.return_value.astimezone.return_value = fixed_now
+            self.service.update_eta(snapshot, self.index)
+        self.assertIn("≈Sat 23:30 +3", self.service.state.eta_text)
+
     def test_eta_learn_rescales_the_end_estimate_by_observed_drift(self):
         # The opt-in: the slicer estimated 100 s per layer but the
         # printer is taking 150 — the remaining end-of-print estimate
@@ -248,6 +259,29 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.assertEqual(self.service.remaining(6, self.index), 14)
         self.observe(4, 108)
         self.assertEqual(self.service.remaining(6, self.index), 12)
+
+
+class LayerDeadlineClockTests(unittest.TestCase):
+    def test_same_day_has_no_suffix(self):
+        now = datetime(2026, 10, 7, 10, 0, tzinfo=timezone.utc)
+        self.assertEqual("11:00", layer_deadline_clock(3600, now))
+
+    def test_short_countdown_crossing_midnight_has_one_day_suffix(self):
+        now = datetime(2026, 10, 7, 23, 30, tzinfo=timezone.utc)
+        self.assertEqual("00:30 +1", layer_deadline_clock(3600, now))
+
+    def test_exact_midnight_counts_as_next_day(self):
+        now = datetime(2026, 10, 7, 23, 30, tzinfo=timezone.utc)
+        self.assertEqual("00:00 +1", layer_deadline_clock(1800, now))
+
+    def test_multi_day_countdown_keeps_weekday_and_day_suffix(self):
+        now = datetime(2026, 10, 7, 23, 30, tzinfo=timezone.utc)
+        self.assertEqual("Sun 00:30 +4", layer_deadline_clock(73 * 3600, now))
+
+    def test_calendar_days_are_not_rounded_duration_days(self):
+        now = datetime(2026, 10, 7, 1, 30, tzinfo=timezone.utc)
+        self.assertEqual("Wed 22:30", layer_deadline_clock(21 * 3600, now))
+
 
 
 class PreviewOverrideTests(unittest.TestCase):

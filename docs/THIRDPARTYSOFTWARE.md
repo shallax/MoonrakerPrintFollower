@@ -100,7 +100,10 @@ The optional model runs locally; MPF does not host an Obico inference service.
 Mozilla's [MPL/GPL compatibility provisions](https://www.mozilla.org/en-US/MPL/2.0/FAQ/#q14-may-i-combine-mpl-licensed-code-and-lgpl-licensed-code-in-the-same-executable-program)
 cover the helper's MPL-2.0 certificate data without changing its own licence.
 
-This index describes direct upstream downloads. Bundling or mirroring those
-binaries or weights would additionally require the applicable full notices,
-licence copies and corresponding-source arrangements; links alone would not
-replace those redistribution requirements.
+GPL and AGPL grant redistribution rights to the works they cover; no separate
+permission is needed when their conditions are met. This index currently
+describes direct upstream downloads. Mirroring binaries or weights requires
+preserving the applicable full notices and licence copies and providing the
+required corresponding source. An index of upstream links alone is not a
+complete redistribution bundle. Components under other licences retain those
+licences and their own redistribution conditions.

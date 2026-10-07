@@ -24,9 +24,9 @@ class MoonrakerPrintFollower(QObject, Extension):
     def bed_mesh(self): return self._runtime.bed_mesh
     @property
     def presentation(self): return self._runtime.presentation
-
+    @property
+    def preview_toolhead(self): return self._runtime.preview_toolhead
     def has_toolpath(self): return self._runtime.cura.has_toolpath
-
     def request_file_download(self, relpath): self._runtime.file_download.request_save(relpath)
 
     @property

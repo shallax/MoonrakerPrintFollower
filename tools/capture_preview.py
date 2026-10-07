@@ -83,7 +83,7 @@ def pane_values():
         "bedMeshMinimumText": "-0.326 mm",
         "bedMeshMaximumText": "+0.086 mm",
         # ETA line: "Selected layer N — in HH:MM:SS · ~HH:MM".
-        "selectedLayerEtaText": "Selected layer 96 — in 00:18:42 · ~14:36",
+        "selectedLayerEtaText": "Selected layer 96 — in 26:18:42 · ~14:36 +1",
         # Pause-at-layer: current layer printed up to 95, selection on 96.
         "pauseAtLayerActive": True,
         "pauseAtLayerCandidate": 96,

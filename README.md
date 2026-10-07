@@ -8,8 +8,48 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 5.2.0
+- **Release:** 5.3.0
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 5.3.0
+
+The new **Toolhead** pane puts printer controls at the top left of Cura
+**Preview**, below the stage menu. Collapse it to the left and reopen it with
+the right-pointing arrow. It leaves Cura's object list, job summary and
+perspective controls available and follows the light or dark theme.
+
+Use the compass to jog X/Y, the stalk arrows to jog Z, and the snapping
+distance slider for 0.1–125 mm presets. The numeric box accepts exact values
+from 0.01 to 300 mm and places the handle between neighbouring presets.
+Values above 125 mm keep their exact distance while the handle stays at the end.
+Position readouts are physical machine coordinates; **Move to** (**G-code · absolute**)
+uses absolute G-code coordinates. Leave an axis blank to keep it unchanged.
+Individual/all-axis homing and the actions menu expose the printer's supported
+levelling, bed-mesh calibration and motor-release operations while idle.
+
+Jog and Move-to require a non-printing state and fresh, usable firmware
+position, travel limits and coordinate-transform data. Both Preview and Monitor
+share a queue that checks every position move before sending it and restores
+the previous coordinate mode and feedrate. Conservative whole-mesh bounds can
+refuse near-bed moves; unsupported kinematics or transforms also show a reason.
+These checks cannot make a firmware query and later command atomic against
+commands from another client, and do not replace firmware protections.
+
+**Z-offset** has its own down/up arrows and remains available during printing.
+Nudges and reset are operator calibration: the client cannot infer actual
+nozzle/bed clearance and does not apply geometry, homing or travel checks to
+them. They use the shared command lane with connection, ownership, control-lock
+and input checks. Firmware decides whether the immediate adjustment can execute.
+Switching printers or reconnecting discards unfinished edits and retires old
+control bindings.
+
+Toolhead, View Options and Print Follower now share boxed titles that highlight
+on hover or keyboard focus. Selected-layer ETA clocks include `+1`, `+2`, etc.
+for additional days, matching Print job Finish. The webcam zoom control is
+narrower while still fitting `800%`.
+
+Optional runtime downloads still use upstream hosts. The inventory and remaining
+hosting work are recorded in [Runtime mirror](docs/RUNTIME_MIRROR.md).
 
 ## What changed in 5.2.0
 
@@ -819,6 +859,14 @@ Monitor always consumes the follower's shared core status stream rather than cre
 
 ## Preview controls
 
+**Toolhead** sits at the top left beneath the Preview stage menu. It offers
+physical position readouts, guarded jog and absolute Move-to controls, homing,
+Z-offset calibration and a supported-actions menu. Collapse it left to a nozzle
+tab; its expansion arrow points right. Jogging requires the print to be paused
+explicitly. Z-offset adjustments remain available during a print and are
+operator-controlled calibration. This pane uses the selected printer's existing
+Monitor controller and does not start another status connection.
+
 The follower controls live in their own Cura-styled action-panel card in Preview. The card contains:
 
 - Cura's native nozzle icon and a bold **Moonraker Print Follower** title
@@ -838,9 +886,26 @@ at the model upload controls.
 ## Screenshots
 
 The interface screenshots are captured deterministically from the plugin's real
-QML with the real cura-light theme (see `docs/INSTRUCTIONS.md`). The toolhead
+QML with the real Cura light/dark themes and synthetic printer data
+(see `docs/INSTRUCTIONS.md`). The toolhead
 showcase uses the production lighting shaders and fixed model, lighting and
 camera fixtures in the same screenshot generation and repeatability checks.
+
+![Preview Toolhead pane, ready](screenshots/15-preview-toolhead.png)
+![Preview Toolhead pane in the dark theme](screenshots/15-preview-toolhead-dark.png)
+
+The Preview Toolhead pane: physical XYZ, compass jogging, distance slider,
+absolute G-code targets and Z-offset calibration. The actions menu contains
+supported levelling and motor controls.
+
+![Preview Toolhead pane during printing](screenshots/17-preview-toolhead-printing.png)
+![Preview Toolhead pane disconnected](screenshots/18-preview-toolhead-disconnected.png)
+![Collapsed Preview Toolhead tab](screenshots/16-preview-toolhead-collapsed.png)
+
+During printing, position moves and homing are disabled while Z-offset
+calibration remains available. A disconnected pane retains its layout with
+unavailable readouts and disabled controls. Collapse leaves a nozzle icon and
+right-pointing expansion arrow.
 
 ![Stealthburner with amber nozzle lights and purple logo lights](screenshots/13-toolhead-lighting.png)
 

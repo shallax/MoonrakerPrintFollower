@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QUrl, QVariant
 from PyQt6.QtQml import QQmlComponent
 from UM.Logger import Logger
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
@@ -32,6 +32,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         self._routed_monitor: Optional[Any] = None
         self._routed_action = None
         self._routed_preview = None
+        self._routed_toolhead = None
         follower.client.sessionInvalidated.connect(self._invalidate_devices)
         # The presentation IN-signals connect once and dispatch to
         # the current monitor only — broadcasting to every cached
@@ -112,6 +113,19 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             monitor.pauseReason, monitor.resumeReason,
             monitor.pauseReasonDetail, monitor.resumeReasonDetail))
         self._routed_preview = monitor.previewBlockChanged.connect(self._follower.receive_preview_block)
+        pane = getattr(self._follower, "preview_toolhead", None)
+        if pane is not None:
+            def publish_toolhead():
+                if self._routed_monitor is monitor:
+                    values = monitor.previewToolheadReadout
+                    pane.publish(values.value() if isinstance(values, QVariant) else values)
+            self._routed_toolhead = publish_toolhead
+            monitor.monitorChanged.connect(publish_toolhead)
+            def dispatch_toolhead(kind, args):
+                if self._routed_monitor is monitor:
+                    monitor.previewToolheadCommand(kind, args)
+            pane.bind_controls(dispatch_toolhead)
+            publish_toolhead()
         # The migration notice's overlay owner (the UX ruling): the
         # toast waits for the CURRENT model's What's-New dismissal —
         # a cached monitor that lost the selection must not hold it.
@@ -137,6 +151,16 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 monitor.previewBlockChanged.disconnect(self._routed_preview)
             except Exception:
                 pass
+        if self._routed_toolhead is not None:
+            try:
+                monitor.monitorChanged.disconnect(self._routed_toolhead)
+            except (RuntimeError, TypeError):
+                pass
+            self._routed_toolhead = None
+        pane = getattr(self._follower, "preview_toolhead", None)
+        if pane is not None:
+            pane.bind_controls(None)
+            pane.reset()
         self._routed_monitor = None
         self._routed_action = None
         self._routed_preview = None

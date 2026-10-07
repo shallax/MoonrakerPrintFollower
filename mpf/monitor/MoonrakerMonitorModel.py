@@ -51,7 +51,7 @@ from .controls.MonitorControls import MonitorControls, _exclude_status
 from .MonitorData import MonitorData
 from .MonitorPublication import MonitorPublication
 from .PauseAtLayerPresentation import PauseAtLayerPresentation
-from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, jog_caption, section_reason
+from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, can_z_offset, jog_caption, section_reason
 from ..files.browser.FileBrowserPresentation import FileBrowserPresentation
 from ..printing.PrintStartOwner import PrintStartOwner
 from .layout.UiStateStore import UiStateStore
@@ -497,11 +497,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._data.set_controls_locked(self._controls_locked)
         self._commands = MonitorCommands(self._data, self)
         self._tuning = MonitorTuning(self._data, self._commands, self)
+        self._toolhead = ToolheadController(self._data, self._commands, self)
         # The object gestures bind to the print that received the
         # click: the coordinator's job key is the only identity that
         # tells a restarted same-name print from the one before it.
         self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self,
-                                         job_identity=lambda: getattr(self._print_state(), "job_key", None))
+                                         job_identity=lambda: getattr(self._print_state(), "job_key", None), motion=self._toolhead)
         self._camera = MonitorCamera(self._data, config, apply_config, self)
         # The stream's freshness policy: a dead bridge relay, the
         # reconnect, the toggle and the wake all resolve to one reload
@@ -530,7 +531,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._mesh_threshold_low = None
         self._mesh_threshold_high = None
         self._mesh_thresholds_touched = False
-        self._toolhead = ToolheadController(self._data, self._commands, self)
         # The persisted jog/extrude selection (the live
         # report) — applied before any publish so the first frame
         # already shows the saved options.
@@ -1416,6 +1416,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values.update(self._detection_values())
         values["webcamStreamEnabled"] = self._camera_recovery.stream_enabled
         values.update(self._toolhead.values)
+        toolhead_readout = dict(values["previewToolheadReadout"])
+        connected = toolhead_readout["connected"] and self._data.active
+        homed = set(str(values.get("homedAxes", "")).lower()) >= set("xyz")
+        toolhead_readout.update(jogAllowed=connected and homed and jog_verdict.mode == "allowed",
+                               moveToAllowed=connected and homed and jog_verdict.mode == "allowed",
+                               homeAllowed=connected and restart_verdict.mode == "allowed",
+                               offsetAllowed=connected and can_z_offset(observation).mode == "allowed")
+        toolhead_readout["actionRows"] = [{**row, "allowed": connected and restart_verdict.mode == "allowed"}
+                                        for row in toolhead_readout["actionRows"]]
+        toolhead_readout["statusText"] = self._toolhead.values.get("jogStatus") or self._commands.status \
+            or section or ("Printing · Z-offset available" if toolhead_readout["offsetAllowed"] and observation is not None and observation.state == "printing" else
+                           "Home XYZ before movement" if not homed else "Ready · targets use G-code coordinates")
+        values["previewToolheadReadout"] = toolhead_readout
         values.update(self._console.values)
         # The console error bell (a live request): while
         # the console is collapsed, a NEW error line rings a red bell
@@ -1583,6 +1596,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         for signal_name in self._publication.changed(previous):
             getattr(self, signal_name).emit()
 
+    previewToolheadReadout = value_property(QVariant, "previewToolheadReadout", monitorChanged, {})
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
     # The migration-failure surfaces (the UX ruling): the dialog's
     # banner and the permanent diagnostics row read these.
@@ -3041,6 +3055,26 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def macroParameterDefinitions(self, name): return QVariant(self._controls.macro_parameters(name))
     @pyqtSlot(str, int)
     def jog(self, axis, direction): self._toolhead.jog(axis, direction)
+
+    def previewToolheadCommand(self, kind, arguments):
+        """Typed Preview intents; the active Monitor owns every operation."""
+        observation = self._data.observation
+        if observation is None or not self._data.active:
+            return
+        if kind == "offset" and len(arguments) == 1:
+            self._controls.z_offset(arguments[0])
+        elif kind in {"home", "action"} and len(arguments) == 1 and can_restart(observation).mode == "allowed":
+            if kind == "home":
+                self._toolhead.home(arguments[0], idle_only=True)
+            elif arguments[0] == "motors":
+                self._toolhead.motors_off()
+            else:
+                self._toolhead.calibration(arguments[0])
+        elif can_jog(observation).mode == "allowed":
+            if kind == "jog" and len(arguments) == 3:
+                self._toolhead.jog(*arguments)
+            elif kind == "move-to" and len(arguments) == 3:
+                self._toolhead.move_to(*arguments)
     @pyqtSlot(bool)
     def setPositionMode(self, absolute):
         # The abs/rel toggle (a live request).

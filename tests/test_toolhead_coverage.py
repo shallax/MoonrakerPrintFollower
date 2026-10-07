@@ -39,7 +39,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         self.assertEqual(commands.sent, [])
         self.assertEqual(len(notes), 1)
         controller.jog("z", 1)
-        self.assertEqual(self._scripts(commands), ["G91\nG1 Z25 F600\nG90"])
+        self.assertEqual(self._scripts(commands), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 Z25 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
     def test_a_refused_send_leaves_the_move_queued(self):
         controller, _, commands = self._make(state="paused")
@@ -49,7 +49,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         self.assertEqual(len(controller._pending), 1)
         commands.refuse = False
         commands.changed.emit()
-        self.assertEqual(self._scripts(commands), ["G91\nG1 X25 F3000\nG90"])
+        self.assertEqual(self._scripts(commands), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X25 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
     def test_a_nested_pump_is_dropped(self):
         controller, _, commands = self._make(state="paused")
@@ -62,7 +62,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         self.assertEqual(commands.sent, [])
         controller._pumping = False
         controller._pump()
-        self.assertEqual(self._scripts(commands), ["G91\nG1 X25 F3000\nG90"])
+        self.assertEqual(self._scripts(commands), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X25 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
     def test_a_jog_with_a_bad_axis_or_direction_is_dropped(self):
         controller, _, commands = self._make()
@@ -99,15 +99,15 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         controller.jog("x", -1)
         self.assertEqual(commands.sent, [])
         controller.jog("x", 1)
-        self.assertEqual(self._scripts(commands), ["G91\nG1 X25 F3000\nG90"])
+        self.assertEqual(self._scripts(commands), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X25 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
-    def test_a_jog_without_position_data_refuses_the_negative_side(self):
+    def test_a_jog_without_position_data_refuses_both_directions(self):
         controller, data, commands = self._make()
         data.snapshot = harness.SimpleNamespace(core={}, auxiliary={})
         data.changed.emit()
         controller.jog("y", -1)
         controller.jog("y", 1)
-        self.assertEqual(self._scripts(commands), ["G91\nG1 Y25 F3000\nG90"])
+        self.assertEqual(self._scripts(commands), [])
 
     def test_the_queue_re_clamps_a_merged_tail(self):
         # The documented overshoot: a tail whose clamp at queue time no
@@ -165,7 +165,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
             commands.complete()  # the send frees the lane
             data.set_state("paused", live=(195.0, 10.0, 10.0, 0.0),
                            maximum=(200, 200, 200))  # the delayed poll
-        self.assertEqual(self._scripts(commands), ["G91\nG1 X5 F3000\nG90"])
+        self.assertEqual(self._scripts(commands), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X5 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.assertAlmostEqual(controller._axis_estimate["x"], 200.0)
 
     def test_the_upward_projection_holds_through_the_queue_drain(self):
@@ -189,7 +189,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
                        maximum=(200, 200, 200))
         commands.complete()  # the last queued move goes out
         self.assertEqual(len(self._scripts(commands)), 2)
-        self.assertEqual(self._scripts(commands)[-1], "G91\nG1 X5 F3000\nG90")
+        self.assertEqual(self._scripts(commands)[-1], 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X5 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0')
         # The queue is drained and every poll so far is pre-move: the
         # boundary tap stays refused.
         data.set_state("paused", live=(190.0, 10.0, 10.0, 0.0),
@@ -200,7 +200,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         # (200), not the stale poll (190).
         commands.complete()  # the lane clears for the next move
         controller.jog("x", -1)
-        self.assertEqual(self._scripts(commands)[-1], "G91\nG1 X-5 F3000\nG90")
+        self.assertEqual(self._scripts(commands)[-1], 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X-5 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0')
 
     def test_a_poll_below_the_pre_command_level_still_adopts(self):
         # The reconciliation's other edge: an upward move's own reflection
@@ -222,7 +222,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         data.snapshot = harness.SimpleNamespace(
             core={"motion_report": {"live_position": [0, 0, "high"]},
                   "gcode_move": {"gcode_position": [0, 0, 3.5]}}, auxiliary={})
-        self.assertAlmostEqual(controller._polled_axis("z"), 3.5)
+        self.assertIsNone(controller._polled_axis("z"), 'G-code coordinates are not physical coordinates')
         data.snapshot = harness.SimpleNamespace(
             core={"motion_report": {"live_position": [0, 0]},
                   "gcode_move": {"gcode_position": [0, 0, "north"]}}, auxiliary={})
@@ -232,14 +232,14 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
                   "gcode_move": {"gcode_position": []}}, auxiliary={})
         self.assertIsNone(controller._polled_axis("z"))
 
-    def test_a_bad_axis_limit_abandons_the_clamp(self):
+    def test_a_bad_axis_limit_refuses_movement(self):
         controller, _, commands = self._make(live=(10.0, 10.0, 10.0, 0.0),
                                              minimum=("low", 0, 0))
         controller.jog("x", 1)
-        self.assertEqual(self._scripts(commands), ["G91\nG1 X25 F3000\nG90"])
+        self.assertEqual(self._scripts(commands), [])
 
     def test_home_centre_and_park_moves(self):
-        controller, _, commands = self._make(live=(0.0, 0.0, 10.0, 0.0),
+        controller, _, commands = self._make(state="standby", live=(0.0, 0.0, 10.0, 0.0),
                                              minimum=(0, 0, 0), maximum=(200, 100, 200))
         controller.home()
         commands.complete()
@@ -253,8 +253,8 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         controller.z_to_zero()
         commands.complete()
         scripts = self._scripts(commands)
-        self.assertEqual(scripts, ["G28", "G28 Y", "M18", "G1 X100 Y50 Z50 F3000",
-                                   "G1 Z0 F600"])
+        self.assertEqual(scripts, ["G28", "G28 Y", "M18", 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 X100 Y50 Z50 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0',
+                                   'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 Z0 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
     def test_centre_is_refused_without_usable_axis_limits(self):
         controller, data, commands = self._make()
@@ -317,7 +317,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         self.assertEqual(controller.values["jogStatus"], "Printer paused — moving now.")
         commands.complete()
         data.set_state("paused")
-        self.assertEqual(self._scripts(commands), ["G91\nG1 X25 F3000\nG90"])
+        self.assertEqual(self._scripts(commands), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X25 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
     def test_a_refused_pause_drops_the_queue_and_says_so(self):
         controller, data, _ = self._make(state="printing")
@@ -389,7 +389,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         self.assertEqual(commands.sent, [])
         self.assertEqual(len(controller._pending), 1)
         commands.complete()
-        self.assertEqual(self._scripts(commands), ["G91\nG1 X25 F3000\nG90"])
+        self.assertEqual(self._scripts(commands), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X25 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.assertEqual(controller._pending, ())
 
     def test_the_queue_full_cap_rejects_the_newest_tap(self):
@@ -426,7 +426,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         # still run once the lane frees.
         commands.busy = False
         commands.changed.emit()
-        self.assertEqual(self._scripts(commands), ["G91\nG1 X5 F3000\nG90"])
+        self.assertEqual(self._scripts(commands), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X5 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
     def test_a_re_clamped_tail_that_is_refused_retreats_the_projection(self):
         # The depth cap's refusal still re-clamps the tail it inherits.
@@ -480,7 +480,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         # The other direction measures against the same reconciliation: a
         # +25 from 1 is legal and lands where the projection says.
         controller.jog("x", 1)
-        self.assertEqual(self._scripts(commands), ["G91\nG1 X25 F3000\nG90"])
+        self.assertEqual(self._scripts(commands), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X25 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.assertAlmostEqual(controller._axis_estimate["x"], 26.0)
 
     def test_a_drop_leaves_a_projection_that_never_advanced_alone(self):
@@ -494,7 +494,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         commands.busy = True
         controller.jog("y", 1)  # no position data: nothing was advanced
         controller.extrude(1)   # axis "e": no axis projection at all
-        self.assertEqual(len(controller._pending), 2)
+        self.assertEqual(len(controller._pending), 1)  # Unknown physical position refuses the jog.
         self.assertIsNone(controller._axis_estimate["y"])
         data.observation = harness.replace(data.observation, controls_locked=True)
         controller.observe()
@@ -568,13 +568,15 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         data = harness._ToolheadData()
         commands = harness._ToolheadCommands()
         data.set_state("paused")
+        from tests.manual_motion_support import attach
+        attach(data, commands)
         controller = self.controller_class(data, commands)
         self.addCleanup(controller.close)
         # The guard is optional: a data owner exposing no setter is a
         # plain no-op, never an AttributeError in the middle of a move.
         data.set_toolhead_guard = None
         controller.jog("x", 1)
-        self.assertEqual(self._scripts(commands), ["G91\nG1 X25 F3000\nG90"])
+        self.assertEqual(self._scripts(commands), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X25 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
     def test_an_emergency_stop_and_a_session_reset_clear_everything(self):
         controller, data, commands = self._make(state="printing")
@@ -620,5 +622,3 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         # The property hands back a copy: a caller cannot rewrite the model.
         values["jogDistance"] = 999
         self.assertEqual(controller.values["jogDistance"], 5.0)
-
-

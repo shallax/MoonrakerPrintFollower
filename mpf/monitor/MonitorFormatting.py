@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import math
 import re
 
+from .toolhead.ToolheadReadout import readout as toolhead_readout
 from .MonitorPermissions import REASON_DETAIL, R_UNKNOWN, Verdict, can_pause, can_resume
 
 from ..geometry.Polygons import point_in_polygon
@@ -477,6 +478,7 @@ def core_values(snapshot, physical, connected):
         flow = ev * math.pi * (diameter / 2.0) ** 2
     accel = number((aux.get("toolhead") or {}).get("max_accel"), None)
     return {
+        "previewToolheadReadout": toolhead_readout(snapshot, connected, state),
         "monitorState": state.capitalize() if connected else "Disconnected",
         "monitorFilename": str(stats.get("filename") or ""),
         "monitorProgress": max(0, min(100, round(number(sd.get("progress")) * 100, 2))),

@@ -149,8 +149,11 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn('Qt.createComponent("MoonrakerMonitorDashboard.qml"', harness.BED_MESH_QML)
 
     def test_setup_and_save_commands_have_one_policy_owner(self):
-        for command in ("G28", "QUAD_GANTRY_LEVEL", "BED_MESH_CALIBRATE", "SAVE_CONFIG", "SET_GCODE_OFFSET", "SET_FAN_SPEED", "SET_LED"):
+        for command in ("G28", "QUAD_GANTRY_LEVEL", "BED_MESH_CALIBRATE", "SAVE_CONFIG", "SET_FAN_SPEED", "SET_LED"):
             self.assertIn(command, harness.CONTROLS)
+        self.assertIn('self._motion.z_offset(amount)', harness.CONTROLS)
+        motion = (harness.PLUGINS / "PhysicalMotion.py").read_text(encoding="utf-8")
+        self.assertIn('SET_GCODE_OFFSET', motion)
         self.assertIn("self._commands.setup_allowed", harness.CONTROLS)
         self.assertIn("configfile.get(\"save_config_pending\")", harness.CONTROLS)
 

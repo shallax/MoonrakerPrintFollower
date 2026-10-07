@@ -5,7 +5,16 @@ coordinator. No Qt, no I/O, no mutable state.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Optional
+
+
+def layer_deadline_clock(remaining: float, now) -> str:
+    """Local arrival clock with calendar days counted from one captured now."""
+    finish = now + timedelta(seconds=remaining)
+    clock = finish.strftime("%a %H:%M" if remaining >= 20 * 3600 else "%H:%M")
+    days = (finish.date() - now.date()).days
+    return clock + (f" +{days}" if days > 0 else "")
 
 
 def status_text(*, detail, load_requested, loading, files_phase, index_phase,

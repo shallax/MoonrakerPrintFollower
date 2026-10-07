@@ -1074,6 +1074,11 @@ class QueuedObjectGestureTests(MonitorModelCase):
         """A mid-print one-shot in flight: babystepping is the
         legitimate mid-print command, and it is what the object click
         then queues behind."""
+        from tests.manual_motion_support import attach_monitor, seed_limits
+        seed_limits(self.model)
+        self.model._data._update(core={**dict(self.model._data.snapshot.core),
+                                      'motion_report': {'live_position': [100, 100, 10]}})
+        attach_monitor(self.model, self.transport)
         self.model.adjustZOffset(0.05)
         self.qt.events(10)
         self.assertTrue(self.model.actionBusy)

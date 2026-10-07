@@ -28,10 +28,10 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
         self.assertEqual(self.controller.values["extrudeSpeed"], 300.0)
         self.controller.set_distance(1)
         self.controller.jog("x", 1)
-        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.controller.jog("y", 1)
         self.commands.complete()
-        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90", "G91\nG1 Y1 F3000\nG90"])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0', 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 Y1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
     def test_printing_jog_pauses_first_and_never_double_sends(self):
         self.data.set_state("printing")
@@ -50,7 +50,7 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
         self.assertEqual(len(self.pauses()), 1)
         # The fresh paused state drains the queue.
         self.data.set_state("paused")
-        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
     def test_jogs_clamp_to_the_axis_limits(self):
         self.data.set_state("paused")
@@ -63,13 +63,13 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
         self.data.snapshot.core["motion_report"]["live_position"][0] = 195.0
         self.data.changed.emit()
         self.controller.jog("x", 1)
-        self.assertEqual(self.scripts(), ["G91\nG1 X5 F3000\nG90"])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X5 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.commands.complete()
         # At the boundary the tap is a no-op.
         self.data.snapshot.core["motion_report"]["live_position"][0] = 200.0
         self.data.changed.emit()
         self.controller.jog("x", 1)
-        self.assertEqual(self.scripts()[-1], "G91\nG1 X5 F3000\nG90")
+        self.assertEqual(self.scripts()[-1], 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X5 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0')
 
     def test_merged_jog_tails_never_overshoot_the_axis_limits(self):
         self.data.set_state("paused")
@@ -85,7 +85,7 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
         self.data.snapshot.core["motion_report"]["live_position"][2] = 195.0
         self.data.changed.emit()
         self.controller.jog("z", 1)
-        self.assertIn("G91\nG1 Z5 F600\nG90", self.scripts())
+        self.assertIn('SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 Z5 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0', self.scripts())
         self.controller.jog("z", 1)
         self.assertEqual(len(self.scripts()), 1)  # at the boundary: no-op
         self.assertEqual(self.controller._axis_estimate["z"], 200.0)
@@ -110,7 +110,7 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
             self.data.snapshot.core["motion_report"]["live_position"][index] = 195.0
             self.data.changed.emit()
             self.controller.jog(axis, 1)
-            self.assertIn("G91\nG1 %s5 F3000\nG90" % axis.upper(), self.scripts())
+            self.assertIn("SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 %s5 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0" % axis.upper(), self.scripts())
             self.assertEqual(self.controller._axis_estimate[axis], 200.0)
             before = len(self.scripts())
             self.controller.jog(axis, 1)
@@ -169,10 +169,10 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
     def test_center_and_z0_moves(self):
         self.data.set_state("paused")
         self.controller.center_toolhead()
-        self.assertEqual(self.scripts(), ["G1 X100 Y100 Z50 F3000"])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 X100 Y100 Z50 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.commands.complete()
         self.controller.z_to_zero()
-        self.assertEqual(self.scripts()[-1], "G1 Z0 F600")
+        self.assertEqual(self.scripts()[-1], 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 Z0 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0')
         self.commands.complete()
         # Without axis data the centre move is a no-op.
         self.data.snapshot = harness.SimpleNamespace(
@@ -181,7 +181,7 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
             auxiliary={"toolhead": {"homed_axes": "xyz"}})
         self.data.changed.emit()
         self.controller.center_toolhead()
-        self.assertEqual(self.scripts()[-1], "G1 Z0 F600")
+        self.assertEqual(self.scripts()[-1], 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 Z0 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0')
 
     def test_moves_toward_the_minimum_are_forbidden_without_position_data(self):
         self.data.set_state("paused")
@@ -193,14 +193,14 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
         self.data.changed.emit()
         self.controller.jog("z", -1)
         self.assertEqual(self.controller._pending, ())
-        self.controller.jog("z", 1)  # away from the minimum is safe
-        self.assertEqual(self.scripts(), ["G91\nG1 Z25 F600\nG90"])
+        self.controller.jog("z", 1)  # Unknown position also refuses upward travel.
+        self.assertEqual(self.scripts(), [])
 
     def test_custom_distance_and_extrusion_controls(self):
         self.data.set_state("paused")
         self.controller.set_distance(42.5)
         self.controller.jog("x", 1)
-        self.assertEqual(self.scripts(), ["G91\nG1 X42.5 F3000\nG90"])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X42.5 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.commands.complete()
         # Out-of-range distances are ignored.
         self.controller.set_distance(0.001)
@@ -247,11 +247,11 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
         # The tracked pause reaches terminal confirmation, clearing busy.
         self.commands.busy = False
         self.commands.changed.emit()
-        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         # The print resumes before the first move completes; the remaining
         # move must never run mid-print.
         self.data.set_state("printing")
-        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.assertIn("resumed", self.controller.values["jogStatus"])
 
     def test_taps_queue_separately_while_a_move_is_in_flight(self):
@@ -260,13 +260,11 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
         self.controller.jog("x", 1)
         self.controller.jog("x", 1)
         self.controller.jog("x", 1)
-        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         # Each queued move drains on its own completion cycle (the
         # no-coalescing ruling: the queue holds separate ops).
         self.commands.complete()
-        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90", "G91\nG1 X1 F3000\nG90"])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0', 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.commands.complete()
-        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90", "G91\nG1 X1 F3000\nG90", "G91\nG1 X1 F3000\nG90"])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0', 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0', 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.assertEqual(self.controller.values["jogStatus"], "")
-
-

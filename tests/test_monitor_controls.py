@@ -537,18 +537,18 @@ class FactorAndOffsetTests(ControlsCase):
         self.assertEqual(self.tuning.previews, [("flow-factor", 80)])
         self.assertEqual(self.tuning.queued, [])
 
-    def test_z_offset_moves_only_when_the_axes_are_homed(self):
+    def test_z_offset_only_delegates_to_shared_lane_never_formats_deferred_gcode(self):
+        calls = []
+        self.controls._motion = SimpleNamespace(z_offset=calls.append)
         self.data.rebuild(auxiliary={"toolhead": {"homed_axes": "xyz"}})
         self.controls.z_offset(0.1)
-        self.assertEqual(self.commands.calls[-1],
-                         ("script", "Z offset", "SET_GCODE_OFFSET Z_ADJUST=+0.1 MOVE=1", can_z_offset))
         self.controls.z_offset()
-        self.assertEqual(self.commands.calls[-1][2], "SET_GCODE_OFFSET Z=0 MOVE=1")
-        # The MOVE gate reads the snapshot's homed axes; the row itself
-        # never consults homing (the H3 ruling), so the nudge still lands.
+        # Calibration is independent of homing/position telemetry and uses
+        # the shared command owner instead of a deferred MOVE=0 script.
         self.data.rebuild(auxiliary={"toolhead": {"homed_axes": "x"}})
         self.controls.z_offset(0.5)
-        self.assertEqual(self.commands.calls[-1][2], "SET_GCODE_OFFSET Z_ADJUST=+0.5")
+        self.assertEqual(calls, [.1, None, .5])
+        self.assertEqual(self.commands.calls, [])
 
     def test_z_offset_rejects_a_zero_or_oversized_nudge(self):
         for amount in (0, 0.00005, 5.5, -6):
@@ -556,12 +556,14 @@ class FactorAndOffsetTests(ControlsCase):
         self.assertEqual(self.commands.calls, [])
 
     def test_z_offset_allows_mid_print_but_not_while_busy(self):
+        calls = []
+        self.controls._motion = SimpleNamespace(z_offset=calls.append)
         self.data.observation = record(state="printing")
         self.controls.z_offset(0.1)
-        self.assertEqual(len(self.commands.calls), 1)
+        self.assertEqual(calls, [.1])
         self.data.observation = record(state="printing", busy=True)
         self.controls.z_offset(0.1)
-        self.assertEqual(len(self.commands.calls), 1)
+        self.assertEqual(calls, [.1])
 
     def test_apply_z_offset_stages_the_configured_reference_without_saving_or_restarting(self):
         self.data.observation = record(state="printing")

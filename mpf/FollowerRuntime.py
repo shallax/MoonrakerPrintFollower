@@ -27,6 +27,7 @@ from .settings.PluginPersistence import OLD_STATE_FILE_NAME, PluginPersistence
 from .preview.PreviewFollower import PreviewFollower
 from .preview.PreviewMotion import PreviewMotion
 from .preview.PreviewPresentation import PreviewPresentation
+from .preview.PreviewToolheadPresentation import PreviewToolheadPresentation
 from .application.PrintCoordinator import PrintCoordinator
 from .cura.PrinterBinding import PrinterBinding
 from .files.transfers.RemoteFileService import RemoteFileService
@@ -203,6 +204,7 @@ class FollowerRuntime:
         self.preview.bind_motion(self.motion)
         self.pauses = PauseController(self.client, parent)
         self.presentation = PreviewPresentation(application, self.cura, parent, persistence=self.persistence)
+        self.preview_toolhead = PreviewToolheadPresentation(application, self.cura, parent, persistence=self.persistence)
         self.preview.bind_position_mode(lambda: self.presentation.reported_position)
         self.toolhead = ToolheadPresenter(application, self.cura, self.client, self.binding,
             self.presentation, self.toolhead_store, parent)
@@ -261,6 +263,7 @@ class FollowerRuntime:
         self.toolhead.close()
         self.toolhead_models.close()
         self.bed_mesh.close()
+        self.preview_toolhead.close()
         self.presentation.close()
         self.motion.close()
         self.cura.close()

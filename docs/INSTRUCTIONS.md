@@ -141,7 +141,17 @@ are visible; a Python 3.14 patch release difference is acceptable.
   the driver's evidence rectangles are desktop-relative. The macOS
   available-desktop fit moves the content below the menu/title bars,
   so assuming a window origin of (0, 0) misses controls and drag handles.
-- The toolhead showcase is part of the same capture commands, through
+- Preview Toolhead screenshots use synthetic data only.
+  `tools/capture_preview_toolhead.py` adds four real-QML Toolhead states:
+  ready, collapsed, printing with Z-offset available, and disconnected.
+  A normal refresh emits light and dark-suffixed images; `CAPTURE_THEME`
+  selects a single theme for the separate repeatability legs. Signals terminate in the local
+  presentation; no printer model, connection or command handler is created.
+  These scenes participate in the normal contrast and repeatability checks.
+  Their isolated software icon provider reproduces Uranium's alpha-mask tint,
+  so dark header/tab icons retain their production text colour. It is capture
+  tooling only and is never packaged into the plugin.
+- The 3-D toolhead showcase is part of the same capture commands, through
   `tools/capture_toolhead.py`. Its attributed model, cube, and exact saved light
   configuration live in `tests/fixtures/toolhead/showcase/`; generation never
   reads a developer's Cura settings. It compiles the production GLSL with

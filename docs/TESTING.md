@@ -1,6 +1,53 @@
 # TESTING.md — the real-Cura UI test harness
 
-## 5.2.0 — current validation
+## 5.3.0 — current validation
+
+The `release/v5.3.0` branch adds Preview Toolhead controls, a shared physical
+position-move guard, boxed Preview headers, multi-day layer ETA clocks and a
+narrower webcam zoom face. Z-offset nudges/reset are operator calibration
+controls: they bypass client geometry/homing checks and remain available while
+printing. Jog and Move-to retain fresh-state physical travel checks.
+
+**Never operate printer controls in the developer's live Cura session.** The
+printer is running a multi-day print. This includes Z-offset, homing, jogging,
+calibration, pause/resume, motor controls and programmatic command invocation.
+Use invented telemetry, isolated real QML and fake transports with no printer
+connection. Installing a snapshot or restarting Cura is permitted; profiles
+and backups must remain untouched. The destructive native desktop harness
+must run only on a disposable CI host.
+
+Run `make all JOBS=2` before committing or pushing. Focused checks use isolated
+processes through the standard runner:
+
+```sh
+make test_files JOBS=2 FILES="tests.test_physical_motion tests.test_guarded_motion_dispatch tests.test_preview_toolhead_readout tests.test_preview_toolhead_host tests.test_preview_toolhead_qml tests.test_qt_toolhead_integration tests.test_monitor_model_runtime tests.test_monitor_controls tests.test_preview tests.test_qml_camera_controls tests.test_whatsnew tests.test_architecture"
+```
+
+The synthetic Toolhead captures cover ready, collapsed, printing and
+disconnected states in both themes. Printing disables position moves and
+homing while leaving Z-offset available. Captures use the real pane and theme
+assets without a printer model or command handler. `make verify_captures`
+includes these scenes in strict UI pixel comparisons; the narrow native-only
+rounding allowance applies solely to the two existing 3-D showcase images.
+Refresh committed screenshots with `make BACKEND=docker generate_screenshots`;
+only the pinned amd64 container defines their pixels.
+
+Regression checks cover queued-position freshness, G92/base-coordinate changes,
+bed-mesh/fade bounds, unknown transforms, missing limits, finite inputs,
+three-second query expiry and invalidated owner/revision/queue-head replies.
+Separate calibration tests prove both Z-offset directions/reset work without
+homing or geometric telemetry, remain serialized behind prior commands, and
+cannot escape connection/control-lock/ownership rules. Real-QML tests check
+host placement, stage visibility, light/dark contrast, slider interpolation,
+scrolling, collapse/focus and discarded drafts at printer switches.
+
+Read-only live Cura inspection confirmed the top-left placement, retained
+native controls, printing-state offset availability and cleared error text.
+No live printer command was used. Branch CI, native Windows/Linux checks and
+the disposable real-Cura release gate remain subsequent validation; local
+fixtures are not a substitute for those checks.
+
+## 5.2.0 — historical validation
 
 Version 5.2.0 adds custom STL/STEP toolheads, True position/Smooth path modes, a
 GPU model editor with nozzle and light placement, and View Options controls

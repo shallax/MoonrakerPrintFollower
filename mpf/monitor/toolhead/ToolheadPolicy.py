@@ -210,6 +210,9 @@ class JogOp:
     speed: float = 0.0
     label: str = ""
     script: str = ""
+    targets: tuple = ()
+    reset: bool = False
+    idle_only: bool = False
 
 
 def make_jog_op(axis: str, signed_distance: float, absolute_coordinates: bool) -> JogOp:

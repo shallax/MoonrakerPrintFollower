@@ -417,7 +417,7 @@ class FollowerEtaTests(harness.FollowerEtaTests):
         follower, port, index = self.make(elapsed=[0.0, 100000.0, 200000.0, 300000.0, 400000.0])
         port.selected_layer = 4
         follower.update_eta(harness.snapshot(3), index)
-        self.assertRegex(follower.state.eta_text, r"^Selected layer 5 — in \d\d:\d\d:\d\d · ≈[A-Z][a-z]{2} \d\d:\d\d$")
+        self.assertRegex(follower.state.eta_text, r"^Selected layer 5 — in \d\d:\d\d:\d\d · ≈[A-Z][a-z]{2} \d\d:\d\d \+[12]$")
 
     def test_a_missing_last_boundary_does_not_affect_a_mid_print_eta(self):
         follower, _, index = self.make(elapsed=[0.0, 60.0, 120.0, 180.0, None])
@@ -443,5 +443,4 @@ class FollowerEtaTests(harness.FollowerEtaTests):
         follower._cura.selected_layer = 5
         follower.update_eta(harness.snapshot(3), index)
         self.assertEqual("", follower.state.eta_text, "no layer has been observed yet")
-
 

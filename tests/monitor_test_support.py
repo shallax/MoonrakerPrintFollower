@@ -158,7 +158,11 @@ class MonitorQtTests(unittest.TestCase):
         output = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(self.app, self.follower)
         output.start()
         self.addCleanup(output.stop)
-        return output._current.activePrinter
+        model = output._current.activePrinter
+        from tests.manual_motion_support import attach_monitor
+        attach_monitor(model, self.transport)
+        self._motion_models = getattr(self, '_motion_models', []) + [model]
+        return model
 
     def feed_chart(self, model, auxiliary):
         """The chart's feed path (the 4.6.0 decoupling): the fixed 1 s
@@ -198,8 +202,12 @@ class MonitorQtTests(unittest.TestCase):
                             "info": {"current_layer": 2, "total_layer": 20}},
             "virtual_sdcard": {"file_size": 100, "file_position": 20},
             "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1},
+            "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
         client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
+        from tests.manual_motion_support import seed_limits
+        for model in getattr(self, '_motion_models', ()):
+            seed_limits(model)
 
     def deliver_state(self, state):
         client = self.follower.client
@@ -212,6 +220,9 @@ class MonitorQtTests(unittest.TestCase):
             "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
         client._handle_http_status({"result": {"status": status}}, None, client._generation, self.status_stamp())
+        from tests.manual_motion_support import seed_limits
+        for model in getattr(self, '_motion_models', ()):
+            seed_limits(model)
 
     def scripts(self):
         return [r for r in self.transport.requests if r.path == "printer/gcode/script"]

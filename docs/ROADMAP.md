@@ -10,29 +10,136 @@ Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
-## Next releases — planning update (6 October 2026)
+## Current release and next plans — update (7 October 2026)
 
-The following is roadmap scope only. It does not start implementation or add
-features to the `release/v5.2.0` branch.
+The `release/v5.3.0` branch starts from the 5.2.0 merge at
+`5683a1f081dfd79f56e417c5c4b2192abaffcbcc`. The author approved the design and
+installed control snapshots, then authorized release documentation, version
+5.3.0 and the branch push. Implementation is complete; publication still
+requires the normal PR, CI and explicit release authorization.
 
 ### 5.3.0 — Toolhead controls in Preview (final planned 5.x feature release)
 
-Add a compass for nudging the physical toolhead while looking at the Preview:
-X− / X+, Y− / Y+, and Z− / Z+, with a selectable move distance. Reuse the
-Monitor's existing toolhead controller, command policy and printer-state gates;
-the two surfaces must operate the same printer state and command queue.
-True position provides the live visual feedback, including without a toolpath.
+The implementation adds a Mainsail-style Toolhead pane on the left of Cura's **Preview** workspace,
+at the top left, beneath its Preview stage menu. Reserve the lower-left object
+list, job summary and perspective buttons. It collapses horizontally to
+the left, leaving an accessible tab to reopen it. It does not appear in Prepare
+or replace the Monitor controls. Preview collapse is presentation state separate
+from the Monitor section's expansion state.
 
-Candidate controls alongside the compass are **Home all**, **Home X**,
-**Home Y**, **Home Z**, **QGL** (quad gantry levelling), and **Bed mesh**
-(calibration). Their exact layout and inclusion will be settled when designing
-5.3.0. Availability follows the printer's capabilities and existing action
-policy. Keep calibration actions distinct from the bed-mesh display controls
-already in View Options, and retain the Monitor controls.
+The accepted inventory is position readouts, absolute move-to fields, X− / X+,
+Y− / Y+, and Z− / Z+ jogging with selectable distances, Home all and individual
+axis homing, Z-offset adjustment, and capability-dependent Toolhead actions,
+including QGL and bed-mesh calibration in the actions menu. The author selected the
+compass layout. Z-offset adjustments use down/up arrows rather than minus/plus.
+Jog and Z-offset arrows have stalks, matching the Monitor controls.
+Omit Mainsail's speed-factor slider. Motor release and the printer's supported
+levelling/calibration actions belong in the action menu; map their precise
+inventory and availability before wiring. Keep calibration distinct from the
+bed-mesh display controls in View Options. Extrusion controls, arbitrary macros,
+temperatures and an extra webcam are outside this pane's scope.
 
-This carries the jog-dock portion of the historical Preview proposal forward
-from 5.2.0. Speed/extrusion factors, arbitrary macros, an extra webcam thumbnail
-and other older suggestions are not automatically added to this release.
+Mockups come first: inspect expanded/collapsed layouts and printing/disconnected
+states, then review real QML with static synthetic data before functional work.
+The author approved the real light/dark QML design on 7 October. The first
+functional snapshot attached a read-only pane using the selected Monitor
+model's existing physical readings and capability projection; all physical
+action signals remain unconnected. Its placement reserves Cura's actual
+perspective controls and job summary and follows viewport resizing. Author
+review of this snapshot preceded the shared motion guard and mutation wiring,
+which the author subsequently authorized.
+Never exercise printer controls in the author's live Cura session, through UI
+input or programmatic invocation. A multi-day print is running. Command tests
+use isolated fake transports with no printer connection; mockup-only snapshots
+have no command handlers attached. The prohibition on using live controls persists throughout
+development and validation.
+The author decides the layout. Use the Monitor's existing 0.1, 0.5, 1, 5, 10,
+25, 50, 100 and 125 mm jog presets and editable distance. The latest mockup
+uses an evenly spaced slider snapping to those presets, alongside one numeric
+field for an exact override; custom values are retained until a preset is chosen.
+Typed values position the handle by interpolation between neighbouring preset
+stops. Values outside the 0.1–125 mm slider scale clamp the handle to its endpoint
+while retaining the exact allowed distance in the box. The slider fills the
+pane width, with the numeric field above it, to keep all preset labels legible.
+The author accepted the current mockup layout, conditional on correct light
+and dark theme support. Verify both themes in the real QML snapshot, including
+expanded/collapsed, disabled and keyboard-focus states. The implemented
+controls use relative jogs and absolute G-code Move-to without a mode toggle;
+firmware coordinate mode and feedrate are preserved.
+Reuse the active Monitor model's existing
+toolhead controller, command policy and queue, with routing invalidated when the
+selected printer changes. Preserve each action's existing permissions; Z-offset
+adjustment and jogging must not acquire a single shared enablement gate.
+
+Position-move safety is a release requirement for both Monitor and Preview.
+Jog and absolute move-to controls validate the requested physical target/path,
+coordinate origins, active offsets and bed-mesh compensation. Retain the
+ordinary jog zero floor, honour a stronger configured minimum and the configured
+maxima, and revalidate after queued/in-flight commands. Fresh, finite position,
+limits and transformation data are required for these position moves.
+
+Z-offset nudges and resets are a separate operator calibration action. The
+author's clarified policy excludes them from client geometry/bed-clearance
+checks: the client cannot know the toolhead's actual physical layout. Both
+directions remain usable during printing through the shared command lane, with
+standard connection/ownership/control-lock/input gates and immediate MOVE=1.
+Missing homing/position/mesh telemetry must not disable or reject the nudges.
+Firmware retains its own execution checks. Tests separate calibration availability
+from guarded position moves and cover shared-lane sequencing, ownership,
+non-finite inputs, coordinate changes and position-move travel limits.
+Unavailable Preview marker feedback remains separate from the movement guard.
+
+The implemented control surface distinguishes physical position readouts from
+absolute G-code targets, including offsets, bounds, untouched axes and
+mode preservation. True-position feedback uses fresh homed telemetry
+and remains available without a loaded toolpath where supported; unavailable
+marker feedback must not become a new jogging restriction or change the user's
+tracking preference. Verify the pane against the real Preview host geometry,
+including short windows and display scaling.
+
+Control wiring snapshot: the XYZ readouts are physical; Move to is explicitly
+labelled G-code/absolute, and blank axes remain unchanged. Jog/absolute scripts
+save and restore the actual firmware mode/feedrate without a return move. Both
+surfaces share one manual-motion queue. Jog and absolute position moves fetch
+one complete Klipper status query before dispatch. A timeout, changed
+session/command revision, missing homing/limits, non-finite telemetry,
+unsupported kinematics/transforms or overridden movement command refuses a
+position move. Z-offset nudges and resets are operator calibration controls,
+not absolute position targets. They bypass geometry, bed-clearance, homing and
+travel checks and do not fetch guard telemetry. Both directions and reset remain
+available during prints, subject to connection, ownership, control-lock,
+input-validation and command-lane checks. They use SET_GCODE_OFFSET MOVE=1;
+firmware remains responsible for executing the calibration command. The client
+cannot know the physical nozzle/bed layout and must not claim safe clearance for
+these adjustments. Firmware homing and calibration use their separate
+operation/state gates; the Preview exposes those only while idle.
+
+Klipper does not publish every runtime mesh offset/fade transform. Position
+travel uses the whole interpolated mesh's conservative extrema (including
+rounding uncertainty and zero), rather than inventing a local bed height.
+Some near-bed position moves may be refused where clearance cannot be proved.
+The checks govern our own requested position moves over fresh reported state;
+a client status query and later firmware script are not an atomic operation
+against unrelated external G-code. No live printer action is used to verify
+this snapshot: only isolated QML and synthetic transports.
+
+Two independent presentation fixes accompany this work: selected-layer ETA
+clocks include the additional-calendar-day suffix already used by Print job
+Finish, and the webcam zoom scale uses a stable width measured for `800%` while
+the FPS face retains room for its longer readout.
+
+### Deferred follow-up — optional runtime hosting
+
+The author also requested resilient hosting for optional detection and STEP
+downloads. The pinned payload inventory and staging audit are complete, but
+source/notices companions, publication and production URL/cache migration
+remain unfinished; 5.3.0 continues to use upstream hosts. Details are in
+[RUNTIME_MIRROR.md](RUNTIME_MIRROR.md). Inventory the exact pinned distributions and their notices/source
+obligations, then mirror unchanged bytes as versioned public GitHub Release
+assets in this repository. Preserve optional downloads, hashes and installed
+cache identities; no binary payloads enter Git history. The migration must not
+point at unpublished assets or require users to download existing runtimes
+again solely because their host changed.
 
 ### Remaining 5.x work — shared tracking already implemented
 
@@ -212,7 +319,7 @@ print supplies the needed markers and timing data. The Preview card can
 collapse to Attach/Detach and Load current print. The two panes share a bottom
 alignment and reserve space in Cura's action row.
 
-## 5.2.0 — Actual toolhead position and custom models (validated; release via PR)
+## 5.2.0 — Actual toolhead position and custom models (historical; released)
 
 The persistent **Enable lighting** master switch disables perimeter, attached and
 scene illumination together, retaining base colours and face paint. It disables
@@ -236,8 +343,10 @@ setup button opens the current printer's Following settings at the upload
 controls. Turning off **Show custom toolhead model** restores Cura's native
 nozzle and disables the custom controls, preserving the user's choices.
 
-The active branch is `release/v5.2.0`, created from `origin/main` at
-`5438a722e70d3e39d4e14df699092b3709751172`.
+The 5.2.0 branch was `release/v5.2.0`, created from `origin/main` at
+`5438a722e70d3e39d4e14df699092b3709751172`. PR 47 merged it at
+`5683a1f081dfd79f56e417c5c4b2192abaffcbcc`; the v5.2.0 release was published
+on 7 October 2026.
 
 The requested release scope is:
 

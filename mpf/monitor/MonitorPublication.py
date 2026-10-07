@@ -17,7 +17,7 @@ from __future__ import annotations
 from PyQt6.QtCore import QVariant
 
 SIGNAL_GROUPS = (
-    ("monitorChanged", ("monitorState", "monitorConnected", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
+    ("monitorChanged", ("previewToolheadReadout", "monitorState", "monitorConnected", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
                         "platePassFraction",
                         "improvingEta", "printIndexReady", "improveEtaProgress", "improveEtaPhase", "monitorElapsed",
                         "monitorEta", "monitorEtaBasis", "monitorFinish", "monitorSpeed", "monitorFlow",

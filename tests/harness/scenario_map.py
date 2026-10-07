@@ -1289,3 +1289,36 @@ EXCLUSIONS["moonrakerEnableLighting"] = {
     "date": "2026-10-06",
     "recheck": "a native Preview scenario exercises master off/on and retained bed/model selections",
 }
+
+# The read-only host is in development. Native journeys for this surface
+# must not be credited to unrelated Monitor controls; keep the exact exclusion
+# until its dedicated native scenario is added before release.
+for _name in (
+    "previewJogDistance", "previewJogDistanceExact", "previewJogDistanceSlider",
+    "previewJogDistanceTick", "previewJogDistanceValidation", "previewToolheadActions",
+    "previewToolheadCollapse", "previewToolheadHome", "previewToolheadHomeAll",
+    "previewToolheadJog", "previewToolheadMenu", "previewToolheadMoveTo",
+    "previewToolheadOffsetDown", "previewToolheadOffsetStep", "previewToolheadOffsetUp",
+    "previewToolheadHost", "previewToolheadPane", "previewToolheadReopen", "previewToolheadScroll",
+    "previewToolheadStatus", "previewToolheadTargetX", "previewToolheadTargetY",
+    "previewToolheadTargetZ",
+):
+    EXCLUSIONS[_name] = {
+        "reason": "read-only Toolhead slice under development; dedicated native Preview journey not yet added",
+        "evidence": "test_preview_toolhead_qml verifies disabled defaults, exact-distance editing, keyboard presets, collapse/focus, short-pane scrolling, axis labels and checked offset selection; capture_preview_toolhead renders real light/dark themes with synthetic values",
+        "date": "2026-10-07",
+        "recheck": "dedicated native Preview Toolhead coverage before the 5.3 release gate",
+    }
+
+EXCLUSIONS["PreviewToolheadPresentation._shell_destroyed"] = {
+    "reason": "private Qt host-destruction callback, not a user command",
+    "evidence": "test_preview_toolhead_host exercises actual QML shell destruction and idempotent owner close",
+    "date": "2026-10-07",
+    "recheck": "host lifecycle changes",
+}
+EXCLUSIONS["previewToolheadReadout"] = {
+    "reason": "read-only Toolhead projection under development; native journey not yet added",
+    "evidence": "test_preview_toolhead_readout checks physical values, absent/nonfinite readings and disabled capabilities; test_output_device_coverage proves selected-machine routing and rejects stale callbacks",
+    "date": "2026-10-07",
+    "recheck": "dedicated native Preview Toolhead coverage before the 5.3 release gate",
+}

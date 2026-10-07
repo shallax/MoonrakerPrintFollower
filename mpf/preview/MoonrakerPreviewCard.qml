@@ -193,40 +193,17 @@ Item {
             height: base.cardExpanded ? implicitHeight : titleBar.height + buttons.height + base.rowSpacing
             spacing: base.rowSpacing
 
-            Item {
+            PreviewPanelHeader {
                 id: titleBar
                 objectName: "moonrakerPreviewCardCollapseToggle"
                 width: parent.width
-                height: followerTitle.implicitHeight
-
-                Cura.IconWithText {
-                    id: followerTitle
-                    anchors.left: parent.left
-                    anchors.right: expandIcon.left
-                    anchors.rightMargin: base.buttonSpacing
-                    height: parent.height
-                    text: "Moonraker Print Follower"
-                    source: UM.Theme.getIcon("Nozzle")
-                    font: UM.Theme.getFont("medium_bold")
-                }
-
-                UM.ColorImage {
-                    id: expandIcon
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 22 * screenScaleFactor
-                    height: width
-                    source: UM.Theme.getIcon(base.cardExpanded ? "ChevronSingleDown" : "ChevronSingleUp")
-                    color: UM.Theme.getColor("text")
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        base.cardExpanded = !base.cardExpanded;
-                        base.cardExpandedRequested(base.cardExpanded);
-                    }
+                text: "Moonraker Print Follower"
+                iconName: "Nozzle"
+                indicatorName: base.cardExpanded ? "ChevronSingleDown" : "ChevronSingleUp"
+                Accessible.name: (base.cardExpanded ? "Collapse" : "Expand") + " Moonraker Print Follower"
+                onClicked: {
+                    base.cardExpanded = !base.cardExpanded;
+                    base.cardExpandedRequested(base.cardExpanded);
                 }
             }
 
