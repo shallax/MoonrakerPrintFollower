@@ -32,8 +32,9 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 - Give Toolhead, View Options and Print Follower matching boxed titles with
   hover/focus highlighting. Use the Monitor's stalk arrows for Z-offset,
   group units beside related values and preserve keyboard access when folded.
-- Include additional calendar days in selected-layer ETA clocks, matching
-  Print job Finish, and narrow the webcam zoom face to fit `800%`.
+- Include additional calendar days in Preview and Print Follower selected-layer
+  ETA clocks and scheduled pause deadlines, matching Print job Finish, and
+  narrow the webcam zoom face to fit `800%`.
 - Add synthetic light/dark Toolhead captures to the regular capture,
   contrast and determinism checks. No live printer controls are used.
 - Document the optional runtime-mirror inventory and redistribution work.

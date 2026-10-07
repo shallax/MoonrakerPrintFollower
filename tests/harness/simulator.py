@@ -49,11 +49,16 @@ KICKOFF_STATE: Dict[str, Any] = {
         "filament_used": 0.0,
         "info": {"total_layer": None, "current_layer": None},
     },
+    # A homed Cartesian fixture with no G92/offset transform. The manual
+    # travel guard must receive both coordinate spaces and real limits;
+    # omitting them correctly refuses the smoke test's jog.
     "gcode_move": {
         "speed_factor": 1.0,
         "extrude_factor": 1.0,
         "absolute_coordinates": True,
         "position": [100.0, 100.0, 0.4, 0.0],
+        "gcode_position": [100.0, 100.0, 0.4, 0.0],
+        "homing_origin": [0.0, 0.0, 0.0, 0.0],
     },
     "virtual_sdcard": {
         "progress": 0.0,
@@ -73,7 +78,9 @@ KICKOFF_STATE: Dict[str, Any] = {
     # The accel ceiling and the ACTIVE tool (the per-tool diameter
     # read keys off extruder) ride the aux poll with homed_axes.
     "toolhead": {"homed_axes": "xyz", "extruder": "extruder", "max_accel": 5000.0,
-                 "max_velocity": 500.0, "position": [100.0, 100.0, 0.4, 0.0]},
+                 "max_velocity": 500.0, "position": [100.0, 100.0, 0.4, 0.0],
+                 "axis_minimum": [0.0, 0.0, 0.0, 0.0],
+                 "axis_maximum": [250.0, 250.0, 250.0, 0.0]},
     "heater_bed": {"temperature": 0.0, "target": 0.0},
     "extruder": {"temperature": 0.0, "target": 0.0},
     "system_stats": {"sysload": 0.1, "memavail": 1000000},
@@ -85,7 +92,8 @@ KICKOFF_STATE: Dict[str, Any] = {
     # raw STRING, settings the typed float (the diameter read uses
     # settings).
     "configfile": {"save_config_pending": False, "save_config_pending_items": {},
-                   "config": {"extruder": {"filament_diameter": "1.75"}},
+                   "config": {"printer": {"kinematics": "cartesian"},
+                              "extruder": {"filament_diameter": "1.75"}},
                    "settings": {"extruder": {"filament_diameter": 1.75}}},
     "bed_mesh": {"profile_name": "", "probed_matrix": [], "mesh_min": [], "mesh_max": [], "profiles": {}},
     # The plate's own object: a real Klipper carries exclude_object on

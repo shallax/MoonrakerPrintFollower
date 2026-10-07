@@ -68,6 +68,30 @@ frames, center/Z-zero intent and malformed readout numbers. Focused isolated
 coverage now measures 100% of statements in both `PhysicalMotion.py` and
 `ToolheadReadout.py`; no product behavior changed for this coverage repair.
 
+Branch CI run `37675893151` passed the coverage and screenshot gates but
+its repeat-boot smoke correctly refused the simulator's jog: the fixture
+omitted travel limits, G-code position/origin and printer kinematics.
+The simulator now publishes a homed 250 mm Cartesian envelope with matching
+planned/G-code coordinates. A loopback HTTP query contract exercises the
+production guard against that reply, rejects out-of-travel and negative-Z
+targets, rejects missing limits and verifies scenario reset restores them.
+Product travel guards and smoke command-count assertions remain unchanged.
+
+The Monitor Print Follower's detached layer ETA and scheduled pause clocks now
+use the same deadline projection as Preview. Fixed local-time regression cases
+compare them directly with Print job Finish before midnight, across midnight
+(`+1`) and across two calendar dates (`+2`). An isolated real-QML test also
+verifies the multi-day text reaches the follower popover's ETA label and fits
+on one line without elision, including a days/hours/minutes duration. The field
+uses its natural text width within the row, with a bounded maximum and explicit
+no-wrap behavior.
+
+The finalized baseline's subsequent native `make all JOBS=2` passed 5,396
+tests in 220 isolated processes (including the enabled loopback simulator
+contracts), all nine lint checks, 29 screenshot scenes, 46 byte-identical
+light/dark capture pairs with zero rounding exceptions, and both exact
+source/package layout validators. No live printer commands were used.
+
 ## 5.2.0 — historical validation
 
 Version 5.2.0 adds custom STL/STEP toolheads, True position/Smooth path modes, a

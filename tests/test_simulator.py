@@ -58,6 +58,41 @@ if tornado is not None:
                 self.assertEqual(self.sim.printer.state["print_stats"]["state"], "printing")
             self.io_loop.run_sync(exercise)
 
+        def test_fresh_motion_query_has_safe_complete_firmware_coordinates(self):
+            from mpf.monitor.toolhead.PhysicalMotion import envelope, prepare, UnsafeMotion
+            from mpf.monitor.toolhead.ToolheadPolicy import JogOp
+
+            async def exercise():
+                client = AsyncHTTPClient()
+                names = ('toolhead', 'gcode_move', 'configfile', 'print_stats', 'bed_mesh')
+                async def query():
+                    response = await client.fetch(self.base + '/printer/objects/query', method='POST',
+                                                  body=json.dumps({'objects': dict.fromkeys(names)}))
+                    return json.loads(response.body)['result']['status']
+
+                status = await query()
+                self.assertEqual(set(status), set(names))
+                bounds = envelope(status)
+                self.assertEqual(bounds.position, (100, 100, .4))
+                self.assertEqual(bounds.gcode, bounds.position)
+                self.assertEqual(bounds.base, (0, 0, 0))
+                self.assertEqual(bounds.origin, (0, 0, 0))
+                self.assertEqual(bounds.minimum, (0, 0, 0))
+                self.assertEqual(bounds.maximum, (250, 250, 250))
+                self.assertIn('G1 X25 F3000', prepare(JogOp(kind='jog', axis='x', distance=25), status))
+                with self.assertRaises(UnsafeMotion):
+                    prepare(JogOp(kind='move-to', targets=(251, None, None)), status)
+                with self.assertRaises(UnsafeMotion):
+                    prepare(JogOp(kind='move-to', targets=(None, None, -.01)), status)
+                # Fault injection remains honest: absent limits must refuse,
+                # and resetting a scenario restores the complete fixture.
+                del self.sim.printer.state['toolhead']['axis_maximum']
+                with self.assertRaises(UnsafeMotion):
+                    envelope(await query())
+                self.sim.printer.reset()
+                self.assertEqual(envelope(await query()), bounds)
+            self.io_loop.run_sync(exercise)
+
         def test_websocket_subscribe_snapshot_once_and_changes_only(self):
             async def exercise():
                 conn = await tornado.websocket.websocket_connect(

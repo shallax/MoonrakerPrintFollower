@@ -380,8 +380,10 @@ MonitorPopOver {
                     UM.Label {
                         objectName: "moonrakerFollowerLayerEta"
                         visible: root.printerModel != null && !root.printerModel.followerAttached
-                        Layout.preferredWidth: 128 * screenScaleFactor
-                        Layout.maximumWidth: 168 * screenScaleFactor
+                        Layout.preferredWidth: Math.max(128 * screenScaleFactor, implicitWidth)
+                        Layout.maximumWidth: 280 * screenScaleFactor
+                        wrapMode: Text.NoWrap
+                        maximumLineCount: 1
                         horizontalAlignment: Text.AlignRight
                         elide: Text.ElideLeft
                         text: root.printerModel != null && root.printerModel.plateAnchorEta !== "" ? root.printerModel.plateAnchorEta : "—"

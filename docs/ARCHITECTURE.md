@@ -461,6 +461,8 @@ Selected-layer deadlines are formatted by the pure
 `PreviewFormatting.layer_deadline_clock` projection. It uses one captured local
 time for both the arrival clock and the calendar-day suffix (`+1`, `+2`, etc.),
 matching the Monitor Finish convention without a second clock read at midnight.
+`NextPausePipeline` uses the same projection for the Monitor Print Follower's
+detached anchor ETA and scheduled pause deadlines.
 
 The 5.3.0 Toolhead pane is attached in Preview by
 `PreviewToolheadPresentation`. Typed intents route through the selected Monitor

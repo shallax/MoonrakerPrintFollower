@@ -44,7 +44,7 @@ Switching printers or reconnecting discards unfinished edits and retires old
 control bindings.
 
 Toolhead, View Options and Print Follower now share boxed titles that highlight
-on hover or keyboard focus. Selected-layer ETA clocks include `+1`, `+2`, etc.
+on hover or keyboard focus. Preview and Print Follower ETA clocks include `+1`, `+2`, etc.
 for additional days, matching Print job Finish. The webcam zoom control is
 narrower while still fitting `800%`.
 
@@ -814,6 +814,10 @@ discrete presentation. Preview and Monitor use the same accepted live motion
 progress.
 
 The follower can also pause the print. Click the pane's plate to open the pop-over, slide its Layer slider to a layer, and the button at the foot of the schedule offers the end of that layer: one press schedules the pause, and the same button then removes it. The list beside the plate carries the whole schedule — each pause with its own ETA (`in 31m · ≈14:32`), a row's ✕ cancelling that one and **Clear** cancelling the rest — with a pause the printer has already taken dimmed to "passed" and one whose moment went by untaken left in the list as "pause not taken". Two kinds of row share the list. The pauses you schedule are fired by the plugin: it sends Klipper's `PAUSE` itself as the print crosses the layer, so the schedule lives with that print — it is dropped when the print ends, a new print starts with an empty list, and nothing survives a Cura restart. A pause the gcode already carries is listed as "baked" and is read-only — it belongs to the slicer, so the ✕ does nothing on it and the layer cannot be scheduled again from here.
+
+The detached follower's selected-layer ETA and scheduled pause clocks include
+`+1`, `+2`, etc. when their deadline falls on a later calendar day, using the
+same convention as Print job **Finish**.
 
 ### Power
 
