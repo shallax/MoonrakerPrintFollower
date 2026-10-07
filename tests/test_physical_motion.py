@@ -139,6 +139,54 @@ class PhysicalMotionTests(unittest.TestCase):
         emitted = float(script.split('G1 X')[1].split()[0])
         self.assertLessEqual(emitted, values['toolhead']['axis_maximum'][0])
 
+    def test_absent_state_configuration_and_invalid_limits_fail_closed(self):
+        for status in (None, [], 'unavailable'):
+            with self.subTest(status=status), self.assertRaisesRegex(UnsafeMotion, 'Fresh printer state'):
+                envelope(status)
+        for config in (None, [], 'malformed'):
+            values = state()
+            values['configfile']['config'] = config
+            with self.subTest(config=config), self.assertRaisesRegex(UnsafeMotion, 'Printer configuration'):
+                envelope(values)
+        for axis in range(3):
+            values = state()
+            values['toolhead']['axis_maximum'][axis] = values['toolhead']['axis_minimum'][axis]
+            with self.subTest(axis=axis), self.assertRaisesRegex(UnsafeMotion, 'Invalid printer travel limits'):
+                envelope(values)
+
+    def test_axis_mapping_and_mixed_coordinate_frames_fail_closed(self):
+        for mapping in ([], {'X': 1, 'Y': 0, 'Z': 2}, {'X': 0, 'Y': 1}):
+            values = state()
+            values['gcode_move']['axis_map'] = mapping
+            with self.subTest(mapping=mapping), self.assertRaisesRegex(UnsafeMotion, 'axis mapping'):
+                envelope(values)
+        values = state()
+        values['gcode_move']['axis_map'] = {'X': 0, 'Y': 1, 'Z': 2}
+        self.assertEqual(envelope(values).position, (100, 100, 10))
+        for axis in range(3):
+            values = state()
+            values['toolhead']['position'][axis] += .1
+            with self.subTest(axis=axis), self.assertRaisesRegex(UnsafeMotion, 'coordinates do not agree'):
+                envelope(values)
+
+    def test_missing_or_malformed_mesh_cannot_authorize_position_moves(self):
+        for mesh in (None, {}, [], {'mesh_matrix': None}, {'mesh_matrix': []},
+                     {'mesh_matrix': [[0, 0]]}, {'mesh_matrix': [[0, 0], [0]]},
+                     {'mesh_matrix': [[0, 0], 'bad']}):
+            values = state(mesh=[[0, 0], [0, 0]])
+            values['bed_mesh'] = mesh
+            with self.subTest(mesh=mesh), self.assertRaises(UnsafeMotion):
+                envelope(values)
+        # Klipper publishes one empty row when compensation is cleared.
+        cleared = envelope(state(mesh=[[]]))
+        self.assertEqual((cleared.compensation_min, cleared.compensation_max, cleared.bed), (0, 0, 0))
+
+    def test_center_uses_physical_midpoint_and_z_zero_uses_gcode_coordinates(self):
+        values = state(base=(10, 20, 5))
+        self.assertIn('G90\nG1 X90 Y80 Z45 F600', prepare(JogOp(kind='center'), values))
+        self.assertIn('G90\nG1 Z0 F600', prepare(JogOp(kind='z0'), values))
+        self.assertEqual(prepare(JogOp(kind='home', script='G28'), None), 'G28')
+
 
 
 if __name__ == '__main__':

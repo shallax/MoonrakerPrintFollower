@@ -54,6 +54,14 @@ class ToolheadReadoutTests(unittest.TestCase):
         self.assertEqual([values['position' + a] for a in 'XYZ'], ['—'] * 3)
         self.assertEqual([r['key'] for r in values['actionRows']], ['motors'])
 
+    def test_malformed_numbers_show_absent_readings_without_losing_valid_axes(self):
+        for invalid in (None, 'not a number', {}, 10 ** 400):
+            with self.subTest(invalid=invalid):
+                values = MODULE.readout(self.snapshot((invalid, 2.5, 3.75), (0, 0, invalid)), True, '')
+                self.assertEqual([values['position' + a] for a in 'XYZ'], ['—', '2.50', '3.75'])
+                self.assertEqual(values['offsetText'], '—')
+                self.assertEqual(values['statusText'], 'Unknown')
+
 
 if __name__ == '__main__':
     unittest.main()

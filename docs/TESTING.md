@@ -47,6 +47,27 @@ No live printer command was used. Branch CI, native Windows/Linux checks and
 the disposable real-Cura release gate remain subsequent validation; local
 fixtures are not a substitute for those checks.
 
+On 7 October 2026, the final release-preparation native `make all JOBS=2` passed
+5,368 tests in 220 isolated processes, shader compilation, all nine lint
+checks, 29 screenshot scenes, 46 byte-identical light/dark capture pairs
+(zero native rounding exceptions), and exact package/source parity for
+both 5.3.0 archives. The final capture-tooling lint also passed.
+
+Canonical committed screenshots came from the pinned amd64 Linux container
+in branch CI run `37672052512`, at source commit
+`6b3d8e9727333e13fa4937674d0ee18dc9e58754`. All 29 promoted PNGs match the
+downloaded render bytes, and both light/dark repeatability pairs passed.
+The expanded pane appears in the README in both themes, alongside printing
+and disconnected states; collapsed captures remain validation fixtures.
+The developer's stopped Colima service was left untouched.
+
+The initial CI coverage gate identified two new modules just below the
+95% per-file floor. Additional invented-telemetry tests exercise missing
+configuration, malformed mesh, invalid axis mappings, mixed coordinate
+frames, center/Z-zero intent and malformed readout numbers. Focused isolated
+coverage now measures 100% of statements in both `PhysicalMotion.py` and
+`ToolheadReadout.py`; no product behavior changed for this coverage repair.
+
 ## 5.2.0 — historical validation
 
 Version 5.2.0 adds custom STL/STEP toolheads, True position/Smooth path modes, a

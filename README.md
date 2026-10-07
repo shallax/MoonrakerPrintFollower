@@ -900,12 +900,10 @@ supported levelling and motor controls.
 
 ![Preview Toolhead pane during printing](screenshots/17-preview-toolhead-printing.png)
 ![Preview Toolhead pane disconnected](screenshots/18-preview-toolhead-disconnected.png)
-![Collapsed Preview Toolhead tab](screenshots/16-preview-toolhead-collapsed.png)
 
 During printing, position moves and homing are disabled while Z-offset
 calibration remains available. A disconnected pane retains its layout with
-unavailable readouts and disabled controls. Collapse leaves a nozzle icon and
-right-pointing expansion arrow.
+unavailable readouts and disabled controls.
 
 ![Stealthburner with amber nozzle lights and purple logo lights](screenshots/13-toolhead-lighting.png)
 
