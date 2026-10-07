@@ -7,6 +7,12 @@ import Cura 1.1 as Cura
 Cura.MachineAction {
     id: base
     anchors.fill: parent
+    property int initialTab: 0
+    Component.onCompleted: {
+        tabBar.currentIndex = initialTab;
+        if (initialTab === 1)
+            Qt.callLater(followingSettings.showToolhead);
+    }
 
     property alias validUrl: connectionSettings.validUrl
     property alias insecureKeyWarning: connectionSettings.insecureKeyWarning
@@ -19,7 +25,7 @@ Cura.MachineAction {
     property alias validRetryInterval: uploadSettings.validRetryInterval
     property alias validTranslation: uploadSettings.validTranslation
     property alias validCacheMax: diagnosticsSettings.validCacheMax
-    property bool canSave: validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validCacheMax && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
+    property bool canSave: followingSettings.validToolhead && validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validCacheMax && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
     // A refused save must be visible: the dialog accepted nothing and
     // said nothing, so the change seemed to revert (the live report).
     // Two refusal causes share the slot with distinct copy: the
@@ -43,6 +49,7 @@ Cura.MachineAction {
 
     function cancel(closeDialog) {
         manager.cancelTest();
+        manager.cancelToolheadModel();
         if (closeDialog)
             actionDialog.close();
     }

@@ -21,6 +21,8 @@
 # Environment: HARNESS_GEOMETRY (1920x1080), HARNESS_WINDOW (1840x900),
 # MPF_WORK_DIR, RUNNER_TEMP. Every path this script owns lives under the
 # work dir; nothing is written into the repository.
+# This harness replaces Cura and reseeds its user profile. Outside GitHub
+# Actions it requires HARNESS_DISPOSABLE_HOST=1 on a disposable test host.
 #
 # The runner reaches the driver through <work-dir>/rpc, handed over as
 # HARNESS_RPC_DIR: one variable, so the two sides cannot disagree about
@@ -94,6 +96,9 @@ REQ_MAJOR="${REQ_MM%%.*}"
 REQ_MINOR="${REQ_MM##*.}"
 if [ "$REQ_MAJOR" -ne 5 ] || [ "$REQ_MINOR" -lt 7 ] || [ "$REQ_MINOR" -gt 13 ]; then
     die "Cura $CURA_VERSION is outside the range this harness ranges over (5.7.0 to 5.13.0)"
+fi
+if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${HARNESS_DISPOSABLE_HOST:-}" != "1" ]; then
+    die "this harness replaces Cura and deletes/reseeds its user profile; use a disposable test host with HARNESS_DISPOSABLE_HOST=1"
 fi
 [ "$(uname -s)" = "Darwin" ] || die "this script is the macOS leg and this is not macOS ($(uname -s))"
 

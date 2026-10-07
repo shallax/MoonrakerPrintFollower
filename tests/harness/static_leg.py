@@ -44,7 +44,14 @@ def static_run(frames):
     start = 0
     length = 1
     for index in range(1, len(frames)):
-        if frame_mad(frames[index - 1], frames[index]) <= STATIC_FRAME_MAD:
+        # Similarity is not transitive: a moving card/slider can change
+        # less than one mean grey level each second while ending up far
+        # from its initial picture. Require both a quiet adjacent pair
+        # and a picture still close to this run's first frame. Keep the
+        # adjacent check so a transient jump that returns to the anchor
+        # also breaks the run.
+        if (frame_mad(frames[index - 1], frames[index]) <= STATIC_FRAME_MAD
+                and frame_mad(frames[start], frames[index]) <= STATIC_FRAME_MAD):
             length += 1
         else:
             start, length = index, 1
@@ -225,5 +232,4 @@ def report(run_dir, capture, capture_reason):
         handle.write("\n")
     _merge_static_into_evidence(run_dir, records)
     return 1 if any(not record["ok"] for record in records) else 0
-
 

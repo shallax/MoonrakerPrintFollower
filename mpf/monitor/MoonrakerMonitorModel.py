@@ -329,7 +329,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                  request_pause_remove=None, request_pause_clear=None,
                  download_failed=None, request_download_progress=None, cancel_file_download=None,
                  identity=None, state_store=None, persistence=None, index_service=None, colour_scheme=None,
-                 detection=None):
+                 detection=None, motion_smoothing=None):
         super().__init__(output_controller, number_of_extruders)
         # The publication exists before anything can read a value
         # property: the declarations below resolve through it.
@@ -342,6 +342,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # accounting reads the tiers back. Optional — the tests and
         # the harness mount without it.
         self._index_service = index_service
+        self._motion_smoothing = motion_smoothing
         self._colour_scheme = colour_scheme
         if colour_scheme is not None:
             colour_scheme.changed.connect(self._on_colour_scheme_changed)
@@ -1504,7 +1505,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             followerShowUnretractions=self._follower_show_unretractions,
             followerAntialiasing=self._follower_antialiasing,
             followerKeepCentred=self._follower_keep_centred,
-            followerMotionSmoothing=bool(getattr(self._config(), "path_smoothing", True)),
+            followerMotionSmoothing=(bool(self._motion_smoothing()) if self._motion_smoothing is not None
+                                     else bool(getattr(self._config(), "path_smoothing", True))),
             followerSoftwareRendering=bool(getattr(self._config(), "software_follower_renderer", False)),
             followerLineScale=self._follower_line_scale,
             followerTrueThickness=self._follower_true_thickness,

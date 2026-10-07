@@ -96,7 +96,11 @@ Item {
     property real buttonSpacing: UM.Theme.getSize("default_margin").width
     property real contentWidth: 300 * screenScaleFactor
 
-    onLoadBusyChanged: loadIndicator.busy = base.loadBusy
+    onLoadBusyChanged: {
+        loadIndicator.busy = base.loadBusy;
+        updateLoadIndicatorGate();
+    }
+    onCardExpandedChanged: updateLoadIndicatorGate()
     onLoadProgressChanged: loadIndicator.progress = base.loadProgress
     onLoadPhaseChanged: loadIndicator.phase = base.loadPhase
 
@@ -113,6 +117,13 @@ Item {
     signal clearPauseAtLayersRequested
     signal replaceConfirmed
     signal replaceCancelled
+
+    function updateLoadIndicatorGate() {
+        // Column excludes hidden children entirely, including their spacing.
+        // Keep the indicator's own font-based height stable to avoid a
+        // RowLayout/implicitHeight feedback loop on Windows.
+        loadIndicator.visible = base.cardExpanded && base.loadBusy;
+    }
 
     // THE shared card content: hosted by whichever shell the presenter
     // places it in (the action-panel shell while Cura's panel exists,
@@ -148,7 +159,10 @@ Item {
         onReplaceCancelled: base.replaceCancelled()
     }
 
-    Component.onCompleted: updateCardGate()
+    Component.onCompleted: {
+        updateCardGate();
+        updateLoadIndicatorGate();
+    }
 
     // The panel shell's strip sizing reads these.
     readonly property bool panelVisible: followerPanel.visible
@@ -309,7 +323,7 @@ Item {
             // indicator's inner bindings on its own properties track.
             LoadProgressIndicator {
                 id: loadIndicator
-                visible: base.cardExpanded
+                visible: false
                 width: parent.width
             }
 
@@ -357,34 +371,6 @@ Item {
                     base.removePauseAtLayerRequested(layer);
                 }
                 onClearPauseAtLayersRequested: base.clearPauseAtLayersRequested()
-            }
-
-            // The bed-mesh display section: the shared range filter,
-            // the exaggeration and the show/hide toggle.
-            BedMeshLegend {
-                visible: base.cardExpanded
-                width: parent.width
-                spacing: base.rowSpacing
-                bedMeshAvailable: base.bedMeshAvailable
-                bedMeshVisible: base.bedMeshVisible
-                bedMeshRangeText: base.bedMeshRangeText
-                bedMeshMinimumText: base.bedMeshMinimumText
-                bedMeshMaximumText: base.bedMeshMaximumText
-                bedMeshMinimum: base.bedMeshMinimum
-                bedMeshMaximum: base.bedMeshMaximum
-                bedMeshThresholdLow: base.bedMeshThresholdLow
-                bedMeshThresholdHigh: base.bedMeshThresholdHigh
-                bedMeshExaggeration: base.bedMeshExaggeration
-                buttonSpacing: base.buttonSpacing
-                onBedMeshVisibilityRequested: function (visible) {
-                    base.bedMeshVisibilityRequested(visible);
-                }
-                onBedMeshThresholdsRequested: function (low, high) {
-                    base.bedMeshThresholdsRequested(low, high);
-                }
-                onBedMeshExaggerationRequested: function (scale) {
-                    base.bedMeshExaggerationRequested(scale);
-                }
             }
         }
     }

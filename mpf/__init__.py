@@ -19,6 +19,8 @@ def register(app):
         from .monitor.camera.MoonrakerMJPGImage import MoonrakerMJPGImage
         from .plate.GpuFollower import GpuFollower
         from .plate.GpuObjectPicker import GpuObjectPicker
+        from .toolhead.ToolheadModelPreview import ToolheadModelPreview
+        qmlRegisterType(ToolheadModelPreview, "MoonrakerPrintFollower", 1, 0, "ToolheadModelPreview")
         qmlRegisterType(GpuFollower, "MoonrakerPrintFollower", 1, 0, "GpuFollower")
         qmlRegisterType(GpuObjectPicker, "MoonrakerPrintFollower", 1, 0, "GpuObjectPicker")
         qmlRegisterType(MoonrakerMJPGImage, "MoonrakerPrintFollower", 1, 0, "MoonrakerMJPGImage")

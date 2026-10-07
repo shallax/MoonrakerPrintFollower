@@ -3937,11 +3937,19 @@ def suite_step(step):
         state = sim_http("/harness/state")["result"]
         listing = sim_http("/server/files/directory?path=gcodes&extended=true")
         gcode_size = listing["result"]["files"][0]["size"]
-        sim_http("/harness/scenario", "POST", {
+        changes = {
             "print_stats": {**state["print_stats"], "state": "printing",
                             "filename": step.get("filename", "scenario1.gcode")},
             "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True,
-                               "progress": 0.5, "file_size": gcode_size}})
+                               "progress": 0.5, "file_size": gcode_size}}
+        # Seed and hold in the same simulator transaction, before any UI wait.
+        # Slow startup must never miss a transient exact-layer assertion.
+        if "current_layer" in step:
+            changes["print_stats"]["info"] = {
+                **state["print_stats"].get("info", {}), "current_layer": step["current_layer"]}
+        if "layer_clock_interval_s" in step:
+            changes["layer_clock_interval_s"] = step["layer_clock_interval_s"]
+        sim_http("/harness/scenario", "POST", changes)
         return True, "the simulator's running job (the real gcode size)", \
             f"file_size {gcode_size}"
 

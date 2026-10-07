@@ -615,38 +615,6 @@ class CoordinatorCoverageTests(unittest.TestCase):
         return parts
 
 
-    def _refresh_cost(self, geometry, *, passthrough=False, polls=4):
-        """The coordinator's own refresh path, timed in milliseconds:
-        the cold refresh (the one walk the memo cannot remove) and the
-        steady-state refreshes after it. The payloads are built outside
-        the clock — the status copy is the session boundary's cost, not
-        the refresh's, and it would otherwise dominate both numbers
-        equally."""
-        parts = self._plate_parts()
-        real_memo = getattr(parts.coordinator, "_plate_memo", None)
-        if passthrough:
-            parts.coordinator._plate_memo = _AlwaysWalk()
-        payloads = [self._plate_status(geometry, position=4500.0 + step * 100.0,
-                                       duration=120.0 + step)
-                    for step in range(polls + 1)]
-        started = time.perf_counter()
-        parts.client.statusReceived.emit(payloads[0])
-        cold = (time.perf_counter() - started) * 1000.0
-        started = time.perf_counter()
-        for payload in payloads[1:]:
-            parts.client.statusReceived.emit(payload)
-        steady = (time.perf_counter() - started) * 1000.0 / polls
-        if passthrough:
-            parts.coordinator._plate_memo = real_memo
-        return cold, steady
-
-        # The cold path is the same walk plus one definition snapshot —
-        # its equality is pinned STRUCTURALLY by the ring-walk spy
-        # above, not by a wall-clock ratio (the cold margin flipped
-        # under gate load; a stopwatch on the first call proves
-        # nothing the spy has not already proven).
-
-
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime not available")
 class ToolheadCoverageTests(unittest.TestCase):
     def setUp(self):

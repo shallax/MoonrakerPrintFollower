@@ -62,9 +62,22 @@ class PackageSourceTests(unittest.TestCase):
 
     def test_package_is_exact_byte_for_byte_source_projection(self):
         with tempfile.TemporaryDirectory() as directory:
-            package = pathlib.Path(directory) / "candidate.curapackage"
-            build_curapackage(package)
-            verify_curapackage(package)
+            for builder, verifier, filename, prefix in (
+                (build_curapackage, verify_curapackage, "candidate.curapackage",
+                 "files/plugins/MoonrakerPrintFollower/"),
+                (build_marketplace_source, verify_marketplace_source, "candidate.zip",
+                 "MoonrakerPrintFollower/"),
+            ):
+                with self.subTest(filename=filename):
+                    package = pathlib.Path(directory) / filename
+                    builder(package)
+                    verifier(package)
+                    with zipfile.ZipFile(package) as archive:
+                        self.assertEqual(
+                            archive.read(prefix + "THIRDPARTYSOFTWARE.md"),
+                            (ROOT / "docs" / "THIRDPARTYSOFTWARE.md").read_bytes(),
+                        )
+                        self.assertFalse(any("toolhead/licences/" in name for name in archive.namelist()))
 
 
 class PackageReproducibilityTests(unittest.TestCase):

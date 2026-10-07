@@ -265,3 +265,7 @@ ifneq ($(LEG),posix)
 else
 	./tools/docker_dev.sh python3 tools/build_shaders.py $(if $(QSB),--qsb "$(QSB)",)
 endif
+
+.PHONY: test_cad_runtime
+test_cad_runtime:
+	$(PYTHON) tools/test_cad_runtime.py $(ARGS)

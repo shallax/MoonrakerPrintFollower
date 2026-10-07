@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import os
+import sys
 import time
 
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
@@ -45,6 +46,10 @@ class CuraIntegration(QObject):
         self._settle_until = 0.0
         self._writing = self._own_scene_changes = 0
         self._load_lease = None
+        self.toolhead_override = False
+        self.incidental_path_reset = False
+        self._path_reset_diagnostics = 0
+        self._path_restore_reported = False
         self._load_watch_lease = None
         self._plugin_loaded_path = None
         self._watch = QTimer(self)
@@ -243,7 +248,71 @@ class CuraIntegration(QObject):
 
     def _position_changed(self, *_args):
         if not self._writing and not self._closed:
-            self.positionChanged.emit()
+            previous = self.incidental_path_reset
+            self.incidental_path_reset = self._tool_handle_change(native_path_reset=True)
+            try:
+                self.positionChanged.emit()
+            finally:
+                self.incidental_path_reset = previous
+
+    def _tool_handle_change(self, *, native_path_reset=False):
+        """Identify native scene-reset paths or decorative root mutations.
+
+        childrenChanged reports the root, not the changed child. Until Cura
+        exposes that origin publicly, inspect only this bounded synchronous
+        call chain; never retain frames or absorb later slider events. Path
+        restoration additionally requires identical armed LayerData in the
+        follower, so it need not assume every refresh originates in a handle.
+        """
+        ToolHandle = None
+        if not native_path_reset:
+            try:
+                from UM.Scene.ToolHandle import ToolHandle
+            except ImportError:
+                return False
+        frame = sys._getframe(1)
+        decorative = scene_reset = path_reset = False
+        try:
+            for _ in range(64):
+                if frame is None:
+                    break
+                name = frame.f_code.co_name
+                if ToolHandle is not None and name in ("addChild", "removeChild"):
+                    values = frame.f_locals
+                    child = values.get("scene_node") if name == "addChild" else values.get("child")
+                    decorative |= values.get("self") is self._root and isinstance(child, ToolHandle)
+                elif name in ("_onSceneChanged", "calculateMaxPathsOnLayer"):
+                    if frame.f_locals.get("self") is self._view:
+                        scene_reset |= name == "_onSceneChanged"
+                        path_reset |= name == "calculateMaxPathsOnLayer"
+                frame = frame.f_back
+            return (scene_reset and path_reset) if native_path_reset else decorative
+        finally:
+            del frame
+
+    def report_path_reset(self, expected_path, same_layer_data):
+        """Bound unexpected endpoint-reset diagnostics for host compatibility."""
+        if self._path_reset_diagnostics >= 3:
+            return
+        self._path_reset_diagnostics += 1
+        origin = []
+        frame = sys._getframe(1)
+        try:
+            for _ in range(32):
+                if frame is None:
+                    break
+                owner = frame.f_locals.get("self")
+                origin.append("%s.%s" % (type(owner).__name__, frame.f_code.co_name))
+                frame = frame.f_back
+        finally:
+            del frame
+        Logger.log("d", "Moonraker: path reset detached; expected=%s scene_reset=%s same_layer_data=%s origin=%s",
+                   expected_path, self.incidental_path_reset, same_layer_data, " > ".join(origin))
+
+    def report_path_restored(self, expected_path):
+        if not self._path_restore_reported:
+            self._path_restore_reported = True
+            Logger.log("d", "Moonraker: restored unchanged toolpath after native scene path reset; path=%s", expected_path)
 
     def _refresh(self, *_args):
         if self._closed: return
@@ -304,6 +373,8 @@ class CuraIntegration(QObject):
 
     def _scene_changed(self, *_args):
         if self.loading or self._slicing or self._own_scene_changes or self._closed: return
+        if self._tool_handle_change():
+            return
         # Cura can still alter the scene after fileCompleted (for example
         # while finishing the G-code model). That must not erase the file
         # association that fileCompleted just confirmed. New project has
@@ -423,7 +494,7 @@ class CuraIntegration(QObject):
         self.queue(self._refresh, 260)
 
     def show_nozzle(self):
-        if self.preview_active and self._view is not None:
+        if self.preview_active and self._view is not None and not self.toolhead_override:
             keep_native_nozzle_visible(self._view)
 
     def close(self):

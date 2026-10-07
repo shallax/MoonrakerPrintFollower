@@ -3,6 +3,23 @@ import time
 from tests import monitor_test_support as harness
 
 class MonitorQtTests(harness.MonitorQtTests):
+    def test_position_mode_controls_monitor_smoothing_without_a_custom_model(self):
+        model = self.monitor()
+        self.deliver()
+        self.qt.events()
+        presentation = self.follower._runtime.presentation
+        config = self.follower.current_printer_config()
+        self.follower.apply_printer_config(harness.replace(config, path_smoothing=False))
+        presentation._set_reported_position(False)
+        model._publish()
+        self.assertTrue(model.followerMotionSmoothing)
+        self.assertTrue(self.follower.motionSmoothing())
+        self.follower.apply_printer_config(harness.replace(config, path_smoothing=True))
+        presentation._set_reported_position(True)
+        model._publish()
+        self.assertFalse(model.followerMotionSmoothing)
+        self.assertFalse(self.follower.motionSmoothing())
+
     def test_idle_camera_switch_notifies_region_bindings(self):
         config = self.follower.current_printer_config()
         self.follower.apply_printer_config(harness.replace(config, camera_url="http://printer-a/bed"))
@@ -3455,6 +3472,9 @@ Item {
             "hoverClockProxy", "root.compact",
         ))
         allowed = {
+            # User-requested setup affordance replaces absent custom-model controls.
+            "visible: root.customToolheadAvailable",
+            "visible: !root.customToolheadAvailable",
             # Preview name plates are a user-toggleable scene overlay; their
             # visibility never changes the Monitor controls' layout.
             "visible: root.dockVisible && root.tagsEnabled",
@@ -3789,6 +3809,11 @@ Item {
             "visible: root.printerModel != null && root.printerModel.fileManagerWalkError !== \"\"",
             "visible: root.printerModel != null && root.printerModel.plateSourceStatus !== \"\"",
             "visible: busy",
+            # Download actions retain a permanent row; only the optional
+            # consent/cancel buttons change opacity through visibility.
+            "visible: text.length > 0",  # Empty import status reserves no row.
+            "visible: root.model && root.model.needsDownload",
+            "visible: root.model && (root.model.busy || root.model.needsDownload)",
             "visible: root.printerModel != null && root.activeRows.length === 0",
             "visible: root.printerModel != null && (root.walkErrorText() !== \"\" || (root.printerModel.fileManagerRefreshedAt !== \"Not yet refreshed\" && root.printerModel.fileManagerEmptyKind === \"over_filtered\"))",
             "visible: root.printerModel == null || root.printerModel.fileManagerSelected > 0",

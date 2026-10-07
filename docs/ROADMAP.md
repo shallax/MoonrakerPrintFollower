@@ -10,6 +10,197 @@ Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
+## Next releases — planning update (6 October 2026)
+
+The following is roadmap scope only. It does not start implementation or add
+features to the `release/v5.2.0` branch.
+
+### 5.3.0 — Toolhead controls in Preview (final planned 5.x feature release)
+
+Add a compass for nudging the physical toolhead while looking at the Preview:
+X− / X+, Y− / Y+, and Z− / Z+, with a selectable move distance. Reuse the
+Monitor's existing toolhead controller, command policy and printer-state gates;
+the two surfaces must operate the same printer state and command queue.
+True position provides the live visual feedback, including without a toolpath.
+
+Candidate controls alongside the compass are **Home all**, **Home X**,
+**Home Y**, **Home Z**, **QGL** (quad gantry levelling), and **Bed mesh**
+(calibration). Their exact layout and inclusion will be settled when designing
+5.3.0. Availability follows the printer's capabilities and existing action
+policy. Keep calibration actions distinct from the bed-mesh display controls
+already in View Options, and retain the Monitor controls.
+
+This carries the jog-dock portion of the historical Preview proposal forward
+from 5.2.0. Speed/extrusion factors, arbitrary macros, an extra webcam thumbnail
+and other older suggestions are not automatically added to this release.
+
+### Remaining 5.x work — shared tracking already implemented
+
+The proposed move to unified physical tracking is already present in the
+5.2.0 implementation; it does not need another feature release. The coordinator
+resolves each telemetry frame once, the index service owns live motion matching,
+and an immutable `MotionProgress` in `PrintSnapshot` feeds both Preview and
+Monitor. Each view's manual scrub position and display smoothing remain
+presentation state and do not advance or replace the live physical result.
+True position deliberately uses reported machine position independently of
+matching a loaded toolpath; it must not be folded into estimated path tracking.
+See [Physical state and Preview](ARCHITECTURE.md#5-physical-state-and-preview).
+
+5.3.0 is the planned end of the 5.x feature line; 6.0.0 recovery follows it.
+Compatibility fixes and maintenance releases can still land if needed. Older
+ideas such as Preview speed/flow controls, macro descriptions and confirmed
+paused macro execution, planned filament-change waypoints, a Preview webcam
+thumbnail, accessibility marker styles and translations remain unassigned.
+Historical proposals below are not a commitment to add another 5.x release.
+
+### 6.0.0 — Resume printing from a scrubbed G-code position
+
+The intended workflow is deliberate recovery from a user-selected point in the
+Print Follower pane, including an earlier point than the printer's pause:
+
+1. Record filament run-out events from the printer's configured sensor(s),
+   tied to the exact print/file identity, sensor identity, event time and the
+   best supported G-code position. Persist those events for that print.
+2. Show a warning triangle at each run-out point in the follower's scrub view,
+   so the user can find and select it rather than guess a layer. Without run-out
+   sensors, let the user mark where they believe extrusion stopped; retain that
+   as a manual estimate rather than a sensor event.
+3. While the printer is paused, let the user load and prime new filament.
+4. From either kind of marker, suggest a suitable restart point a little earlier
+   along the toolpath to give extrusion a chance to settle before the missing
+   section. Keep the suspected run-out point distinct from the proposed restart.
+5. Let the user inspect the suggestion, adjust the selection where supported,
+   see what will be printed again, and explicitly start recovery.
+
+The goal is selection anywhere along the indexed path, not just at layer
+boundaries. Scrubbing remains inspection until the user deliberately starts
+recovery. Ordinary Resume continues to mean returning from the existing pause;
+resuming from an earlier selection is a separate operation. The existing
+physical tracker is the foundation, not a second tracking implementation.
+
+Questions to resolve during 6.0.0 design and feasibility work:
+
+- **Event accuracy:** a sensor event marks when that sensor reported run-out,
+  not necessarily when extrusion stopped at the nozzle. Account for sensor
+  location, notification delay and queued motion. Use an exact marker only
+  when supported by the evidence; otherwise show its uncertainty and allow
+  the user to adjust the recovery point. Determine what can be recovered
+  after a disconnect versus what MPF must record live.
+- **Restart lead-in:** investigate rewinding a few moves or a small distance
+  along the extrusion path before the suspected run-out point, rather than
+  assuming a primed nozzle immediately produces the intended flow. Prefer a
+  suitable path boundary where feasible; move count and path distance are
+  candidate controls, with no fixed amount chosen yet. Account for travels,
+  retractions, seams, tool changes and material already deposited so a lead-in
+  does not simply create a blob or unnecessarily repeat completed geometry.
+  Decide whether selection snaps to a suitable restart point, offers a suggested
+  point, or requires a minimum lead-in for supported cases. Show the reason,
+  rewind distance and replayed section before confirmation, and reconstruct
+  printer state at the actual restart point. Suggestions must work from both
+  sensor events and user-marked estimates; neither guarantees where flow stopped.
+- **Executable recovery points:** map a scrubbed motion, including a point
+  within a move or arc, back to the exact original G-code. Determine which
+  positions can be resumed directly and which need a generated partial move
+  or a clearly explained adjustment. A parser byte offset alone is not proof
+  that a motion has physically completed.
+- **Printer state reconstruction:** restore the coordinate/extrusion modes,
+  offsets, active tool, temperatures, fans and relevant motion settings at the
+  chosen point. Establish how printer-specific pause/resume macros, priming,
+  retractions, excluded objects and already-executed commands are handled.
+  In particular, reconstruct absolute/relative extrusion mode (`M82` / `M83`),
+  the logical E coordinate and every preceding `G92 E...` reset, including
+  per-tool state where applicable. Account for extrusion/retraction and priming
+  performed during the pause so restarting does not produce a large unintended
+  extrusion or retraction, or repeat the prime. Replaying the file's prefix is
+  not a recovery strategy.
+- **Return and replay:** plan a staged return from the prime/park position:
+  lift Z for clearance, traverse X/Y to the selected resume location, lower Z
+  slowly to the resume height, then continue the selected path. A clearance of
+  about 5 mm is a starting proposal, not a fixed rule: account for the current
+  and target heights, printed geometry and available Z travel. If sufficient
+  clearance or the descent cannot be established, explain the limitation rather
+  than blindly applying the lift. Set deliberate travel/descent speeds and
+  restore the intended print state at handover. Explain the material that will
+  be printed again and decide which printer configurations and G-code constructs
+  the first release supports.
+- **Recovery scope:** paused filament recovery is the initial use case. Decide
+  separately whether stopped jobs, a restarted printer or lost homing can be
+  supported; these are not implied by selecting an earlier scrub position.
+
+This is a user-directed print-recovery feature. The older exclusion of
+*automatic* resume from failure detection remains in force.
+
+#### Klipper feasibility notes — checked 6 October 2026
+
+These are research findings and design questions, not a tested recovery recipe.
+Source inspection used upstream Klipper commit
+`461c4e3722c3a897fba1c6b3f0780a5315043842`; recheck against supported versions
+when implementing 6.0.0.
+
+- **Seeking exists, complete recovery does not come with it.** With virtual SD,
+  Klipper provides `M26 S<offset>` and `M24`. The implementation refuses a seek
+  while the SD worker is active and changes the file position without rebuilding
+  printer state. Use exact original bytes and command boundaries; validate the
+  loaded file and paused worker before seeking. A mid-move selection needs its
+  own partial-move plan. Compare seeking the original file with generating a
+  recovery file; neither approach is selected yet.
+  [Commands](https://www.klipper3d.org/G-Codes.html#virtual_sdcard),
+  [implementation](https://github.com/Klipper3d/klipper/blob/461c4e3722c3a897fba1c6b3f0780a5315043842/klippy/extras/virtual_sdcard.py).
+- **Normal Resume returns to the old pause position.** Stock `PAUSE` saves
+  `PAUSE_STATE`; stock `RESUME` restores it with movement before restarting SD
+  execution. Moving to the chosen recovery point and then calling normal Resume
+  would undo that positioning. Design an explicit handover that reconciles
+  pause flags, file execution and user-defined PAUSE/RESUME wrappers, without
+  unexpected additional parks, primes or moves. Do not treat `M24` and `RESUME`
+  as interchangeable.
+  [Pause/resume implementation](https://github.com/Klipper3d/klipper/blob/461c4e3722c3a897fba1c6b3f0780a5315043842/klippy/extras/pause_resume.py).
+- **Saved G-code state is limited and contemporary.** `SAVE_GCODE_STATE`
+  captures parser/coordinate state, not historical checkpoints or every heater,
+  tool, mesh, fan and macro state. Restore compensates the relative E origin
+  for extrusion since the save; it does not physically reverse that extrusion.
+  Reconstruct the selected point separately. Klipper's extrusion semantics also
+  depend on `G90`/`G91`: `M83` forces relative E, while `M82` removes that override
+  rather than unconditionally forcing absolute E. Firmware retraction has its
+  own retracted-state flag; handle `G10`/`G11`, not just explicit E moves.
+  [State commands](https://www.klipper3d.org/G-Codes.html#save_gcode_state),
+  [parser](https://github.com/Klipper3d/klipper/blob/461c4e3722c3a897fba1c6b3f0780a5315043842/klippy/extras/gcode_move.py),
+  [firmware retraction](https://github.com/Klipper3d/klipper/blob/461c4e3722c3a897fba1c6b3f0780a5315043842/klippy/extras/firmware_retraction.py).
+- **Sensor status is not an exact historical G-code event log.** The documented
+  switch/motion sensor status supplies enabled/present flags, not a saved run-out
+  file offset. Capture transitions with print identity and contemporaneous
+  progress; investigate an optional printer-side event hook if closer correlation
+  is needed. Account for motion-sensor detection distance, run-out/pause delays,
+  multiple sensors and repeated events. Preserve manual estimates and explain
+  missing evidence after disconnects instead of inventing an exact marker.
+  [Status](https://www.klipper3d.org/Status_Reference.html#filament_switch_sensor),
+  [sensor configuration](https://www.klipper3d.org/Config_Reference.html#filament_switch_sensor),
+  [event handling](https://github.com/Klipper3d/klipper/blob/461c4e3722c3a897fba1c6b3f0780a5315043842/klippy/extras/filament_switch_sensor.py).
+- **Long pauses can invalidate recovery assumptions.** Klipper's default idle
+  timeout is 600 seconds and turns off heaters and motors. Check current homing,
+  temperatures and bed retention before planning the return; do not assume a
+  paused print retained them or automatically home through an existing part.
+  Preserve applicable bed mesh/offset transformations; do not add compensation
+  twice or blindly re-run QGL/mesh calibration around the print.
+  [Idle timeout](https://www.klipper3d.org/Config_Reference.html#idle_timeout),
+  [bed mesh transforms](https://www.klipper3d.org/Bed_Mesh.html#move-splitting).
+- **Macro execution has its own timing.** Klipper evaluates an entire macro
+  template before executing its generated commands. Conditions later in one
+  template cannot verify the result of an earlier generated move or heating
+  command. Use explicit phases and observed completion; `M400` is available to
+  wait for queued moves. Arbitrary macros, loops and conditional tool changes
+  may prevent trustworthy reconstruction from static G-code alone. Define
+  supported cases and refusals rather than promise universal replay.
+  [Macro evaluation](https://www.klipper3d.org/Command_Templates.html#the-printer-variable).
+
+Additional MPF design work: persist a recovery attempt and its selected point;
+prevent double submission and blind retries after an ambiguous disconnect;
+keep cancellation available during preparation; distinguish replay progress from
+original print progress; and decide how replay affects ETA, filament totals,
+object exclusions, scheduled pauses, detection and print history. Record which
+settings came from the original file versus user changes made during the pause.
+Exercise run-out, marker adjustment, lead-in, staged return, failed handover and
+repeat recovery in the simulator and controlled printer tests before release.
+
 ## 5.1.0 — Preview object banners
 
 The `release/v5.1.0` branch delivers camera-aligned object-name banners for
@@ -21,11 +212,79 @@ print supplies the needed markers and timing data. The Preview card can
 collapse to Attach/Detach and Load current print. The two panes share a bottom
 alignment and reserve space in Cura's action row.
 
-## 5.2.0 — Physical head and Preview controls (planned)
+## 5.2.0 — Actual toolhead position and custom models (validated; release via PR)
 
-The remaining Preview work moves to 5.2.0. The detailed earlier proposal
-remains below as a planning record; its old version references describe the
-decisions as originally made.
+The persistent **Enable lighting** master switch disables perimeter, attached and
+scene illumination together, retaining base colours and face paint. It disables
+the bed/model checkboxes without losing their selections. Followed normal-mode
+previews use retained native path indices and completed colour/depth to avoid
+whole-print copies and repeated geometry work; unsupported scenes retain Cura's
+native renderer. Live loaded-print testing has accepted performance as comparable
+with the custom toolhead disabled. Branch CI and the full 112-job Cura 5.7–5.13
+UI Version Sweep passed on 6 October 2026 at `8da5d38c`; the release PR and
+tag workflow retain their own full release gates.
+
+Repeated unchanged banner publications retain their absolute finish deadlines,
+avoiding delegate reconstruction on the idle handle watcher. Fixed Stealthburner
+lighting and partially printed Voron cube scenes now join the regular screenshot
+generation, repeatability checks and README gallery.
+
+View Options groups persisted toolhead visibility, position, opacity and separate bed/model illumination switches, object-name banners, and the relocated bed-mesh display controls with dividers. Lighting must remain usable on detailed G-code: retain shaded-head and additive-light images between unchanged compositions; cache static lower-layer depth and append completed top-layer depth; use compact older boundary indices for outer and hole walls; reject distant paths before tubular extrusion; and avoid native scene redraws for toolhead-only motion. The loading indicator collapses when idle.
+
+The custom toolhead section appears only with an uploaded model. Otherwise a
+setup button opens the current printer's Following settings at the upload
+controls. Turning off **Show custom toolhead model** restores Cura's native
+nozzle and disables the custom controls, preserving the user's choices.
+
+The active branch is `release/v5.2.0`, created from `origin/main` at
+`5438a722e70d3e39d4e14df699092b3709751172`.
+
+The requested release scope is:
+
+- Rename the Preview **Object banners** card to **View Options** and add
+  **True position** / **Smooth path** choice for both native and custom models. True
+  position follows `motion_report.live_position` independently of estimated
+  progress through Cura's toolpath, including without loaded G-code. Smooth
+  path requires a loaded toolpath.
+- Add a custom toolhead model picker in Following settings, with STL and
+  STEP/STP support. STEP import preserves available model colours; the
+  conversion runs locally and needs an explicitly managed CAD runtime.
+- Anchor the imported model at the centre of its lowest surface, treating
+  that location as the nozzle tip. STL is Z-up millimetres; STEP units are converted to millimetres. Models are limited to 128 MiB and one million triangles. Conversion reports its stage, elapsed time and triangle counts during mesh construction, with cancellation and no automatic time cutoff.
+- Automatic anchoring is the default. Provide a manual override for models
+  whose lowest geometry is a probe or duct: the accepted interaction is
+  surface picking in an isolated model preview, precise XYZ fields in millimetres,
+  and Reset to automatic.
+- Preserve settings drafts until Save, retain the previous working model
+  after a failed import, and keep printer bindings and render lifetimes
+  separate from physical progress tracking.
+
+Implementation uses a pinned, optional OpenCASCADE reader and independent
+CPython 3.12 helper on macOS ARM64/x86-64, Linux ARM64/x86-64 and Windows
+x86-64. Conversion runs in a disposable child process; cancellation terminates
+it. The flattened content-addressed mesh retains colours and assembly placements,
+so subsequent loads require neither the source file nor the CAD reader. All
+runtime notices and upstream source references are shipped with the plugin.
+
+Reported motion uses admitted live machine-space telemetry, freshness and XYZ
+homing checks. It is independent of the loaded file, matching and attachment.
+Smooth path enables smooth toolpath progress in both views and replaces
+the separate Smooth path progress setting. Native Cura nozzle restoration
+uses public scene/view methods. Import and alignment drafts remain transactional.
+
+The v5.1.0 macOS Preview CI failure is fixed forward: p6/p7 atomically seed
+layer 1 and hold the simulator clock before UI waits, preventing slow startup
+from skipping a transient layer. The full critic, seven-persona panel,
+re-review and fresh adversarial rounds were completed; decisions are recorded
+in the local review audit. The following older proposals are planning history,
+not additional scope for this request.
+
+### Earlier Preview controls proposal
+
+This is historical planning, superseded by the implemented 5.2.0 scope and
+the 5.3.0 / 6.0.0 plans above. In particular, Preview jogging moves to 5.3.0
+and run-out recovery markers to 6.0.0. The old version references below
+describe decisions as originally made.
 
 - Show the printer's live physical head position in Cura Preview, mapped from
   machine coordinates into the sliced scene. Include a distinct marker,
@@ -37,10 +296,11 @@ decisions as originally made.
 - Show macro descriptions and allow a macro during a paused print only after
   explicit confirmation; keep macro execution blocked while printing.
 
-The old proposal also lists exploratory ideas such as filament-change markers,
-an extra Preview camera thumbnail and per-extruder colouring. They need a new
-scope decision before entering a release. Cloud analysis, model retraining,
-multi-camera fusion and automatic cancel/resume/heater actions remain
+The old proposal also lists exploratory ideas such as planned filament/colour-
+change waypoints, an extra Preview camera thumbnail and per-extruder colouring.
+These remain unscheduled; the 6.0.0 run-out markers above concern observed sensor
+events and recovery rather than every planned colour change. Cloud analysis,
+model retraining, multi-camera fusion and automatic cancel/resume/heater actions remain
 unscheduled detection exclusions.
 
 ## 5.0.0 — local failure detection

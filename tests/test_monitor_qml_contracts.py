@@ -1369,7 +1369,9 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn("_clockTextMinutes", harness.TEMP_CHART_QML)
         # Disabled sliders grey the fill and the handle ring.
         slider_source = (harness.PLUGINS / "OutlineSlider.qml").read_text(encoding="utf-8")
-        self.assertGreaterEqual(slider_source.count("control.enabled ? UM.Theme.getColor(\"primary\") : UM.Theme.getColor(\"text_disabled\")"), 2)
+        self.assertIn('property color fillColor: UM.Theme.getColor("primary")', slider_source)
+        self.assertIn('control.enabled ? control.fillColor : UM.Theme.getColor("text_disabled")', slider_source)
+        self.assertIn('control.enabled ? UM.Theme.getColor("primary") : UM.Theme.getColor("text_disabled")', slider_source)
         # The colour/colour strings follow the user's locale.
         self.assertIn("britishSpelling", harness.MONITOR_QML + harness.TEMPERATURE_DETAIL_QML)
         self.assertIn("britishSpelling", harness.MONITOR_MODEL)

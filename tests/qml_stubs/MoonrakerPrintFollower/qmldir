@@ -3,3 +3,4 @@ MoonrakerMJPGImage 1.0 MoonrakerMJPGImage.qml
 MoonrakerMJPGImage 1.1 MoonrakerMJPGImage.qml
 GpuFollower 1.0 GpuFollower.qml
 GpuObjectPicker 1.0 GpuObjectPicker.qml
+ToolheadModelPreview 1.0 ToolheadModelPreview.qml

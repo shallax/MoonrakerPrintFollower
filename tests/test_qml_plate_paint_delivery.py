@@ -571,3 +571,37 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                          "onPainted synchronously initiated its replacement paint")
         self.assertTrue(state["pending"],
                         "the retry was consumed before the next event turn")
+
+    def test_obsolete_staging_upload_cannot_replace_committed_texture(self):
+        from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, Q_ARG, QVariant
+        monitor, window, face, baseline = self._mount_empty()
+        self._pump_ms(100)
+        epoch, world = face.property("_progressWorldEpoch"), face.property("_progressWorldKey")
+        front = face.property("_frontBuffer")
+        stage = 1 - front
+        standing = {"epoch": epoch, "world": world, "valid": True,
+                    "from": 0, "split": 6, "paintKey": "standing"}
+        face.setProperty("_deliveredComposition", standing)
+
+        def deliver(receipt):
+            face.setProperty("_canvasTransaction", {
+                "epoch": epoch, "world": world, "inFlight": True,
+                "pending": False, "count": 1, "first": receipt,
+                "last": receipt, "consensus": True})
+            face.setProperty("_paintBuffer", stage)
+            return QMetaObject.invokeMethod(face, "_deliverStagedPaint",
+                Q_RETURN_ARG(QVariant), Q_ARG(QVariant, stage))
+
+        obsolete = dict(standing, split=16, paintKey="superseded-demand")
+        self.assertFalse(deliver(obsolete))
+        self.assertEqual(face.property("_frontBuffer"), front,
+                         "the superseded upload exposed intermediate pixels")
+        receipt = face.property("_deliveredComposition")
+        self.assertEqual(receipt.toVariant() if hasattr(receipt, "toVariant") else receipt, standing)
+        self.assertTrue(face.property("_canvasTransaction").toVariant()["pending"])
+        key = QMetaObject.invokeMethod(face, "_progressKeyOf", Q_RETURN_ARG(QVariant))
+        current = dict(standing, split=10, paintKey=key)
+        self.assertTrue(deliver(current))
+        self.assertEqual(face.property("_frontBuffer"), stage)
+        receipt = face.property("_deliveredComposition")
+        self.assertEqual(receipt.toVariant() if hasattr(receipt, "toVariant") else receipt, current)

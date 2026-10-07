@@ -96,10 +96,15 @@ class PreviewFollower:
     def __init__(self, cura, motion=None):
         self._cura = cura
         self._motion = motion
+        self._reported_position = None
         self._state = PreviewState()
 
     @property
     def state(self): return self._state
+
+    def bind_position_mode(self, reported_position):
+        """Share View Options' source choice without reading UI or persistence."""
+        self._reported_position = reported_position
 
     def bind_motion(self, motion):
         """The optional Qt display driver for path smoothing (see PreviewMotion)."""
@@ -139,11 +144,19 @@ class PreviewFollower:
 
     def remember(self):
         view = self._cura.view
+        self._expected_layer_data = self._layer_data(view)
         self._state = replace(self._state,
             expected_layer=preview_current_layer(view),
             expected_minimum=preview_minimum_layer(view),
             expected_path=preview_current_path(view),
             expected_minimum_path=preview_minimum_path(view))
+
+    @staticmethod
+    def _layer_data(view):
+        try:
+            return view.getLayerData()
+        except (AttributeError, RuntimeError):
+            return None
 
     def detect_override(self):
         state, view = self._state, self._cura.view
@@ -164,10 +177,27 @@ class PreviewFollower:
             expected_path=state.expected_path, current_path=preview_current_path(view),
             expected_minimum_path=state.expected_minimum_path, current_minimum_path=preview_minimum_path(view))
         if kind:
-            # The ruling: ANY user intervention to the layer
-            # selection detaches the follower — no absorption window,
-            # no auto re-attach. A spurious detach from Cura's own
-            # restoration is the accepted cost; a missed detach is not.
+            # Native scene refreshes reset the path to its maximum, including
+            # selection changes that leave the existing LayerData untouched.
+            # Only the synchronous, proven scene-reset origin is exempt;
+            # genuine slider endpoints and all other handle changes detach.
+            if (kind == "path" and getattr(self._cura, "incidental_path_reset", False)
+                    and getattr(self, "_expected_layer_data", None) is not None
+                    and self._layer_data(view) is self._expected_layer_data
+                    and state.expected_path is not None
+                    and preview_current_path(view) == preview_max_paths(view)
+                    and preview_minimum_path(view) == state.expected_minimum_path):
+                with self._cura.writing_preview():
+                    set_preview_path(view, state.expected_path)
+                if preview_current_path(view) == state.expected_path:
+                    reporter = getattr(self._cura, "report_path_restored", None)
+                    if callable(reporter):
+                        reporter(state.expected_path)
+                    return None
+            reporter = getattr(self._cura, "report_path_reset", None)
+            if (kind == "path" and callable(reporter)
+                    and preview_current_path(view) == preview_max_paths(view)):
+                reporter(state.expected_path, self._layer_data(view) is getattr(self, "_expected_layer_data", None))
             self.attach(False)
         return kind
 
@@ -223,7 +253,8 @@ class PreviewFollower:
                 apply_preview_decision(view, decision.current_layer, decision.minimum_layer)
             if config.path_follow and decision.follow_path:
                 detail, hydration = self._follow_path(view, min(layer, maximum), index, snapshot.motion_progress,
-                    smooth=bool(getattr(config, "path_smoothing", True)))
+                    smooth=(not self._reported_position() if self._reported_position is not None
+                            else bool(getattr(config, "path_smoothing", True))))
                 self._state = replace(self._state, nozzle_valid=detail.startswith("path "))
         # Re-arm expectations only once the view has actually accepted the
         # drive. Cura can defer view writes while it hangs (e.g. recovering
@@ -376,4 +407,3 @@ class PreviewFollower:
                     clock = finish.strftime("%a %H:%M" if remaining >= 20 * 3600 else "%H:%M")
                     text = prefix + f"in {self.format_duration(remaining)} · ≈{clock}"
         self._state = replace(self._state, eta_text=text)
-

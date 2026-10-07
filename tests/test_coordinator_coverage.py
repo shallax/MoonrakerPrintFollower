@@ -1,7 +1,225 @@
 """Executable coordinator coverage contracts."""
+from unittest.mock import Mock
+
 from tests import control_owner_support as harness
 
 class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
+    def _banner_parts(self):
+        from dataclasses import replace
+        from mpf.printing.PrintState import MotionProgress
+
+        parts = self._printing(self._make())
+        parts.files.path = parts.cura.plugin_loaded_path = "/tmp/banner.gcode"
+        parts.coordinator._frame["exclude_object"] = harness._plate_geometry(count=20, vertices=4)
+        parts.index.view = harness._view(job_key=parts.files.job_key)
+        parts.index.view.physical_file_offset = lambda progress: progress.split if progress else None
+        rows = {f"OBJ_{index}": {"top": 4.0, "center": [20.0 + index, 20.0],
+                                "bounds": [10.0 + index, 10.0, 30.0 + index, 30.0],
+                                "progress": 0.5, "remaining": 40.0}
+                for index in range(20)}
+        rows["OBJ_18"]["remaining"] = 0.0
+        rows["OBJ_19"]["remaining"] = None
+        parts.index.view.object_metrics = Mock(side_effect=lambda *_args: harness.copy.deepcopy(rows))
+        parts.coordinator._snapshot = replace(parts.coordinator.snapshot, layer_eta=500.0,
+                                             motion_progress=MotionProgress(1, 2, 10))
+        return parts
+
+    def test_stationary_banner_publications_keep_deadlines_and_projected_rows(self):
+        from mpf.application import PrintCoordinator as coordinator_module
+        from mpf.preview.ObjectNameProjection import place_banners
+        from mpf.preview.PreviewPresentation import PreviewPresentation
+        from PyQt6.QtCore import QObject, QRectF
+
+        parts = self._banner_parts()
+        parts.cura.has_toolpath = parts.cura.preview_active = True
+        # Exercise the production presentation's property publication gate
+        # without a foreign QGuiApplication or the actual Cura singleton.
+        presentation = PreviewPresentation.__new__(PreviewPresentation)
+        QObject.__init__(presentation)
+        camera = harness.SimpleNamespace(projectToViewport=lambda point: point,
+            getViewportWidth=lambda: 1000, getViewportHeight=lambda: 800)
+        window = harness.SimpleNamespace(devicePixelRatio=lambda: 1.0,
+            viewportRect=QRectF(0, 0, 1, 1), width=lambda: 1000, height=lambda: 800)
+        shell = harness.SimpleNamespace(setProperty=Mock(), findChild=lambda *_args: None)
+        presentation._application = harness.SimpleNamespace(platformActivity=False, getMainWindow=lambda: window)
+        presentation._cura = harness.SimpleNamespace(preview_active=True, has_toolpath=True,
+            controller=harness.SimpleNamespace(getScene=lambda: harness.SimpleNamespace(getActiveCamera=lambda: camera)))
+        presentation._tags_shell = shell
+        presentation._panel_card = presentation._overlay_card = None
+        presentation._closed = presentation._hover_only = False
+        presentation._tags_enabled = True
+        presentation._hover_point = None
+        presentation._projected_rows = []
+        presentation._camera_projection = harness.SimpleNamespace(projector=lambda _camera: lambda point: point)
+        presentation._viewport_hover = harness.SimpleNamespace(blocked=lambda *_args: False)
+        def objects():
+            block = presentation._values
+            return [dict(row, position=row["center"], **block["objectTagMetrics"][row["name"]])
+                    for row in block["objectTagDefinitions"]], False
+        presentation._scene_objects = objects
+        clock = harness.SimpleNamespace(time=Mock(return_value=1000.0))
+        with harness.patch.object(coordinator_module, "time", clock):
+            parts.coordinator._publish()
+            first = parts.presentation.published[-1]
+            presentation._values = first
+            presentation._update_tags()
+            metrics = first["objectTagMetrics"]
+            self.assertEqual(metrics["OBJ_0"]["deadline"], 1040.0)
+            self.assertNotIn("remaining", metrics["OBJ_0"])
+            self.assertIsNone(metrics["OBJ_18"]["deadline"])
+            self.assertIsNone(metrics["OBJ_19"]["deadline"])
+            clock.time.return_value = 1010.0
+            for _ in range(50):
+                parts.coordinator._publish()
+                current = parts.presentation.published[-1]
+                self.assertIs(current["objectTagMetrics"], metrics)
+                self.assertEqual(current["objectTagDefinitions"], first["objectTagDefinitions"])
+                presentation._values = current
+                presentation._update_tags()
+            # The presentation's tagRows equality gate sees identical rows:
+            # its Repeater model is not replaced merely because time advanced.
+            def project_rows(block):
+                objects = [dict(row, position=row["center"], **block["objectTagMetrics"][row["name"]])
+                           for row in block["objectTagDefinitions"]]
+                return place_banners(objects, lambda point: (point[0] * 10, point[1] * 10), 1000, 800)
+            self.assertEqual(project_rows(first), project_rows(current))
+            self.assertEqual(parts.index.view.object_metrics.call_count, 1)
+            self.assertEqual(clock.time.call_count, 1)
+            self.assertEqual(sum(call.args[0] == "tagRows" for call in shell.setProperty.call_args_list), 1)
+
+    def test_banner_deadlines_refresh_for_progress_eta_source_and_printer_changes(self):
+        from dataclasses import replace
+        from mpf.application import PrintCoordinator as coordinator_module
+
+        parts = self._banner_parts()
+        coordinator = parts.coordinator
+        clock = harness.SimpleNamespace(time=Mock(return_value=1000.0))
+        with harness.patch.object(coordinator_module, "time", clock):
+            def publish():
+                return coordinator._object_tag_values(None, coordinator.snapshot)["objectTagMetrics"]
+            previous = publish()
+            for index, change in enumerate((
+                lambda: setattr(coordinator, "_snapshot", replace(coordinator.snapshot, layer_eta=490.0)),
+                lambda: setattr(coordinator, "_snapshot", replace(coordinator.snapshot,
+                    motion_progress=replace(coordinator.snapshot.motion_progress, split=3))),
+                lambda: coordinator._frame["exclude_object"]["objects"][0].update(center=[25.0, 20.0]),
+                lambda: coordinator._frame["exclude_object"].update(excluded_objects=["OBJ_0"]),
+                lambda: setattr(parts.binding, "identity", ("http://other-printer", "Other")),
+                lambda: setattr(coordinator, "_snapshot", replace(coordinator.snapshot, job_key=("other", 1, 2))),
+            ), start=1):
+                with self.subTest(change=index):
+                    clock.time.return_value = 1000.0 + index
+                    change()
+                    metrics = publish()
+                    self.assertIsNot(metrics, previous)
+                    self.assertEqual(metrics["OBJ_0"]["deadline"], 1040.0 + index)
+                    self.assertIs(publish(), metrics)
+                    previous = metrics
+            self.assertEqual(parts.index.view.object_metrics.call_count, 7)
+
+    def test_changed_file_job_or_matching_loaded_path_refreshes_banner_deadlines(self):
+        from mpf.application import PrintCoordinator as coordinator_module
+
+        parts = self._banner_parts()
+        clock = harness.SimpleNamespace(time=Mock(return_value=1000.0))
+        with harness.patch.object(coordinator_module, "time", clock):
+            first = parts.coordinator._object_tag_values(None, parts.coordinator.snapshot)
+            parts.files.path = parts.cura.plugin_loaded_path = "/tmp/new-banner.gcode"
+            clock.time.return_value = 1010.0
+            second = parts.coordinator._object_tag_values(None, parts.coordinator.snapshot)
+            self.assertEqual(second["objectTagMetrics"]["OBJ_0"]["deadline"], 1050.0)
+            parts.files.job_key = parts.index.view.job_key = ("new-banner.gcode", 100000, 2)
+            clock.time.return_value = 1020.0
+            third = parts.coordinator._object_tag_values(None, parts.coordinator.snapshot)
+            self.assertEqual(third["objectTagMetrics"]["OBJ_0"]["deadline"], 1060.0)
+            self.assertIsNot(first["objectTagMetrics"], third["objectTagMetrics"])
+            self.assertEqual(parts.index.view.object_metrics.call_count, 3)
+            self.assertIsNotNone(parts.coordinator._object_tag_metric_owner)
+            parts.coordinator.close()
+            self.assertIsNone(parts.coordinator._object_tag_metric_owner)
+            self.assertEqual(parts.coordinator._object_tag_metrics, {})
+
+    def test_handle_watcher_eta_recomputation_reuses_authoritative_banner_frame(self):
+        from mpf.application import PrintCoordinator as coordinator_module
+        from mpf.preview.PreviewFollower import PreviewFollower, PreviewState
+
+        parts = self._banner_parts()
+        parts.index.view.elapsed_times = (100.0, 200.0, 400.0)
+        follower = PreviewFollower(parts.cura)
+        follower._state = PreviewState(observed_layer=1, path_layer=1, path_fraction=0.3,
+                                      anchor_layer=1, anchor_duration=100.0, duration=120.0)
+        # Use the production remaining-end derivation called by the 5 Hz
+        # handle watcher, rather than a synthetic precomputed ETA value.
+        parts.preview.remaining_end = Mock(wraps=follower.remaining_end)
+        clock = harness.SimpleNamespace(time=Mock(return_value=1000.0),
+                                        monotonic=Mock(return_value=100.0))
+        with harness.patch.object(coordinator_module, "time", clock):
+            parts.coordinator._position_changed()
+            first = parts.presentation.published[-1]["objectTagMetrics"]
+            for index in range(1, 11):
+                clock.monotonic.return_value = 100.0 + index * 0.25
+                clock.time.return_value = 1000.0 + index * 0.25
+                parts.coordinator._position_changed()
+                self.assertIs(parts.presentation.published[-1]["objectTagMetrics"], first)
+            self.assertEqual(parts.preview.remaining_end.call_count, 11)
+            self.assertEqual(parts.index.view.object_metrics.call_count, 1)
+            self.assertEqual(first["OBJ_0"]["deadline"], 1040.0)
+
+    def test_paused_deadlines_hold_duration_and_resume_gets_a_new_anchor(self):
+        from dataclasses import replace
+        from mpf.application import PrintCoordinator as coordinator_module
+
+        parts = self._banner_parts()
+        coordinator = parts.coordinator
+        clock = harness.SimpleNamespace(time=Mock(return_value=1000.0))
+        with harness.patch.object(coordinator_module, "time", clock):
+            def deadline():
+                return coordinator._object_tag_values(None, coordinator.snapshot)["objectTagMetrics"]["OBJ_0"]["deadline"]
+            self.assertEqual(deadline(), 1040.0)
+            coordinator._snapshot = replace(coordinator.snapshot,
+                observation=replace(coordinator.snapshot.observation, state="paused"))
+            for now in (1010.0, 1020.0):
+                clock.time.return_value = now
+                self.assertEqual(deadline() - now, 40.0)
+            coordinator._snapshot = replace(coordinator.snapshot,
+                observation=replace(coordinator.snapshot.observation, state="printing"))
+            clock.time.return_value = 1030.0
+            self.assertEqual(deadline(), 1070.0)
+            clock.time.return_value = 1040.0
+            self.assertEqual(deadline(), 1070.0)
+            self.assertEqual(parts.index.view.object_metrics.call_count, 4)
+
+    def test_banner_deadline_owner_changes_and_source_loss_release_the_previous_frame(self):
+        from mpf.application import PrintCoordinator as coordinator_module
+
+        parts = self._banner_parts()
+        coordinator = parts.coordinator
+        clock = harness.SimpleNamespace(time=Mock(return_value=1000.0))
+        with harness.patch.object(coordinator_module, "time", clock):
+            def publish():
+                return coordinator._object_tag_values(None, coordinator.snapshot)["objectTagMetrics"]
+            first = publish()
+            old_view = parts.index.view
+            replacement = harness.copy.copy(old_view)
+            parts.index.view = replacement
+            clock.time.return_value = 1010.0
+            self.assertEqual(publish()["OBJ_0"]["deadline"], 1050.0)
+            replacement.job_key = ("wrong", 0, 0)
+            self.assertEqual(publish(), {})
+            self.assertIsNone(coordinator._object_tag_metric_owner)
+            replacement.job_key = parts.files.job_key
+            parts.cura.plugin_loaded_path = "/tmp/different.gcode"
+            self.assertEqual(publish(), {})
+            parts.cura.plugin_loaded_path = parts.files.path
+            clock.time.return_value = 1020.0
+            self.assertEqual(publish()["OBJ_0"]["deadline"], 1060.0)
+            self.assertEqual(first["OBJ_0"]["deadline"], 1040.0)
+            coordinator.reset_binding()
+            self.assertIsNone(coordinator._object_tag_metric_owner)
+            self.assertEqual(coordinator._object_tag_metrics, {})
+            coordinator.close()
+            self.assertIsNone(coordinator._object_tag_metric_owner)
+
     def test_object_tag_sources_join_unique_case_variants_without_extra_banners(self):
         from mpf.application.PrintCoordinator import _merge_object_tag_definitions
 
@@ -698,24 +916,27 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
             self.assertEqual(len(calls), cold + 4,
                              "the restarted job reused the previous definition")
 
-    def test_the_memoised_refresh_costs_a_fraction_of_the_re_walk(self):
-        # The same refresh path both ways: with the pre-fix call site (a
-        # stand-in that normalises every poll) and with the memo. The
-        # structural assertion lives in the ring-walk spy above; this
-        # one pins the ORDER of the win, with a margin wide enough that
-        # no plausible machine inverts it. The pre-fix cost is the
-        # review's own: ~14 ms a poll at this geometry against a 750 ms
-        # cadence, paid on the owner thread.
+    def test_the_memoised_refresh_skips_ring_work_with_identical_output(self):
+        # Compare the real refresh paths rather than wall-clock ratios:
+        # shared runners can pause either measurement independently.
+        # The cache must remove repeated polygon processing while serving
+        # exactly the rows the uncached implementation would produce.
         geometry = harness._plate_geometry(80, 300)
-        raw_cold, raw_steady = self._refresh_cost(geometry, passthrough=True)
-        memo_cold, memo_steady = self._refresh_cost(geometry)
-        print("plate projection per refresh (80 x 300): "
-              "re-walk cold %.2f ms steady %.2f ms; "
-              "memoised cold %.2f ms steady %.2f ms"
-              % (raw_cold, raw_steady, memo_cold, memo_steady))
-        self.assertLess(memo_steady, raw_steady * 0.25,
-                        "the memoised refresh cost %.2f ms against the re-walk's %.2f ms"
-                        % (memo_steady, raw_steady))
+        raw = self._plate_parts()
+        raw.coordinator._plate_memo = harness._AlwaysWalk()
+        memo = self._plate_parts()
+        for step in range(5):
+            kwargs = {"position": 4500.0 + step * 100.0, "duration": 120.0 + step}
+            calls, spy = harness._normalisation_spy()
+            with spy:
+                self._plate_poll(raw, geometry, **kwargs)
+            self.assertGreaterEqual(len(calls), 80)
+            calls, spy = harness._normalisation_spy()
+            with spy:
+                self._plate_poll(memo, geometry, **kwargs)
+            self.assertEqual(len(calls), 80 if step == 0 else 0)
+            self.assertEqual(memo.index.plate_visited_rows[-1],
+                             raw.index.plate_visited_rows[-1])
 
     def test_a_missing_or_invalid_file_position_resolves_to_none(self):
         # Missing, null and non-numeric fields all resolve to None —

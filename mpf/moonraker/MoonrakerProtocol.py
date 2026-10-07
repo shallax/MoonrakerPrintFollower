@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import math
 from typing import Any, Dict, Optional
@@ -40,7 +41,7 @@ class RemoteFileIdentity:
 # roughly one object in six. The aux lane keeps the object too — the
 # per-job polygons ride it (websocket: the all-fields subscription;
 # HTTP: the aux poll), so the name is intentionally on both lanes.
-CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh", "pause_resume", "exclude_object")
+CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", "toolhead", "bed_mesh", "pause_resume", "exclude_object")
 
 
 def _secure_scheme(scheme: str) -> bool:
@@ -245,8 +246,8 @@ def parse_file_identity(filename: str, payload: Dict[str, Any], fallback_size: i
 
 
 def motion_live_position(status: Dict[str, Any]) -> Optional[tuple[float, float, float, float]]:
-    report = status.get("motion_report") if isinstance(status, dict) else None
-    if not isinstance(report, dict):
+    report = status.get("motion_report") if isinstance(status, Mapping) else None
+    if not isinstance(report, Mapping):
         return None
     raw = report.get("live_position")
     if not isinstance(raw, (list, tuple)) or len(raw) < 4:
@@ -271,12 +272,12 @@ def live_position_in_gcode_space(
     endpoint. ``homing_origin`` is a compatibility fallback when the pair is
     absent. ``axis_map`` is honoured for extended coordinate vectors.
     """
-    if not isinstance(motion_report, dict):
+    if not isinstance(motion_report, Mapping):
         return None
     raw = motion_report.get("live_position")
     if not isinstance(raw, (list, tuple)):
         return None
-    move = gcode_move if isinstance(gcode_move, dict) else {}
+    move = gcode_move if isinstance(gcode_move, Mapping) else {}
     queued = move.get("position")
     gcode = move.get("gcode_position")
     paired = isinstance(queued, (list, tuple)) and isinstance(gcode, (list, tuple))
@@ -284,7 +285,7 @@ def live_position_in_gcode_space(
     if not isinstance(origin, (list, tuple)):
         origin = ()
     axis_map = move.get("axis_map")
-    if not isinstance(axis_map, dict):
+    if not isinstance(axis_map, Mapping):
         axis_map = {}
 
     result = []

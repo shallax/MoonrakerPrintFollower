@@ -91,6 +91,89 @@ class BannerPlacementTests(unittest.TestCase):
 
 
 class BannerHostTests(harness.RealEngineTestCase):
+    def test_custom_section_disappears_and_reflows_without_uploaded_model(self):
+        host, window = self.mount_window("PreviewObjectTagsHost.qml", 1000, 1000)
+        host.setProperty("dockVisible", True)
+        host.setProperty("controlsExpanded", True)
+        show = self.find(host, "moonrakerShowToolhead")
+        controls = self.find(host, "moonrakerToolheadControls")
+        column = self.find(host, "moonrakerPreviewObjectTagsControls")
+
+        def layout_ready(_):
+            children = [child for child in column.childItems()
+                        if child.isVisible() and child.height() > 0]
+            height = sum(child.height() for child in children)
+            height += column.property("spacing") * max(0, len(children) - 1)
+            return abs(column.height() - height) < .01
+
+        # Visibility changes schedule a later Column polish on macOS.
+        self._wait_until(window, layout_ready, timeout=3.0)
+        self.assertTrue(layout_ready(None), "initial View Options layout did not settle")
+        compact_height = column.property("height")
+        self.assertFalse(show.property("visible"))
+        self.assertFalse(controls.property("visible"))
+        self.assertTrue(self.find(host, "moonrakerReportedToolheadPosition").property("visible"))
+        self.assertTrue(self.find(host, "moonrakerReportedToolheadPosition").property("enabled"))
+        self.assertTrue(self.find(host, "moonrakerEstimatedToolheadPosition").property("visible"))
+        self.assertEqual(show.property("text"), "Show custom toolhead model")
+        host.setProperty("customToolheadAvailable", True)
+        self._wait_until(window, lambda image: layout_ready(image)
+                         and column.height() > compact_height + 100, timeout=3.0)
+        self.assertTrue(show.property("visible"))
+        self.assertTrue(controls.property("visible"))
+        self.assertGreater(column.property("height"), compact_height + 100)
+        host.setProperty("customToolheadAvailable", False)
+        self._wait_until(window, lambda image: layout_ready(image)
+                         and column.height() == compact_height, timeout=3.0)
+        self.assertEqual(column.property("height"), compact_height)
+        self.assertTrue(self.find(host, "moonrakerPreviewObjectTagsEnabled").property("visible"))
+
+    def test_toolhead_visibility_disables_only_toolhead_controls_and_preserves_preferences(self):
+        host = self.mount("PreviewObjectTagsHost.qml")
+        host.setProperty("reportedPosition", True)
+        host.setProperty("toolheadOpacity", .6)
+        host.setProperty("projectionAvailable", True)
+        host.setProperty("tagsEnabled", True)
+        host.setProperty("estimatedPositionAvailable", False)
+        self.pump(10)
+        show = self.find(host, "moonrakerShowToolhead")
+        controls = [self.find(host, name) for name in (
+            "moonrakerToolheadOpacity", "moonrakerLightBed", "moonrakerLightModels")]
+        reported = self.find(host, "moonrakerReportedToolheadPosition")
+        estimated = self.find(host, "moonrakerEstimatedToolheadPosition")
+        self.assertTrue(show.property("enabled"))
+        self.assertTrue(reported.property("enabled"))
+        self.assertFalse(estimated.property("enabled"))
+        host.setProperty("toolheadVisible", False)
+        host.setProperty("estimatedPositionAvailable", True)
+        self.pump(10)
+        self.assertTrue(show.property("enabled"))
+        self.assertTrue(all(not control.property("enabled") for control in controls))
+        self.assertTrue(reported.property("enabled"))
+        self.assertTrue(estimated.property("enabled"))
+        self.assertTrue(self.find(host, "moonrakerPreviewObjectTagsEnabled").property("enabled"))
+        self.assertTrue(host.property("reportedPosition"))
+        self.assertAlmostEqual(host.property("toolheadOpacity"), .6)
+        host.setProperty("toolheadVisible", True)
+        self.pump(10)
+        self.assertTrue(all(control.property("enabled") for control in controls))
+        self.assertGreater(self.find(host, "moonrakerViewOptionsDivider").property("height"), 0)
+
+    def test_bed_mesh_is_a_separate_enabled_view_options_section(self):
+        host = self.mount("PreviewObjectTagsHost.qml")
+        host.setProperty("controlsExpanded", True)
+        host.setProperty("bedMeshAvailable", True)
+        host.setProperty("toolheadVisible", False)
+        self.pump(10)
+        section = self.find(host, "moonrakerViewOptionsBedMesh")
+        self.assertTrue(section.property("enabled"))
+        self.assertTrue(section.property("bedMeshAvailable"))
+        self.assertGreater(self.find(host, "moonrakerBedMeshDivider").property("height"), 0)
+        card = self.mount("MoonrakerPreviewCard.qml")
+        from PyQt6.QtQuick import QQuickItem
+        self.assertFalse(any(child.metaObject().className().startswith("BedMeshLegend")
+                             for child in card.findChildren(QQuickItem)))
+
     def test_hover_only_tooltip_explains_why_the_option_is_disabled(self):
         host = self.mount("PreviewObjectTagsHost.qml")
         tooltip = self.find(host, "moonrakerPreviewObjectTagsHoverOnlyTooltip")
@@ -112,6 +195,84 @@ class BannerHostTests(harness.RealEngineTestCase):
         self.pump(10)
         self.assertEqual(tooltip.property("text"),
                          "This Cura version does not provide camera projection to plugins.")
+
+    def test_lighting_checkbox_indicators_restore_identical_enabled_colours(self):
+        from PyQt6.QtCore import QPoint
+        from PyQt6.QtTest import QTest
+
+        host = self.mount("PreviewObjectTagsHost.qml")
+        window = harness.QQuickWindow()
+        window.resize(1400, 1000)
+        self.addCleanup(window.deleteLater)
+        host.setParentItem(window.contentItem())
+        host.setProperty("dockVisible", True)
+        host.setProperty("controlsExpanded", True)
+        window.show()
+        bed = self.find(host, "moonrakerLightBed")
+        models = self.find(host, "moonrakerLightModels")
+        self.pump(20)
+        def background(control):
+            return control.property("indicator").property("color").name()
+        expected = background(bed)
+        position = models.mapToScene(harness.QPointF(models.width() / 2, models.height() / 2))
+        for hovered in (True, False, True):
+            QTest.mouseMove(window, QPoint(round(position.x()), round(position.y())) if hovered else QPoint(2, 2))
+            host.setProperty("lightingEnabled", False)
+            self._pump_ms(100)
+            host.setProperty("lightingEnabled", True)
+            self._wait_until(window, lambda _: background(models) == expected and background(bed) == expected,
+                             timeout=3.0)
+            self.assertTrue(models.property("enabled"))
+            self.assertEqual(background(models), expected)
+            self.assertEqual(background(bed), expected)
+        host.setProperty("toolheadVisible", False)
+        self._pump_ms(100)
+        self.assertEqual(background(models), background(bed))
+        self.assertNotEqual(background(models), expected)
+        host.setProperty("toolheadVisible", True)
+        self._wait_until(window, lambda _: background(models) == expected, timeout=3.0)
+        self.assertEqual(background(models), expected)
+
+    def test_view_options_reservation_keeps_native_extension_chain_clear(self):
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtQml import QQmlComponent
+
+        component = QQmlComponent(self.engine)
+        component.setData(b'import QtQuick 2.15; Row { spacing: 8; Rectangle { objectName: "modifier"; width: 36; height: 36 } }', QUrl())
+        row = component.create()
+        self.assertIsNotNone(row, harness.qml_error_report(component))
+        self.addCleanup(row.deleteLater)
+        window = harness.QQuickWindow()
+        window.resize(2400, 1000)
+        self.addCleanup(window.deleteLater)
+        row.setParentItem(window.contentItem())
+        panel = self.mount("MoonrakerPreviewCardPanelHost.qml")
+        panel.setParentItem(row)
+        card = self.find(panel, "moonrakerPreviewCard")
+        card.setProperty("gateVisible", True)
+        tags = self.mount("PreviewObjectTagsHost.qml")
+        tags.setParentItem(window.contentItem())
+        tags.setProperty("dockVisible", True)
+        window.show()
+        modifier = self.find(row, "modifier")
+        dock = self.find(tags, "moonrakerPreviewObjectTagsDock")
+        for expanded in (False, True):
+            card.setProperty("cardExpanded", expanded)
+            self.pump(20)
+            row.setX(2300 - row.width())
+            row.setY(800 - row.height())
+            self.pump(20)
+            left = card.mapToScene(harness.QPointF(0, 0)).x()
+            bottom = card.mapToScene(harness.QPointF(0, card.height())).y()
+            tags.setProperty("previewCardLeft", left)
+            tags.setProperty("previewCardBottom", bottom)
+            tags.setProperty("controlsExpanded", expanded)
+            self.pump(20)
+            modifier_right = modifier.mapToScene(harness.QPointF(modifier.width(), 0)).x()
+            self.assertLessEqual(modifier_right + row.property("spacing"), dock.x())
+            self.assertAlmostEqual(dock.x() + dock.width() + panel.property("bannerGap"), left, delta=1)
+            self.assertAlmostEqual(dock.width(), panel.property("bannerWidth"), delta=1)
+            self.assertAlmostEqual(dock.y() + dock.height(), bottom, delta=1)
 
     def test_bottom_bar_expands_upward_when_its_handle_is_clicked(self):
         from PyQt6.QtCore import QPoint, Qt
@@ -145,6 +306,24 @@ class BannerHostTests(harness.RealEngineTestCase):
                                padding, delta=1)
         self.assertAlmostEqual(dock.height() - controls.mapToItem(
             dock, harness.QPointF(0, controls.implicitHeight())).y(), padding, delta=1)
+
+    def test_hidden_banner_countdowns_sleep_and_refresh_when_rows_return(self):
+        host = self.mount("PreviewObjectTagsHost.qml")
+        host.setProperty("dockVisible", True)
+        host.setProperty("tagsEnabled", True)
+        clock = host.findChild(harness.QObject, "moonrakerBannerCountdown")
+        self.assertIsNotNone(clock)
+        self.assertFalse(clock.property("running"))
+        host.setProperty("etaNow", 0.)
+        host.setProperty("tagRows", [{"name": "Part", "nodeId": 1,
+            "anchorX": 20, "anchorY": 20, "labelX": 20, "labelY": 20,
+            "labelWidth": 90, "labelHeight": 44, "progress": .5, "deadline": time.time() + 60}])
+        self.pump(3)
+        self.assertTrue(clock.property("running"))
+        self.assertGreater(host.property("etaNow"), time.time() - 5)
+        host.setProperty("tagRows", [])
+        self.pump(3)
+        self.assertFalse(clock.property("running"))
 
     def test_controls_and_hover_mode_render(self):
         host = self.mount("PreviewObjectTagsHost.qml")

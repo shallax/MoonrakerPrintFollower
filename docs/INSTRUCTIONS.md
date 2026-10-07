@@ -141,6 +141,16 @@ are visible; a Python 3.14 patch release difference is acceptable.
   the driver's evidence rectangles are desktop-relative. The macOS
   available-desktop fit moves the content below the menu/title bars,
   so assuming a window origin of (0, 0) misses controls and drag handles.
+- The toolhead showcase is part of the same capture commands, through
+  `tools/capture_toolhead.py`. Its attributed model, cube, and exact saved light
+  configuration live in `tests/fixtures/toolhead/showcase/`; generation never
+  reads a developer's Cura settings. It compiles the production GLSL with
+  ModernGL 5.12.0/glcontext 3.0.0 (development dependencies only). Linux uses
+  the pinned Mesa EGL rasteriser; Windows CI provides Mesa through MSYS2 and
+  `GLCONTEXT_WIN_LIBGL`; those Windows captures select LLVMpipe rather than
+  the headless runner's D3D12 adapter. Native GPU captures remain smoke evidence.
+  Both new images participate in `make generate_screenshots` and
+  `make verify_captures`; only amd64 container output goes in `screenshots/`.
 - Deterministic captures: the harness freezes EVERY live input the
   scenes render — the formatter's wall clock is patched to a fixed
   instant (`FrozenDatetime`, patching every module object loaded from
@@ -249,7 +259,11 @@ What differs on this leg, and why:
   `make generate_screenshots` renders `dist/screenshots` for a look;
   it does not copy into `screenshots/`, because the CI sync job
   compares against renders made with the container's pinned fonts.
-  `make verify_captures` (two runs, byte-compared) does work natively.
+  `make verify_captures` does work natively. UI captures remain byte-exact.
+  Only the two native 3D toolhead showcase images allow at most 16 changed
+  pixels, each differing by no more than one 8-bit RGB level, with fully
+  opaque alpha. This bounds native OpenGL rounding without accepting holes
+  or geometry changes. Canonical Linux captures remain byte-exact.
 - **`make ui_test MODE=suite` and `make ui_release_gate` use the native
   desktop harness.** They stage Cura, the plugin and the driver, then
   invoke `tests/harness/runner.py` using the harness environment (see
@@ -315,6 +329,9 @@ needed. This is the same distinction as the Windows native leg.
 `make ui_release_gate` use the native real-Cura harness through the
 same targets as the other hosts (see TESTING.md). They need an
 interactive desktop session and are separate from `make all`.
+The macOS harness replaces Cura and deletes/reseeds its user profile;
+run it only on a disposable test host. Outside GitHub Actions,
+`HARNESS_DISPOSABLE_HOST=1` is required before it can make those changes.
 
 ## Repo hygiene — the standing rule on addresses
 
@@ -873,7 +890,9 @@ real-Qt tests (PyQt6 6.11.0). The release workflow on tag push additionally
 builds reproducible archives and verifies source/package byte parity and the
 Marketplace layout. Its reusable CI runs the artifact scan despite the tag's
 intentionally skipped lint job, then requires the package, scan and full Cura
-gate to succeed before publication; a skipped gate fails the release.
+gate and the native CAD conversion matrix to succeed before publication; a
+skipped required check fails the release. The CAD matrix runs on tags even
+though lint is intentionally skipped.
 Before tagging, run the smoke checks the harness cannot
 cover (the full matrix from the panel round, restored after a
 transcription drift):
@@ -971,6 +990,18 @@ an explicit diagnostic override with a recorded reason. A responsive QML
 tree or internal grab is not proof of current WindowServer pixels. These
 software-rendered CI recordings are evidence of the UI, not physical-Mac
 GPU performance. See TESTING.md for the capture contract and investigation.
+
+The still-frame check compares each sampled picture with both its predecessor
+and the first picture of its candidate static span. Adjacent similarity alone
+can chain gradual card/slider motion into a false freeze. Keep the one-level
+grey tolerance, 60-second floor, 35% share and driven-input requirement; encoder
+dither stays tolerated and genuine frozen recordings still fail.
+
+The toolhead restoration probe must check that the plugin releases both its
+override flag and native suppression owner. Normal SimulationView also requires
+the native nozzle under the current scene root. Cura's OpenGL compatibility mode
+deliberately omits that nozzle; record the mode and ownership diagnostics rather
+than requiring a node that Cura itself does not render there.
 
 For a single native scenario diagnosis, dispatch `leg.yml` with its exact
 scenario ID as `group` (for example `b12`) and `mode=suite`. This uses the

@@ -300,7 +300,9 @@ class QtRuntimeTests(harness.QtRuntimeTests):
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
         follower.apply_printer_config(config_type(url="http://printer-a", feed_mode="http"))
-        follower.client.statusReceived.emit({"print_stats": {"state": "printing", "filename": "same.gcode"}, "virtual_sdcard": {"file_size": 100}})
+        follower.client.admit_status({"print_stats": {"state": "printing", "filename": "same.gcode"}, "virtual_sdcard": {"file_size": 100}},
+            origin="sync", stamp=harness.time.monotonic(), generation=follower.client._generation)
+        self.assertEqual(follower.print_state.observation.filename, "same.gcode")
         follower._runtime.pauses.toggle(4, 0, 10)
         generation = follower._runtime.cura.generation
         follower.apply_printer_config(config_type(url="http://printer-b", feed_mode="http"))
@@ -328,8 +330,9 @@ class QtRuntimeTests(harness.QtRuntimeTests):
         app.controller.view = harness.SimpleNamespace(getActivity=lambda: True, getLayerData=lambda: object())
         app.controller.activeViewChanged.emit()
         self.qt.events()
-        follower.client.statusReceived.emit({"print_stats": {"state": "printing", "filename": "part.gcode",
-            "info": {"current_layer": 2}}, "virtual_sdcard": {"file_size": 100}})
+        follower.client.admit_status({"print_stats": {"state": "printing", "filename": "part.gcode",
+            "info": {"current_layer": 2}}, "virtual_sdcard": {"file_size": 100}},
+            origin="sync", stamp=harness.time.monotonic(), generation=follower.client._generation)
         self.assertEqual(follower.print_state.observation.filename, "part.gcode")
         self.assertTrue(any(r.channel == "metadata" for r in transport.requests))
 
@@ -340,8 +343,10 @@ class QtRuntimeTests(harness.QtRuntimeTests):
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
         follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, feed_mode="http"))
-        follower.client.statusReceived.emit({"print_stats": {"state": "printing", "filename": "part.gcode",
-            "info": {"current_layer": 2}}, "virtual_sdcard": {"file_size": 100}})
+        follower.client.admit_status({"print_stats": {"state": "printing", "filename": "part.gcode",
+            "info": {"current_layer": 2}}, "virtual_sdcard": {"file_size": 100}},
+            origin="sync", stamp=harness.time.monotonic(), generation=follower.client._generation)
+        self.assertEqual(follower.print_state.observation.filename, "part.gcode")
         self.assertFalse(any(r.channel == "metadata" for r in transport.requests))
 
     def test_stale_index_completion_does_not_install_into_new_job(self):
@@ -1247,5 +1252,4 @@ class QtRuntimeTests(harness.QtRuntimeTests):
         # Only the user (or a view swap while attached) re-attaches.
         preview.attach(True)
         self.assertTrue(preview.state.attached)
-
 

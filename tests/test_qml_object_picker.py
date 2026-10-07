@@ -473,28 +473,29 @@ class PlateCanvasHitTests(harness.PlateCanvasHitTests):
         self.assertIsNone(canvas.property("_plot"),
                           "the map plotted with no printer attached")
 
-        # The late attach, dimensions and all. The threaded raster
-        # needs wall-clock pumping before the grab can see it.
+        # Wait for the threaded raster's delivered ink, not a fixed delay.
         printer = harness.LateBedDouble()
         self._bed_printer = printer
         printer.setBed(250.0, 250.0)
         document.setProperty("printerModel", printer)
-        self._pump_ms(200)
+        self.pump(10)
         plot = canvas.property("_plot")
         self.assertIsNotNone(plot, "the late attach never built the mapping")
         self.assertEqual(self._bed_rect(canvas), (0.0, 250.0, 0.0, 250.0))
-        plotted = window.grabWindow()
+        plotted = self._wait_until(window, lambda image: not image.isNull()
+                                   and self._ink_count(image) > 0, timeout=3.0)
         self.assertGreater(self._ink_count(plotted), 0,
                            "the late attach never reached the canvas")
 
         # A bed switch: the same canvas, the new machine's rectangle,
         # and the raster repainted with it.
         printer.setBed(300.0, 200.0)
-        self._pump_ms(200)
+        self.pump(10)
         plot = canvas.property("_plot")
         self.assertIsNotNone(plot, "the bed switch dropped the mapping")
         self.assertEqual(self._bed_rect(canvas), (0.0, 300.0, 0.0, 200.0))
-        switched = window.grabWindow()
+        switched = self._wait_until(window, lambda image: not image.isNull()
+                                    and image != plotted, timeout=3.0)
         self.assertEqual(switched.size(), plotted.size())
         self.assertNotEqual(switched, plotted,
                             "the map never repainted for the bed switch")

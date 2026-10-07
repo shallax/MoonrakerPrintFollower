@@ -153,6 +153,9 @@ class PipeSafeHandler(BaseHTTPRequestHandler):
 
 @contextmanager
 def runtime():
+    # Native extension modules must load before the sys.modules snapshot
+    # used to isolate each fake host; NumPy cannot be reinitialised.
+    import numpy  # noqa: F401
     from PyQt6.QtCore import QCoreApplication, QEventLoop, QObject, QTimer, pyqtProperty, pyqtSignal
 
     app = QCoreApplication.instance() or QCoreApplication([])
@@ -441,5 +444,4 @@ def runtime():
         # context unwinds (a late prepared-store flush): the scratch
         # dir's teardown must never fail the suite on it.
         shutil.rmtree(cache, ignore_errors=True)
-
 

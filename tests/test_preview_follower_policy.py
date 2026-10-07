@@ -318,6 +318,17 @@ class FollowerPathTests(harness.FollowerPathTests):
         self.run_path(config=config, motion=motion)
         self.assertEqual([500.0], self.view.paths, "a sub-half-path move is not rewritten")
 
+    def test_position_modes_override_the_retired_smoothing_setting(self):
+        motion = harness.MotionTrace()
+        self.follower.bind_position_mode(lambda: False)
+        self.run_path(config=harness.preview_config(path_follow=True, path_smoothing=False), motion=motion)
+        self.assertEqual([(3, 0.5, "byte-range")], motion.writes)
+        self.assertEqual([], self.view.paths)
+        self.follower.bind_position_mode(lambda: True)
+        self.run_path(config=harness.preview_config(path_follow=True, path_smoothing=True), motion=motion)
+        self.assertEqual([500.0], self.view.paths)
+        self.assertGreater(motion.reset_calls, 0)
+
     def test_a_real_path_write_arms_the_nozzle_indicator(self):
         self.run_path(config=harness.preview_config(path_follow=True, show_toolhead_indicator=True))
         self.assertTrue(self.follower.state.nozzle_valid)

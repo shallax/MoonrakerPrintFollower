@@ -409,6 +409,11 @@ SETTINGS_PROBE = (
     "    result[\"walk_error\"] = repr(exc)\n"
     "with open(" + _scratch("settings_probe.json") + ", 'w') as f:\n"
     "    _json.dump(result, f)\n"
+    # Keep the full tree in the diagnostic file, not the driver's bounded
+    # RPC response. New controls can legitimately grow the dump beyond 4 KB.
+    "result[\"config_item_count\"] = len(result.pop(\"config_items\"))\n"
+    "result[\"action_count\"] = len(result.pop(\"actions\"))\n"
+    "result[\"dump\"] = " + _scratch("settings_probe.json") + "\n"
     "result")
 
 
@@ -1378,7 +1383,7 @@ for extension in app.getExtensions():
     if "MoonrakerPrintFollower" in type(extension).__name__:
         rt = extension._runtime
         state = rt.preview._state
-        result["ready"] = bool(state.attached and rt.binding.config.path_smoothing and rt.preview._motion is not None and view is not None and hasattr(view, "getLayerData") and view.getLayerData() is not None and view.getMaxLayers() == 2)
+        result["ready"] = bool(state.attached and not rt.presentation.reported_position and rt.preview._motion is not None and view is not None and hasattr(view, "getLayerData") and view.getLayerData() is not None and view.getMaxLayers() == 2)
         result["layer"] = state.expected_layer
         result["path"] = state.expected_path
         result["moving"] = bool(result["ready"] and state.expected_path is not None and state.expected_path > 0 and view.getCurrentLayer() == state.expected_layer)

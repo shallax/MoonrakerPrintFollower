@@ -26,6 +26,7 @@ Slider {
     // slider after the submit's rebuild (one LED row holds five).
     property string controlObject: ""
     property string controlKind: ""
+    property color fillColor: UM.Theme.getColor("primary")
     property bool tuningActive: false
     readonly property bool interacting: pressed || tuningActive
     // The focus contract: a model refresh can disable the slider
@@ -211,7 +212,7 @@ Slider {
             width: Math.max(0, control.visualPosition) * (parent.width - 4 * screenScaleFactor)
             // Disabled sliders grey out (the live report):
             // the stock dimming does not reach a custom-styled fill.
-            color: control.enabled ? UM.Theme.getColor("primary") : UM.Theme.getColor("text_disabled")
+            color: control.enabled ? control.fillColor : UM.Theme.getColor("text_disabled")
             radius: Math.min(UM.Theme.getSize("progressbar_radius").width, height / 2)
             cornerSide: Cura.RoundedRectangle.Direction.All
         }
