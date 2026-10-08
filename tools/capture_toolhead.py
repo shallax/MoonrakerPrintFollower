@@ -201,7 +201,7 @@ def render_receivers(bed, paths, shader):
 
 def capture_sample_scale(renderer):
     # Apple's software MSAA can shade a tube-facet boundary inconsistently.
-    # Four fixed supersamples retain its good frame without changing tolerances.
+    # Four fixed floating samples resolve once on CPU, without driver rounding.
     return 2 if renderer == "Apple Software Renderer" else 1
 
 
@@ -210,8 +210,46 @@ def resolve_capture_samples(raw, scale):
         return raw
     if scale != 2:
         raise ValueError("Unsupported capture sample scale")
-    samples = np.frombuffer(raw, dtype=np.uint8).reshape(SIZE[1], 2, SIZE[0], 2, 4)
-    return ((samples.sum((1, 3), dtype=np.uint16) + 2) // 4).astype(np.uint8).tobytes()
+    samples = np.frombuffer(raw, dtype=np.float32).reshape(SIZE[1], 2, SIZE[0], 2, 4)
+    if not np.isfinite(samples).all():
+        raise ValueError("Nonfinite capture samples")
+    # RGBA8 clamps each sample before resolving. Preserve that operation, with
+    # one explicitly rounded final conversion instead of four driver conversions.
+    averaged = np.clip(samples, 0.0, 1.0).mean((1, 3), dtype=np.float64)
+    return np.floor(averaged * 255.0 + 0.5).astype(np.uint8).tobytes()
+
+
+def capture_bed_uniforms(projection, z, viewport):
+    # Solve the plane using the exact FLOAT32 matrix uploaded to the driver.
+    rows = np.asarray(projection, dtype=np.float32).astype(np.float64).T
+    inverse = np.linalg.inv(rows[:2, :2])
+    constant = -inverse @ (rows[:2, 2] * z + rows[:2, 3])
+    return dict(u_captureBedX=tuple((*inverse[0], constant[0])),
+                u_captureBedY=tuple((*inverse[1], constant[1])),
+                u_captureBedZ=float(z), u_captureViewport=viewport)
+
+
+def capture_receiver_fragment(fragment, renderer):
+    if renderer != "Apple Software Renderer":
+        return fragment  # Preserve the exact canonical/native shader source.
+    fragment = fragment.replace("uniform bool u_captureGrid;", """uniform bool u_captureGrid;
+uniform vec3 u_captureBedX; uniform vec3 u_captureBedY;
+uniform float u_captureBedZ; uniform vec2 u_captureViewport;""")
+    start = fragment.index("vec3 baseColour=f_color.rgb;")
+    tail = fragment[start:].replace("f_vertex", "capturePosition").replace("f_normal", "captureNormal")
+    # Software varying interpolation drifts at byte-rounding boundaries even
+    # in a single-sample target. Reconstruct the same physical bed plane from
+    # fixed pixel coordinates; raster coverage and depth remain unchanged.
+    return fragment[:start] + """precise vec3 capturePosition=f_vertex;
+vec3 captureNormal=f_normal;
+if(u_captureGrid){
+    precise vec2 ndc=(gl_FragCoord.xy/u_captureViewport)*2.0-1.0;
+    precise float px=ndc.x*u_captureBedX.x+ndc.y*u_captureBedX.y+u_captureBedX.z;
+    precise float py=ndc.x*u_captureBedY.x+ndc.y*u_captureBedY.y+u_captureBedY.z;
+    capturePosition=vec3(px,py,u_captureBedZ);
+    captureNormal=vec3(0.0,0.0,1.0);
+}
+""" + tail
 
 
 def capture(output_dir):
@@ -219,7 +257,8 @@ def capture(output_dir):
     from PyQt6.QtGui import QImage
 
     context, dll_directory = create_context()
-    print("Toolhead capture renderer:", context.info["GL_RENDERER"], flush=True)
+    renderer = context.info["GL_RENDERER"]
+    print("Toolhead capture renderer:", renderer, flush=True)
     head, paths, bed, lights = scene_meshes()
     if np.any(head.colours[:, 3] != 1.0):
         raise ValueError("The showcase capture requires opaque CAD materials")
@@ -247,7 +286,8 @@ if(u_captureGrid){
 }
 float diffuse=max(dot(normalize(f_normal),normalize(vec3(-.4,-.5,1.))),0.);
 frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseColour),f_color.a);""")
-    base_shader = context.program(vertex_shader=source["shaders"]["vertex41core"], fragment_shader=fragment)
+    base_shader = context.program(vertex_shader=source["shaders"]["vertex41core"],
+                                  fragment_shader=capture_receiver_fragment(fragment, renderer))
     buffers, vaos = [], {}
     for label, mesh in (("head", head), ("paths", paths), ("bed", bed)):
         buffer = context.buffer(preview_buffer(mesh)[0])
@@ -258,10 +298,12 @@ frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseCo
             else:
                 layout, attrs = "3f 3f 4f 32x", ("a_vertex", "a_normal", "a_color")
             vaos[label, shader] = context.vertex_array(shader, [(buffer, layout, *attrs)])
-    sample_scale = capture_sample_scale(context.info["GL_RENDERER"])
+    sample_scale = capture_sample_scale(renderer)
+    sample_dtype = "f4" if sample_scale == 2 else "f1"
     render_size = tuple(value * sample_scale for value in SIZE)
-    framebuffer = context.simple_framebuffer(render_size, components=4, samples=4 if sample_scale == 1 else 0)
-    resolved = context.simple_framebuffer(render_size, components=4)
+    framebuffer = context.simple_framebuffer(render_size, components=4,
+                                           samples=4 if sample_scale == 1 else 0, dtype=sample_dtype)
+    resolved = context.simple_framebuffer(render_size, components=4, dtype=sample_dtype)
     framebuffer.use()
     context.enable(moderngl.DEPTH_TEST)
     context.disable(moderngl.CULL_FACE)
@@ -277,6 +319,8 @@ frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseCo
             uniforms(shader, dict(light_values_, u_modelMatrix=identity, u_normalMatrix=identity,
                                   u_viewMatrix=identity, u_projectionMatrix=projection, u_viewPosition=eye,
                                   u_orthographic=1, u_viewDirection=tuple((np.asarray(eye)-target)/500)))
+        if sample_scale == 2:
+            uniforms(base_shader, capture_bed_uniforms(projection, float(bed.triangles[0, 0, 2]), render_size))
         framebuffer.use()
         framebuffer.depth_mask = True
         framebuffer.clear(.09, .105, .125, 1, depth=1)
@@ -291,7 +335,7 @@ frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseCo
         head_shader["u_depthOnly"].value = 0
         vaos["head", head_shader].render()
         context.copy_framebuffer(resolved, framebuffer)
-        raw = resolve_capture_samples(resolved.read(components=4, alignment=1), sample_scale)
+        raw = resolve_capture_samples(resolved.read(components=4, alignment=1, dtype=sample_dtype), sample_scale)
         image = QImage(raw, *SIZE, SIZE[0]*4, QImage.Format.Format_RGBA8888).flipped()
         pixels = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 4)
         if np.any(pixels[:, 3] != 255):

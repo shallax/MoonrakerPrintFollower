@@ -21,12 +21,45 @@ class ToolheadCaptureTests(unittest.TestCase):
         samples = np.array([
             [[0, 1, 2, 255], [4, 5, 6, 255], [100, 101, 102, 255], [104, 105, 106, 255]],
             [[8, 9, 10, 255], [12, 13, 14, 255], [108, 109, 110, 255], [112, 113, 114, 255]],
-        ], dtype=np.uint8)
+        ], dtype=np.float32) / 255.0
         with patch.object(capture, 'SIZE', (2, 1)):
             resolved = capture.resolve_capture_samples(samples.tobytes(), 2)
         self.assertEqual(resolved, bytes((6, 7, 8, 255, 106, 107, 108, 255)))
         with self.assertRaisesRegex(ValueError, 'sample scale'):
             capture.resolve_capture_samples(raw, 3)
+
+    def test_float_resolve_clamps_each_sample_and_rejects_nonfinite_input(self):
+        samples = np.array([[[-2, 0, .5, 1], [2, .5, .5, 1]],
+                            [[0, .5, .5, 1], [1, 1, .5, 1]]], dtype=np.float32)
+        with patch.object(capture, 'SIZE', (1, 1)):
+            self.assertEqual(capture.resolve_capture_samples(samples.tobytes(), 2), bytes((128, 128, 128, 255)))
+            for invalid in (float('nan'), float('inf'), -float('inf')):
+                samples[0, 0, 0] = invalid
+                with self.assertRaisesRegex(ValueError, 'Nonfinite'):
+                    capture.resolve_capture_samples(samples.tobytes(), 2)
+
+    def test_fixed_pixel_plane_matches_the_actual_uploaded_camera(self):
+        for target, yaw, pitch, height in (((0, 8, 61), 12, -10, 170),
+                ((-12, 0, 10), -28, 7, 80)):
+            projection, _eye = capture.camera(target, yaw, pitch, height)
+            rows = projection.astype(np.float32).astype(np.float64).T
+            z = -.1
+            values = capture.capture_bed_uniforms(projection, z, (2800, 2200))
+            self.assertEqual(values['u_captureViewport'], (2800, 2200))
+            for x, y in ((0.5, 0.5), (1399.5, 731.5), (2799.5, 2199.5)):
+                ndc = np.array([x / 2800 * 2 - 1, y / 2200 * 2 - 1, 1])
+                point = np.array([np.dot(ndc, values['u_captureBedX']),
+                                  np.dot(ndc, values['u_captureBedY']), z, 1])
+                np.testing.assert_allclose((rows @ point)[:2], ndc[:2], atol=1e-12, rtol=0)
+
+    def test_plane_adapter_keeps_other_drivers_shader_source_unchanged(self):
+        fragment = 'uniform bool u_captureGrid;\nvec3 baseColour=f_color.rgb;\nlightSurface(f_vertex,f_normal,baseColour);'
+        for renderer in ('Apple M1 Pro', 'llvmpipe', 'AMD Radeon', 'NVIDIA'):
+            self.assertIs(capture.capture_receiver_fragment(fragment, renderer), fragment)
+        adapted = capture.capture_receiver_fragment(fragment, 'Apple Software Renderer')
+        self.assertIn('precise vec3 capturePosition=f_vertex;', adapted)
+        self.assertIn('gl_FragCoord.xy/u_captureViewport', adapted)
+        self.assertIn('lightSurface(capturePosition,captureNormal,baseColour)', adapted)
 
     def test_analytic_grid_is_bed_only_and_restores_path_palette_after_failure(self):
         events = []
