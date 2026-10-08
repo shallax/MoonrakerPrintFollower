@@ -199,6 +199,21 @@ def render_receivers(bed, paths, shader):
     paths.render()
 
 
+def capture_sample_scale(renderer):
+    # Apple's software MSAA can shade a tube-facet boundary inconsistently.
+    # Four fixed supersamples retain its good frame without changing tolerances.
+    return 2 if renderer == "Apple Software Renderer" else 1
+
+
+def resolve_capture_samples(raw, scale):
+    if scale == 1:
+        return raw
+    if scale != 2:
+        raise ValueError("Unsupported capture sample scale")
+    samples = np.frombuffer(raw, dtype=np.uint8).reshape(SIZE[1], 2, SIZE[0], 2, 4)
+    return ((samples.sum((1, 3), dtype=np.uint16) + 2) // 4).astype(np.uint8).tobytes()
+
+
 def capture(output_dir):
     import moderngl
     from PyQt6.QtGui import QImage
@@ -243,8 +258,10 @@ frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseCo
             else:
                 layout, attrs = "3f 3f 4f 32x", ("a_vertex", "a_normal", "a_color")
             vaos[label, shader] = context.vertex_array(shader, [(buffer, layout, *attrs)])
-    framebuffer = context.simple_framebuffer(SIZE, components=4, samples=4)
-    resolved = context.simple_framebuffer(SIZE, components=4)
+    sample_scale = capture_sample_scale(context.info["GL_RENDERER"])
+    render_size = tuple(value * sample_scale for value in SIZE)
+    framebuffer = context.simple_framebuffer(render_size, components=4, samples=4 if sample_scale == 1 else 0)
+    resolved = context.simple_framebuffer(render_size, components=4)
     framebuffer.use()
     context.enable(moderngl.DEPTH_TEST)
     context.disable(moderngl.CULL_FACE)
@@ -274,7 +291,7 @@ frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseCo
         head_shader["u_depthOnly"].value = 0
         vaos["head", head_shader].render()
         context.copy_framebuffer(resolved, framebuffer)
-        raw = resolved.read(components=4, alignment=1)
+        raw = resolve_capture_samples(resolved.read(components=4, alignment=1), sample_scale)
         image = QImage(raw, *SIZE, SIZE[0]*4, QImage.Format.Format_RGBA8888).flipped()
         pixels = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 4)
         if np.any(pixels[:, 3] != 255):

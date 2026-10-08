@@ -225,6 +225,35 @@ class EnvironmentGLTests(unittest.TestCase):
                 async_module.native_depth_format(gl, context)
         self.assertEqual(int(gl.glGetError()), 0)
 
+    def test_unsized_native_depth_uses_measured_precision_and_restores_binding_on_refusal(self):
+        if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
+        from unittest.mock import patch
+        with patch.dict(sys.modules, {
+            'mpf.toolhead.ToolheadEnvironmentWorker': SimpleNamespace(EnvironmentWorker=object, CaptureJob=object),
+            'mpf.toolhead.ToolheadCaptureRecipe': SimpleNamespace(CaptureFreezer=object),
+        }):
+            from mpf.toolhead import ToolheadAsyncEnvironment as async_module
+        gl, context = self.gl, self.context
+        previous = int(gl.glGetIntegerv(0x8CA7))
+        for bits, expected in ((16, 0x81A5), (24, 0x81A6), (32, 0x81A7), (0, None), (12, None)):
+            queries = []
+            def resolve(ctx, name, *signature, bits=bits, queries=queries):
+                if name == 'glGetRenderbufferParameteriv':
+                    def query(_target, parameter, output):
+                        queries.append(parameter)
+                        output._obj.value = 0x1902 if parameter == 0x8D44 else bits
+                    return query
+                return procedure(ctx, name, *signature)
+            with self.subTest(bits=bits), patch.object(async_module, 'procedure', side_effect=resolve):
+                if expected is None:
+                    with self.assertRaisesRegex(RuntimeError, 'depth precision unsupported'):
+                        async_module.native_depth_format(gl, context)
+                else:
+                    self.assertEqual(async_module.native_depth_format(gl, context), expected)
+            self.assertEqual(queries, [0x8D44, 0x8D54])
+            self.assertEqual(int(gl.glGetIntegerv(0x8CA7)), previous)
+            self.assertEqual(int(gl.glGetError()), 0)
+
     def test_worker_storage_selects_physical_pair_and_retires_all_names(self):
         if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
         from unittest.mock import patch

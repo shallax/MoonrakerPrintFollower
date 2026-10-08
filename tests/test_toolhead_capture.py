@@ -11,6 +11,23 @@ from tools import capture_toolhead as capture
 
 
 class ToolheadCaptureTests(unittest.TestCase):
+    def test_four_sample_resolve_is_only_for_apple_software_and_preserves_spatial_rgba(self):
+        for renderer, scale in (("Apple Software Renderer", 2), ("Apple M1 Pro", 1),
+                ("llvmpipe", 1), ("AMD Radeon", 1), ("NVIDIA", 1)):
+            self.assertEqual(capture.capture_sample_scale(renderer), scale)
+        raw = b'unchanged native MSAA bytes'
+        self.assertIs(capture.resolve_capture_samples(raw, 1), raw)
+        # Two neighbouring pixels, each with four differently coloured samples.
+        samples = np.array([
+            [[0, 1, 2, 255], [4, 5, 6, 255], [100, 101, 102, 255], [104, 105, 106, 255]],
+            [[8, 9, 10, 255], [12, 13, 14, 255], [108, 109, 110, 255], [112, 113, 114, 255]],
+        ], dtype=np.uint8)
+        with patch.object(capture, 'SIZE', (2, 1)):
+            resolved = capture.resolve_capture_samples(samples.tobytes(), 2)
+        self.assertEqual(resolved, bytes((6, 7, 8, 255, 106, 107, 108, 255)))
+        with self.assertRaisesRegex(ValueError, 'sample scale'):
+            capture.resolve_capture_samples(raw, 3)
+
     def test_analytic_grid_is_bed_only_and_restores_path_palette_after_failure(self):
         events = []
         bed = Mock()

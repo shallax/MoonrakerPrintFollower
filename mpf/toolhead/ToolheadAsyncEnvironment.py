@@ -124,6 +124,13 @@ def native_depth_format(gl, context):
             procedure(context, 'glGetRenderbufferParameteriv', None, ctypes.c_uint, ctypes.c_uint,
                 ctypes.POINTER(ctypes.c_int))(0x8D41, 0x8D44, ctypes.byref(value))
             result = value.value
+            if result == 0x1902:
+                # Mesa may report Qt's unsized DEPTH_COMPONENT request. Match
+                # its actual storage precision rather than guessing depth24.
+                procedure(context, 'glGetRenderbufferParameteriv', None, ctypes.c_uint, ctypes.c_uint,
+                    ctypes.POINTER(ctypes.c_int))(0x8D41, 0x8D54, ctypes.byref(value))
+                result = {16: 0x81A5, 24: 0x81A6, 32: 0x81A7}.get(value.value)
+                if result is None: raise RuntimeError('Reflection face depth precision unsupported')
         finally: procedure(context, 'glBindRenderbuffer', None, ctypes.c_uint, ctypes.c_uint)(0x8D41, previous)
         face.release()
         return result

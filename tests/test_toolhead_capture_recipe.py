@@ -131,9 +131,9 @@ class CaptureRecipeTests(unittest.TestCase):
             'mpf.toolhead.ToolheadSceneLighting': NS(shader_sources=lambda *_: (parser, 'vertex', None, 'fragment')),
         }), patch.object(module.ShaderRecipe, 'load', side_effect=lambda path: str(path)):
             self.assertEqual(module.recipe_for('grid'), '/resources/grid.shader')
-            self.assertEqual(module.recipe_for(('paths', False, False)), '/simulation/layers3d.shader')
-            self.assertEqual(module.recipe_for(('paths', False, True)), '/simulation/layers3d_shadow.shader')
-            self.assertTrue(module.recipe_for('light-mesh').endswith('toolhead/scene-lighting.shader'))
+            self.assertEqual(Path(module.recipe_for(('paths', False, False))), Path('/simulation') / 'layers3d.shader')
+            self.assertEqual(Path(module.recipe_for(('paths', False, True))), Path('/simulation') / 'layers3d_shadow.shader')
+            self.assertEqual(Path(module.recipe_for('light-mesh')).parts[-2:], ('toolhead', 'scene-lighting.shader'))
             light = module.recipe_for(('light-path', False))
             self.assertEqual(light.stages, (('vertex', 'vertex'), ('fragment', 'fragment')))
             self.assertIs(type(dict(light.defaults)['u_min_width'].value), float)
