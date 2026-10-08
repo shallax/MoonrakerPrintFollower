@@ -157,7 +157,7 @@ class EnvironmentGLTests(unittest.TestCase):
         gl.glViewport(1, 2, 8, 9)
         gl.glActiveTexture(0x84C3)
         gl.glEnable(gl.GL_SCISSOR_TEST); gl.glScissor(2, 3, 4, 5)
-        environment = ToolheadEnvironment()
+        environment = ToolheadEnvironment(commands_per_turn=1)
         self.addCleanup(environment.close)
         colours = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0), (1, 0, 1), (0, 1, 1)]
         def commands(face):
@@ -188,3 +188,27 @@ class EnvironmentGLTests(unittest.TestCase):
             get(0x8515 + face, 0, 0x1902, 0x1406, depths)
             self.assertAlmostEqual(depths[0], (face+1)/8., places=6)
         self.assertEqual(int(gl.glGetError()), 0)
+        # Re-slice while the old paired map is visible. Every intermediate
+        # face must keep its old colours/depth AND matching probe descriptor.
+        old_names=environment._storage.front,environment._storage.front_depth
+        old_descriptor=environment.descriptor
+        replacement=SimpleNamespace(commands=commands,descriptor=ProbeDescriptor((1,2,3),(-20,-20,-20),(20,20,20)))
+        colours[:]=colours[1:]+colours[:1]
+        for turn in range(12):
+            environment.step(gl,self.context,'new slice','new pose',lambda:replacement)
+            self.assertTrue(environment.available,environment.failure)
+            if turn<11:
+                self.assertEqual((environment._storage.front,environment._storage.front_depth),old_names)
+                self.assertIs(environment.descriptor,old_descriptor)
+                gl.glBindTexture(0x8513,environment._storage.front)
+                for face in range(6):
+                    get(0x8515+face,0,0x1908,0x1401,pixels)
+                    old_colour=colours[(face-1)%6]
+                    self.assertEqual(tuple(pixels[:4]),(*[round(v*255) for v in old_colour],255))
+                gl.glBindTexture(0x8513,environment._storage.front_depth)
+                for face in range(6):
+                    get(0x8515+face,0,0x1902,0x1406,depths)
+                    self.assertAlmostEqual(depths[0],(face+1)/8.,places=6)
+        self.assertEqual(environment.descriptor,replacement.descriptor)
+        self.assertNotEqual((environment._storage.front,environment._storage.front_depth),old_names)
+        self.assertEqual(int(gl.glGetError()),0)

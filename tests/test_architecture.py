@@ -177,7 +177,7 @@ class SourceContractTests(unittest.TestCase):
             'ToolheadDepthCache': set(),
             'ToolheadGLState': set(),
             'ToolheadEnvironment': {'ToolheadGLState'},
-            'ToolheadEnvironmentScene': {'ToolheadEnvironment', 'ToolheadPathGeometry', 'ToolheadSceneLighting', 'PluginPaths'},
+            'ToolheadEnvironmentScene': {'ToolheadEnvironment', 'ToolheadPathGeometry', 'ToolheadSceneLighting', 'PluginPaths', 'BedMeshSceneNode'},
             'ToolheadFrameCache': set(),
             'ToolheadOcclusion': {'ToolheadTransparency'},
             'ToolheadTransparency': set(),

@@ -103,3 +103,32 @@ class GLStateTests(unittest.TestCase):
         context=NS(getProcAddress=lambda name:ctypes.cast(function,ctypes.c_void_p).value)
         module.procedure(context,'test',None,ctypes.c_uint)(7)
         self.assertEqual(called,[7])
+
+    def test_procedure_cache_is_context_generation_owned_and_does_not_retain_owner(self):
+        from PyQt6.QtCore import pyqtSignal
+        import gc, weakref
+        self.scope.stop()
+        called=[]
+        function=ctypes.CFUNCTYPE(None,ctypes.c_uint)(called.append)
+        class Context(QObject):
+            aboutToBeDestroyed=pyqtSignal()
+            def __init__(self):
+                super().__init__();self.lookups=0
+            def getProcAddress(self,name):
+                self.lookups+=1
+                return ctypes.cast(function,ctypes.c_void_p).value
+        context=Context();other=Context()
+        first=module.procedure(context,'test',None,ctypes.c_uint)
+        self.assertIs(module.procedure(context,'test',None,ctypes.c_uint),first)
+        self.assertEqual(context.lookups,1)
+        self.assertIsNot(module.procedure(other,'test',None,ctypes.c_uint),first)
+        first(9);self.assertEqual(called,[9])
+        context.aboutToBeDestroyed.emit()
+        self.assertIsNot(module.procedure(context,'test',None,ctypes.c_uint),first)
+        self.assertEqual(context.lookups,2)
+        reference=weakref.ref(context)
+        del context;gc.collect()
+        self.assertIsNone(reference())
+        self.assertEqual(len(module._procedures),1)
+        other.aboutToBeDestroyed.emit()
+        self.assertEqual(len(module._procedures),0)

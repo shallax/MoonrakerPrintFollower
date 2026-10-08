@@ -28,6 +28,18 @@ Slider {
     property string controlKind: ""
     property color fillColor: UM.Theme.getColor("primary")
     property bool tuningActive: false
+    // Editors can retire a debounced keyboard apply before resetting a value
+    // or changing its target. This never emits a commit.
+    property bool retiredGesture: false
+    signal cancelledGestureEnded
+    function cancelPendingCommit() {
+        retiredGesture = retiredGesture || pressed;
+        keyDebounce.stop();
+        movedWhilePressed = false;
+        handlePress = false;
+        handleDragged = false;
+        tuningActive = false;
+    }
     readonly property bool interacting: pressed || tuningActive
     // The focus contract: a model refresh can disable the slider
     // for a beat (the availability/count transitions) — a disabled
@@ -87,6 +99,11 @@ Slider {
     // handle and never submits (a live report, 2026-09-15).
     property bool movedWhilePressed: false
     onMoved: {
+        if (retiredGesture) {
+            if (!pressed)
+                cancelledGestureEnded();
+            return;
+        }
         valueTuning(selectedValue());
         if (!pressed) {
             valueCommitted(selectedValue());
@@ -96,7 +113,12 @@ Slider {
         }
     }
     onPressedChanged: {
-        if (!pressed && movedWhilePressed) {
+        if (pressed) {
+            retiredGesture = false;
+        } else if (retiredGesture) {
+            movedWhilePressed = false;
+            cancelledGestureEnded();
+        } else if (movedWhilePressed) {
             movedWhilePressed = false;
             valueCommitted(selectedValue());
         }

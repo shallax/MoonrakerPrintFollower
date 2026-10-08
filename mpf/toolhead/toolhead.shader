@@ -198,6 +198,27 @@ fragment =
         colour += textureCube(u_environment, normalize(direction - (tangent + bitangent) * cone * 0.7), level).rgb * 0.1;
         return colour;
     }
+    float grainHash(vec3 cell) {
+        vec3 h = fract(cell * vec3(0.1031, 0.11369, 0.13787));
+        h += dot(h, h.yzx + 19.19);
+        return fract((h.x + h.y) * h.z);
+    }
+    vec3 grainGradient(vec3 position) {
+        // Random lattice values, with an analytic, continuous quintic
+        // gradient. No periodic wave or repeating dimple texture.
+        vec3 cell = floor(position), f = fract(position);
+        vec3 w = f*f*f*(f*(f*6.0-15.0)+10.0);
+        vec3 dw = 30.0*f*f*(f-1.0)*(f-1.0);
+        float a = grainHash(cell), b = grainHash(cell+vec3(1,0,0));
+        float c = grainHash(cell+vec3(0,1,0)), d = grainHash(cell+vec3(1,1,0));
+        float e = grainHash(cell+vec3(0,0,1)), g = grainHash(cell+vec3(1,0,1));
+        float h = grainHash(cell+vec3(0,1,1)), i = grainHash(cell+vec3(1,1,1));
+        float lower = mix(mix(a,b,w.x), mix(c,d,w.x), w.y);
+        float upper = mix(mix(e,g,w.x), mix(h,i,w.x), w.y);
+        return vec3(mix(mix(b-a,d-c,w.y), mix(g-e,i-h,w.y), w.z)*dw.x,
+                    mix(mix(c-a,d-b,w.x), mix(h-e,i-g,w.x), w.z)*dw.y,
+                    (upper-lower)*dw.z);
+    }
     vec3 surfaceNormal() {
         // Physical sub-mm grain belongs to the immutable model, not the
         // camera/world. Derivative filtering fades unresolved grain rather
@@ -206,23 +227,28 @@ fragment =
         float strength = clamp(u_surfaceDetail, 0.0, 1.0) * v_material.z;
         if (strength <= 0.0) return normal;
         vec3 p = v_localPosition;
-        vec3 k0 = vec3(11.3, 17.1, 13.7);
-        vec3 k1 = vec3(-19.7, 7.3, 23.9);
-        vec3 k2 = vec3(29.1, -21.7, 5.9);
-        float footprint = max(length(dFdx(p)), length(dFdy(p))) * 5.9;
-        float resolved = 1.0 - smoothstep(0.25, 0.8, footprint);
-        vec3 gradient = (cos(dot(p, k0)) * k0 + cos(dot(p, k1)) * k1
-                       + cos(dot(p, k2)) * k2) / 90.0;
+        float footprint = max(length(dFdx(p)), length(dFdy(p)));
+        float coarse = 1.0 - smoothstep(0.25, 0.8, footprint*5.9);
+        float fine = 1.0 - smoothstep(0.25, 0.8, footprint*12.7);
+        mat3 turn = mat3(0.36,0.8,-0.48, -0.48,0.6,0.64, 0.8,0.0,0.6);
+        vec3 gradient = grainGradient(p*5.9) * (0.32*coarse);
+        vec3 fineGradient = grainGradient(turn*p*12.7 + vec3(17.2,31.7,9.1));
+        // Pull the rotated-domain gradient back into object coordinates.
+        gradient += vec3(dot(turn[0],fineGradient),dot(turn[1],fineGradient),
+                         dot(turn[2],fineGradient)) * (0.14*fine);
         if (abs(v_material.w-7.0) < 0.5 || v_material.w >= 19.5) {
-            vec3 fibre = vec3(37.0, 5.0, 11.0);
-            gradient += fibre * cos(dot(p, fibre)) * sin(dot(p, k1)*0.23) / 90.0;
+            vec3 fibrePosition = p * vec3(16.3,3.1,11.7);
+            float fibreFootprint = max(length(dFdx(fibrePosition)), length(dFdy(fibrePosition)));
+            float fibreWeight = 1.0 - smoothstep(0.25, 0.8, fibreFootprint);
+            vec3 fibres = grainGradient(fibrePosition);
+            gradient += fibres * vec3(0.12,0.035,0.09) * fibreWeight;
         }
         vec3 localNormal = normalize(v_localNormal);
         gradient -= localNormal * dot(localNormal, gradient);
         if (u_previewEnabled != 0 && abs(v_body-u_previewBody) < 0.5)
             gradient = (u_previewRotation * vec4(gradient,0.0)).xyz;
         vec3 detail = (u_normalMatrix * vec4(gradient, 0.0)).xyz;
-        return normalize(normal + detail * (0.07 * strength * resolved));
+        return normalize(normal + detail * (0.07 * strength));
     }
     float led(vec3 position, vec3 direction, vec3 normal) {
         vec3 toLight = normalize(position - v_position);
@@ -512,6 +538,27 @@ fragment41core =
         colour += textureLod(u_environment, normalize(direction - (tangent + bitangent) * cone * 0.7), level).rgb * 0.1;
         return colour;
     }
+    float grainHash(vec3 cell) {
+        vec3 h = fract(cell * vec3(0.1031, 0.11369, 0.13787));
+        h += dot(h, h.yzx + 19.19);
+        return fract((h.x + h.y) * h.z);
+    }
+    vec3 grainGradient(vec3 position) {
+        // Random lattice values, with an analytic, continuous quintic
+        // gradient. No periodic wave or repeating dimple texture.
+        vec3 cell = floor(position), f = fract(position);
+        vec3 w = f*f*f*(f*(f*6.0-15.0)+10.0);
+        vec3 dw = 30.0*f*f*(f-1.0)*(f-1.0);
+        float a = grainHash(cell), b = grainHash(cell+vec3(1,0,0));
+        float c = grainHash(cell+vec3(0,1,0)), d = grainHash(cell+vec3(1,1,0));
+        float e = grainHash(cell+vec3(0,0,1)), g = grainHash(cell+vec3(1,0,1));
+        float h = grainHash(cell+vec3(0,1,1)), i = grainHash(cell+vec3(1,1,1));
+        float lower = mix(mix(a,b,w.x), mix(c,d,w.x), w.y);
+        float upper = mix(mix(e,g,w.x), mix(h,i,w.x), w.y);
+        return vec3(mix(mix(b-a,d-c,w.y), mix(g-e,i-h,w.y), w.z)*dw.x,
+                    mix(mix(c-a,d-b,w.x), mix(h-e,i-g,w.x), w.z)*dw.y,
+                    (upper-lower)*dw.z);
+    }
     vec3 surfaceNormal() {
         // Physical sub-mm grain belongs to the immutable model, not the
         // camera/world. Derivative filtering fades unresolved grain rather
@@ -520,23 +567,28 @@ fragment41core =
         float strength = clamp(u_surfaceDetail, 0.0, 1.0) * v_material.z;
         if (strength <= 0.0) return normal;
         vec3 p = v_localPosition;
-        vec3 k0 = vec3(11.3, 17.1, 13.7);
-        vec3 k1 = vec3(-19.7, 7.3, 23.9);
-        vec3 k2 = vec3(29.1, -21.7, 5.9);
-        float footprint = max(length(dFdx(p)), length(dFdy(p))) * 5.9;
-        float resolved = 1.0 - smoothstep(0.25, 0.8, footprint);
-        vec3 gradient = (cos(dot(p, k0)) * k0 + cos(dot(p, k1)) * k1
-                       + cos(dot(p, k2)) * k2) / 90.0;
+        float footprint = max(length(dFdx(p)), length(dFdy(p)));
+        float coarse = 1.0 - smoothstep(0.25, 0.8, footprint*5.9);
+        float fine = 1.0 - smoothstep(0.25, 0.8, footprint*12.7);
+        mat3 turn = mat3(0.36,0.8,-0.48, -0.48,0.6,0.64, 0.8,0.0,0.6);
+        vec3 gradient = grainGradient(p*5.9) * (0.32*coarse);
+        vec3 fineGradient = grainGradient(turn*p*12.7 + vec3(17.2,31.7,9.1));
+        // Pull the rotated-domain gradient back into object coordinates.
+        gradient += vec3(dot(turn[0],fineGradient),dot(turn[1],fineGradient),
+                         dot(turn[2],fineGradient)) * (0.14*fine);
         if (abs(v_material.w-7.0) < 0.5 || v_material.w >= 19.5) {
-            vec3 fibre = vec3(37.0, 5.0, 11.0);
-            gradient += fibre * cos(dot(p, fibre)) * sin(dot(p, k1)*0.23) / 90.0;
+            vec3 fibrePosition = p * vec3(16.3,3.1,11.7);
+            float fibreFootprint = max(length(dFdx(fibrePosition)), length(dFdy(fibrePosition)));
+            float fibreWeight = 1.0 - smoothstep(0.25, 0.8, fibreFootprint);
+            vec3 fibres = grainGradient(fibrePosition);
+            gradient += fibres * vec3(0.12,0.035,0.09) * fibreWeight;
         }
         vec3 localNormal = normalize(v_localNormal);
         gradient -= localNormal * dot(localNormal, gradient);
         if (u_previewEnabled != 0 && abs(v_body-u_previewBody) < 0.5)
             gradient = (u_previewRotation * vec4(gradient,0.0)).xyz;
         vec3 detail = (u_normalMatrix * vec4(gradient, 0.0)).xyz;
-        return normalize(normal + detail * (0.07 * strength * resolved));
+        return normalize(normal + detail * (0.07 * strength));
     }
     float led(vec3 position, vec3 direction, vec3 normal) {
         vec3 toLight = normalize(position - v_position);

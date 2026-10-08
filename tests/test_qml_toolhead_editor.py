@@ -1,6 +1,7 @@
 """Production Cura editor: scrollbar gutter, themed intensity and draft cancellation."""
 from __future__ import annotations
 
+import copy
 import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -100,6 +101,235 @@ class ToolheadEditorTests(harness.RealEngineTestCase):
             pending.extend(item.childItems())
         self.fail("Missing editor item: " + name)
 
+    def _other_owner(self):
+        config = SimpleNamespace(toolhead_model='', toolhead_model_name='',
+                                 toolhead_tip=[], toolhead_lights=[])
+        other = ToolheadModels(ToolheadAssetStore(self.directory.name),
+                               self.directory.name, lambda: config,
+                               lambda: 'synthetic-other-printer')
+        self.addCleanup(other.close)
+        # Restore the original owner before the parent dialog cleanup runs.
+        self.addCleanup(self.dialog.setProperty, 'model', self.draft)
+        return other
+
+    def _reveal_and_nudge(self, slider):
+        scroll = self.find('toolheadAppearanceScroll')
+        point = slider.mapToItem(scroll.property('contentItem'), harness.QPointF())
+        scroll.setProperty('contentY', max(0, min(
+            scroll.property('contentHeight') - scroll.height(), point.y() - 100)))
+        self.dialog.grabWindow()
+        self.pump(20)
+        slider.forceActiveFocus()
+        QTest.keyClick(self.dialog, Qt.Key.Key_Right)
+        self.assertTrue(slider.property('interacting'))
+
+    def test_equal_valued_owner_rebind_cancels_and_resynchronises(self):
+        self.find('toolheadEditorSection').setProperty('currentIndex', 0)
+        other = self._other_owner()
+        for owner in (self.draft, other):
+            owner.toggleOpacitySelection(0)
+            owner.setSelectedFinish('roughness', .8)
+            owner.setSelectedFinish('reflectivity', .75)
+            owner.setSelectedOpacity(.8)
+            kind = owner.materialTypes[0]['kind']
+            owner.setMaterialFinish(kind, 'roughness', .8)
+            owner.setMaterialFinish(kind, 'reflectivity', .75)
+        for name in ('toolheadSelectedroughness', 'toolheadSelectedreflectivity',
+                     'toolheadSelectedOpacity', 'toolheadMaterialroughness',
+                     'toolheadMaterialreflectivity'):
+            with self.subTest(slider=name):
+                self.dialog.setProperty('model', self.draft)
+                self._pump_ms(60)
+                slider = self.find(name)
+                original = slider.property('modelValue')
+                before = copy.deepcopy(other.fields())
+                self._reveal_and_nudge(slider)
+                self.assertGreater(slider.property('value'), original)
+                # The new owner has the SAME value and SAME selected IDs.
+                # Only editOwner changes, so no other binding can mask failure.
+                self.dialog.setProperty('model', other)
+                self._pump_ms(400)
+                self.assertFalse(slider.property('interacting'))
+                self.assertAlmostEqual(slider.property('value'), original, places=4)
+                self.assertAlmostEqual(slider.property('value'),
+                                       slider.property('modelValue'), places=4)
+                self.assertEqual(other.fields(), before)
+
+    def test_surface_detail_pending_key_does_not_apply_to_new_owner(self):
+        self.find('toolheadEditorSection').setProperty('currentIndex', 0)
+        other = self._other_owner()
+        self.draft.setSurfaceDetail(.35)
+        other.setSurfaceDetail(.35)
+        self._pump_ms(60)
+        slider = self.find('toolheadSurfaceDetail')
+        before = copy.deepcopy(other.fields())
+        self._reveal_and_nudge(slider)
+        self.assertAlmostEqual(self.draft.surfaceDetail, .36, places=4)
+        self.assertAlmostEqual(other.surfaceDetail, .35, places=4)
+        self.dialog.setProperty('model', other)
+        self._pump_ms(400)
+        self.assertFalse(slider.property('interacting'))
+        self.assertAlmostEqual(other.surfaceDetail, .35, places=4)
+        self.assertAlmostEqual(slider.property('value'), 35, places=4)
+        self.assertAlmostEqual(slider.property('value'),
+                               slider.property('modelValue'), places=4)
+        self.assertEqual(other.fields(), before)
+
+
+    def test_held_groove_gesture_cannot_write_replacement_owner(self):
+        self.find('toolheadEditorSection').setProperty('currentIndex',0)
+        other=self._other_owner()
+        for owner in (self.draft,other):
+            owner.toggleOpacitySelection(0);owner.setSelectedFinish('roughness',.8)
+        self._pump_ms(60)
+        slider=self.find('toolheadSelectedroughness')
+        scroll=self.find('toolheadAppearanceScroll')
+        point=slider.mapToItem(scroll.property('contentItem'),harness.QPointF())
+        scroll.setProperty('contentY',max(0,min(scroll.property('contentHeight')-scroll.height(),point.y()-100)))
+        self.dialog.grabWindow();self.pump(20)
+        press=slider.mapToScene(harness.QPointF(slider.width()*.15,slider.height()/2)).toPoint()
+        move=slider.mapToScene(harness.QPointF(slider.width()*.4,slider.height()/2)).toPoint()
+        before=copy.deepcopy(other.fields())
+        QTest.mousePress(self.dialog,Qt.MouseButton.LeftButton,pos=press)
+        QTest.mouseMove(self.dialog,move)
+        self.pump(2)
+        self.dialog.setProperty('model',other);self.pump(2)
+        move=slider.mapToScene(harness.QPointF(slider.width()*.55,slider.height()/2)).toPoint()
+        QTest.mouseMove(self.dialog,move);self.pump(2)
+        QTest.mouseRelease(self.dialog,Qt.MouseButton.LeftButton,pos=move)
+        self._pump_ms(400)
+        self.assertEqual(other.fields(),before,'Old native groove gesture wrote replacement owner')
+        self.assertEqual(slider.property("value"),slider.property("modelValue"))
+
+    def _reveal_appearance(self, item, offset=140):
+        scroll = self.find('toolheadAppearanceScroll')
+        p = item.mapToItem(scroll.property('contentItem'), harness.QPointF())
+        scroll.setProperty('contentY', max(0, min(
+            scroll.property('contentHeight') - scroll.height(), p.y() - offset)))
+        self.dialog.grabWindow()
+        self.pump(20)
+
+
+    def _nudge_appearance(self, slider):
+        self._reveal_appearance(slider)
+        slider.forceActiveFocus()
+        QTest.keyClick(self.dialog, Qt.Key.Key_Right)
+        self.assertTrue(slider.property('interacting'))
+
+
+    def _click_appearance(self, item):
+        self._reveal_appearance(item)
+        p = item.mapToScene(harness.QPointF(item.width()/2, item.height()/2)).toPoint()
+        QTest.mouseClick(self.dialog, Qt.MouseButton.LeftButton, pos=p)
+        self.pump(20)
+
+
+    def test_pending_nudges_cancel_on_reset_selection_and_profile_changes(self):
+        """Eight subcases: 3 immediate mouse resets, 3 target switches, 2 profiles."""
+        self.find('toolheadEditorSection').setProperty('currentIndex', 0)
+        draft = self.draft
+        draft.toggleOpacitySelection(0)
+        for name, reset, field in (
+            ('toolheadSelectedroughness', 'toolheadSelectedAutoroughness', 'roughness'),
+            ('toolheadSelectedreflectivity', 'toolheadSelectedAutoreflectivity', 'reflectivity'),
+            ('toolheadSelectedOpacity', 'toolheadResetOpacity', 'opacity'),
+        ):
+            with self.subTest(immediate_reset=field):
+                if field == 'opacity': draft.setSelectedOpacity(.8)
+                else: draft.setSelectedFinish(field, .8)
+                self._pump_ms(60)
+                slider = self.find(name)
+                self._nudge_appearance(slider)
+                self._click_appearance(self.find(reset))
+                immediate = slider.property('value')
+                self._pump_ms(400)
+                self.assertAlmostEqual(slider.property('value'),
+                                       slider.property('modelValue'), places=4)
+                self.assertAlmostEqual(slider.property('value'), immediate, places=4)
+                self.assertIn(draft.selectedSources[field], ('Automatic', 'Imported'))
+                self.assertFalse(slider.property('interacting'))
+        for name, field in (
+            ('toolheadSelectedroughness', 'roughness'),
+            ('toolheadSelectedreflectivity', 'reflectivity'),
+            ('toolheadSelectedOpacity', 'opacity'),
+        ):
+            with self.subTest(target_switch=field):
+                draft.clearOpacitySelection()
+                draft.selectOpacityKind('body')
+                draft.toggleOpacitySelection(0)
+                if field == 'opacity': draft.setSelectedOpacity(.8)
+                else: draft.setSelectedFinish(field, .8)
+                self._pump_ms(60)
+                slider = self.find(name)
+                self._nudge_appearance(slider)
+                draft.clearOpacitySelection()
+                draft.selectOpacityKind('face')
+                draft.toggleOpacitySelection(0)
+                self.pump(20)
+                before = copy.deepcopy((draft.faceFinishes, draft.faceOpacity))
+                self._pump_ms(400)
+                self.assertEqual((draft.faceFinishes, draft.faceOpacity), before)
+                self.assertAlmostEqual(slider.property('value'),
+                                       slider.property('modelValue'), places=4)
+        combo = self.find('toolheadMaterialType')
+        for field in ('roughness', 'reflectivity'):
+            with self.subTest(profile_switch=field):
+                combo.setProperty('currentIndex', 0)
+                self._pump_ms(60)
+                slider = self.find('toolheadMaterial' + field)
+                self._nudge_appearance(slider)
+                before = copy.deepcopy(draft._material_overrides)
+                self._reveal_appearance(combo)
+                combo.forceActiveFocus()
+                # Native ComboBox keyboard input changes the actual profile.
+                QTest.keyClick(self.dialog, Qt.Key.Key_Down)
+                self.pump(20)
+                self.assertEqual(combo.property('currentIndex'), 1)
+                self._pump_ms(400)
+                self.assertEqual(draft._material_overrides, before)
+                self.assertAlmostEqual(slider.property('value'),
+                                       slider.property('modelValue'), places=4)
+
+
+    def test_dragged_appearance_sliders_resolve_automatic_and_imported_values(self):
+        """Three native drags break the value binding before real reset clicks."""
+        self.find('toolheadEditorSection').setProperty('currentIndex', 0)
+        self.draft.toggleOpacitySelection(0)
+        self._pump_ms(80)
+        for name, reset, field in (
+            ('toolheadSelectedroughness', 'toolheadSelectedAutoroughness', 'roughness'),
+            ('toolheadSelectedreflectivity', 'toolheadSelectedAutoreflectivity', 'reflectivity'),
+            ('toolheadSelectedOpacity', 'toolheadResetOpacity', 'opacity'),
+        ):
+            with self.subTest(native_drag_then_reset=field):
+                slider = self.find(name)
+                self._reveal_appearance(slider, offset=100)
+                handle = slider.property('handle')
+                start = handle.mapToScene(harness.QPointF(
+                    handle.width()/2, handle.height()/2)).toPoint()
+                end = slider.mapToScene(harness.QPointF(
+                    slider.property('leftPadding') + .72*slider.property('availableWidth'),
+                    slider.height()/2)).toPoint()
+                QTest.mousePress(self.dialog, Qt.MouseButton.LeftButton, pos=start)
+                QTest.mouseMove(self.dialog, end, 20)
+                QTest.mouseRelease(self.dialog, Qt.MouseButton.LeftButton, pos=end)
+                self._pump_ms(80)
+                self.assertGreater(slider.property('value'), 65)
+                self.assertLess(slider.property('value'), 80)
+                self._click_appearance(self.find(reset))
+                self._pump_ms(80)
+                self.assertAlmostEqual(slider.property('value'),
+                                       slider.property('modelValue'), places=4)
+        # Idle target update must still follow the model after a native drag.
+        self.draft.selectOpacityKind('face')
+        self.draft.toggleOpacitySelection(0)
+        self._pump_ms(80)
+        for name in ('toolheadSelectedroughness', 'toolheadSelectedreflectivity',
+                     'toolheadSelectedOpacity'):
+            slider = self.find(name)
+            self.assertAlmostEqual(slider.property('value'),
+                                   slider.property('modelValue'), places=4)
+
     def assert_always_visible(self, bar):
         expression = QQmlExpression(qmlContext(bar), bar, "policy === 2")
         self.assertEqual(expression.evaluate(), (True, False))
@@ -175,6 +405,7 @@ class ToolheadEditorTests(harness.RealEngineTestCase):
         self.pump()
         self.assertEqual(self.find("toolheadOpacityPickKind").property("currentIndex"), 1)
         self.assertEqual(self.draft.selectedOpacity, 1.)
+        self.assertEqual(self.find('toolheadSelectedOpacity').property('value'),100.)
         # Safe synthetic editor capture: no CuraApplication or printer.
         import os
         folder = os.environ.get("MPF_APPEARANCE_RENDER_DIR")

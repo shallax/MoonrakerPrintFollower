@@ -4,12 +4,40 @@ from __future__ import annotations
 import ctypes
 import threading
 from contextlib import contextmanager
+from weakref import WeakKeyDictionary, ref
+
+
+_procedures = WeakKeyDictionary()
+_procedure_lock = threading.RLock()
 
 
 def procedure(context, name, result, *arguments):
+    key = name, result, arguments
+    with _procedure_lock:
+        try:
+            cache = _procedures.get(context)
+            if cache is None:
+                cache = {}
+                context_ref = ref(context)
+                def retired():
+                    owner = context_ref()
+                    if owner is not None:
+                        with _procedure_lock: _procedures.pop(owner, None)
+                        try: owner.aboutToBeDestroyed.disconnect(retired)
+                        except (RuntimeError, TypeError): pass
+                # A context wrapper may recreate its native context. Fence
+                # that generation as well as ordinary Python owner retirement.
+                context.aboutToBeDestroyed.connect(retired)
+                _procedures[context] = cache
+        except (TypeError, AttributeError):
+            cache = None  # Capability-only adapters without QObject ownership.
+        if cache is not None and key in cache: return cache[key]
     address = context.getProcAddress(name.encode("ascii"))
     if not address: raise RuntimeError(name + " is unavailable")
-    return ctypes.CFUNCTYPE(result, *arguments)(int(address))
+    function = ctypes.CFUNCTYPE(result, *arguments)(int(address))
+    if cache is not None:
+        with _procedure_lock: cache[key] = function
+    return function
 
 
 @contextmanager

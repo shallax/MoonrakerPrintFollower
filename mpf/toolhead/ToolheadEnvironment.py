@@ -4,12 +4,21 @@ from __future__ import annotations
 import ctypes
 import math
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass
 from .ToolheadGLState import preserved_state, procedure, retire_textures, flush_texture_deletions
 
 SIZE = 512
 TEXTURE_UNIT = 7
 DEPTH_UNIT = 6
+TURN_COMMANDS = 64
+TURN_SECONDS = .002  # CPU submission budget; a single GPU draw is indivisible.
+CHANGED_INTERVAL = .15
+PERIODIC_INTERVAL = 1.
+
+
+class EnvironmentNotReady(RuntimeError):
+    """Native slicing is still producing a trustworthy scene snapshot."""
 
 
 @dataclass(frozen=True)
@@ -142,19 +151,26 @@ class CubeStorage:
 
 
 class ToolheadEnvironment:
-    def __init__(self, *, clock=time.monotonic, storage_factory=CubeStorage, window=None):
+    def __init__(self, *, clock=time.monotonic, storage_factory=CubeStorage, window=None,
+                 commands_per_turn=TURN_COMMANDS, turn_clock=time.perf_counter, diagnostic=False):
         self._window = window
         self._clock, self._factory = clock, storage_factory
+        self._commands_per_turn = max(1, min(TURN_COMMANDS, int(commands_per_turn)))
+        self._turn_clock = turn_clock
         self._context = self._storage = None
         self._hard = self._published = self._pending = None
         self._face = 0
         self._commands = None
         self._preparing = None
         self.descriptor = None
-        self._next = self._retry = 0.
+        self._next = self._retry = self._changed_next = 0.
         self.revision = 0
         self.available = False
         self.failure = ""
+        self._reported_failure = ""
+        self._diagnostic = diagnostic
+        self._capture_start = None
+        self._capture_cpu = self._capture_turns = self._report_at = 0.
 
     def release_bindings(self):
         # ShaderProgram stops its texture loop at the first release exception.
@@ -184,64 +200,126 @@ class ToolheadEnvironment:
             self._context = context
         if hard != self._hard:
             self._hard = hard
-            self.available = False
-            self._published = self._pending = self._commands = None
-            self._preparing = self.descriptor = None
-            self._retry = self._next = 0
+            # Keep the last COMPLETE colour/depth/descriptor triple visible
+            # during same-context replacement. Only pending faces are retired;
+            # context changes/disable/failure still retire the published map.
+            self._pending = self._commands = self._preparing = None
+            self._retry = self._next = self._changed_next = 0
         if now < self._retry: return False
+        if self._pending is None:
+            if soft != self._published:
+                self._next = min(self._next, self._changed_next)
+            if now < self._next: return False
+        started = None
         try:
-            with preserved_state(gl, context):
+            started = self._turn_clock()
+            operations = 0
+            # Production bounds preparation uses immutable CPU arrays only.
+            # A pending CPU turn must not save/restore the entire host GL state.
+            if (self._pending is not None and self._preparing is not None
+                    and getattr(self._pending[1], 'cpu_preparation', False) is True):
+                for operations in range(1, self._commands_per_turn + 1):
+                    command = next(self._preparing, None)
+                    if command is None:
+                        self._preparing = None
+                        operations -= 1
+                        if self._turn_clock() - started >= TURN_SECONDS: return True
+                        break
+                    command()
+                    if self._turn_clock() - started >= TURN_SECONDS: return True
+                if operations == self._commands_per_turn: return True
+            with preserved_state(gl, context), ExitStack() as turn_cleanup:
                 if self._storage is None:
                     self._storage = self._factory(gl, context)
                     self._storage.window = self._window
                 if self._pending is None:
-                    if now < self._next: return False
                     # Freeze the complete scene/prefix/pose for all six faces.
+                    if self._diagnostic:
+                        self._capture_start = now
+                        self._capture_cpu = self._capture_turns = 0.
                     self._pending = (soft, snapshot())
                     self._face, self._commands = 0, None
                     prepare = getattr(self._pending[1], "prepare", None)
                     self._preparing = iter(prepare()) if prepare else None
                 data = self._pending[1]
-                if self._preparing is not None:
-                    command = next(self._preparing, None)
-                    if command is not None:
-                        command()
-                        return True
-                    self._preparing = None
-                first = self._commands is None
-                if first: self._commands = iter(data.commands(self._face))
-                self._storage.begin(gl, first)
-                command = next(self._commands, None)
-                if command is not None:
-                    command(gl)
-                else:
-                    self._storage.copy(gl, self._face)
-                    self._face += 1
-                    self._commands = None
-                    if self._face == 6:
-                        descriptor = data.descriptor
-                        if not isinstance(descriptor, ProbeDescriptor): raise RuntimeError("Reflection probe descriptor unavailable")
-                        self._storage.publish(gl)
-                        self.descriptor = descriptor
-                        self.available = True
-                        self.revision += 1
-                        self._published = self._pending[0]
-                        self._pending = None
-                        self._next = now + 1.
-                        self.failure = ""
+                turn = getattr(data, 'turn', None)
+                if turn is not None: turn_cleanup.enter_context(turn())
+                for _operation in range(self._commands_per_turn - operations):
+                    preparing = False
+                    if self._preparing is not None:
+                        command = next(self._preparing, None)
+                        if command is not None:
+                            command()
+                            preparing = True
+                        else: self._preparing = None
+                    if not preparing:
+                        first = self._commands is None
+                        if first: self._commands = iter(data.commands(self._face))
+                        self._storage.begin(gl, first)
+                        command = next(self._commands, None)
+                        if command is not None:
+                            command(gl)
+                        else:
+                            self._storage.copy(gl, self._face)
+                            self._face += 1
+                            self._commands = None
+                            if self._face == 6:
+                                descriptor = data.descriptor
+                                if not isinstance(descriptor, ProbeDescriptor): raise RuntimeError("Reflection probe descriptor unavailable")
+                                self._storage.publish(gl)
+                                self.descriptor = descriptor
+                                self.available = True
+                                self.revision += 1
+                                self._published = self._pending[0]
+                                self._pending = None
+                                completed = self._clock()
+                                self._changed_next = completed + CHANGED_INTERVAL
+                                self._next = completed + (CHANGED_INTERVAL if soft != self._published else PERIODIC_INTERVAL)
+                                self.failure = ""
+                                self._reported_failure = ""
+                    if not self.working or self._turn_clock() - started >= TURN_SECONDS: break
                 return self.working
         except Exception as error:
             return self.fail(error)
+        finally:
+            if self._diagnostic and self._capture_start is not None and started is not None:
+                self._capture_cpu += max(0., self._turn_clock() - started)
+                self._capture_turns += 1
+                if not self.working:
+                    finished = self._clock()
+                    if self.available and finished >= self._report_at:
+                        try:
+                            from UM.Logger import Logger
+                            Logger.log("i", "Toolhead environment capture: revision %s, wall %.1f ms, CPU submission %.1f ms, %s turns",
+                                self.revision, (finished-self._capture_start)*1000, self._capture_cpu*1000, int(self._capture_turns))
+                        except Exception: pass
+                        self._report_at = finished + 10.
+                    self._capture_start = None
 
     def fail(self, error):
         # A map fault retires only optional reflection. No partly built
         # map, recursive render, permanent latch or timer spin is allowed.
         self.failure = str(error)[:200]
+        if self.failure != self._reported_failure:
+            self._reported_failure = self.failure
+            try:
+                from UM.Logger import Logger
+                Logger.log("w", "Toolhead reflections unavailable: %s", self.failure)
+            except Exception:
+                pass
         self.available = False
         self._pending = self._commands = self._preparing = None
         self.descriptor = None
         self._retry = self._clock() + 5.
         return False
+
+    def defer(self):
+        # Slicing readiness is not a map fault. Keep the last complete map;
+        # abandon any partial scene and retry shortly without a busy loop.
+        self._pending = self._commands = self._preparing = None
+        self._next = 0.
+        self._capture_start = None
+        self._retry = self._clock() + .05
 
     def apply(self, shader):
         shader.setUniformValue("u_environmentEnabled", int(self.available))
@@ -259,4 +337,5 @@ class ToolheadEnvironment:
         if self._storage is not None: self._storage.close()
         self._storage = self._pending = self._commands = self._published = self._hard = self._preparing = self.descriptor = None
         self._context = None
+        self._capture_start = None
         self.available = False

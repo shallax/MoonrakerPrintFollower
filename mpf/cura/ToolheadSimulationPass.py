@@ -57,26 +57,6 @@ def _colour_bytes(data, count):
     return np.frombuffer(raw, dtype=np.float32).reshape(count, 4)
 
 
-def path_mesh(data):
-    """Share native immutable arrays; add missing previous-type values once."""
-    if data.hasAttribute("prev_line_types"): return data
-    from UM.Mesh.MeshData import MeshData
-    from cura.LayerPolygon import LayerPolygon
-    attributes = {name: data.getAttribute(name) for name in data.attributeNames()}
-    types = np.asarray(attributes["line_types"]["value"], dtype=np.float32)
-    previous = np.empty_like(types)
-    if len(previous):
-        previous[0] = LayerPolygon.MoveUnretractedType
-        previous[1:] = types[:-1]
-    previous.flags.writeable = False
-    attributes["prev_line_types"] = dict(value=previous, opengl_type="float", opengl_name="a_prev_line_type")
-    vertices = data.getVertices()
-    try: colours = data.getColors()
-    except (TypeError, ValueError): colours = _colour_bytes(data, len(vertices))
-    return MeshData(vertices=vertices, normals=data.getNormals(), indices=data.getIndices(),
-                    colors=colours, uvs=data.getUVCoordinates(), attributes=attributes)
-
-
 class ToolheadSimulationPass:
     def __init__(self, original, renderer, view, root, eligible_callback, *,
                  active_extruder=None, starts_colour=None, timing=None):
@@ -114,8 +94,18 @@ class ToolheadSimulationPass:
     def getTextureId(self): return self._fbo.texture() if self._owned_output else self.original.getTextureId()
     def getOutput(self): return self._fbo.toImage() if self._owned_output else self.original.getOutput()
     def getCompletedLayerShadowMode(self):
-        """Observed native material mode; unknown before a valid source transition."""
+        """Observed native material mode for the current eligible source."""
         return self._shadow if not self._closed and self._last_source is not None else None
+    def getReflectionSceneReady(self):
+        # Cura has no public processing-state getter. Keep this narrow,
+        # read-only host-layout observation in the adapter: slice preparation
+        # removes LayerData before the engine/processed replacement arrives.
+        from UM.Application import Application
+        backend = getattr(Application.getInstance(), "getBackend", lambda: None)()
+        return not (getattr(backend, "_slicing", False)
+                    or getattr(backend, "_process_layers_job", None)
+                    or self._view.isBusy())
+
     def bind(self): self.original.bind()
     def release(self): self.original.release()
 
@@ -266,7 +256,7 @@ class ToolheadSimulationPass:
                                   for filename in ("layers3d.shader", "layers3d_shadow.shader"))
             if any(shader is None for shader in self._shaders): raise RuntimeError("Native simulation shaders unavailable")
         if data is not self._data:
-            self._geometry = ToolheadPathGeometry(path_mesh(data))
+            self._geometry = ToolheadPathGeometry(data)
             self._data = data
         width, height = self.getSize()
         if width <= 0 or height <= 0: raise RuntimeError("Simulation target size unavailable")
@@ -310,7 +300,7 @@ class ToolheadSimulationPass:
                 gl.glColorMask(True, True, True, True)
                 gl.glEnable(gl.GL_CULL_FACE)
                 if top > start:
-                    instanced = self._shadow and self._instanced_shadow.render(self._geometry.mesh, self._shadow_source,
+                    instanced = self._shadow and self._instanced_shadow.render(self._geometry.vertex_mesh(context), self._shadow_source,
                         camera, transform, start, top, self._view, gl)
                     if not instanced: self._geometry.render(shadow if self._shadow else normal, camera, transform, [(start, top)], gl)
                 completed(top, end)
@@ -569,8 +559,8 @@ class ToolheadSimulationPass:
             if source is not None and self._previous is not None:
                 if current[1] != self._previous[1]: self._shadow = True
                 if not self._view.isSimulationRunning() and current[0] != self._previous[0]: self._shadow = False
-            # Keep the original's private transition state synchronized through
-            # its public render(), never by reading or mutating its internals.
+            # Let native rendering apply its transitions before admitting
+            # retained colour/depth on the following frame.
             warm = previous_shadow != self._shadow or previous_layer != current[0]
             self._previous = current
             if source is not None and self._shadow is not None and not warm and self._failed_context is not context:
@@ -594,3 +584,15 @@ class ToolheadSimulationPass:
             except Exception: pass
         self._owned_output = False
         self.original.render()
+        if source is not None:
+            # Stationary/re-sliced previews may never produce a transition.
+            # Read the actual stock shader identity AFTER its successful draw;
+            # _switching_layers alone can disagree after a scene reset. This
+            # narrow host-layout observation never changes native state, and
+            # an unavailable/unknown layout keeps the transition-only fallback.
+            shaders = getattr(self.original, "__dict__", {})
+            normal, shadow = shaders.get('_layer_shader'), shaders.get('_layer_shadow_shader')
+            current = shaders.get('_current_shader')
+            if normal is not None and shadow is not None and normal is not shadow:
+                if current is normal: self._shadow = False
+                elif current is shadow: self._shadow = True

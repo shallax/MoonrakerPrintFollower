@@ -1,4 +1,5 @@
 """Ordinary plugin scene node, independent of Cura's estimated NozzleNode."""
+import time
 import numpy as np
 from UM.Mesh.MeshData import MeshData
 from UM.Scene.SceneNode import SceneNode
@@ -138,12 +139,12 @@ class ToolheadSceneNode(SceneNode):
 
     def prepare_environment(self, renderer, camera, gl):
         if self._native_model or self._view is None or self._root is None or not self._lighting_enabled or not self._reflections_enabled: return
-        from .ToolheadEnvironment import ToolheadEnvironment
+        from .ToolheadEnvironment import EnvironmentNotReady, ToolheadEnvironment
         from .ToolheadEnvironmentScene import ToolheadEnvironmentScene
         if self._environment is None:
             from UM.Application import Application
             window = getattr(Application.getInstance(), "getMainWindow", lambda: None)()
-            self._environment = ToolheadEnvironment(window=window)
+            self._environment = ToolheadEnvironment(window=window, diagnostic=self._render_timing.enabled)
         if self._environment_scene is None: self._environment_scene = ToolheadEnvironmentScene()
         if not self._environment.ready:
             self._schedule_environment()
@@ -156,22 +157,29 @@ class ToolheadSceneNode(SceneNode):
             self._environment.step(gl, self._render_context, signature[0], soft,
                 lambda: self._environment_scene.snapshot(self, renderer, camera, signature))
             self._schedule_environment()
+        except EnvironmentNotReady:
+            self._environment.defer()
+            self._schedule_environment()
         except Exception as error:
             # Unsupported optional capture keeps ordinary shading available.
             self._environment.fail(error)
+            self._schedule_environment()
 
     def _schedule_environment(self):
         owner = self._environment
+        delay = owner.wake_delay
+        deadline = time.monotonic() + delay
         pending = getattr(self, "_environment_wake", None)
-        if pending is not None and pending[0] is owner: return
+        if pending is not None and pending[0] is owner and pending[1] <= deadline: return
         from UM.Application import Application
         from PyQt6.QtCore import QTimer
         app = Application.getInstance()
-        delay = int(owner.wake_delay * 1000)
-        token = owner, object()
+        delay = int(delay * 1000)
+        token = owner, deadline, object()
         self._environment_wake = token
         def request():
-            if self._environment_wake is token: self._environment_wake = None
+            if self._environment_wake is not token: return
+            self._environment_wake = None
             if self._environment is owner and self.visible_for_render() and self._lighting_enabled and self._reflections_enabled:
                 window = app.getMainWindow()
                 if window is not None: window.update()
@@ -290,7 +298,14 @@ class ToolheadSceneNode(SceneNode):
     def scene_lighting_effects(self): return self._light_bed, self._light_models
 
     def set_lighting_enabled(self, enabled):
-        self._lighting_enabled = bool(enabled)
+        enabled = bool(enabled)
+        if enabled == self._lighting_enabled: return
+        self._lighting_enabled = enabled
+        if not enabled:
+            # Disabled effects must release their large viewport surfaces and
+            # receiver buffers, not merely stop drawing into retained targets.
+            self._scene_lighting = None
+        self._lighting_failure = ""
 
     def set_reflections_enabled(self, enabled):
         enabled = bool(enabled)
@@ -470,6 +485,13 @@ class ToolheadSceneNode(SceneNode):
         from UM.Math.Matrix import Matrix
         if self._rotor_render is None: self._rotor_render = ToolheadRotorRender()
         poses = self._rotor_motion.sample()
+        static_key = self._frame_cache._key
+        cache_key = None if static_key is None else (
+            static_key, id(static), self._rotor_key,
+            tuple((row['body'],tuple(row['centre']),tuple(row['axis']),row['direction'],phase,blur)
+                  for row,phase,blur,_label in poses),
+            tuple((body,tuple(map(id,meshes))) for body,meshes in sorted(self._rotor_meshes.items())),
+            tuple(map(id,self._static_transparent)))
         current_target = [None]
         base = self.render_transformation().getData()
         convert = np.array(((1,0,0),(0,0,1),(0,-1,0)))
@@ -501,12 +523,13 @@ class ToolheadSceneNode(SceneNode):
             for mesh, transform, normal in sorted(transparent,key=distance,reverse=True):
                 self._draw_mesh(cropped_camera,None,mesh,transform,normal)
             if self._depth_seed is not None:
+                self._write_translucent_depth(cropped_camera, transparent)
                 self._occlusion.overlay(gl, current_target[0], cropped_camera)
         import time
         if time.monotonic() >= self._rotor_retry:
             try:
                 result = self._rotor_render.combine(gl,static,camera,size,render,
-                    blurred=any(blur>.02 for _row,_phase,blur,_label in poses))
+                    blurred=any(blur>.02 for _row,_phase,blur,_label in poses), cache_key=cache_key)
                 self._rotor_status = ""
                 return result
             except Exception:
@@ -591,7 +614,38 @@ class ToolheadSceneNode(SceneNode):
         batch.render(camera)
 
     def _draw(self, camera):
-        self._draw_mesh(camera,self.getMeshData(),None if self._rotor_meshes else self._translucent_mesh,self.render_transformation(),self._render_normal)
+        translucent = None if self._rotor_meshes else self._translucent_mesh
+        self._draw_mesh(camera,self.getMeshData(),translucent,self.render_transformation(),self._render_normal)
+        if self._depth_seed is not None and translucent is not None:
+            self._write_translucent_depth(camera, [(translucent, self.render_transformation(), self._render_normal)])
+
+    def _write_translucent_depth(self, camera, surfaces):
+        """Classify native foreground only after all CAD colours have blended.
+
+        A transparent bed behind a translucent head must not be replayed as
+        foreground. Writing depth before CAD colour would hide its inner faces.
+        This depth belongs only to the owned head crop, never Cura's scene.
+        """
+        if not surfaces: return
+        gl = OpenGL.getInstance().getBindingsObject()
+        shader = self._shader
+        shader.setUniformValue("u_depthOnly", 1)
+        try:
+            batch = RenderBatch(shader, type=RenderBatch.RenderType.Solid, backface_cull=True,
+                state_setup_callback=lambda bindings: (bindings.glColorMask(False, False, False, False),
+                    bindings.glDepthMask(True), bindings.glDepthFunc(bindings.GL_LESS)))
+            for mesh, transform, normal in surfaces:
+                batch.addItem(transform, mesh=mesh, **({"normal_transformation": normal} if normal is not None else {}))
+            batch.render(camera)
+        finally:
+            try:
+                try:
+                    shader.setUniformValue("u_depthOnly", 0)
+                finally:
+                    shader.release()
+            finally:
+                gl.glColorMask(True, True, True, True)
+                if self._environment is not None: self._environment.release_bindings()
 
     @staticmethod
     def _camera_view(camera):

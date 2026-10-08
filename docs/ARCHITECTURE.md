@@ -179,14 +179,14 @@ correct package ownership.
 | `ToolheadTransparency.py` | Blend native transparent surfaces ahead of the cropped head, preserving its premultiplied colour and alpha | G-code rasterization or native shader changes |
 | `ToolheadOcclusion.py` | Seed custom-head crops from the owned complete native path depth and small public solid/bed batches; retain depth provenance and retry failed acquisition | Native private FBO access, duplicate G-code rasterization or settings |
 | `ToolheadSurfaceCache.py` | Private visible-surface framebuffer, incremental completed paths and moving-light shading with bounded storage | Native framebuffer mutation or telemetry |
-| `ToolheadSimulationPass.py` | Public render-pass adapter for eligible previews with a visible custom head; retained native index storage, guarded shadow instancing and native fallback | Native class patches or scene mutation |
+| `ToolheadSimulationPass.py` | Render-pass adapter for eligible previews with a visible custom head; retained native indices, guarded shadow instancing, read-only stock shader identity after native fallback | Native class patches or scene mutation |
 | `ToolheadSimulationCache.py` | Retained native path colour/depth with completed-prefix append and bounded storage | Fractional paths, telemetry or native framebuffer mutation |
 | `ToolheadCamera.py` | Parallel orthographic or perspective view rays from delivered camera matrices | Saved preferences or scene mutation |
 | `ToolheadSceneLighting.py` | Owned additive bed/path illumination using light-independent surfaces; legacy/compatibility forward fallback | Host shader mutation, settings writes or telemetry |
 | `ToolheadOpaqueShader.py` | Shared toolhead shader variant without alpha discard for the fully opaque single-pass path | Shader formula duplication, settings or telemetry |
 | `ToolheadGLState.py` | Independent host graphics-state restoration around owned optional effects | Native framebuffer mutation or scene recursion |
 | `ToolheadEnvironment.py` | Paired colour/depth cubemaps, frozen six-face capture, atomic probe publication and optional failure backoff | Scene discovery or printer state |
-| `ToolheadEnvironmentScene.py` | Owned shaders reading actual platform/grid meshes and the complete visible public LayerData prefix | Native program mutation or recursive renderer calls |
+| `ToolheadEnvironmentScene.py` | Owned shaders reading platform/grid/visible bed-height meshes and the visible public LayerData prefix | Native program mutation or recursive renderer calls |
 | `ToolheadSceneNode.py` | Non-selectable lit triangle node; private head depth above final scene composition, cleared before Qt controls; opaque single pass and completed-image opacity | Telemetry or nozzle suppression |
 | `ToolheadPresenter.py` | Reported-position freshness/homing gate, estimated public LayerData adapter and one native-nozzle suppression owner | Print progress matching or native class patches |
 | `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
@@ -552,7 +552,9 @@ tile-sized colour/depth image and re-shades only when its pose, camera, model
 or lights change. Global opacity fades this premultiplied image once at composition,
 so coincident CAD faces do not accumulate alpha and opacity changes do not rerun
 geometry. Opaque models use one shaded depth-tested draw at every global opacity;
-models with intrinsically translucent materials retain their depth prepass.
+models with intrinsically translucent materials draw all translucent colours first,
+then write their owned depth before Cura's transparent bed overlay. This protects
+completed head colours without an early transparent prepass hiding internal parts.
 
 The View Options master lighting switch persists independently of the bed/model
 choices. Disabling it bypasses scene illumination and displays the head's base
@@ -1825,6 +1827,11 @@ refresh the Presenter. ToolheadSceneNode gates capture and queued wakeups with
 this flag; disabling closes the environment owner and invalidates the frame
 cache without rebuilding mesh buffers. Re-enable creates a fresh capture owner.
 Lighting off retains the separate reflection choice.
+Disabling lighting retires its retained frame/surface owners and resets its
+optional failure state; re-enabling allocates a fresh lighting owner lazily.
+Reflection disable separately retires its fixed-size maps. Other simulation
+owners may still require shared path buffers, and freeing owned allocations
+does not require the driver's process footprint to shrink immediately.
 
 MPFHEAD3 retains per-triangle material/body occurrence IDs and bounded immutable
 annotation tables; MPFHEAD1/2 remain readable. STEP physical material labels and
@@ -1832,17 +1839,58 @@ clear part names choose conservative finishes. Unknown remains nonmetallic;
 colour is never a metal detector. Intrinsic CAD alpha is retained. Exact-position
 normal welding uses a conservative 192 MiB working budget (512 bytes per
 triangle); larger meshes retain cached read-only flat normals without welding. Plastic detail
-perturbs model-local normals and fades unresolved grain; one saved strength is
+uses irregular gradient noise to perturb model-local normals and fades each
+noise domain at its own pixel footprint, including anisotropic fibre grain; one saved strength is
 live-previewed transactionally. Glass and metal do not gain generated grain.
 
 The normal Preview renderer supplies a frozen visible source/prefix and cloned
-public grid/platform/layer shaders to a 512-pixel colour/depth cube capture. Each composition
-executes at most one bed batch or 32,768-index path chunk; chunk uploads retain
-native VBOs and cap owned EBO copies. Bounds preparation reduces at most 65,536
-vertices per turn and caches each immutable mesh's bounds. Six complete colour
-and depth faces publish with their origin, near/far and bounds atomically.
-Backward scrubs, visibility/filter/source/context changes retire old maps; motion
-coalesces and refreshes at most once per second. Unsupported compatibility mode
+public grid/platform/layer shaders to a 512-pixel colour/depth cube capture. Visible
+BedMeshSceneNode surfaces retain their actual height and vertex colours. Plate
+colours blend before their paired depth is written, including negative mesh heights.
+A turn submits at most 64 preparation/draw/copy operations with a 2 ms CPU
+budget; a single GPU draw or shader compilation is indivisible. Each path draw
+has at most 32,768 indices, retaining owned VBOs and bounded EBO copies.
+The owned vertex upload snapshots attribute metadata and supplies previous line
+types before any draw. It shares immutable native arrays and the public colour
+byte API; it never creates or borrows a native LayerData cached VBO. This prevents
+Cura's late previous-type attribute from invalidating host storage. One weakly
+retained upload per source/share group serves simulation, lighting and reflection.
+Bounds reduction visits at most 65,536 vertices or 32,768 indexed path elements
+per operation. Immutable full chunks are cached; only the current first/last
+partial-prefix bounds are retained. Conservative transformed tube bounds reject
+chunks outside one homogeneous cube-face clip plane; every 32 rejected chunks
+provides a cooperative checkpoint. Native and attached-light passes use the same
+admission, without decimation or changed pixel tolerances.
+Snapshot-local visibility decisions retain their exact box/camera identities.
+The additive pass also rejects padded chunks beyond every active light sphere;
+the native colour/depth pass keeps the original admission. Both rejection tests
+share one 32-candidate cooperative budget. Contiguous path draws share shader,
+VAO and buffer bindings only within one capture turn; frozen uniforms upload
+once, while element offsets and additive depth state remain per-command.
+Every plate/face/shader transition and turn exit independently releases these
+bindings before the host graphics guard restores its state. Procedure pointers
+are weakly cached per native context generation and evicted on destruction.
+Idle deadlines precede GL state handling. Declared CPU-only bounds preparation
+also avoids that guard while retaining the same operation/time budget; snapshot
+creation, drawing and resource creation remain guarded. Ordinary forward path
+bounds are lazy; native/deferred draws do not scan them. Native int32 index arrays
+can use an identical unsigned view without a whole-print conversion allocation.
+Six complete colour and depth faces publish with their origin, near/far and
+bounds atomically. Same-context slice, visibility, filter and source changes keep
+the last complete map visible while its replacement builds; abandoned partial
+faces never publish. Disable, context retirement and capture failure remove it.
+Changed pose/path/light state coalesces with a 150 ms minimum interval after
+publication; unchanged scenes refresh at most once per second. Earlier wake
+deadlines supersede old idle timers, and obsolete callbacks cannot request a
+frame. Empty LayerData during active slice/layer production defers replacement
+and retains the complete map; a stable empty bed remains capturable. The adapter
+reads only the backend slicing/layer-job flags and public Preview busy state.
+The opt-in rendering marker also logs bounded capture wall/submission time and
+turn counts, at most one report per ten seconds, without waiting for GPU work.
+After a successful stock draw, the simulation adapter can observe the identities
+of the stock layer, shadow and current shaders to initialize stationary previews.
+This narrow read-only host-layout dependency never changes native state; unknown
+layouts retain transition-based observation. Unsupported compatibility mode
 keeps ordinary shading. The map excludes the head. One local reflected ray uses
 16 coarse depth samples and at most two six-step candidate refinements, then
 seven colour taps for roughness. Bounds only restrict the search interval;
@@ -1878,6 +1926,9 @@ and show a fallback status. Models exceeding 64 translucent bodies refuse fan
 animation while keeping ordinary rendering available.
 Conservative all-angle bounds prevent rotor clipping. A visible moving rotor
 requests composition at 30 Hz; hidden/stopped rotors stop that timer.
+Stopped poses reuse a completed shutter image keyed by camera, scene/depth,
+materials, rotor geometry/configuration, phase and blur. Publication happens
+after successful graphics-state restoration; faults cannot cache partial work.
 
 The selected Monitor routes raw read-only fan observations. Full samples replace
 old RPM fields; deltas retain unchanged values. Finite nonnegative measured RPM,
@@ -1891,7 +1942,9 @@ commands. Printer controls are never exercised during development.
 Toolhead appearance follows the delivered Cura camera projection, including
 perspective/orthographic switches and retained-image crops. Perspective eye
 vectors vary per fragment; orthographic vectors use the active camera world
-back axis. Projection/view bytes invalidate cached shading. The editor uses
+back axis. Projection/view bytes invalidate cached shading. Bounded value-based
+camera caches also fence dtype and in-place matrix changes; cached vectors are
+copied before delivery. The editor uses
 parallel orthographic rays, and translucent rotating bodies sort by view depth
 in that mode. Cura's saved preference is not a rendering authority.
 

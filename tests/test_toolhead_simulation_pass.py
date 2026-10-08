@@ -123,6 +123,24 @@ class SimulationPassTests(unittest.TestCase):
         self.adapter.render()  # Synchronize original lower-shadow mode.
         self.adapter.render()
 
+    def test_empty_reflection_scene_waits_for_slice_preparation_and_layer_processing(self):
+        backend = SimpleNamespace(_slicing=False, _process_layers_job=None)
+        self.application.getBackend = lambda: backend
+        self.view.isBusy = Mock(return_value=False)
+        self.assertTrue(self.adapter.getReflectionSceneReady())
+        backend._slicing = True
+        self.assertFalse(self.adapter.getReflectionSceneReady())
+        backend._slicing = False
+        job = object(); backend._process_layers_job = job
+        self.assertFalse(self.adapter.getReflectionSceneReady())
+        self.assertIs(backend._process_layers_job, job)
+        backend._process_layers_job = None
+        self.view.isBusy.return_value = True
+        self.assertFalse(self.adapter.getReflectionSceneReady())
+        self.view.isBusy.return_value = False
+        self.application.getBackend = lambda: None
+        self.assertTrue(self.adapter.getReflectionSceneReady())
+
     def test_visible_depth_revision_covers_fractional_progress_and_camera_source_changes(self):
         self.activate(.5)
         self.fbo.handle.return_value = 83
@@ -405,6 +423,7 @@ class SimulationPassTests(unittest.TestCase):
     def test_completed_shadow_capability_tracks_native_warmup_and_detached_layer_navigation(self):
         self.data.getElementCounts = lambda: {0: 6, 1: 8, 2: 4}
         self.assertIsNone(self.adapter.getCompletedLayerShadowMode())
+
         self.adapter.render()
         self.assertIsNone(self.adapter.getCompletedLayerShadowMode())
         self.path = .5
@@ -428,6 +447,33 @@ class SimulationPassTests(unittest.TestCase):
         self.path = 1.0  # Scrubbing paths restores native shadow material.
         self.adapter.render()
         self.assertIs(self.adapter.getCompletedLayerShadowMode(), True)
+
+    def test_stationary_native_draw_establishes_actual_shader_without_navigation(self):
+        normal, shadow=object(),object()
+        self.original._layer_shader=normal
+        self.original._layer_shadow_shader=shadow
+        self.original._current_shader=normal
+        self.adapter.render()
+        self.assertIs(self.adapter.getCompletedLayerShadowMode(),False)
+        self.adapter.render()
+        self.assertTrue(self.adapter._owned_output)
+        # A scene reset can leave the native shader shadow while its flag says
+        # switching layers. Use actual shader identity, never guess from flag.
+        self.child.data=self.make_data()
+        self.original._current_shader=shadow
+        self.original._switching_layers=True
+        self.adapter.render()
+        self.assertIs(self.adapter.getCompletedLayerShadowMode(),True)
+        self.adapter.render()
+        self.assertTrue(self.adapter._owned_output)
+        self.original._current_shader=object()
+        self.child.data=self.make_data()
+        self.adapter.render()
+        self.assertIsNone(self.adapter.getCompletedLayerShadowMode())
+        self.original._current_shader=shadow
+        self.allowed=False
+        self.adapter.render()
+        self.assertIsNone(self.adapter.getCompletedLayerShadowMode())
 
     def test_completed_shadow_capability_is_unknown_after_source_retirement_and_close(self):
         self.activate()
@@ -513,21 +559,6 @@ class SimulationPassTests(unittest.TestCase):
         self.minimum = 0
         self.data.getLayer = lambda layer: None
         self.assertIsNone(self.module.path_ranges(self.data, self.view))
-
-    def test_owned_missing_previous_types_are_built_once_without_source_mutation(self):
-        types = np.array([1, 2, 3], np.float32)
-        attributes = {"line_types": dict(value=types, opengl_name="a_line_type", opengl_type="float")}
-        self.data.hasAttribute = lambda name: False
-        self.data.attributeNames = lambda: list(attributes)
-        self.data.getAttribute = attributes.__getitem__
-        for getter in ("Vertices", "Normals", "Indices", "Colors", "UVCoordinates"):
-            setattr(self.data, "get" + getter, lambda getter=getter: getter)
-        mesh = self.module.path_mesh(self.data)
-        np.testing.assert_array_equal(mesh.attributes["prev_line_types"]["value"], [8, 1, 2])
-        self.assertFalse(mesh.attributes["prev_line_types"]["value"].flags.writeable)
-        self.assertNotIn("prev_line_types", attributes)
-        attributes["line_types"]["value"] = np.array([], np.float32)
-        self.assertEqual(len(self.module.path_mesh(self.data).attributes["prev_line_types"]["value"]), 0)
 
     def depth_fixture(self, older_types=(6, 1, 6)):
         vertices = np.asarray([point for i in range(7) for point in ((-2., 0., float(i)), (2., 0., float(i)))], dtype=np.float32)
@@ -813,7 +844,7 @@ class SimulationPassTests(unittest.TestCase):
     def test_instanced_shadow_replaces_lower_only_and_preserves_normal_fractional_draw(self):
         self.instanced.render.return_value = True
         self.activate(.5)
-        self.instanced.render.assert_called_once_with(self.geometry.mesh, Path('/native/shaders/layers3d_shadow.shader'),
+        self.instanced.render.assert_called_once_with(self.geometry.vertex_mesh.return_value, Path('/native/shaders/layers3d_shadow.shader'),
             self.camera, 'world', 0, 6, self.view, self.gl)
         self.assertEqual(self.geometry.render.call_args_list, [call(self.normal, self.camera, 'world', [(6, 8)], self.gl)])
         self.normal.setUniformValue.assert_any_call('u_last_line_ratio', .5)
@@ -877,20 +908,3 @@ class SimulationPassTests(unittest.TestCase):
         for _ in range(3):self.assertFalse(self.adapter.try_copy_completed_depth(self.gl,object(),self.camera,[tuple(changed)],self.view))
         self.logger.log.assert_called_once_with('i','toolhead shared simulation depth rejected: %s','malformed geometry/view metadata')
         self.adapter._cache.try_copy_depth.assert_not_called()
-
-    def test_missing_previous_types_with_broken_native_colour_getter_preserves_public_colour_bytes(self):
-        attributes,paths=self.depth_fixture()
-        colours=self.data.getColors.return_value.astype(np.float32)
-        self.data.hasAttribute=lambda name:False
-        self.data.attributeNames=lambda:list(attributes)
-        self.data.getNormals=lambda:None;self.data.getUVCoordinates=lambda:None
-        self.data.getColors.side_effect=ValueError('ambiguous ndarray truth')
-        self.data.getColorsAsByteArray=Mock(return_value=colours.tobytes())
-        mesh=self.module.path_mesh(self.data)
-        np.testing.assert_array_equal(mesh.colors,colours)
-        np.testing.assert_array_equal(mesh.attributes['prev_line_types']['value'],np.r_[8,attributes['line_types']['value'][:-1]])
-        self.assertFalse(mesh.colors.flags.writeable)
-        self.data.getColorsAsByteArray.assert_called_once()
-        self.assertNotIn('prev_line_types',attributes)
-        self.data.getColorsAsByteArray.return_value=b'wrong size'
-        with self.assertRaisesRegex(ValueError,'colour bytes have wrong size'):self.module.path_mesh(self.data)

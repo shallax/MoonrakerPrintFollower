@@ -52,8 +52,8 @@ class ToolheadShaderTests(unittest.TestCase):
         core = self.source["shaders"]["fragment41core"]
         self.assertTrue(core.lstrip().startswith("#version 410"))
         # Declarations differ between GLSL versions; all functions must agree.
-        legacy = legacy[legacy.index("float led("):]
-        core = core[core.index("float led("):].replace("frag_color", "gl_FragColor")
+        legacy = legacy[legacy.index("float grainHash("):]
+        core = core[core.index("float grainHash("):].replace("frag_color", "gl_FragColor")
         self.assertEqual(legacy, core)
 
     def test_master_disable_returns_painted_base_colour_before_all_lighting(self):

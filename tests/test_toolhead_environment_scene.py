@@ -28,6 +28,35 @@ with patch.dict(sys.modules, {
 
 
 class EnvironmentSceneTests(unittest.TestCase):
+    def test_turn_batches_frozen_bindings_and_breaks_on_camera_geometry_or_fault(self):
+        from contextlib import contextmanager
+        geometry=Mock();shader=Mock();camera=Mock();transform=Matrix()
+        snapshot=module.EnvironmentSnapshot(self.owner,(0,0,0),'light',[],[],{},False)
+        events=[];draw=Mock();setup=Mock()
+        @contextmanager
+        def session(*_):
+            events.append('enter')
+            try:yield draw
+            finally:events.append('exit')
+        geometry.draw_session.side_effect=session
+        with snapshot.turn():
+            for first,last in ((0,2),(2,4)):
+                snapshot._path_draw('first',geometry,shader,camera,transform,first,last,Mock(),setup)
+            self.assertEqual(events,['enter'])
+            setup.assert_called_once()
+            snapshot._path_draw('changed camera',geometry,shader,camera,transform,0,2,Mock(),setup)
+            self.assertEqual(events,['enter','exit','enter'])
+            snapshot._break_draw()
+            self.assertEqual(events,['enter','exit','enter','exit'])
+            snapshot._path_draw('third',geometry,shader,camera,transform,0,2,Mock(),setup)
+        self.assertEqual(events,['enter','exit','enter','exit','enter','exit'])
+        self.assertIsNone(snapshot._turn)
+        with self.assertRaisesRegex(RuntimeError,'chunk failed'),snapshot.turn():
+            draw.side_effect=RuntimeError('chunk failed')
+            snapshot._path_draw('fail',geometry,shader,camera,transform,0,2,Mock(),setup)
+        self.assertEqual(events[-2:],['enter','exit'])
+        self.assertIsNone(snapshot._draw)
+
     def setUp(self):
         self.owner = module.ToolheadEnvironmentScene()
         self.view = Mock()
@@ -55,6 +84,7 @@ class EnvironmentSceneTests(unittest.TestCase):
             'UM.Application': NS(Application=NS(getInstance=lambda: self.app)),
             'cura.Settings.ExtruderManager': NS(ExtruderManager=NS(getInstance=lambda: NS(activeExtruderIndex=2))),
             'UM.Scene.Platform': NS(Platform=Platform),
+            'mpf.bedmesh.BedMeshSceneNode': NS(BedMeshSceneNode=Heightmap),
             'UM.Resources': NS(Resources=NS(Shaders=0, Images=1, getPath=lambda kind, value: value)),
             'UM.View.GL.OpenGL': NS(OpenGL=NS(getInstance=lambda: NS(createTexture=lambda: Mock()))),
         }
@@ -109,6 +139,15 @@ class EnvironmentSceneTests(unittest.TestCase):
         # A bed-only probe needs no path-shadow observation.
         self.owner.signature(self.renderer,self.view,self.root)
 
+    def test_empty_slice_replacement_is_deferred_but_a_stable_empty_bed_is_allowed(self):
+        ready = False
+        self.renderer.getRenderPass = lambda name: NS(
+            getCompletedLayerShadowMode=lambda: None, getReflectionSceneReady=lambda: ready)
+        with self.assertRaisesRegex(module.EnvironmentNotReady, 'replacement is still processing'):
+            self.owner.signature(self.renderer, self.view, self.root)
+        ready = True
+        self.assertEqual(self.owner.signature(self.renderer, self.view, self.root)[1], ())
+
     def test_shader_clones_native_sources_without_changing_geometry_semantics(self):
         parser='[shaders]\nvertex41core=vertex\nfragment41core=fragment\ngeometry41core=void myEmitVertex() { f_color = color; }\n[defaults]\nu_test=1\n[bindings]\nu_mvp=model_matrix\n'
         with tempfile.TemporaryDirectory() as folder:
@@ -139,6 +178,179 @@ class EnvironmentSceneTests(unittest.TestCase):
         list(empty.prepare())
         self.assertEqual(list(empty.commands(1)),[])
 
+    def test_culling_keeps_crossing_segments_and_shadow_chunk_straddles(self):
+        geometry=NS(mesh=object());chunk=module.PATH_CHUNK
+        snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[],{},False)
+        camera=module.probe_camera(np.zeros(3),0,None,.2,1000.)
+        # Box lies only below probe: reject the positive-X cube face.
+        snap.path_bounds[id(geometry),0]=(np.array([-6,-44,-6]),np.array([6,-34,6]))
+        snap.path_bounds[id(geometry),chunk]=(np.array([10,-1,-1]),np.array([20,1,1]))
+        self.assertEqual(list(snap.visible_chunks(geometry,camera,0,chunk)),[])
+        self.assertEqual(list(snap.visible_chunks(geometry,camera,chunk-2,chunk+2)),[(chunk-2,chunk+2)])
+        # A long segment crosses the frustum even if neither endpoint lies in it.
+        snap.path_bounds[id(geometry),0]=(np.array([-100,-1,-1]),np.array([100,1,1]))
+        self.assertEqual(list(snap.visible_chunks(geometry,camera,0,2)),[(0,2)])
+        snap.path_bounds.clear()
+        self.assertEqual(list(snap.visible_chunks(geometry,camera,0,2)),[(0,2)])
+
+    def test_frozen_visibility_reuses_boxes_but_new_box_or_camera_invalidates(self):
+        geometry=NS(mesh=object());snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[],{},False)
+        camera=module.probe_camera(np.zeros(3),0,None,.2,1000.)
+        box=(np.array([10,-1,-1]),np.array([20,1,1]))
+        snap.path_bounds[id(geometry),0]=box
+        for _ in range(4):self.assertEqual(list(snap.visible_chunks(geometry,camera,0,2)),[(0,2)])
+        self.assertEqual(len(snap._visibility),1)
+        self.assertIs(next(iter(snap._visibility.values()))[0],box)
+        snap.path_bounds[id(geometry),0]=(np.array([-6,-44,-6]),np.array([6,-34,6]))
+        self.assertEqual(list(snap.visible_chunks(geometry,camera,0,2)),[])
+        other=module.probe_camera(np.zeros(3),3,None,.2,1000.)
+        self.assertEqual(list(snap.visible_chunks(geometry,other,0,2)),[(0,2)])
+        self.assertEqual(len(snap._visibility),2)
+
+    def test_additive_range_keeps_crossings_partial_chunks_missing_bounds_and_checkpoints(self):
+        geometry=NS(mesh=object());chunk=module.PATH_CHUNK
+        snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[],{},False)
+        camera=module.probe_camera(np.zeros(3),0,None,.2,1000.)
+        snap.lighting={'u_attachedCount':1,'u_attachedPosition[0]':[10,0,0],
+                       'u_attachedRange[0]':2.,'u_attachedColour[0]':[1,0,0]}
+        snap.path_bounds[id(geometry),0]=(np.array([8,-1,-1]),np.array([12,1,1]))
+        snap.path_bounds[id(geometry),chunk]=(np.array([100,-1,-1]),np.array([120,1,1]))
+        self.assertEqual(list(snap.lit_chunks(geometry,camera,0,chunk*2)),[(0,chunk)])
+        self.assertEqual(list(snap.lit_chunks(geometry,camera,chunk-2,chunk+2)),[(chunk-2,chunk+2)])
+        for offset in range(0,chunk*96,chunk):
+            snap.path_bounds[id(geometry),offset]=(np.array([100,-1,-1]),np.array([120,1,1]))
+        self.assertEqual(list(snap.lit_chunks(geometry,camera,0,chunk*96)),[(None,None)]*3)
+        # Native geometry is still admitted even when its additive energy is zero.
+        self.assertEqual(len(list(snap.visible_chunks(geometry,camera,0,chunk*96))),96)
+        snap.path_bounds.clear()
+        self.assertEqual(list(snap.lit_chunks(geometry,camera,0,2)),[(0,2)])
+        snap.path_bounds[id(geometry),0]=(np.array([8,-1,-1]),np.array([12,1,1]))
+        snap.lighting['u_attachedColour[0]']=[0,0,0]
+        self.assertEqual(list(snap.lit_chunks(geometry,camera,0,2)),[])
+        snap.lighting['u_attachedRange[0]']=float('nan')
+        self.assertEqual(list(snap.lit_chunks(geometry,camera,0,2)),[(0,2)])
+        snap.lighting={}
+        self.assertEqual(list(snap.lit_chunks(geometry,camera,0,2)),[(0,2)])
+        snap.path_bounds.clear()
+        self.assertEqual(list(snap.visible_chunks(geometry,camera,0,2)),[(0,2)])
+
+    def test_mixed_frustum_and_light_rejections_share_one_bounded_checkpoint(self):
+        geometry=NS(mesh=object());chunk=module.PATH_CHUNK
+        snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[],{},False)
+        camera=module.probe_camera(np.zeros(3),0,None,.2,1000.)
+        snap.lighting={'u_attachedCount':1,'u_attachedPosition[0]':[10,0,0],
+                       'u_attachedRange[0]':2.,'u_attachedColour[0]':[1,0,0]}
+        for index in range(96):
+            snap.path_bounds[id(geometry),index*chunk]=(np.array([100,-1,-1]),np.array([120,1,1])) if index%32==31 else (np.array([-6,-44,-6]),np.array([6,-34,6]))
+        work=snap.lit_chunks(geometry,camera,0,chunk*96)
+        self.assertEqual(next(work),(None,None))
+        self.assertEqual(len(snap._visibility),32)
+        self.assertEqual(len(list(work)),2)
+
+    def test_cached_bounds_transform_work_yields_before_scanning_large_print(self):
+        geometry=Mock();mesh=geometry.mesh;chunk=module.PATH_CHUNK
+        self.owner._mesh_bounds[mesh]=(np.array([-1,-40,-1]),np.array([1,-30,1]))
+        self.owner._path_bounds[mesh]={start:(np.array([-1,-40,-1]),np.array([1,-30,1]),2.)
+            for start in range(0,chunk*100,chunk)}
+        snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[(geometry,Matrix(),(0,chunk*100),None,0)],{},False)
+        work=snap.prepare();next(work)()
+        self.assertLessEqual(len(snap.path_bounds),32)
+        self.assertIsNone(snap.descriptor)
+        remaining=list(work);self.assertEqual(len(remaining),2)
+        self.assertEqual(len(snap.path_bounds),100)
+        self.assertIsNotNone(snap.descriptor)
+        mesh.getVertices.assert_not_called();mesh.getIndices.assert_not_called()
+
+    def test_rejected_chunks_yield_cooperative_checkpoints_for_both_native_and_lit_paths(self):
+        geometry=Mock();chunk=module.PATH_CHUNK
+        snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[(geometry,Matrix(),(0,chunk*96),None,0)],{},False)
+        snap.descriptor=module.ProbeDescriptor((0,0,0),(-10,-50,-10),(10,-30,10))
+        for start in range(0,chunk*96,chunk):
+            snap.path_bounds[id(geometry),start]=(np.array([-6,-44,-6]),np.array([6,-34,6]))
+        snap.lighting={'u_lightOpacity':1};snap.light_effects=(False,True)
+        self.owner.path_shader=Mock();self.owner.light_path_shader=Mock()
+        commands=list(snap.commands(0));self.assertEqual(len(commands),6)
+        for command in commands:command(Mock())
+        geometry.render.assert_not_called()
+        camera=module.probe_camera(np.zeros(3),0,None,.2,1000.)
+        work=snap.visible_chunks(geometry,camera,0,chunk*96)
+        self.assertEqual(next(work),(None,None))
+        self.assertEqual(len(list(work)),2)
+
+    def test_shared_layer_geometry_bounds_retain_every_transformed_occurrence(self):
+        mesh=HashMesh([[-1,0,0],[1,0,0]])
+        mesh.getIndices=lambda:np.arange(2)
+        geometry=NS(mesh=mesh)
+        left=Matrix();left.data[0,3]=100
+        below=Matrix();below.data[1,3]=-40
+        snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],
+            [(geometry,left,(0,2),None,0),(geometry,below,(0,2),None,0)],{},False)
+        for reduction in snap.prepare():reduction()
+        low,high=snap.path_bounds[id(geometry),0]
+        np.testing.assert_allclose(low,[-3,-42,-2])
+        np.testing.assert_allclose(high,[103,2,2])
+        camera=module.probe_camera(np.zeros(3),0,None,.2,1000.)
+        self.assertEqual(list(snap.visible_chunks(geometry,camera,0,2)),[(0,2)])
+
+    def test_partial_prefix_bounds_exclude_future_layers_and_do_not_accumulate_scrub_keys(self):
+        mesh=HashMesh([[-1,-40,0],[1,-40,0],[-1,40,0],[1,40,0]])
+        mesh.getIndices=lambda:np.tile(np.arange(4),module.PATH_CHUNK//4)
+        geometry=NS(mesh=mesh)
+        def snapshot(first,last):
+            snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[(geometry,Matrix(),(first,last),None,0)],{},False)
+            for reduction in snap.prepare():reduction()
+            return snap
+        snap=snapshot(0,2)
+        camera=module.probe_camera(np.zeros(3),2,None,.2,1000.)
+        self.assertEqual(list(snap.visible_chunks(geometry,camera,0,2)),[])
+        mesh.getVertices=Mock(wraps=mesh.getVertices)
+        snapshot(0,2);mesh.getVertices.assert_not_called()
+        for end in range(4,100,2):
+            snapshot(0,end)
+            self.assertEqual(len(self.owner._path_edges[mesh]),1)
+        snapshot(2,4)
+        self.assertEqual(set(self.owner._path_edges[mesh]),{(2,4)})
+
+    def test_path_bounds_are_cached_bounded_and_include_scaled_tube_dimensions(self):
+        chunk=module.PATH_CHUNK
+        points=np.tile([10.,-40.,0.],(chunk+2,1))
+        mesh=NS(getVertices=lambda:points,getIndices=lambda:np.arange(chunk+2),
+                getAttribute=lambda name:{'value':np.tile([3.,.4],(chunk+2,1))})
+        # Hashable immutable fixture, matching native MeshData cache ownership.
+        class Mesh:
+            getVertices=staticmethod(mesh.getVertices)
+            getIndices=staticmethod(mesh.getIndices)
+            getAttribute=staticmethod(mesh.getAttribute)
+        mesh=Mesh();geometry=NS(mesh=mesh)
+        transform=Matrix(np.array([[2,1,0,5],[0,3,0,0],[0,0,1,0],[0,0,0,1.]]))
+        snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[(geometry,transform,(0,chunk+2),None,0)],{},False)
+        count=0
+        for reduction in snap.prepare(): reduction();count+=1
+        self.assertEqual(count,3)
+        self.assertEqual(len(self.owner._path_bounds[mesh]),1)
+        self.assertEqual(len(self.owner._path_edges[mesh]),1)
+        low,high=snap.path_bounds[id(geometry),0]
+        np.testing.assert_allclose(low,[-33,-138,-18])
+        np.testing.assert_allclose(high,[3,-102,18])
+        self.assertTrue(np.all(np.asarray(snap.descriptor.minimum)<=low))
+        mesh.getVertices=Mock(side_effect=AssertionError('cached mesh rescanned'))
+        other=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],snap.paths,{},False)
+        self.assertEqual(list(other.prepare()),[])
+        bad=HashMesh([[0,0,0],[float('nan'),0,0]])
+        bad_snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[(NS(mesh=bad),Matrix(),(0,2),None,0)],{},False)
+        with self.assertRaisesRegex(RuntimeError,'Invalid reflection scene vertices'):
+            for reduction in bad_snap.prepare():reduction()
+        self.owner._mesh_bounds[bad]=(np.zeros(3),np.ones(3))
+        with self.assertRaisesRegex(RuntimeError,'Invalid reflection path vertices'):
+            for reduction in bad_snap.prepare():reduction()
+        mesh.getVertices=lambda:points
+        mesh.getAttribute=lambda name:{'value':np.full((chunk+2,2),float('nan'))}
+        self.owner._path_bounds[mesh].clear()
+        self.owner._path_edges[mesh].clear()
+        with self.assertRaisesRegex(RuntimeError,'Invalid reflection path dimensions'):
+            for reduction in other.prepare():reduction()
+
+
     def test_completed_shadow_and_current_prefix_use_distinct_native_geometry(self):
         geometry=Mock(); shadow, current=Mock(), Mock()
         self.owner.path_shader=Mock(side_effect=lambda compatibility, shaded: shadow if shaded else current)
@@ -162,6 +374,7 @@ class EnvironmentSceneTests(unittest.TestCase):
 
 
 class Platform: pass
+class Heightmap: pass
 
 
 from contextlib import nullcontext
@@ -185,7 +398,7 @@ class HashMesh:
         return None
 
     def getIndices(self):
-        return np.arange(6)
+        return np.arange(6) % len(self.vertices)
 
     def getAttribute(self, name):
         return None
@@ -216,6 +429,7 @@ class EnvironmentDelta(unittest.TestCase):
 
     def test_snapshot_freezes_attached_light_values_and_native_top_prefix(self):
         mesh=HashMesh();self.children=[self.child(mesh)]
+        mesh.getElementCounts=lambda:{0:np.int64(2),1:np.int64(4)}
         geometry=NS(mesh=mesh)
         node=self.snapshot_node();node._lighting_enabled=True;node._attached_lights=[dict(brightness=1)]
         position=[3,4,5]
@@ -228,6 +442,7 @@ class EnvironmentDelta(unittest.TestCase):
         self.assertEqual(snap.lighting['u_attachedPosition[0]'],[3,4,5])
         self.assertEqual(snap.light_effects,(False,True))
         self.assertEqual(snap.path_top[id(geometry)],2)
+        self.assertIs(type(snap.path_top[id(geometry)]),int, 'Qt rejects NumPy scalar uniform values at bind')
 
     def test_bounds_preflight_is_chunked_cached_and_transformed_without_whole_print_scan(self):
         vertices = np.zeros((module.BOUNDS_CHUNK+3,3))
@@ -242,6 +457,7 @@ class EnvironmentDelta(unittest.TestCase):
         self.assertNotIn(mesh,self.owner._mesh_bounds)
         next(work)()
         self.assertIsNone(snap.descriptor)
+        next(work)()  # At most PATH_CHUNK indices for the admitted prefix.
         with self.assertRaises(StopIteration): next(work)
         np.testing.assert_allclose(snap.descriptor.minimum,(38,-2,-2))
         np.testing.assert_allclose(snap.descriptor.maximum,(52,22,32))
@@ -301,6 +517,36 @@ class EnvironmentDelta(unittest.TestCase):
         self.assertEqual(snap.plates, [])
         self.assertIsNone(self.owner._plate_kinds[oversized])
 
+    def test_heightmap_uses_vertex_colours_and_retired_visible_identity_not_uv_guess(self):
+        mesh=HashMesh([[-100,-1,-100],[100,2,-100],[100,1,100]])
+        heightmap=Heightmap();heightmap.visible=False
+        heightmap.isVisible=lambda:heightmap.visible
+        heightmap.getMeshData=lambda:mesh
+        heightmap.callDecoration=lambda name:None
+        self.children=[heightmap]
+        self.batches=[NS(renderMode=4,items=[dict(mesh=mesh,transformation=Matrix())])]
+        shader=Mock();self.owner.mesh_shader=Mock(return_value=shader)
+        sig=self.owner.signature(self.renderer,self.view,self.root)
+        snap=self.owner.snapshot(self.snapshot_node(),self.renderer,NS(getCameraLightPosition=lambda:None),sig)
+        self.assertEqual(snap.plates,[])
+        heightmap.visible=True
+        visible=self.owner.signature(self.renderer,self.view,self.root)
+        self.assertNotEqual(sig[0],visible[0])
+        snap=self.owner.snapshot(self.snapshot_node(),self.renderer,NS(getCameraLightPosition=lambda:None),visible)
+        self.assertIs(snap.plates[0][1]['mesh'],mesh)
+        self.assertEqual(snap.plates[0][2],{},'native vertex colour/alpha must not be overridden or treated as flat lighting receiver')
+        self.owner.mesh_shader.assert_called_with('default')
+        heightmap.visible=False;self.batches=[]
+        hidden=self.owner.signature(self.renderer,self.view,self.root)
+        self.assertNotEqual(hidden[0],visible[0])
+        self.assertEqual(self.owner.snapshot(self.snapshot_node(),self.renderer,NS(getCameraLightPosition=lambda:None),hidden).plates,[])
+        heightmap.visible=True
+        oldmesh=mesh;mesh=HashMesh(np.zeros((module.MAX_BED_VERTICES+1,3)))
+        self.assertNotEqual(hidden[0],self.owner.signature(self.renderer,self.view,self.root)[0])
+        self.batches=[NS(renderMode=4,items=[dict(mesh=mesh,transformation=Matrix()),dict(mesh=oldmesh,transformation=Matrix())])]
+        sig=self.owner.signature(self.renderer,self.view,self.root)
+        self.assertEqual(self.owner.snapshot(self.snapshot_node(),self.renderer,NS(getCameraLightPosition=lambda:None),sig).plates,[])
+
     def test_explicit_platform_identity_wins_over_planar_uv_heuristic(self):
         bed = HashMesh([[-100, 0, -100], [100, 0, -100], [100, 0, 100]], uv=True)
         platform = Platform()
@@ -329,8 +575,9 @@ class EnvironmentDelta(unittest.TestCase):
         snap.light_effects = (True,True);snap.path_top[id(geometry)]=2
         gl=Mock()
         commands=list(snap.commands(0))
-        # One bed and two native path spans precede the additive commands.
-        self.assertEqual(len(commands),5)
+        # Bed colour and post-colour depth plus two native path spans precede
+        # the additive commands.
+        self.assertEqual(len(commands),6)
         commands[-2](gl);commands[-1](gl)
         gl.glDepthMask.assert_called_with(False)
         gl.glBlendFuncSeparate.assert_called_with(gl.GL_SRC_ALPHA,gl.GL_ONE,gl.GL_ZERO,gl.GL_ONE)
@@ -350,15 +597,18 @@ class EnvironmentDelta(unittest.TestCase):
     def test_path_shader_fault_backs_off_and_recovery_publishes_six_faces(self):
         now = [10.0]
         storage = Mock()
-        environment = ToolheadEnvironment(clock=lambda: now[0], storage_factory=lambda *args: storage)
+        environment = ToolheadEnvironment(clock=lambda: now[0], storage_factory=lambda *args: storage, commands_per_turn=1)
         geometry = Mock()
         geometry.mesh = HashMesh()
+        geometry.draw_session.side_effect=lambda shader,camera,transform,gl:nullcontext(
+            lambda ranges: geometry.render(shader,camera,transform,ranges,gl))
         snap = module.EnvironmentSnapshot(self.owner, (0, 0, 0), 'light', [], [(geometry, Matrix(), (0, 2), None, 0)], {}, False)
         self.owner.path_shader = Mock(side_effect=RuntimeError('native path shader compile failed'))
         with patch('mpf.toolhead.ToolheadEnvironment.preserved_state', side_effect=lambda *args: nullcontext()):
             step = lambda: environment.step(Mock(), object_context, 'file', 'pose', lambda: snap)
             object_context = object()
             self.assertTrue(step())  # Bounded scene-bounds preflight.
+            self.assertTrue(step())  # Bounded path chunk preflight.
             self.assertFalse(step())
             self.assertIn('compile failed', environment.failure)
             for _ in range(20):
@@ -412,12 +662,12 @@ class EnvironmentImageTests(unittest.TestCase):
             self.assertIs(self.owner.mesh_shader('grid'),self.shader)
             self.assertIs(self.owner.mesh_shader('grid'),self.shader)
             factory.assert_called_once()
-        batch=Mock();constructor=Mock(return_value=batch);constructor.RenderType=NS(Transparent=2)
+        batch=Mock();constructor=Mock(return_value=batch);constructor.RenderType=NS(Transparent=2,Solid=1)
         item=dict(mesh=object(),transformation=Matrix(),normal_transformation='normal',uniforms={'native':1})
         snapshot=module.EnvironmentSnapshot(self.owner,(0,0,0),'light',[(self.shader,item,{'u_plateColor':[1,0,0,1]})],[],{},False)
         snapshot.descriptor = module.ProbeDescriptor((0,0,0),(-10,-10,-10),(10,10,10))
         with patch.dict(sys.modules,{'UM.View.RenderBatch':NS(RenderBatch=constructor)}):
-            commands=list(snapshot.commands(0));self.assertEqual(len(commands),1);commands[0](Mock())
+            commands=list(snapshot.commands(0));self.assertEqual(len(commands),2);commands[0](Mock())
         batch.addItem.assert_called_once_with(item['transformation'],mesh=item['mesh'],uniforms={'native':1},normal_transformation='normal')
         batch.render.assert_called_once()
         for inherited_equation in ('REVERSE_SUBTRACT','MIN'):
@@ -425,5 +675,16 @@ class EnvironmentImageTests(unittest.TestCase):
             bindings.glBlendEquationSeparate(inherited_equation,inherited_equation)
             constructor.call_args.kwargs['state_setup_callback'](bindings)
             bindings.glBlendEquation.assert_called_once_with(0x8006)
-            bindings.glDepthMask.assert_called_once_with(True)
+            bindings.glDepthMask.assert_called_once_with(False)
             bindings.glDepthFunc.assert_called_once_with(0x0201)
+        colour_setup=constructor.call_args.kwargs['state_setup_callback']
+        with patch.dict(sys.modules,{'UM.View.RenderBatch':NS(RenderBatch=constructor)}):
+            gl=Mock();commands[1](gl)
+        self.assertEqual(constructor.call_args.kwargs['type'],1)
+        depth_setup=constructor.call_args.kwargs['state_setup_callback']
+        self.assertIsNot(depth_setup,colour_setup)
+        bindings=Mock();bindings.GL_LESS=0x0201
+        depth_setup(bindings)
+        bindings.glDepthMask.assert_called_once_with(True)
+        bindings.glColorMask.assert_called_once_with(False,False,False,False)
+        gl.glColorMask.assert_called_once_with(True,True,True,True)

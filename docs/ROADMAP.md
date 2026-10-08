@@ -38,7 +38,22 @@ perspective cameras and retain native scene depth under attached illumination.
 The rendering extension passed the full local gate (5,510 tests, all lint checks,
 46 byte-identical capture pairs and verified packages) and 98% coverage with every
 module above 95%, then was pushed. Canonical Linux captures have been refreshed
-from that head; whole branch CI validation remains in progress. These effects issue no printer commands and
+from that head, and whole branch CI passed. The live qualification follow-up
+corrects re-slice admission, bed-overlay translucency, bed-height capture and
+appearance-reset handles; reflection refresh retains the previous complete map
+and culls invisible chunks. Owned path vertex storage prevents late native
+attributes from corrupting slice markers. Irregular grain replaces periodic
+bumps, and active map changes supersede idle timers. The large-print audit adds
+exact camera caches, lazy forward bounds, idle/CPU-only graphics avoidance,
+weak native-procedure caching, conservative light-range filtering, snapshot
+visibility reuse and turn-scoped path bindings. Stopped fan images can be reused,
+disabled lighting retires its viewport caches, and native signed index storage
+can share unsigned upload bytes. Native million-line proofs retain exact paired
+maps; the loaded-print capture latency still needs qualification. Staged first
+uploads, worker bounds, uncullled shadow instancing and complete mutable-input
+revision tracking remain separate candidates requiring native proofs. Fresh
+full local and branch CI gates for this follow-up remain in progress.
+These effects issue no printer commands and
 never require per-face material setup.
 
 ### 5.3.0 — Toolhead controls in Preview (final planned 5.x feature release)
@@ -3158,4 +3173,7 @@ sets the chart's shipped resolution.
   dismissible by click, and all entries clear at print end. NO automatic
   PAUSE retry — a retry could double a command that was merely slow.
 
-5.3.0 live qualification follow-up: correct the fan-animation window-state API, add independent selected-body/face RGB colour editing, and provide a saved Preview reflection enable switch beside lighting. Local and CI qualification of this delta is in progress.
+5.3.0 live qualification follow-up: fan-window fix, RGB picker, reflection toggle
+and clear-selection action passed whole CI at ea3aa7db. The subsequent re-slice,
+translucency, bed-height capture, faster continuous reflection refresh and reset
+slider fixes await fresh full local and exact-head CI qualification.

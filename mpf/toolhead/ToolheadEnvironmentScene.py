@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import configparser
+from contextlib import contextmanager, ExitStack
 from copy import deepcopy
 import math
 from pathlib import Path
@@ -11,7 +12,7 @@ from types import SimpleNamespace
 import numpy as np
 from .ToolheadPathGeometry import ToolheadPathGeometry
 from .ToolheadSceneLighting import layer_range, create_path_shader
-from .ToolheadEnvironment import ProbeDescriptor
+from .ToolheadEnvironment import EnvironmentNotReady, ProbeDescriptor
 
 PATH_CHUNK = 32768  # index elements; native tube emission is bounded per turn
 MAX_BED_VERTICES = 250000
@@ -72,6 +73,7 @@ def probe_camera(origin, face, light, near=.2, far=10000.):
 
 
 class EnvironmentSnapshot:
+    cpu_preparation = True  # prepare() never binds, creates or calls Qt/GL resources.
     def __init__(self, owner, origin, light, plates, paths, uniforms, compatibility):
         self.owner, self.origin, self.light = owner, tuple(origin), light
         self.plates, self.paths = plates, paths
@@ -80,12 +82,46 @@ class EnvironmentSnapshot:
         self.lighting = {}
         self.light_effects = (False, False)
         self.path_top = {}
+        self.path_bounds = {}
+        self._visibility = {}
+        self._turn = self._draw_key = self._draw = None
+
+    def _close_draw(self):
+        turn, self._turn = self._turn, None
+        self._draw_key = self._draw = None
+        if turn is not None: turn.close()
+
+    def _break_draw(self):
+        if self._turn is not None:
+            self._close_draw()
+            self._turn = ExitStack()
+
+    @contextmanager
+    def turn(self):
+        """No shader, VAO or buffer binding survives a host render turn."""
+        self._turn = ExitStack()
+        try: yield
+        finally: self._close_draw()
+
+    def _path_draw(self, key, geometry, shader, camera, transform, start, end, gl, setup):
+        if self._turn is None:
+            setup()
+            geometry.render(shader, camera, transform, [(start, end)], gl)
+            return
+        if key != self._draw_key:
+            self._close_draw()
+            self._turn = ExitStack()
+            setup()
+            self._draw = self._turn.enter_context(geometry.draw_session(shader, camera, transform, gl))
+            self._draw_key = key
+        self._draw([(start, end)])
 
     def prepare(self):
         """Reduce immutable mesh bounds once, in bounded render-thread turns."""
         entries = [(item["mesh"], item["transformation"]) for _shader, item, _settings in self.plates]
         entries += [(geometry.mesh, transform) for geometry, transform, *_rest in self.paths]
         world = []
+        cached_work = 0
         for mesh, transform in entries:
             if mesh not in self.owner._mesh_bounds:
                 vertices = mesh.getVertices()
@@ -104,12 +140,134 @@ class EnvironmentSnapshot:
             centre = matrix[:3, :3] @ centre + matrix[:3, 3]
             extent = np.abs(matrix[:3, :3]) @ extent
             world.append((centre - extent, centre + extent))
+            cached_work += 1
+            if cached_work == 32:
+                cached_work = 0
+                yield lambda: None
+        # Reduce only admitted prefix chunks. Future layers must not force all
+        # six faces to draw the currently visible prefix. Cache immutable local
+        # bounds; transformed tube expansion is accounted for per snapshot.
+        for geometry, transform, bounds, _partial, _shadow in self.paths:
+            mesh = geometry.mesh
+            cached = self.owner._path_bounds.setdefault(mesh, {})
+            edges = self.owner._path_edges.setdefault(mesh, {})
+            admitted_edges = set()
+            matrix = np.asarray(transform.getData())
+            expansion = max(1., float(np.max(np.abs(matrix[:3, :3]).sum(axis=1))))
+            for start in range(bounds[0] // PATH_CHUNK * PATH_CHUNK, bounds[1], PATH_CHUNK):
+                first, last = max(start, bounds[0]), min(start + PATH_CHUNK, bounds[1])
+                complete = first == start and last == start + PATH_CHUNK
+                cache, key = (cached, start) if complete else (edges, (first, last))
+                if not complete: admitted_edges.add(key)
+                if key not in cache:
+                    def reduce_path(first=first, last=last, cache=cache, key=key, mesh=mesh):
+                        selected = np.asarray(mesh.getIndices()).reshape(-1)[first:last]
+                        points = mesh.getVertices()[selected]
+                        dimensions = mesh.getAttribute("line_dimensions")
+                        dimensions = dimensions["value"] if dimensions is not None else None
+                        if not len(points) or not np.isfinite(points).all():
+                            raise RuntimeError("Invalid reflection path vertices")
+                        padding = 2.
+                        if dimensions is not None:
+                            sizes = np.asarray(dimensions)[selected]
+                            if not np.isfinite(sizes).all(): raise RuntimeError("Invalid reflection path dimensions")
+                            padding = max(padding, float(np.max(np.abs(sizes))) * 2)
+                        cache[key] = points.min(axis=0), points.max(axis=0), padding
+                    yield reduce_path
+                low, high, padding = cache[key]
+                centre, extent = (low + high) / 2, (high - low) / 2
+                centre = matrix[:3, :3] @ centre + matrix[:3, 3]
+                extent = np.abs(matrix[:3, :3]) @ extent + padding * expansion
+                key = id(geometry), start
+                previous = self.path_bounds.get(key)
+                low, high = centre - extent, centre + extent
+                if previous is not None:
+                    # One immutable LayerData may occur under multiple scene
+                    # transforms. Its shared geometry must retain every copy.
+                    low, high = np.minimum(low, previous[0]), np.maximum(high, previous[1])
+                self.path_bounds[key] = low, high
+                cached_work += 1
+                if cached_work == 32:
+                    cached_work = 0
+                    yield lambda: None
+            # Keep only the current first/last partial blocks, not every scrub
+            # prefix. Unchanged captures reuse these two bounded edge entries.
+            self.owner._path_edges[mesh] = {key: value for key, value in edges.items() if key in admitted_edges}
         padding = max(2., float(self.uniforms.get("u_max_thickness", 0)) * 2,
                       float(self.uniforms.get("u_max_line_width", 0)) * 2)
         low = np.min([entry[0] for entry in world], axis=0) - padding if world else np.asarray(self.origin) - 1
         high = np.max([entry[1] for entry in world], axis=0) + padding if world else np.asarray(self.origin) + 1
+        if self.path_bounds:
+            low = np.minimum(low, np.min([box[0] for box in self.path_bounds.values()], axis=0))
+            high = np.maximum(high, np.max([box[1] for box in self.path_bounds.values()], axis=0))
         reach = float(np.linalg.norm(np.maximum(abs(low - self.origin), abs(high - self.origin)))) + 1
         self.descriptor = ProbeDescriptor(self.origin, tuple(low), tuple(high), far=max(2., reach))
+
+    def visible_chunks(self, geometry, camera, first, last, *, lights=None):
+        """Reject only whole padded chunks outside one homogeneous clip plane."""
+        clip = camera.getProjectionMatrix().getData() @ camera.getInverseWorldTransformation().getData()
+        camera_key = clip.dtype.str, clip.tobytes()
+        rejected = 0
+        for start in range(first, last, PATH_CHUNK):
+            end = min(start + PATH_CHUNK, last)
+            # A shadow boundary can straddle two aligned cached chunks.
+            visible = False
+            for offset in range(start // PATH_CHUNK * PATH_CHUNK, end, PATH_CHUNK):
+                box = self.path_bounds.get((id(geometry), offset))
+                if box is None:
+                    visible = True; break  # Unprepared synthetic snapshots fail open.
+                key = camera_key, id(geometry), offset
+                cached = self._visibility.get(key)
+                if cached is None or cached[0] is not box:
+                    low, high = box
+                    corners = np.array([[x, y, z, 1.] for x in (low[0], high[0])
+                                        for y in (low[1], high[1]) for z in (low[2], high[2])])
+                    points = corners @ clip.T
+                    verdict = not any(np.all(sign * points[:, axis] > points[:, 3])
+                                      for axis in range(3) for sign in (-1, 1))
+                    self._visibility[key] = box, verdict
+                else: verdict = cached[1]
+                if verdict:
+                    visible = True; break
+            if visible and lights is not None:
+                visible = False
+                for offset in range(start // PATH_CHUNK * PATH_CHUNK, end, PATH_CHUNK):
+                    box = self.path_bounds.get((id(geometry), offset))
+                    if box is None:
+                        visible = True; break
+                    low, high = box
+                    for position, reach in lights:
+                        delta = np.maximum(np.maximum(low - position, position - high), 0)
+                        if float(np.sum(delta * delta)) <= reach * reach:
+                            visible = True; break
+                    if visible: break
+            if visible:
+                rejected = 0
+                yield start, end
+            else:
+                rejected += 1
+                if rejected == 32:
+                    # Cooperative checkpoint: next(commands) must not scan an
+                    # arbitrarily large invisible print in one GUI turn.
+                    rejected = 0
+                    yield None, None
+
+    def lit_chunks(self, geometry, camera, first, last):
+        """Cull only additive energy; native colour and depth keep all geometry."""
+        lights = []
+        try:
+            for index in range(int(self.lighting['u_attachedCount'])):
+                position = np.asarray(self.lighting[f'u_attachedPosition[{index}]'], dtype=float)
+                reach = float(self.lighting[f'u_attachedRange[{index}]'])
+                colour = np.asarray(self.lighting[f'u_attachedColour[{index}]'], dtype=float)
+                if position.shape != (3,) or not np.isfinite(position).all() or not math.isfinite(reach):
+                    raise ValueError('Unclassified light range')
+                if reach > 0 and np.any(colour != 0): lights.append((position, reach))
+        except (KeyError, TypeError, ValueError):
+            lights = None  # Incomplete synthetic/custom descriptors fail open.
+        # A single rejection budget covers both tests. Nested generators
+        # otherwise multiply 31 frustum rejects by 31 light-range rejects.
+        yield from self.visible_chunks(geometry, camera, first, last, lights=lights)
 
     def commands(self, face):
         from UM.View.RenderBatch import RenderBatch
@@ -117,16 +275,34 @@ class EnvironmentSnapshot:
         camera = probe_camera(self.origin, face, self.light, descriptor.near, descriptor.far)
         for shader, item, settings in self.plates:
             def plate(gl, shader=shader, item=item, settings=settings):
+                self._break_draw()
                 for name, value in settings.items(): shader.setUniformValue(name, value)
                 batch = RenderBatch(shader, type=RenderBatch.RenderType.Transparent, backface_cull=False,
                                     state_setup_callback=lambda bindings: (
-                                        bindings.glDepthMask(True), bindings.glDepthFunc(bindings.GL_LESS),
+                                        bindings.glDepthMask(False), bindings.glDepthFunc(bindings.GL_LESS),
                                         bindings.glBlendEquation(bindings.GL_FUNC_ADD)))
                 batch.addItem(item["transformation"], mesh=item["mesh"], uniforms=item.get("uniforms"),
                               normal_transformation=item.get("normal_transformation"))
                 try: batch.render(camera)
                 finally: shader.release()
             yield plate
+        # Native transparent plate surfaces do not occlude each other while
+        # their colours blend: a negative heightmap still shows beneath the
+        # grid. Populate paired depth only AFTER that complete colour phase.
+        for shader, item, settings in self.plates:
+            def plate_depth(gl, shader=shader, item=item, settings=settings):
+                self._break_draw()
+                for name, value in settings.items(): shader.setUniformValue(name, value)
+                batch = RenderBatch(shader, type=RenderBatch.RenderType.Solid, backface_cull=False,
+                    state_setup_callback=lambda bindings:(bindings.glColorMask(False,False,False,False),
+                        bindings.glDepthMask(True),bindings.glDepthFunc(bindings.GL_LESS)))
+                batch.addItem(item['transformation'],mesh=item['mesh'],uniforms=item.get('uniforms'),
+                    normal_transformation=item.get('normal_transformation'))
+                try: batch.render(camera)
+                finally:
+                    try: shader.release()
+                    finally: gl.glColorMask(True,True,True,True)
+            yield plate_depth
         for geometry, transform, bounds, partial, shadow in self.paths:
             # Native shadow geometry has distinct helper/start-marker rules,
             # not merely grey paint. Keep its shader and range separate.
@@ -136,19 +312,23 @@ class EnvironmentSnapshot:
                 if last <= first: continue
                 shader = self.owner.path_shader(self.compatibility, is_shadow)
                 fragment = None if is_shadow else partial
-                for start in range(first, last, PATH_CHUNK):
-                    end = min(start + PATH_CHUNK, last)
+                for start, end in self.visible_chunks(geometry, camera, first, last):
+                    if start is None:
+                        yield lambda gl: None
+                        continue
                     def path(gl, geometry=geometry, transform=transform, start=start, end=end, partial=fragment, shader=shader):
-                        for name, value in self.uniforms.items(): shader.setUniformValue(name, value)
-                        shader.setUniformValue("u_last_vertex", partial[0] if partial else [math.nan] * 3)
-                        shader.setUniformValue("u_next_vertex", partial[1] if partial else [math.nan] * 3)
-                        shader.setUniformValue("u_last_line_ratio", partial[2] if partial else 1.)
+                        def setup():
+                            for name, value in self.uniforms.items(): shader.setUniformValue(name, value)
+                            shader.setUniformValue("u_last_vertex", partial[0] if partial else [math.nan] * 3)
+                            shader.setUniformValue("u_next_vertex", partial[1] if partial else [math.nan] * 3)
+                            shader.setUniformValue("u_last_line_ratio", partial[2] if partial else 1.)
                         gl.glEnable(gl.GL_DEPTH_TEST)
                         gl.glDepthMask(True)
                         gl.glDepthFunc(gl.GL_LESS)
                         gl.glDisable(gl.GL_BLEND)
                         gl.glDisable(gl.GL_CULL_FACE)
-                        geometry.render(shader, camera, transform, [(start, end)], gl)
+                        key = id(geometry), shader, id(camera), id(transform), id(partial)
+                        self._path_draw(key, geometry, shader, camera, transform, start, end, gl, setup)
                     yield path
 
 
@@ -162,6 +342,7 @@ class EnvironmentSnapshot:
                 if not settings: continue  # Native platform volume is not the bed receiver.
                 mesh = self.owner.light_receiver(item['mesh'])
                 def lit_plate(gl, mesh=mesh, item=item, shader=shader):
+                    self._break_draw()
                     self._light_state(gl, shader)
                     shader.setUniformValue('u_hasColour', 0)
                     batch = RenderBatch(shader, type=RenderBatch.RenderType.Solid, backface_cull=True,
@@ -173,23 +354,33 @@ class EnvironmentSnapshot:
         if light_models:
             shader = self.owner.light_path_shader(self.compatibility)
             for geometry, transform, bounds, partial, shadow in self.paths:
-                for start in range(bounds[0], bounds[1], PATH_CHUNK):
-                    end = min(start + PATH_CHUNK, bounds[1])
+                for start, end in self.lit_chunks(geometry, camera, bounds[0], bounds[1]):
+                    if start is None:
+                        yield lambda gl: None
+                        continue
                     def lit_path(gl, geometry=geometry, transform=transform, start=start, end=end, partial=partial, shadow=shadow):
-                        self._light_state(gl, shader)
-                        for name, value in self.uniforms.items(): shader.setUniformValue(name, value)
-                        shader.setUniformValue('u_lightingFirstTopElement', self.path_top[id(geometry)])
-                        shader.setUniformValue('u_lightingShadowElements', shadow)
-                        shader.setUniformValue('u_last_vertex', partial[0] if partial else [math.nan]*3)
-                        shader.setUniformValue('u_next_vertex', partial[1] if partial else [math.nan]*3)
-                        shader.setUniformValue('u_last_line_ratio', partial[2] if partial else 1.)
-                        geometry.render(shader, camera, transform, [(start, end)], gl)
+                        # CubeStorage.begin restores depth writes for each
+                        # command. Reapply additive state even in a bound batch.
+                        self._light_state(gl, shader, uniforms=False)
+                        def setup():
+                            self._light_uniforms(shader)
+                            for name, value in self.uniforms.items(): shader.setUniformValue(name, value)
+                            shader.setUniformValue('u_lightingFirstTopElement', self.path_top[id(geometry)])
+                            shader.setUniformValue('u_lightingShadowElements', shadow)
+                            shader.setUniformValue('u_last_vertex', partial[0] if partial else [math.nan]*3)
+                            shader.setUniformValue('u_next_vertex', partial[1] if partial else [math.nan]*3)
+                            shader.setUniformValue('u_last_line_ratio', partial[2] if partial else 1.)
+                        key = id(geometry), shader, id(camera), id(transform), id(partial), shadow
+                        self._path_draw(key, geometry, shader, camera, transform, start, end, gl, setup)
                     yield lit_path
 
-    def _light_state(self, gl, shader):
+    def _light_uniforms(self, shader):
         for name, value in self.lighting.items(): shader.setUniformValue(name, value)
         shader.setUniformValue('u_depthOnly', 0)
         shader.setUniformValue('u_orthographic', 0)  # Cube faces always use perspective rays.
+
+    def _light_state(self, gl, shader, *, uniforms=True):
+        if uniforms: self._light_uniforms(shader)
         gl.glEnable(gl.GL_DEPTH_TEST)
         gl.glEnable(gl.GL_CULL_FACE)
         gl.glCullFace(gl.GL_BACK)
@@ -212,6 +403,8 @@ class ToolheadEnvironmentScene:
         self._scrub_epoch = 0
         self._plate_kinds = {}
         self._mesh_bounds = {}
+        self._path_bounds = {}
+        self._path_edges = {}
         self._light_receivers = {}
 
     def path_shader(self, compatibility, shadow=False):
@@ -248,6 +441,12 @@ class ToolheadEnvironmentScene:
                 normals=np.tile([0, 1, 0], (len(vertices), 1)).astype(np.float32))
         return self._light_receivers[mesh]
 
+    @staticmethod
+    def heightmap_meshes(root):
+        from ..bedmesh.BedMeshSceneNode import BedMeshSceneNode
+        return {child.getMeshData() for child in root.getAllChildren()
+                if isinstance(child, BedMeshSceneNode) and child.isVisible() and child.getMeshData() is not None}
+
     def signature(self, renderer, view, root):
         if view.getCompatibilityMode():
             # Legacy top-layer mesh and flat-line modes differ from tubes.
@@ -271,12 +470,15 @@ class ToolheadEnvironmentScene:
         self._prefix = prefix
         provider = renderer.getRenderPass("simulationview")
         shadow = getattr(provider, "getCompletedLayerShadowMode", lambda: None)()
+        if not data and not getattr(provider, "getReflectionSceneReady", lambda: True)():
+            raise EnvironmentNotReady("Native slice replacement is still processing")
         if shadow is None and any(visible for _mesh, _transform, visible in data):
-            raise RuntimeError("Native Preview path shadow state unavailable")
+            raise EnvironmentNotReady("Native Preview path shadow state unavailable")
         hard = (root, view, self._scrub_epoch, bool(shadow), tuple((id(mesh), transform, visible) for mesh, transform, visible in data),
                 repr(uniforms), bool(view.getCompatibilityMode()), int(view.getMinimumLayer()), colours, texture,
                 tuple((id(item["mesh"]), item["transformation"].getData().tobytes())
-                      for batch in self._batches for item in batch.items if batch.renderMode == 4))
+                      for batch in self._batches for item in batch.items if batch.renderMode == 4),
+                frozenset(map(id, self.heightmap_meshes(root))))
         return hard, data, uniforms, colours, texture
 
     def snapshot(self, node, renderer, camera, signature):
@@ -303,35 +505,45 @@ class ToolheadEnvironmentScene:
                 owned_texture.setImage(image.mirrored())
             self._platform_key, self._texture = texture, owned_texture
         platforms = {child.getMeshData() for child in root.getAllChildren() if isinstance(child, Platform)}
-        plates = []
+        heightmaps = self.heightmap_meshes(root)
+        plates, heightmap_plates = [], []
         for batch in self._batches:
             if batch.renderMode != 4: continue
             for item in batch.items:
                 mesh = item["mesh"]
+                if mesh in heightmaps and self._plate_kinds.get(mesh) is None:
+                    vertices = mesh.getVertices()
+                    if vertices is not None and 3 <= len(vertices) <= MAX_BED_VERTICES:
+                        self._plate_kinds[mesh] = "heightmap"
                 if mesh not in self._plate_kinds:
                     kind = None
                     # Bound classification before any whole-array operation.
-                    if mesh in platforms or mesh.hasUVCoordinates():
+                    if mesh in platforms or mesh in heightmaps or mesh.hasUVCoordinates():
                         vertices = mesh.getVertices()
                         if vertices is not None and 3 <= len(vertices) <= MAX_BED_VERTICES:
                             extent = np.ptp(vertices, axis=0)
-                            if mesh in platforms: kind = "platform"
+                            if mesh in heightmaps: kind = "heightmap"
+                            elif mesh in platforms: kind = "platform"
                             elif mesh.hasUVCoordinates() and extent[1] < .02 and extent[0] > node.light_dimensions()[0]*.7 and extent[2] > node.light_dimensions()[1]*.7:
                                 kind = "grid"
                     self._plate_kinds[mesh] = kind
                 kind = self._plate_kinds[mesh]
                 if kind is None: continue
+                if kind == "heightmap" and mesh not in heightmaps: continue
                 is_grid = kind == "grid"
-                shader = self.mesh_shader(kind)
+                shader = self.mesh_shader("default" if kind == "heightmap" else kind)
                 settings = {"u_plateColor": [value/255 for value in colours[0]],
                             "u_gridColor0": [value/255 for value in colours[1]],
                             "u_gridColor1": [value/255 for value in colours[2]]} if is_grid else {}
                 if is_grid:
                     # Match native textured-bed blending over the platform.
                     settings["u_plateColor"][3] = .5 if Application.getInstance().getGlobalContainerStack().getMetaDataEntry("has_textured_buildplate", False) else 1.
-                else: shader.setTexture(0, self._texture)
+                elif kind == "platform": shader.setTexture(0, self._texture)
                 copied = dict(item, transformation=Matrix(item["transformation"].getData()))
-                plates.append((shader, copied, settings))
+                (heightmap_plates if kind == "heightmap" else plates).append((shader, copied, settings))
+        # Heightmap alpha must blend over the same bed base; it is not a flat
+        # attached-light receiver and retains its actual vertex colour/height.
+        plates.extend(heightmap_plates)
         shadow = _hard[3]
         used, paths = set(), []
         for mesh, raw_transform, visible in data:
@@ -344,6 +556,8 @@ class ToolheadEnvironmentScene:
             before = sum(count for layer, count in mesh.getElementCounts().items() if layer < int(view.getCurrentLayer())) if shadow else 0
             paths.append((self._geometry[mesh], transform, bounds[:2], bounds[2], int(before)))
         self._geometry = {key: value for key, value in self._geometry.items() if key in used}
+        self._path_bounds = {key: value for key, value in self._path_bounds.items() if key in used}
+        self._path_edges = {key: value for key, value in self._path_edges.items() if key in used}
         meshes = {item["mesh"] for batch in self._batches for item in batch.items}
         self._plate_kinds = {mesh: kind for mesh, kind in self._plate_kinds.items() if mesh in meshes}
         self._light_receivers = {mesh: receiver for mesh, receiver in self._light_receivers.items() if mesh in meshes}
@@ -356,5 +570,8 @@ class ToolheadEnvironmentScene:
             node.apply_attached_lights(SimpleNamespace(setUniformValue=lambda name, value: snapshot.lighting.__setitem__(name, deepcopy(value))))
             snapshot.light_effects = node.scene_lighting_effects()
             for geometry, _transform, bounds, _partial, _shadow in paths:
-                snapshot.path_top[id(geometry)] = max(bounds[0], sum(count for layer, count in geometry.mesh.getElementCounts().items() if layer < int(view.getCurrentLayer())))
+                # Native LayerData counts are NumPy integers. Qt's scalar
+                # uniform overload accepts Python int only, including after
+                # ShaderProgram defers this upload until the next bind.
+                snapshot.path_top[id(geometry)] = int(max(bounds[0], sum(count for layer, count in geometry.mesh.getElementCounts().items() if layer < int(view.getCurrentLayer()))))
         return snapshot

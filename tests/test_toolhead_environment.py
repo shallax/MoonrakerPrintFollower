@@ -3,6 +3,7 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+import sys
 
 from mpf.toolhead.ToolheadEnvironment import ToolheadEnvironment, ProbeDescriptor
 
@@ -13,7 +14,7 @@ class EnvironmentTests(unittest.TestCase):
         self.storage = Mock()
         self.context = object()
         self.factory = Mock(return_value=self.storage)
-        self.environment = ToolheadEnvironment(clock=lambda: self.clock[0], storage_factory=self.factory)
+        self.environment = ToolheadEnvironment(clock=lambda: self.clock[0], storage_factory=self.factory, commands_per_turn=1)
         scope = patch('mpf.toolhead.ToolheadEnvironment.preserved_state', return_value=nullcontext())
         scope.start(); self.addCleanup(scope.stop)
         self.drawn = []
@@ -55,17 +56,156 @@ class EnvironmentTests(unittest.TestCase):
         self.assertTrue(self.step())
         self.assertTrue(self.environment.available)
 
-    def test_hard_identity_change_retires_front_and_pending_without_cross_scene_faces(self):
+    def test_idle_deadline_does_not_touch_graphics_but_changed_pose_and_context_do(self):
         self.finish()
+        with patch('mpf.toolhead.ToolheadEnvironment.preserved_state',return_value=nullcontext()) as guard:
+            for _ in range(100):self.assertFalse(self.step())
+            guard.assert_not_called()
+            self.clock[0]+=.16
+            self.assertTrue(self.step(soft='changed'))
+            guard.assert_called_once()
+            guard.reset_mock()
+            self.environment.step(None,object(),'file','changed',lambda:self.snapshot('changed'))
+            guard.assert_called_once()
+
+    def test_declared_cpu_prepare_turns_keep_budget_without_touching_gl(self):
+        timer=[0.];work=[]
+        owner=ToolheadEnvironment(clock=lambda:self.clock[0],storage_factory=self.factory,
+            turn_clock=lambda:timer[0],commands_per_turn=4)
+        snap=self.snapshot('pose');snap.cpu_preparation=True
+        def prepare():
+            for index in range(6):
+                def reduce(index=index):
+                    work.append(index);timer[0]+=.0021
+                yield reduce
+        snap.prepare=prepare
+        step=lambda:owner.step(None,self.context,'file','pose',lambda:snap)
+        with patch('mpf.toolhead.ToolheadEnvironment.preserved_state',return_value=nullcontext()) as guard:
+            self.assertTrue(step());guard.assert_called_once()
+            guard.reset_mock()
+            for _ in range(5):self.assertTrue(step())
+            guard.assert_not_called()
+            self.assertEqual(work,list(range(6)))
+            while step():pass
+            self.assertTrue(owner.available)
+            self.storage.publish.assert_called_once()
+            guard.assert_called()
+
+    def test_cpu_prepare_count_cap_and_exhaustion_fall_through_to_draw(self):
+        work=[]
+        owner=ToolheadEnvironment(clock=lambda:self.clock[0],storage_factory=self.factory,
+            turn_clock=lambda:0.,commands_per_turn=4)
+        snap=self.snapshot('pose');snap.cpu_preparation=True
+        snap.prepare=lambda:(lambda index=index:work.append(index) for index in range(9))
+        step=lambda:owner.step(None,self.context,'file','pose',lambda:snap)
+        self.assertTrue(step());self.assertEqual(work,list(range(4)))
+        with patch('mpf.toolhead.ToolheadEnvironment.preserved_state',return_value=nullcontext()) as guard:
+            self.assertTrue(step());self.assertEqual(work,list(range(8)));guard.assert_not_called()
+            self.assertTrue(step());self.assertEqual(work,list(range(9)));guard.assert_called_once()
+
+    def test_explicit_small_capture_batches_never_publish_partial_faces(self):
+        owner=ToolheadEnvironment(clock=lambda:self.clock[0],storage_factory=self.factory,turn_clock=lambda:0.,commands_per_turn=4)
+        for frame in range(3):
+            owner.step(None,self.context,'file','pose',lambda:self.snapshot('pose'))
+            self.assertEqual(self.storage.begin.call_count,(frame+1)*4)
+            self.assertEqual(owner.available,frame==2)
+        self.assertEqual(self.drawn,[('pose',face) for face in range(6)])
+        self.storage.publish.assert_called_once()
+
+    def test_changed_pose_refreshes_promptly_without_recapturing_unchanged_idle_frames(self):
+        self.finish()
+        old = self.environment.descriptor
+        self.assertGreater(self.environment.wake_delay, .9)
+        self.clock[0] += .1
+        self.assertFalse(self.step(soft='moved'))
+        self.assertAlmostEqual(self.environment.wake_delay, .05)
+        self.assertIs(self.environment.descriptor, old)
+        self.clock[0] += .06
+        self.assertTrue(self.step(soft='moved'))
+        for _ in range(11): self.step(soft='newer')
+        self.assertEqual(self.drawn[-6:], [('moved', face) for face in range(6)])
+        self.assertEqual(self.environment.revision, 2)
+        self.assertAlmostEqual(self.environment.wake_delay, .15)
+        self.clock[0] += .16
+        self.finish(soft='newer')
+        self.assertEqual(self.environment.revision, 3)
+        self.assertGreater(self.environment.wake_delay, .9)
+        self.clock[0] += .3
+        self.assertFalse(self.step(soft='newer'))
+        self.assertEqual(self.environment.revision, 3)
+
+    def test_zero_cost_preparation_still_has_a_bounded_operation_ceiling(self):
+        prepared = []
+        owner = ToolheadEnvironment(clock=lambda:self.clock[0], storage_factory=self.factory,
+                                   turn_clock=lambda:0., commands_per_turn=1000000)
+        snap = self.snapshot('pose')
+        snap.prepare = lambda: (lambda index=index: prepared.append(index) for index in range(130))
+        owner.step(None, self.context, 'file', 'pose', lambda:snap)
+        self.assertEqual(prepared, list(range(64)))
+        self.storage.begin.assert_not_called()
+        owner.step(None, self.context, 'file', 'pose', lambda:snap)
+        self.assertEqual(prepared, list(range(128)))
+        self.assertFalse(owner.available)
+        owner.step(None, self.context, 'file', 'pose', lambda:snap)
+        self.assertEqual(prepared, list(range(130)))
+        self.assertEqual(self.drawn, [('pose',face) for face in range(6)])
+        self.assertTrue(owner.available)
+
+    def test_turn_budget_counts_prepare_draw_and_copy_and_always_makes_progress(self):
+        timer=[0.]
+        owner=ToolheadEnvironment(clock=lambda:self.clock[0],storage_factory=self.factory,turn_clock=lambda:timer[0])
+        def commands(face):
+            yield lambda gl:timer.__setitem__(0,timer[0]+.003)
+        def prepare():
+            yield lambda:timer.__setitem__(0,timer[0]+.003)
+        snap=self.snapshot('pose');snap.commands=commands;snap.prepare=prepare
+        self.storage.copy.side_effect=lambda *args:timer.__setitem__(0,timer[0]+.003)
+        owner.step(None,self.context,'file','pose',lambda:snap)
+        self.storage.begin.assert_not_called()
+        for count in range(12):
+            owner.step(None,self.context,'file','pose',lambda:snap)
+            self.assertEqual(self.storage.begin.call_count,count+1)
+            self.assertEqual(owner.available,count==11)
+        self.storage.publish.assert_called_once()
+
+    def test_hard_identity_change_keeps_complete_front_and_retires_pending_faces(self):
+        self.finish()
+        self.clock[0] += 1.1
         self.step(soft='moving')
         self.assertTrue(self.environment.available)
+        self.assertTrue(self.environment.working)
         self.step(hard='new file', soft='new pose')
-        self.assertFalse(self.environment.available)
+        self.assertTrue(self.environment.available)
         self.assertEqual(self.environment._face, 0)
         self.assertEqual(self.drawn[-1], ('new pose', 0))
+        old_descriptor=self.environment.descriptor
+        for _ in range(10):self.step(hard='new file',soft='new pose')
+        self.assertIs(self.environment.descriptor,old_descriptor)
+        self.assertEqual(self.environment.revision,1)
+        self.step(hard='new file',soft='new pose')
+        self.assertEqual(self.environment.revision,2)
+        self.assertEqual(self.drawn[-6:],[('new pose',face) for face in range(6)])
         self.environment.close()
         self.assertFalse(self.environment.working)
         self.storage.close.assert_called_once()
+
+    def test_slice_readiness_keeps_complete_map_abandons_partial_and_retries_without_fault_backoff(self):
+        self.finish()
+        old = self.environment.descriptor
+        self.clock[0] += 1.1
+        self.step(soft='new slice')
+        self.assertTrue(self.environment.working)
+        self.environment.defer()
+        self.assertTrue(self.environment.available)
+        self.assertIs(self.environment.descriptor, old)
+        self.assertFalse(self.environment.working)
+        self.assertFalse(self.environment.ready)
+        self.assertEqual(self.environment.failure, '')
+        self.assertAlmostEqual(self.environment.wake_delay, .05)
+        self.clock[0] += .051
+        self.assertTrue(self.environment.ready)
+        self.finish()
+        self.assertEqual(self.environment.revision, 2)
 
     def test_fault_never_publishes_partial_map_and_backoff_does_not_spin(self):
         self.storage.copy.side_effect = RuntimeError('copy failed')
@@ -81,6 +221,55 @@ class EnvironmentTests(unittest.TestCase):
         self.finish()
         self.assertTrue(self.environment.available)
         self.assertEqual(self.environment.failure, '')
+
+    def test_capture_failure_diagnostic_is_bounded_deduplicated_and_recovers(self):
+        logger=Mock()
+        with patch.dict(sys.modules,{'UM.Logger':SimpleNamespace(Logger=logger)}):
+            self.environment.fail(RuntimeError('fault'))
+            self.environment.fail(RuntimeError('fault'))
+            logger.log.assert_called_once_with('w','Toolhead reflections unavailable: %s','fault')
+            self.environment.fail(RuntimeError('different'))
+            self.assertEqual(logger.log.call_count,2)
+            logger.log.side_effect=RuntimeError('logger fault')
+            self.environment.fail(RuntimeError('x'*300))
+            self.assertEqual(len(self.environment.failure),200)
+            logger.log.side_effect=None
+            self.clock[0]+=6
+            self.finish()
+            self.assertTrue(self.environment.available)
+            self.environment.fail(RuntimeError('x'*300))
+            self.assertEqual(logger.log.call_count,4)
+
+    def test_capture_timing_separates_submission_and_wall_delay_and_cannot_break_rendering(self):
+        logger = Mock(); timer=[0.]
+        owner = ToolheadEnvironment(clock=lambda:self.clock[0], storage_factory=self.factory,
+            commands_per_turn=1, turn_clock=lambda:timer[0], diagnostic=True)
+        snap = self.snapshot('pose')
+        def commands(face):
+            yield lambda gl:timer.__setitem__(0,timer[0]+.001)
+        snap.commands = commands
+        with patch.dict(sys.modules, {'UM.Logger':SimpleNamespace(Logger=logger)}):
+            for _ in range(12):
+                owner.step(None,self.context,'file','pose',lambda:snap)
+                self.clock[0]+=.02
+            args = logger.log.call_args.args
+            self.assertEqual(args[2],1)
+            self.assertAlmostEqual(args[3],220.)
+            self.assertAlmostEqual(args[4],6.)
+            self.assertEqual(args[5],12)
+            for _ in range(12): owner.step(None,self.context,'file','changed',lambda:snap)
+            logger.log.assert_called_once()
+            self.clock[0]+=11.
+            logger.log.side_effect=RuntimeError('diagnostic logger unavailable')
+            for _ in range(12): owner.step(None,self.context,'file','changed',lambda:snap)
+            self.assertTrue(owner.available)
+            self.assertEqual(owner.failure,'')
+            self.assertEqual(logger.log.call_count,2)
+            owner.step(None,self.context,'new file','changed',lambda:snap)
+            owner.defer()
+            self.assertIsNone(owner._capture_start)
+            owner.close()
+            self.assertIsNone(owner._capture_start)
 
     def test_context_change_retires_resources_before_reallocating(self):
         self.finish()

@@ -98,6 +98,48 @@ class MaterialRenderTests(unittest.TestCase):
         np.testing.assert_allclose(detailed[:, :, 3], .35, atol=1e-6)
         np.testing.assert_array_equal(self.render("ABS", 0), smooth)
 
+    def test_noise_gradient_is_continuous_and_matches_independent_height_differences(self):
+        parser = configparser.ConfigParser(interpolation=None)
+        from pathlib import Path
+        parser.read(Path(__file__).resolve().parents[1] / 'mpf/toolhead/toolhead.shader')
+        fragment = parser['shaders']['fragment41core']
+        helpers = fragment[fragment.index('float grainHash('):fragment.index('vec3 surfaceNormal()')]
+        # Independent scalar height interpolation verifies the shipped
+        # analytic derivative, including negative coordinates and cell seams.
+        height = """float height(vec3 p) {
+            vec3 c=floor(p), f=fract(p), w=f*f*f*(f*(6.*f-15.)+10.);
+            return mix(mix(mix(grainHash(c),grainHash(c+vec3(1,0,0)),w.x),
+                           mix(grainHash(c+vec3(0,1,0)),grainHash(c+vec3(1,1,0)),w.x),w.y),
+                       mix(mix(grainHash(c+vec3(0,0,1)),grainHash(c+vec3(1,0,1)),w.x),
+                           mix(grainHash(c+vec3(0,1,1)),grainHash(c+vec3(1,1,1)),w.x),w.y),w.z);
+        }"""
+        shader = self.context.program(vertex_shader='#version 410\nin vec3 p;out vec3 analytic;out vec3 numeric;'+helpers+height+"""
+            void main() {
+                float e=.001;
+                analytic=grainGradient(p);
+                numeric=vec3(height(p+vec3(e,0,0))-height(p-vec3(e,0,0)),
+                             height(p+vec3(0,e,0))-height(p-vec3(0,e,0)),
+                             height(p+vec3(0,0,e))-height(p-vec3(0,0,e)))/(2.*e);
+                gl_Position=vec4(0);
+            }""", varyings=['analytic','numeric'])
+        self.addCleanup(shader.release)
+        rng = np.random.default_rng(52)
+        interior = rng.uniform(-50,50,(2000,3)).astype('f4')
+        seams = rng.uniform(-30,30,(1000,3)).astype('f4'); seams[:,0]=np.floor(seams[:,0])
+        left, right = seams.copy(), seams.copy()
+        left[:,0]-=.0001; right[:,0]+=.0001
+        points = np.concatenate((interior,left,right,interior+np.array([1,0,0],dtype='f4')))
+        source = self.context.buffer(points.tobytes()); self.addCleanup(source.release)
+        output = self.context.buffer(reserve=len(points)*6*4); self.addCleanup(output.release)
+        vao = self.context.vertex_array(shader,[(source,'3f','p')]); self.addCleanup(vao.release)
+        self.anchor.use(); vao.transform(output,vertices=len(points))
+        data = np.frombuffer(output.read(),'f4').reshape(-1,2,3)
+        np.testing.assert_allclose(data[:2000,0], data[:2000,1], atol=.007, rtol=0)
+        self.assertLess(float(np.max(np.linalg.norm(data[2000:3000,0]-data[3000:4000,0],axis=1))), .002)
+        self.assertGreater(np.count_nonzero(abs(data[:2000,0]-data[4000:,0])>.05), 2000,
+                           'neighbouring lattice cells must not repeat the same bump pattern')
+        self.assertEqual(self.context.error,'GL_NO_ERROR')
+
     def test_glass_and_metal_do_not_gain_generated_plastic_grain(self):
         for name in ("Glass", "Aluminium"):
             with self.subTest(name=name):

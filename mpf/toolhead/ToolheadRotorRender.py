@@ -7,8 +7,9 @@ class ToolheadRotorRender:
     def __init__(self):
         self._context = self._size = None
         self._work = self._resolve = self._result = self._blitter = None
+        self._key = None
 
-    def combine(self, gl, static, camera, size, render, *, blurred):
+    def combine(self, gl, static, camera, size, render, *, blurred, cache_key=None):
         from PyQt6.QtCore import QRect, QRectF
         from PyQt6.QtGui import QOpenGLContext
         from PyQt6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat, QOpenGLTextureBlitter
@@ -19,6 +20,9 @@ class ToolheadRotorRender:
         if width*height*(max(1,samples)*12 + (4 if samples else 0) + 8) > 128*1024*1024:
             raise RuntimeError("Fan blur exceeds its graphics memory budget")
         if context is None: raise RuntimeError('Rotor graphics context unavailable')
+        if cache_key is not None and self._context is context and self._size == size and self._key == cache_key:
+            return self._result
+        self._key = None
         with preserved_state(gl, context):
             if context is not self._context or size != self._size:
                 self._context = self._size = None
@@ -61,4 +65,7 @@ class ToolheadRotorRender:
                     matrix = QOpenGLTextureBlitter.targetTransform(QRectF(0,0,width,height),QRect(0,0,width,height))
                     self._blitter.blit(texture.texture(),matrix,QOpenGLTextureBlitter.Origin.OriginBottomLeft)
                 finally: self._blitter.release()
-            return self._result
+        # Restoration is part of a successful composition. A failed guard
+        # exit must never mark partially delivered graphics state as reusable.
+        self._key = cache_key
+        return self._result

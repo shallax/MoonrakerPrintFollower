@@ -4,6 +4,24 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 5.3.0
 
+- Batch reflection path bindings and frozen uniforms within each render turn,
+  reuse conservative visibility checks, and skip additive draws beyond light
+  reach. Avoid graphics work during idle/CPU bounds turns and defer unused
+  forward-light bounds. Keep reflection geometry and pixel checks unchanged.
+- Release retained lighting surfaces when lighting is disabled. Reuse completed
+  stopped-fan images and exact camera calculations; avoid copying native signed
+  index storage solely to upload its identical unsigned bytes.
+- Replace repeated surface bumps with irregular plastic grain. Keep roughness
+  and visible grain independently adjustable, with material-specific defaults.
+- Isolate path vertex uploads from Cura's late attribute additions, preventing
+  false white start markers. Defer empty slice replacements and let active map
+  refreshes supersede idle timers while retaining the previous complete map.
+
+- Keep reflections visible while a replacement slice/layer map builds, and cull
+  out-of-view path chunks to reduce capture work. Include visible bed-height meshes.
+- Fix stationary re-slice reflection admission and toolhead translucency against
+  the bed. Automatic/Imported appearance resets also synchronize their sliders.
+
 - Added an RGB colour picker for selected toolhead bodies and faces, with independent transparency and imported-colour reset. Fixed enabling visual fan rotation on Cura’s Qt Quick window.
 - Add a saved **Enable reflections** checkbox beside **Enable lighting** in Preview View Options.
 - Put **Clear body / face selections** beside the toolhead selection summary; deselecting preserves appearance edits.

@@ -42,6 +42,13 @@ polymer identities remain unknown. CF/GF fillers are resolved before glass;
 filled polymers remain nonmetallic. Printed chopped-fibre composites receive
 fine filtered grain, not an invented woven-cloth texture.
 
+Roughness spreads highlights and blurs reflections through microscopic surface
+texture. Surface detail adds visible, irregular object-anchored grain to plastic
+normals. Presets coordinate both properties, but their independent adjustments
+allow smooth matte surfaces or textured surfaces with sheen. Increasing detail
+changes the grain strength rather than adding a repeating pattern; unresolved
+fine and fibre grain fades with its own screen footprint.
+
 Reflectivity means normal-incidence reflection F0, independent of roughness.
 PC's approximate default uses ((1.586 - 1)/(1.586 + 1))² = 0.05135.
 Other profile F0 values are conservative rendering approximations, not claimed
@@ -56,9 +63,29 @@ the production STEP reader. Its annotations identify ABS, steel, aluminium,
 brass and nylon. The synthetic Voron cube contours and bed are rendered into a
 512px six-face colour/depth environment map; the toolhead samples that map with
 the production shader's bounded local-depth lookup. A flat mirror reference and
-moving-toolhead diagnostic make reflection angles visible. A single probe cannot
+moving-toolhead diagnostic make reflection angles visible. In Cura, visible bed-height
+meshes also supply their native geometry and colours. During re-slicing or layer
+changes, the last complete map remains visible until its replacement is ready;
+the first map still requires a complete capture. Conservative cube-face culling
+skips invisible path chunks without reducing their geometry. A single probe cannot
 reconstruct hidden surfaces, and finite sampling can miss thin geometry.
 No live Cura profile, printer connection or machine command is involved.
+
+## Display memory and large prints
+
+Disabling **Enable reflections** retires the plugin's fixed-size reflection
+maps. Disabling **Enable lighting** retires its retained viewport-sized lighting
+surfaces. Selecting the default toolhead retires custom-head rendering owners.
+The loaded G-code and Cura's own Preview data remain; shared buffers can also
+remain while another rendering owner needs them. Graphics drivers and CPU
+allocators may retain freed storage, so the process memory figure is not an
+immediate allocation receipt.
+
+Large-print capture reuses visibility tests and batches frozen path state within
+bounded turns, without lowering map resolution or simplifying visible paths.
+Preparation and an initial vertex upload still depend on print size. Isolated
+pixel parity and submission measurements are not promises of live frame rate
+or capture latency on a particular loaded print.
 
 An explicitly exaggerated demonstration uses ABS roughness 0.06/F0 0.75,
 metal roughness 0.05/F0 scale 1, and nylon roughness 0.08/F0 0.5. These are
@@ -75,7 +102,8 @@ body overrides, which take precedence over the imported material/profile.
 without changing any appearance edits.
 Automatic finish resets only that selected property, including bypassing a body
 override on a selected face. Restore imported transparency restores its original
-STEP alpha independently of material and finish. Whole-body changes clear the
+STEP alpha independently of material and finish. Resetting a property also moves
+its slider to the resolved automatic/imported value and cancels pending nudges. Whole-body changes clear the
 same property's descendant face overrides before applying explicitly selected
 faces. Each sparse body/face map permits at most 2,048 entries; an oversized edit
 is refused atomically.

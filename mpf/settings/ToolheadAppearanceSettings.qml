@@ -12,6 +12,7 @@ Flickable {
     property var preview: null
     property var types: model ? model.materialTypes : []
     property var selected: types.length ? types[Math.max(0, Math.min(finish.currentIndex, types.length - 1))] : null
+    property string selectionKey: model ? JSON.stringify([model.opacityBodies, model.opacityFaces]) : ""
     property var colourDialog: null
     property var colourOwner: null
     onModelChanged: {
@@ -233,17 +234,38 @@ Flickable {
                         objectName: "toolheadSelectedAuto" + modelData.field
                         text: "Automatic"
                         enabled: root.model && !root.model.busy && root.model.opacitySelectionCount > 0
-                        onClicked: root.model.resetSelectedFinish(modelData.field)
+                        onClicked: {
+                            selectedFinishSlider.cancelPendingCommit();
+                            root.model.resetSelectedFinish(modelData.field);
+                            selectedFinishSlider.value = selectedFinishSlider.modelValue;
+                        }
                     }
                 }
                 OutlineSlider {
+                    id: selectedFinishSlider
+                    property real modelValue: targetFinish.resolvedValue >= 0 ? targetFinish.resolvedValue * 100 : 50
+                    property var editOwner: root.model
+                    onCancelledGestureEnded: value = modelValue
+                    property string editTarget: root.selectionKey
+                    onEditOwnerChanged: {
+                        cancelPendingCommit();
+                        value = modelValue;
+                    }
+                    onEditTargetChanged: {
+                        cancelPendingCommit();
+                        value = modelValue;
+                    }
+                    onModelValueChanged: {
+                        if (!interacting)
+                            value = modelValue;
+                    }
                     objectName: "toolheadSelected" + modelData.field
                     Accessible.name: modelData.label + " for selected bodies and faces"
                     Layout.fillWidth: true
                     from: 0
                     to: 100
                     stepSize: 1
-                    value: targetFinish.resolvedValue >= 0 ? targetFinish.resolvedValue * 100 : 50
+                    value: modelValue
                     enabled: root.model && !root.model.busy && root.model.opacitySelectionCount > 0
                     live: false
                     onValueCommitted: value => root.model.setSelectedFinish(modelData.field, value / 100)
@@ -256,13 +278,30 @@ Flickable {
             wrapMode: Text.WordWrap
         }
         OutlineSlider {
+            id: opacitySlider
+            property real modelValue: root.model && root.model.selectedOpacity >= 0 ? root.model.selectedOpacity * 100 : 50
+            property var editOwner: root.model
+            onCancelledGestureEnded: value = modelValue
+            property string editTarget: root.selectionKey
+            onEditOwnerChanged: {
+                cancelPendingCommit();
+                value = modelValue;
+            }
+            onEditTargetChanged: {
+                cancelPendingCommit();
+                value = modelValue;
+            }
+            onModelValueChanged: {
+                if (!interacting)
+                    value = modelValue;
+            }
             objectName: "toolheadSelectedOpacity"
             Accessible.name: "Selected opacity. Zero invisible, one hundred opaque."
             Layout.fillWidth: true
             from: 0
             to: 100
             stepSize: 1
-            value: root.model && root.model.selectedOpacity >= 0 ? root.model.selectedOpacity * 100 : 50
+            value: modelValue
             enabled: root.model && !root.model.busy && root.model.opacitySelectionCount > 0
             live: false
             onValueCommitted: value => root.model.setSelectedOpacity(value / 100)
@@ -278,7 +317,11 @@ Flickable {
             Layout.fillWidth: true
             text: "Restore imported transparency"
             enabled: root.model && !root.model.busy && root.model.opacitySelectionCount > 0
-            onClicked: root.model.resetSelectedOpacity()
+            onClicked: {
+                opacitySlider.cancelPendingCommit();
+                root.model.resetSelectedOpacity();
+                opacitySlider.value = opacitySlider.modelValue;
+            }
         }
         UM.Label {
             Layout.fillWidth: true
@@ -290,13 +333,25 @@ Flickable {
             text: "Surface detail"
         }
         OutlineSlider {
+            id: detailSlider
+            property var editOwner: root.model
+            onCancelledGestureEnded: value = modelValue
+            onEditOwnerChanged: {
+                cancelPendingCommit();
+                value = modelValue;
+            }
+            property real modelValue: (root.model ? root.model.surfaceDetail : 0.35) * 100
+            onModelValueChanged: {
+                if (!interacting)
+                    value = modelValue;
+            }
             objectName: "toolheadSurfaceDetail"
             Accessible.name: "Plastic and composite surface detail strength. Zero is smooth."
             Layout.fillWidth: true
             from: 0
             to: 100
             stepSize: 1
-            value: (root.model ? root.model.surfaceDetail : 0.35) * 100
+            value: modelValue
             enabled: root.model && !root.model.busy
             live: false
             onValueTuning: value => root.model.previewSurfaceDetail(value / 100)
@@ -347,21 +402,40 @@ Flickable {
                         checked: automatic
                         enabled: root.model && !root.model.busy && root.selected
                         onClicked: {
+                            materialFinishSlider.cancelPendingCommit();
                             if (checked)
                                 root.model.resetMaterialFinish(root.selected.kind, modelData.field);
                             else
                                 root.model.setMaterialFinish(root.selected.kind, modelData.field, root.selected[modelData.field]);
+                            materialFinishSlider.value = materialFinishSlider.modelValue;
                         }
                     }
                 }
                 OutlineSlider {
+                    id: materialFinishSlider
+                    property real modelValue: root.selected ? root.selected[modelData.field] * 100 : 0
+                    property var editOwner: root.model
+                    onCancelledGestureEnded: value = modelValue
+                    property string editTarget: root.selected ? root.selected.kind : ""
+                    onEditOwnerChanged: {
+                        cancelPendingCommit();
+                        value = modelValue;
+                    }
+                    onEditTargetChanged: {
+                        cancelPendingCommit();
+                        value = modelValue;
+                    }
+                    onModelValueChanged: {
+                        if (!interacting)
+                            value = modelValue;
+                    }
                     objectName: "toolheadMaterial" + modelData.field
                     Accessible.name: modelData.label + " for selected material. Zero to one hundred percent."
                     Layout.fillWidth: true
                     from: 0
                     to: 100
                     stepSize: 1
-                    value: root.selected ? root.selected[modelData.field] * 100 : 0
+                    value: modelValue
                     enabled: root.model && !root.model.busy && root.selected
                     live: false
                     onValueCommitted: value => root.model.setMaterialFinish(root.selected.kind, modelData.field, value / 100)

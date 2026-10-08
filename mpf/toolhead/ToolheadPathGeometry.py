@@ -2,11 +2,55 @@
 from __future__ import annotations
 
 import ctypes
+from contextlib import contextmanager
+from weakref import WeakValueDictionary
 import numpy as np
 
 
+class UploadArray(np.ndarray):
+    # Bundled Uranium still calls this removed NumPy spelling.
+    def tostring(self): return self.tobytes()
+
+
+class PathVertexMesh:
+    """Owned upload identity; never populate Cura's mutable LayerData VBO cache."""
+    def __init__(self, mesh):
+        self.source = mesh
+        self._attributes = {name: dict(mesh.getAttribute(name)) for name in mesh.attributeNames()}
+        for attribute in self._attributes.values():
+            if "value" in attribute: attribute["value"] = np.asarray(attribute["value"]).view(UploadArray)
+        if "line_types" in self._attributes:
+            types = np.asarray(self._attributes["line_types"]["value"], dtype=np.float32)
+            previous = np.empty_like(types).view(UploadArray)
+            if len(previous):
+                previous[0] = 8  # Public LayerPolygon.MoveUnretractedType.
+                previous[1:] = types[:-1]
+            previous.flags.writeable = False
+            self._attributes["prev_line_types"] = dict(value=previous, opengl_type="float", opengl_name="a_prev_line_type")
+
+    # Explicit upload API: no delegated host cache properties or broken native
+    # getColors() getter. Geometry/bytes remain shared until the one GPU upload.
+    def getVertexCount(self): return self.source.getVertexCount()
+    def getVertices(self): return self.source.getVertices()
+    def getIndices(self): return self.source.getIndices()
+    def getNormals(self): return self.source.getNormals()
+    def getUVCoordinates(self): return self.source.getUVCoordinates()
+    def hasNormals(self): return self.source.hasNormals()
+    def hasColors(self): return self.source.hasColors()
+    def hasUVCoordinates(self): return self.source.hasUVCoordinates()
+    def getVerticesAsByteArray(self): return self.source.getVerticesAsByteArray()
+    def getNormalsAsByteArray(self): return self.source.getNormalsAsByteArray()
+    def getColorsAsByteArray(self): return self.source.getColorsAsByteArray()
+    def getUVCoordinatesAsByteArray(self): return self.source.getUVCoordinatesAsByteArray()
+    def attributeNames(self): return sorted(self._attributes)
+    def getAttribute(self, name): return self._attributes[name]
+
+
+_vertex_meshes = WeakValueDictionary()
+
+
 class ToolheadPathGeometry:
-    """Reuse Cura's public vertex buffer; own a stable index buffer and VAO.
+    """Share immutable native arrays; own vertex/index buffers and VAOs.
 
     RenderBatch's range path recreates/uploads the index buffer every draw.
     Our full immutable index buffer is uploaded once and ranges use offsets.
@@ -17,31 +61,42 @@ class ToolheadPathGeometry:
     def __init__(self, mesh, indices=None, *, build_bounds=True, index_chunk=None):
         self.mesh = mesh
         self._index_chunk = index_chunk
-        self._indices = np.asarray(mesh.getIndices() if indices is None else indices,
-            dtype=None if index_chunk else np.uint32).reshape(-1)
+        source_indices = np.asarray(mesh.getIndices() if indices is None else indices).reshape(-1)
+        # Native signed 32-bit indices already have the exact EBO bit layout.
+        # Viewing those bytes avoids a second whole-print CPU allocation.
+        self._indices = (source_indices if index_chunk else source_indices.view(np.uint32)
+            if source_indices.dtype == np.int32 else np.asarray(source_indices, dtype=np.uint32))
         self._element_base = 0
         self._exterior = self._exterior_offsets = None
         self._index_buffer = self._draw_elements = None
         self._context = None
+        self._vertex_mesh = None
         self._vaos = {}
         self._normal_key = self._normal_matrix = None
         self._world_key = None
         self._world_bounds = None
+        # Most callers use retained deferred surfaces or native simulation,
+        # neither of which needs per-block forward-light bounds.
+        self._bounds = None if build_bounds else np.empty((0, 2, 3), dtype=np.float32)
+
+    def _ensure_bounds(self):
+        if self._bounds is not None: return
+        mesh = self.mesh
         vertices = mesh.getVertices()
-        self._bounds = []
+        bounds = []
         try: dimensions = mesh.getAttribute("line_dimensions")
         except KeyError: dimensions = None
-        padding = max(0.1, float(np.max(dimensions["value"])) * 2) if build_bounds and dimensions is not None else 2.0
-        for start in range(0, len(self._indices) if build_bounds else 0, self.BLOCK):
+        padding = max(0.1, float(np.max(dimensions["value"])) * 2) if dimensions is not None else 2.0
+        for start in range(0, len(self._indices), self.BLOCK):
             points = vertices[self._indices[start:start + self.BLOCK]]
-            self._bounds.append((points.min(axis=0) - padding, points.max(axis=0) + padding))
-        self._bounds = np.asarray(self._bounds, dtype=np.float32).reshape(-1, 2, 3)
+            bounds.append((points.min(axis=0) - padding, points.max(axis=0) + padding))
+        self._bounds = np.asarray(bounds, dtype=np.float32).reshape(-1, 2, 3)
 
     def exterior_geometry(self):
         """Compact immutable EBO for Inset0 boundaries, including hole walls.
 
         Skip interior vertices before even running the vertex shader. The VBO
-        remains Cura's original, so category, end caps and dimensions agree.
+        retains Cura's immutable arrays, so category/end caps/dimensions agree.
         """
         if self._exterior is None:
             try: attribute = self.mesh.getAttribute("line_types")
@@ -60,7 +115,9 @@ class ToolheadPathGeometry:
 
     def ranges(self, transform, visible, lights):
         """Conservative cube/sphere overlap, in world space; never sample lines."""
-        if not len(self._bounds) or not lights: return []
+        if not lights: return []
+        self._ensure_bounds()
+        if not len(self._bounds): return []
         matrix = np.asarray(transform.getData())
         key = matrix.tobytes()
         if key != self._world_key:
@@ -95,6 +152,22 @@ class ToolheadPathGeometry:
 
     def render(self, shader, camera, transform, ranges, gl):
         if not ranges: return
+        ranges = self._validate_ranges(ranges)
+        with self.draw_session(shader, camera, transform, gl) as draw:
+            draw(ranges)
+
+    def _validate_ranges(self, ranges):
+        ranges = [(int(start), int(end)) for start, end in ranges]
+        if any(start < 0 or end < start or end > len(self._indices) or end-start > 0x7fffffff
+               for start, end in ranges):
+            raise RuntimeError("Lighting index range exceeds owned buffer")
+        if self._index_chunk and (len(ranges) != 1 or ranges[0][1]-ranges[0][0] > self._index_chunk):
+            raise RuntimeError("Reflection index chunk exceeds budget")
+        return ranges
+
+    @contextmanager
+    def draw_session(self, shader, camera, transform, gl):
+        """Keep frozen bindings only inside one bounded environment turn."""
         from PyQt6.QtOpenGL import QOpenGLBuffer, QOpenGLVertexArrayObject
         from PyQt6.QtGui import QOpenGLContext
         from UM.View.GL.OpenGL import OpenGL
@@ -110,19 +183,14 @@ class ToolheadPathGeometry:
                 self._context = context
                 self._index_buffer = self._draw_elements = None
                 self._vaos.clear()
-            ranges = [(int(start), int(end)) for start, end in ranges]
-            if any(start < 0 or end < start or end > len(self._indices) or end-start > 0x7fffffff
-                   for start, end in ranges):
-                raise RuntimeError("Lighting index range exceeds owned buffer")
-            if self._index_chunk and (len(ranges) != 1 or ranges[0][1]-ranges[0][0] > self._index_chunk):
-                raise RuntimeError("Reflection index chunk exceeds budget")
             if self._draw_elements is None:
                 address = context.getProcAddress(b"glDrawElements")
                 if not address: raise RuntimeError("Lighting index draw unavailable")
                 # PyQt's wrapper accepts client arrays, not EBO byte offsets.
                 self._draw_elements = ctypes.CFUNCTYPE(None, ctypes.c_uint, ctypes.c_int,
                     ctypes.c_uint, ctypes.c_void_p)(int(address))
-            vertex_buffer = OpenGL.getInstance().createVertexBuffer(self.mesh)
+            self.vertex_mesh(context)
+            vertex_buffer = OpenGL.getInstance().createVertexBuffer(self._vertex_mesh)
             if vertex_buffer is None or int(vertex_buffer.bufferId()) <= 0:
                 raise RuntimeError("Lighting vertex buffer unavailable")
             vao_key = (shader, id(vertex_buffer), vertex_buffer.bufferId())
@@ -140,13 +208,6 @@ class ToolheadPathGeometry:
             if int(index_buffer.bufferId()) <= 0: raise RuntimeError("Lighting path index buffer unavailable")
             index_bound = True
             if not index_buffer.bind(): raise RuntimeError("Lighting path index buffer could not be bound")
-            if self._index_buffer is None or self._index_chunk:
-                self._element_base = ranges[0][0] if self._index_chunk else 0
-                elements = self._indices[ranges[0][0]:ranges[0][1]] if self._index_chunk else self._indices
-                body = np.asarray(elements, dtype=np.uint32).tobytes()
-                index_buffer.allocate(body, len(body))
-                if index_buffer.size() != len(body): raise RuntimeError("Lighting path index storage incomplete")
-                self._index_buffer = index_buffer
             shader_bound = True
             if shader.bind() is False: raise RuntimeError("Lighting path shader could not be bound")
             normal_key = transform.getData().tobytes()
@@ -166,11 +227,20 @@ class ToolheadPathGeometry:
                 # Retaining the wrapper also prevents buffer identity reuse
                 # while this VAO still references its vertex attributes.
                 self._vaos[vao_key] = (vao, vertex_buffer)
-            for start, end in ranges:
-                # LayerData counts are NumPy integers on the native host.
-                # ctypes requires Python integers for counts and EBO offsets.
-                shader.setUniformValue("u_drawElementStart", int(start))
-                self._draw_range(gl, start, end)
+            def draw(ranges):
+                ranges = self._validate_ranges(ranges)
+                if not ranges: return
+                if self._index_buffer is None or self._index_chunk:
+                    self._element_base = ranges[0][0] if self._index_chunk else 0
+                    elements = self._indices[ranges[0][0]:ranges[0][1]] if self._index_chunk else self._indices
+                    body = np.asarray(elements, dtype=np.uint32).tobytes()
+                    index_buffer.allocate(body, len(body))
+                    if index_buffer.size() != len(body): raise RuntimeError("Lighting path index storage incomplete")
+                    self._index_buffer = index_buffer
+                for start, end in ranges:
+                    shader.setUniformValue("u_drawElementStart", start)
+                    self._draw_range(gl, start, end)
+            yield draw
         except Exception as error:
             failure = error
         finally:
@@ -187,19 +257,33 @@ class ToolheadPathGeometry:
             self._index_buffer = None
             raise RuntimeError("Lighting path draw failed: " + str(failure)) from failure
 
+    def vertex_mesh(self, context):
+        # One upload shared by reflection/lighting/simulation owners in this
+        # share group. Weak values retire it with the last owner. Retaining the
+        # group wrapper prevents its identity being reused while names survive.
+        group = context.shareGroup()
+        key = id(self.mesh), id(group)
+        upload = _vertex_meshes.get(key)
+        if upload is None or upload.source is not self.mesh:
+            upload = _vertex_meshes[key] = PathVertexMesh(self.mesh)
+            upload.group = group
+        self._vertex_mesh = upload
+        return upload
+
     def _configure_attributes(self, shader):
         offset = 0
-        count = self.mesh.getVertexCount()
+        mesh = self._vertex_mesh
+        count = mesh.getVertexCount()
         for name, present, kind, size in (("a_vertex", True, "vector3f", 3),
-                ("a_normal", self.mesh.hasNormals(), "vector3f", 3),
-                ("a_color", self.mesh.hasColors(), "vector4f", 4),
-                ("a_uvs", self.mesh.hasUVCoordinates(), "vector2f", 2)):
+                ("a_normal", mesh.hasNormals(), "vector3f", 3),
+                ("a_color", mesh.hasColors(), "vector4f", 4),
+                ("a_uvs", mesh.hasUVCoordinates(), "vector2f", 2)):
             if present:
                 shader.enableAttribute(name, kind, offset)
                 offset += count * size * 4
         sizes = {"float": 1, "int": 1, "vector2f": 2, "vector3f": 3, "vector4f": 4}
-        for name in self.mesh.attributeNames():
-            attribute = self.mesh.getAttribute(name)
+        for name in mesh.attributeNames():
+            attribute = mesh.getAttribute(name)
             kind = attribute["opengl_type"]
             shader.enableAttribute(attribute["opengl_name"], kind, offset)
             offset += count * sizes[kind] * 4
