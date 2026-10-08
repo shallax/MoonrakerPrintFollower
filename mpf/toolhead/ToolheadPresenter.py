@@ -5,7 +5,7 @@ import math
 import time
 from contextlib import contextmanager
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
 
 from ..geometry.ToolheadGeometry import default_mesh, valid_tip
 
@@ -80,7 +80,7 @@ class ToolheadPresenter(QObject):
             self._animation_timer.stop()
             return
         window = getattr(self._application, "getMainWindow", lambda: None)()
-        if window is None or not window.isVisible() or window.isMinimized():
+        if window is None or not window.isVisible() or window.windowState() == Qt.WindowState.WindowMinimized:
             self._animation_timer.stop()
             return
         window.update()
@@ -273,10 +273,15 @@ class ToolheadPresenter(QObject):
             self._node.set_opacity_overrides(
                 getattr(config, "toolhead_body_opacity", {}) if custom and not self._model_error else {},
                 getattr(config, "toolhead_face_opacity", {}) if custom and not self._model_error else {})
+            self._node.set_colour_overrides(
+                getattr(config, "toolhead_body_colours", {}) if custom and not self._model_error else {},
+                getattr(config, "toolhead_face_colours", {}) if custom and not self._model_error else {})
             self._node.set_rotors(getattr(config, "toolhead_rotors", []) if custom and not self._model_error else [], getattr(self, "_fan_readings", {}))
             effects = (self._presentation.light_bed, self._presentation.light_models) if custom else (False, False)
             lighting = custom and self._presentation.lighting_enabled
             self._node.set_lighting_enabled(lighting)
+            reflections = custom and self._presentation.reflections_enabled
+            self._node.set_reflections_enabled(reflections)
             self._node.set_scene_lighting(*effects)
             self._node.set_scene(self._cura.view, root)
             # Detached camera navigation still benefits from stable native
@@ -291,12 +296,12 @@ class ToolheadPresenter(QObject):
             except (AttributeError, TypeError, ValueError):
                 pass
             window = getattr(self._application, "getMainWindow", lambda: None)()
-            if show and custom and self._node.visible_for_render() and self._node.rotors_moving() and window is not None and window.isVisible() and not window.isMinimized(): self._animation_timer.start()
+            if show and custom and self._node.visible_for_render() and self._node.rotors_moving() and window is not None and window.isVisible() and window.windowState() != Qt.WindowState.WindowMinimized: self._animation_timer.start()
             else: self._animation_timer.stop()
             local_appearance = tuple(repr(getattr(config, name, {})) for name in (
                 "toolhead_body_materials", "toolhead_body_finishes", "toolhead_face_finishes",
-                "toolhead_body_opacity", "toolhead_face_opacity"))
-            scene_state = (key, show, (point.x, point.y, point.z) if show else None, id(root), opacity, dimensions, repr(attached), effects, lighting, getattr(config, "toolhead_surface_detail", .35), repr(getattr(config, "toolhead_material_overrides", {})), repr(getattr(config, "toolhead_surface_materials", {})), local_appearance, repr(getattr(config, "toolhead_rotors", [])), repr(getattr(self, "_fan_readings", {})))
+                "toolhead_body_opacity", "toolhead_face_opacity", "toolhead_body_colours", "toolhead_face_colours"))
+            scene_state = (key, show, (point.x, point.y, point.z) if show else None, id(root), opacity, dimensions, repr(attached), effects, lighting, reflections, getattr(config, "toolhead_surface_detail", .35), repr(getattr(config, "toolhead_material_overrides", {})), repr(getattr(config, "toolhead_surface_materials", {})), local_appearance, repr(getattr(config, "toolhead_rotors", [])), repr(getattr(self, "_fan_readings", {})))
             scene_changed = scene_state != self._last_scene_state
             if scene_changed:
                 if show: self._node.set_render_position(point)

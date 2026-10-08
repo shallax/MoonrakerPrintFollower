@@ -6,7 +6,7 @@ from UM.View.GL.OpenGL import OpenGL
 from UM.View.RenderBatch import RenderBatch
 from ..resources.PluginPaths import plugin_path
 from ..geometry.ToolheadMaterials import material_parameters, surface_detail, finish_uniforms, material_overrides, painted_materials, local_finish_overrides, local_finish_parameters
-from ..geometry.ToolheadOpacity import opacity_overrides, opacity_colours
+from ..geometry.ToolheadOpacity import opacity_overrides, opacity_colours, colour_overrides
 from ..geometry.ToolheadRotors import rotors, RotorMotion, rotation, speed
 from ..geometry.ToolheadLighting import light_values, validated_lights
 
@@ -94,6 +94,7 @@ class ToolheadSceneNode(SceneNode):
         self._scene_lighting = None
         self._light_bed = self._light_models = True
         self._lighting_enabled = True
+        self._reflections_enabled = True
         self._view = self._root = None
         self._render_position = self._render_transform = self._render_normal = None
         self._render_failure = ""
@@ -136,7 +137,7 @@ class ToolheadSceneNode(SceneNode):
         Logger.logException("e", self._render_failure)
 
     def prepare_environment(self, renderer, camera, gl):
-        if self._native_model or self._view is None or self._root is None or not self._lighting_enabled: return
+        if self._native_model or self._view is None or self._root is None or not self._lighting_enabled or not self._reflections_enabled: return
         from .ToolheadEnvironment import ToolheadEnvironment
         from .ToolheadEnvironmentScene import ToolheadEnvironmentScene
         if self._environment is None:
@@ -171,7 +172,7 @@ class ToolheadSceneNode(SceneNode):
         self._environment_wake = token
         def request():
             if self._environment_wake is token: self._environment_wake = None
-            if self._environment is owner and self.visible_for_render() and self._lighting_enabled:
+            if self._environment is owner and self.visible_for_render() and self._lighting_enabled and self._reflections_enabled:
                 window = app.getMainWindow()
                 if window is not None: window.update()
         app.callLater(lambda: QTimer.singleShot(max(1, delay), request) if delay else request())
@@ -244,6 +245,14 @@ class ToolheadSceneNode(SceneNode):
         self._rotor_key = None
         self._build_meshes(rows)
 
+    def set_colour_overrides(self, bodies, faces):
+        if self._source_model is None: return
+        bodies = colour_overrides(bodies, self._source_model, bodies=True)
+        faces = colour_overrides(faces, self._source_model)
+        if (bodies, faces) == (self._body_colours, self._face_colours): return
+        self._body_colours, self._face_colours = bodies, faces
+        self._build_meshes(self._rotor_motion.rows)
+
     def set_surface_detail(self, value):
         self._surface_detail = surface_detail(value)
 
@@ -282,6 +291,15 @@ class ToolheadSceneNode(SceneNode):
 
     def set_lighting_enabled(self, enabled):
         self._lighting_enabled = bool(enabled)
+
+    def set_reflections_enabled(self, enabled):
+        enabled = bool(enabled)
+        if enabled == self._reflections_enabled: return
+        self._reflections_enabled = enabled
+        if not enabled:
+            if self._environment is not None: self._environment.close()
+            self._environment = self._environment_scene = None
+            self._environment_wake = None
 
     def scene_lighting_signature(self):
         return self._opacity, self._lighting_enabled, self._light_bed, self._light_models, repr(self._attached_lights)
@@ -365,6 +383,7 @@ class ToolheadSceneNode(SceneNode):
         self._source_model = model
         self._body_materials, self._body_finishes, self._face_finishes = {}, {}, {}
         self._body_opacity, self._face_opacity = {}, {}
+        self._body_colours, self._face_colours = {}, {}
         self._surface_materials = {}
         self._transparent_body_count = len(np.unique(model.body_ids[(model.colours[:,3] > 0) & (model.colours[:,3] < .999)]))
         self._rotor_key = None
@@ -388,7 +407,7 @@ class ToolheadSceneNode(SceneNode):
         normals = model.vertex_normals[:, :, [0, 2, 1]] * np.array([1, 1, -1], dtype=np.float32)
         materials = material_parameters(model, self._surface_materials, self._body_materials)
         finishes = local_finish_parameters(model, self._body_finishes, self._face_finishes)
-        colours = opacity_colours(model, self._body_opacity, self._face_opacity)
+        colours = opacity_colours(model, self._body_opacity, self._face_opacity, body_colours=self._body_colours, face_colours=self._face_colours)
         opaque = colours[:, 3] >= .999
         visible = colours[:, 3] > 0
         self._mesh_centres = {}
@@ -549,7 +568,7 @@ class ToolheadSceneNode(SceneNode):
         if self._frame_cache is None:
             from .ToolheadFrameCache import ToolheadFrameCache
             self._frame_cache = ToolheadFrameCache(depth_only=True)
-        state = (id(self.getMeshData()), id(self._translucent_mesh), self._lighting_enabled,
+        state = (id(self.getMeshData()), id(self._translucent_mesh), self._lighting_enabled, self._reflections_enabled,
             self._lights, repr(self._attached_lights), self._surface_detail, repr(self._material_overrides),
             (self._environment.available, self._environment.revision) if self._environment else None)
         self._frame_cache.draw(OpenGL.getInstance().getBindingsObject(), camera, self._model_bounds,

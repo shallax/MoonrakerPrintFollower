@@ -1,11 +1,26 @@
 """Reported positions retain verified toolpath provenance and native lifecycle."""
 import time
+import os
 import unittest
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from tests.qt_runtime_support import QT_AVAILABLE, runtime
+
+if QT_AVAILABLE:
+    from PyQt6.QtCore import Qt
+
+
+_APP = None
+
+
+def setUpModule():
+    global _APP
+    if QT_AVAILABLE:
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        from PyQt6.QtGui import QGuiApplication
+        _APP = QGuiApplication.instance() or QGuiApplication([])
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt required")
@@ -156,6 +171,7 @@ class ToolheadPresenterLifecycleTests(unittest.TestCase):
             def set_attached_lights(self, value): self.attached = value
             def set_surface_detail(self, value): self.detail = value
             def set_material_finishes(self, value): self.finishes = value
+            def set_colour_overrides(self, bodies, faces): self.colours = (bodies, faces)
             def set_local_appearance(self, materials, body_finishes, face_finishes): self.local_appearance = (materials, body_finishes, face_finishes)
             def set_opacity_overrides(self, bodies, faces): self.opacity_overrides = (bodies, faces)
 
@@ -164,6 +180,7 @@ class ToolheadPresenterLifecycleTests(unittest.TestCase):
             def rotors_moving(self): return False
             def set_scene_lighting(self, bed, models): self.effects = (bed, models)
             def set_lighting_enabled(self, enabled): self.lighting_enabled = enabled
+            def set_reflections_enabled(self, enabled): self.reflections_enabled = enabled
             def set_scene(self, view, root): self.scene = (view, root)
             def set_simulation_active(self, active):
                 changed = getattr(self, "simulation_active", False) != active
@@ -182,6 +199,7 @@ class ToolheadPresenterLifecycleTests(unittest.TestCase):
             sceneLightingRequested = pyqtSignal()
             light_bed = light_models = True
             lighting_enabled = True
+            reflections_enabled = True
             toolheadVisibilityRequested = pyqtSignal(bool)
             toolhead_visible = True
             reportedPositionRequested = pyqtSignal(bool)
@@ -251,7 +269,7 @@ class ToolheadPresenterLifecycleTests(unittest.TestCase):
         self.assertEqual(node.models[-1][1], self.module.default_mesh().automatic_tip)
         self.assertIn('saved model unavailable', self.presentation.publish_toolhead.call_args.args[0])
     def test_visual_rotors_sleep_for_hidden_windows_and_telemetry_stop_repaints_once(self):
-        window=SimpleNamespace(update=Mock(), isVisible=lambda:True, isMinimized=lambda:False)
+        window=SimpleNamespace(update=Mock(), isVisible=lambda:True, windowState=lambda:Qt.WindowState.WindowNoState)
         self.application.getMainWindow=lambda:window
         node=self.presenter._node
         node.visible_for_render=lambda:True
@@ -282,6 +300,31 @@ class ToolheadPresenterLifecycleTests(unittest.TestCase):
         self.presenter.set_fan_readings({'fan':dict(available=True,rpm=0)})
         window.update.assert_called_once()
 
+    def test_visual_rotor_uses_real_qwindow_state_when_enabled_and_minimized(self):
+        from PyQt6.QtQuick import QQuickWindow
+        window = QQuickWindow()
+        self.addCleanup(window.close)
+        self.application.getMainWindow = lambda: window
+        node = self.presenter._node
+        node.visible_for_render = lambda: True
+        node.rotors_moving = lambda: True
+        self.assertFalse(hasattr(window, "isMinimized"))
+        window.show()
+        self.presenter.update()
+        self.assertTrue(self.presenter._animation_timer.isActive())
+        self.presenter._animate()
+        window.setWindowState(Qt.WindowState.WindowMinimized)
+        self.presenter._animate()
+        self.assertFalse(self.presenter._animation_timer.isActive())
+        self.presenter.update()
+        self.assertFalse(self.presenter._animation_timer.isActive())
+        window.setWindowState(Qt.WindowState.WindowNoState)
+        self.presenter.update()
+        self.assertTrue(self.presenter._animation_timer.isActive())
+        window.hide()
+        self.presenter._animate()
+        self.assertFalse(self.presenter._animation_timer.isActive())
+
     def test_pose_only_updates_request_composition_without_invalidating_native_gcode(self):
         window = SimpleNamespace(update=Mock())
         self.presenter._application.getMainWindow = lambda: window
@@ -310,13 +353,14 @@ class ToolheadPresenterLifecycleTests(unittest.TestCase):
         self.scene.sceneChanged.emit.assert_called_once_with(self.presenter._node)
 
     def test_each_local_appearance_map_redraws_a_stationary_head_without_native_scene_rebuild(self):
-        window=SimpleNamespace(update=Mock(),isVisible=lambda:True,isMinimized=lambda:False)
+        window=SimpleNamespace(update=Mock(),isVisible=lambda:True,windowState=lambda:Qt.WindowState.WindowNoState)
         self.application.getMainWindow=lambda:window
         self.presenter.update()
         for field, value in (("toolhead_body_materials",{"0":"petg"}),
                 ("toolhead_body_finishes",{"0":{"roughness":.2}}),
                 ("toolhead_face_finishes",{"0":{"reflectivity":.7}}),
-                ("toolhead_body_opacity",{"0":.3}), ("toolhead_face_opacity",{"0":.2})):
+                ("toolhead_body_opacity",{"0":.3}), ("toolhead_face_opacity",{"0":.2}),
+                ("toolhead_body_colours",{"0":"#112233"}), ("toolhead_face_colours",{"0":"#445566"})):
             with self.subTest(field=field):
                 window.update.reset_mock();self.scene.sceneChanged.emit.reset_mock()
                 setattr(self.binding.config,field,value)
@@ -333,6 +377,22 @@ class ToolheadPresenterLifecycleTests(unittest.TestCase):
         self.presentation.lighting_enabled = True
         self.presentation.sceneLightingRequested.emit()
         self.assertTrue(self.presenter._node.lighting_enabled)
+
+    def test_reflection_toggle_redraws_stationary_head_without_rebuilding_mesh(self):
+        node = self.presenter._node
+        meshes = len(node.models)
+        self.scene.sceneChanged.emit.reset_mock()
+        self.presentation.reflections_enabled = False
+        self.presentation.sceneLightingRequested.emit()
+        self.assertFalse(node.reflections_enabled)
+        self.assertTrue(node.lighting_enabled)
+        self.assertEqual(len(node.models), meshes)
+        self.scene.sceneChanged.emit.assert_called_once()
+        self.presentation.reflections_enabled = True
+        self.presentation.sceneLightingRequested.emit()
+        self.assertTrue(node.reflections_enabled)
+        self.assertEqual(len(node.models), meshes)
+        self.assertEqual(self.scene.sceneChanged.emit.call_count, 2)
 
     def test_hiding_the_custom_model_releases_native_nozzle_and_preserves_mesh(self):
         self.presentation.reported_position = False

@@ -8,7 +8,7 @@ from math import isfinite
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
-from ..geometry.ToolheadOpacity import opacity_overrides
+from ..geometry.ToolheadOpacity import opacity_overrides, colour_overrides
 from ..geometry.ToolheadMaterials import surface_detail, material_overrides, painted_materials, local_finish_overrides
 from ..geometry.ToolheadRotors import rotors
 from ..geometry.ToolheadLighting import validated_lights
@@ -175,6 +175,8 @@ class PrinterConfig:
     toolhead_face_finishes: dict = field(default_factory=dict)
     toolhead_body_opacity: dict = field(default_factory=dict)
     toolhead_face_opacity: dict = field(default_factory=dict)
+    toolhead_body_colours: dict = field(default_factory=dict)
+    toolhead_face_colours: dict = field(default_factory=dict)
     toolhead_rotors: List[dict] = field(default_factory=list)
     follow_mode: str = "exact"
 
@@ -268,6 +270,8 @@ class PrinterConfig:
         data["toolhead_face_finishes"] = local_finish_overrides(data["toolhead_face_finishes"])
         data["toolhead_body_opacity"] = opacity_overrides(data["toolhead_body_opacity"], bodies=True)
         data["toolhead_face_opacity"] = opacity_overrides(data["toolhead_face_opacity"])
+        data["toolhead_body_colours"] = colour_overrides(data["toolhead_body_colours"], bodies=True)
+        data["toolhead_face_colours"] = colour_overrides(data["toolhead_face_colours"])
         data["toolhead_rotors"] = rotors(data["toolhead_rotors"])
 
         try:

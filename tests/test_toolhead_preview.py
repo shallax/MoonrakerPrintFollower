@@ -80,6 +80,24 @@ class PreviewTests(unittest.TestCase):
         painter.end()
         return image
 
+    def test_colour_override_updates_preview_and_keeps_selection_overlay_temporary(self):
+        original = self.mesh.colours.copy()
+        before_key = self.preview._material_key
+        self.draft.bodyColours = {'0': '#00ff00'}
+        self.draft.changed.emit()
+        self.drain()
+        self.assertNotEqual(self.preview._material_key, before_key)
+        np.testing.assert_array_equal(self.preview._preview_colours[0], [0, 1, 0, 1])
+        image = self.paint()
+        green = sum(image.pixelColor(x,y).green() > image.pixelColor(x,y).red()*2 and image.pixelColor(x,y).alpha() > 0
+                    for x in range(240) for y in range(200))
+        self.assertGreater(green, 100)
+        self.draft.faceColours = {'0': 'imported'}
+        self.draft.changed.emit()
+        self.drain()
+        np.testing.assert_array_equal(self.preview._preview_colours, original)
+        np.testing.assert_array_equal(self.mesh.colours, original)
+
     def test_real_model_and_tip_paint_pixels(self):
         image = self.paint()
         opaque = sum(image.pixelColor(x, y).alpha() > 0 for x in range(240) for y in range(200))

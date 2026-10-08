@@ -23,6 +23,20 @@ class FakePreferences:
 
 
 class PrinterConfigTests(unittest.TestCase):
+    def test_toolhead_rgb_maps_roundtrip_per_printer_and_reject_alpha_colours(self):
+        prefs = FakePreferences()
+        active = ['machine-a', 'Printer A']
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+        store.set(PrinterConfig(toolhead_body_colours={'0': '#ABCDEF'},
+            toolhead_face_colours={'4': 'imported', '5': '#ff112233', '6': '#123456'}))
+        config = store.get()
+        self.assertEqual(config.toolhead_body_colours, {'0': '#abcdef'})
+        self.assertEqual(config.toolhead_face_colours, {'4': 'imported', '6': '#123456'})
+        active[:] = ['machine-b', 'Printer B']
+        self.assertEqual(store.get().toolhead_body_colours, {})
+        active[:] = ['machine-a', 'Printer A']
+        self.assertEqual(store.get().toolhead_face_colours, {'4': 'imported', '6': '#123456'})
+
     def test_detection_thresholds_are_per_machine_and_bad_pairs_revert_together(self):
         prefs = FakePreferences()
         active = ["machine-a", "Printer A"]

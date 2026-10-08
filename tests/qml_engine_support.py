@@ -2764,22 +2764,34 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.pump(20)
         face.setWidth(face.width() - 1)
         self.pump(20)
-        # At this face size the canvas can still be blank when the
-        # baseline is grabbed, and two blank grabs agree — so a settle
-        # check alone accepts the blank frame, and every painter test
-        # below then diffs against an empty baseline and passes while
-        # proving nothing. The arrival has to be PROVED, on the frame
-        # that was returned, before the settle is trusted; a canvas
-        # that never paints now fails here and says so. The arrival is
-        # the PAINT, never the agreement: the view just set is serviced
-        # a frame late, and a baseline from the previous one is a
-        # census of two different pictures (the 2-CPU rig's "painted as
-        # separate runs", eight blobs where the stroke is one).
         self._await_painted(face, grid, painted)
-        inked = self._grab_when_inked(window, face)
-        self.assertTrue(self._ink_rows(inked, face, window),
-                        "the baseline was grabbed before the grid painted")
-        return face, window, self._mapping(plot), self._settled(window)
+        mapping, baseline = self._grid_baseline(window, face, grid)
+        return face, window, mapping, baseline
+
+    def _grid_baseline(self, window, face, grid, timeout=5.0):
+        """Require the delivered grid at its final mapping before pixel diffs."""
+        from theme_support import ThemeBackend
+        border = ThemeBackend(str(ROOT / "tests/theme_assets/cura-light")).getColor("border").rgb()
+        deadline = time.monotonic() + timeout
+        previous, steady = None, 0
+        while time.monotonic() < deadline:
+            self._pump_ms(20)
+            image = window.grabWindow()
+            mapping = self._mapping(grid.property("_plot"))
+            origin = face.mapToItem(window.contentItem(), QPointF())
+            # The fixture's 250 mm bed has fully covered 2 px major lines.
+            # A stale resized texture has ink, but misses their core colour.
+            points = [self._scene(mapping, x, 125.) for x in (50., 100., 150., 200.)]
+            points += [self._scene(mapping, 125., y) for y in (50., 100., 150., 200.)]
+            good = all(image.pixelColor(int(origin.x()) + int(x), int(origin.y()) + int(y)).rgb() == border
+                       for x, y in points)
+            crop = image.copy(int(origin.x()), int(origin.y()), int(face.width()), int(face.height()))
+            geometry = (face.width(), face.height(), origin.x(), origin.y(), tuple(mapping.items()))
+            steady = steady + 1 if good and previous is not None and previous == (geometry, crop) else 0
+            previous = (geometry, crop) if good else None
+            if good and steady >= 2:
+                return mapping, image
+        self.fail("the delivered grid never matched its major-line cores and three identical full-face frames")
 
     def _printed(self, split, window, face, baseline, box, span):
         """Move the boundary to *split* and return the pixels the

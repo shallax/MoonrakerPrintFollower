@@ -1289,6 +1289,12 @@ EXCLUSIONS["moonrakerEnableLighting"] = {
     "date": "2026-10-06",
     "recheck": "a native Preview scenario exercises master off/on and retained bed/model selections",
 }
+EXCLUSIONS["moonrakerEnableReflections"] = {
+    "reason": "native journeys do not yet toggle the optional reflection capture owner",
+    "evidence": "test_preview_object_tags proves real-QML fit and retained checked state; test_preview_presentation verifies saved preference and signals; test_toolhead_presenter and test_toolhead_scene verify stationary redraw, owner retirement, stale wake fencing and both shader texture units",
+    "date": "2026-10-08",
+    "recheck": "a native Preview scenario exercises reflections off/on with a published environment map",
+}
 
 # The read-only host is in development. Native journeys for this surface
 # must not be credited to unrelated Monitor controls; keep the exact exclusion
@@ -1344,6 +1350,11 @@ for _name in (
 
 # The material/body editor uses the same isolated CAD-fixture boundary as fans.
 for _name in (
+    'ToolheadModels.acceptColourChoice', 'ToolheadModels.beginColourChoice',
+    'ToolheadModels.cancelColourChoice', 'ToolheadModels.reportColourError',
+    'ToolheadModels.resetSelectedColour', 'ToolheadModels.setSelectedColour',
+    'toolheadChooseColour', 'toolheadColourDialog', 'toolheadRestoreColour',
+    'toolheadSelectedColourLabel', 'toolheadSelectedColourSwatch',
     'ToolheadModels.clearMaterialPaint', 'ToolheadModels.clearOpacitySelection',
     'ToolheadModels.paintBody', 'ToolheadModels.paintSurface',
     'ToolheadModels.resetMaterialFinish', 'ToolheadModels.resetSelectedFinish',
@@ -1360,7 +1371,7 @@ for _name in (
 ):
     EXCLUSIONS[_name] = {
         'reason': 'native simulator does not import an annotated CAD fixture; isolated real-QML and GPU suites own this editor',
-        'evidence': 'test_qml_toolhead_editor verifies selected property editing, wrapping, reset and body-only restore; test_toolhead_models verifies precedence, mixed selection, cancellation and atomic caps; test_toolhead_opacity and test_toolhead_material_render verify immutable source alpha, local finishes and actual pixels; test_monitor_telemetry and test_toolhead_rotors verify read-only fan observations',
+        'evidence': 'test_qml_toolhead_editor verifies native colour accept/reject/reset, selected property editing, wrapping, reset and body-only restore; test_toolhead_models verifies precedence, mixed selection, cancellation and atomic caps; test_toolhead_opacity and test_toolhead_material_render verify immutable source alpha, local finishes and actual pixels; test_monitor_telemetry and test_toolhead_rotors verify read-only fan observations',
         'date': '2026-10-08',
         'recheck': 'native settings scenario imports the owned appearance STEP fixture',
     }

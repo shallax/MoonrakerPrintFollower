@@ -22,9 +22,9 @@ These are visual presets, not measured physical finishes. Older cached models
 still load; reimport STEP to recover annotations absent from the old cache.
 
 The editor's **Appearance** section lets you select bodies and CAD faces together,
-assign material types, and adjust roughness, reflectivity and opacity independently.
+assign material types, choose colours, and adjust roughness, reflectivity and opacity independently.
 Temporary colours identify material types while painting; leaving edit mode restores
-CAD colours. Automatic and Imported reset each property separately, and invisible
+CAD colours with any explicit colour overrides. Automatic and Imported reset each property separately, and invisible
 parts remain selectable through the body list. See [appearance controls and defaults](docs/TOOLHEAD_MATERIALS.md).
 
 In normal Cura Preview, reflective parts show a cached approximation of the actual
@@ -93,6 +93,8 @@ the current printer's Following settings at the upload controls.
 **Enable lighting** switches all toolhead and scene lights off together, including
 the perimeter lights. It preserves the bed/model choices and disables their
 controls while off; the model remains visible in its base colours.
+**Enable reflections** independently switches bed/model reflections on or off.
+Both switches retain their saved Preview choices across restarts.
 Unavailable live positions show a reason; estimated positioning requires a toolpath.
 
 Choose a custom toolhead under **Configure Moonraker → Following → Toolhead

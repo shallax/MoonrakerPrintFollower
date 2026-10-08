@@ -4,6 +4,10 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 5.3.0
 
+- Added an RGB colour picker for selected toolhead bodies and faces, with independent transparency and imported-colour reset. Fixed enabling visual fan rotation on Cura’s Qt Quick window.
+- Add a saved **Enable reflections** checkbox beside **Enable lighting** in Preview View Options.
+- Put **Clear body / face selections** beside the toolhead selection summary; deselecting preserves appearance edits.
+
 - Preserve STEP material annotations, transparency and distinct body occurrences.
   Authored material names or clear part names select conservative roughness and
   metalness presets; unknown parts stay nonmetallic. Add one **Surface detail**

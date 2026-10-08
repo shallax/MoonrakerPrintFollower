@@ -18,6 +18,7 @@ Item {
     property bool tagsEnabled: false
     property bool hoverOnly: false
     property bool lightingEnabled: true
+    property bool reflectionsEnabled: true
     property bool lightBed: true
     property bool lightModels: true
     property bool bedMeshAvailable: false
@@ -55,6 +56,7 @@ Item {
     signal tagsEnabledRequested(bool enabled)
     signal hoverOnlyRequested(bool enabled)
     signal lightingEnabledRequested(bool enabled)
+    signal reflectionsEnabledRequested(bool enabled)
     signal lightBedRequested(bool enabled)
     signal lightModelsRequested(bool enabled)
     signal bedMeshVisibilityRequested(bool visible)
@@ -349,11 +351,21 @@ Item {
                     value: root.toolheadOpacity * 100
                     onValueTuning: value => root.toolheadOpacityRequested(value / 100)
                 }
-                ViewOptionsCheckBox {
-                    objectName: "moonrakerEnableLighting"
-                    text: "Enable lighting"
-                    checked: root.lightingEnabled
-                    onClicked: root.lightingEnabledRequested(checked)
+                Row {
+                    spacing: UM.Theme.getSize("default_margin").width
+                    ViewOptionsCheckBox {
+                        objectName: "moonrakerEnableLighting"
+                        text: "Enable lighting"
+                        checked: root.lightingEnabled
+                        onClicked: root.lightingEnabledRequested(checked)
+                    }
+                    ViewOptionsCheckBox {
+                        objectName: "moonrakerEnableReflections"
+                        text: "Enable reflections"
+                        enabled: root.lightingEnabled
+                        checked: root.reflectionsEnabled
+                        onClicked: root.reflectionsEnabledRequested(checked)
+                    }
                 }
                 Row {
                     enabled: root.lightingEnabled

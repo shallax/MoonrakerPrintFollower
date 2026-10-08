@@ -59,6 +59,7 @@ class PreviewPresentation(QObject):
         self._tags_enabled = bool(saved.get("previewObjectTagsEnabled", False))
         self._hover_only = bool(saved.get("previewObjectTagsHoverOnly", False))
         self.lighting_enabled = bool(saved.get("previewLightingEnabled", True))
+        self.reflections_enabled = bool(saved.get("previewReflectionsEnabled", True))
         self.light_bed = bool(saved.get("previewLightBed", True))
         self.light_models = bool(saved.get("previewLightModels", True))
         self.toolhead_visible = bool(saved.get("previewToolheadVisible", True))
@@ -188,6 +189,7 @@ class PreviewPresentation(QObject):
             self._tags_shell.setProperty("toolheadVisible", self.toolhead_visible)
             self._tags_shell.setProperty("customToolheadAvailable", bool(self._values.get("customToolheadAvailable")))
             self._tags_shell.setProperty("lightingEnabled", self.lighting_enabled)
+            self._tags_shell.setProperty("reflectionsEnabled", self.reflections_enabled)
             self._tags_shell.setProperty("lightBed", self.light_bed)
             self._tags_shell.setProperty("lightModels", self.light_models)
             for name, value in self._values.items():
@@ -226,6 +228,10 @@ class PreviewPresentation(QObject):
     def _set_lighting_enabled(self, enabled):
         self.lighting_enabled = bool(enabled)
         self._set_scene_lighting("previewLightingEnabled", self.lighting_enabled)
+
+    def _set_reflections_enabled(self, enabled):
+        self.reflections_enabled = bool(enabled)
+        self._set_scene_lighting("previewReflectionsEnabled", self.reflections_enabled)
 
     def _set_light_bed(self, enabled):
         self.light_bed = bool(enabled)
@@ -594,6 +600,7 @@ class PreviewPresentation(QObject):
                     shell.setParent(content)
                     shell.tagsEnabledRequested.connect(self._set_tags_enabled)
                     shell.lightingEnabledRequested.connect(self._set_lighting_enabled)
+                    shell.reflectionsEnabledRequested.connect(self._set_reflections_enabled)
                     shell.lightBedRequested.connect(self._set_light_bed)
                     shell.lightModelsRequested.connect(self._set_light_models)
                     self._wire(shell)

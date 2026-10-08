@@ -15,9 +15,15 @@ Every profile has independent roughness and reflectivity settings. Automatic
 roughness retains the individual authored finish rather than flattening all
 materials of a profile to one value. Body and face assignments are optional,
 bounded, asset-specific overrides. Material-paint colours are temporary identification
-colours; leaving paint mode restores the original CAD palette.
+colours; leaving paint mode restores the CAD palette with any explicit colour overrides.
 
 ## Evidence and numerical limits
+
+Preview's View Options places **Enable reflections** beside **Enable lighting**.
+Disabling reflections stops environment capture and releases its owned maps,
+while retaining the model's colours, finish settings and transparency. The choice
+is saved like the other global Preview display preferences. Lighting off disables
+the reflection checkbox and retains its checked choice for when lighting returns.
 
 Manufacturer descriptions support the direction of the defaults, not precise
 PBR roughness measurements:
@@ -62,9 +68,11 @@ any user's configuration. Normal profiles stay unchanged.
 ## Editing selected parts
 
 Bodies and CAD faces share an additive selection. Assign a material type or
-adjust roughness, reflectivity and opacity independently; each readout reports
+adjust colour, roughness, reflectivity and opacity independently; each readout reports
 automatic, body, face or mixed provenance. Face overrides take precedence over
 body overrides, which take precedence over the imported material/profile.
+**Clear body / face selections**, beside the selection summary, deselects both
+without changing any appearance edits.
 Automatic finish resets only that selected property, including bypassing a body
 override on a selected face. Restore imported transparency restores its original
 STEP alpha independently of material and finish. Whole-body changes clear the
@@ -74,5 +82,8 @@ is refused atomically.
 
 Invisible geometry remains selectable through the body-name list or faint edit
 ghosts. Cyan selection and material-type highlights are temporary and exclusive;
-normal rendering retains original CAD colours. Done keeps the printer-settings
+normal rendering uses the imported CAD colours plus any explicit colour overrides.
+Choose colour opens an RGB picker for the selected parts; transparency stays
+independent. Restore imported colour restores each original face colour, even
+when its body has a colour override. Cancelling the picker changes nothing. Done keeps the printer-settings
 draft; Save persists it, while Cancel restores all appearance properties.

@@ -12,6 +12,57 @@ Flickable {
     property var preview: null
     property var types: model ? model.materialTypes : []
     property var selected: types.length ? types[Math.max(0, Math.min(finish.currentIndex, types.length - 1))] : null
+    property var colourDialog: null
+    property var colourOwner: null
+    onModelChanged: {
+        if (colourOwner && colourOwner !== model) {
+            colourOwner.cancelColourChoice();
+            if (colourDialog !== null)
+                colourDialog.close();
+        }
+    }
+    function openColourDialog() {
+        if (!root.model || !root.model.beginColourChoice())
+            return;
+        colourOwner = root.model;
+        if (colourDialog === null) {
+            var component = Qt.createComponent("ToolheadColourDialog.qml");
+            if (component.status !== Component.Ready) {
+                root.model.reportColourError("Colour picker unavailable: " + component.errorString());
+                return;
+            }
+            colourDialog = component.createObject(root);
+            colourOwner = root.model;
+            if (colourDialog === null) {
+                root.model.reportColourError("Colour picker could not open.");
+                return;
+            }
+            colourDialog.accepted.connect(function () {
+                var colour = colourDialog.selectedColor;
+                var hex = "#" + ((1 << 24) + (Math.round(colour.r * 255) << 16) + (Math.round(colour.g * 255) << 8) + Math.round(colour.b * 255)).toString(16).slice(-6);
+                var applied = root.colourOwner ? root.colourOwner.acceptColourChoice(hex) : false;
+                if (applied && root.preview)
+                    root.preview.picking = false;
+            });
+            colourDialog.rejected.connect(function () {
+                if (root.colourOwner)
+                    root.colourOwner.cancelColourChoice();
+            });
+        }
+        colourDialog.selectedColor = root.model.selectedColour || UM.Theme.getColor("lining");
+        colourDialog.open();
+    }
+    Connections {
+        target: root.colourOwner
+        function onColourChoiceChanged() {
+            if (root.colourDialog !== null && (!root.colourOwner || !root.colourOwner.colourChoiceActive))
+                root.colourDialog.close();
+        }
+    }
+    Component.onDestruction: {
+        if (root.colourOwner)
+            root.colourOwner.cancelColourChoice();
+    }
     contentWidth: width
     contentHeight: content.implicitHeight
     clip: true
@@ -80,6 +131,13 @@ Flickable {
             Layout.fillWidth: true
             text: root.model && root.model.opacitySelectionCount ? root.model.opacityBodies.length + " bodies · " + root.model.opacityFaces.length + " faces · " + (root.model.selectedOpacity >= 0 ? Math.round(root.model.selectedOpacity * 100) + "% opacity" : "Mixed opacity") : "Select bodies or faces"
         }
+        Cura.SecondaryButton {
+            objectName: "toolheadClearOpacitySelection"
+            Layout.fillWidth: true
+            text: "Clear body / face selections"
+            enabled: root.model && root.model.opacitySelectionCount > 0
+            onClicked: root.model.clearOpacitySelection()
+        }
         Cura.ComboBox {
             objectName: "toolheadSelectedMaterial"
             Accessible.name: "Material type for selected bodies and faces"
@@ -104,6 +162,45 @@ Flickable {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             text: "Material · " + (root.model ? root.model.selectedSources.material : "Automatic")
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            Rectangle {
+                objectName: "toolheadSelectedColourSwatch"
+                Layout.preferredWidth: UM.Theme.getSize("default_margin").width * 2
+                Layout.preferredHeight: UM.Theme.getSize("default_margin").height * 2
+                color: root.model && root.model.selectedColour ? root.model.selectedColour : "transparent"
+                border.color: UM.Theme.getColor("text")
+                UM.Label {
+                    anchors.centerIn: parent
+                    text: root.model && root.model.selectedColour ? "" : "?"
+                }
+            }
+            UM.Label {
+                objectName: "toolheadSelectedColourLabel"
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                wrapMode: Text.WordWrap
+                text: "Selected colour · " + (root.model && root.model.selectedColour ? root.model.selectedColour.toUpperCase() : "Mixed colours") + " · " + (root.model ? root.model.selectedSources.colour : "Imported")
+            }
+        }
+        Cura.SecondaryButton {
+            objectName: "toolheadChooseColour"
+            Layout.fillWidth: true
+            text: "Choose colour…"
+            enabled: root.model && !root.model.busy && root.model.opacitySelectionCount > 0
+            onClicked: root.openColourDialog()
+        }
+        Cura.SecondaryButton {
+            objectName: "toolheadRestoreColour"
+            Layout.fillWidth: true
+            text: "Restore imported colour"
+            enabled: root.model && !root.model.busy && root.model.opacitySelectionCount > 0
+            onClicked: {
+                var restored = root.model.resetSelectedColour();
+                if (restored && root.preview)
+                    root.preview.picking = false;
+            }
         }
         Repeater {
             model: [
@@ -182,13 +279,6 @@ Flickable {
             text: "Restore imported transparency"
             enabled: root.model && !root.model.busy && root.model.opacitySelectionCount > 0
             onClicked: root.model.resetSelectedOpacity()
-        }
-        Cura.SecondaryButton {
-            objectName: "toolheadClearOpacitySelection"
-            Layout.fillWidth: true
-            text: "Clear selection"
-            enabled: root.model && root.model.opacitySelectionCount > 0
-            onClicked: root.model.clearOpacitySelection()
         }
         UM.Label {
             Layout.fillWidth: true
@@ -316,7 +406,7 @@ Flickable {
         }
         UM.Label {
             Layout.fillWidth: true
-            text: "In paint mode: white plastics, blue glass, gold metal, dark grey composites, grey unidentified. All classified faces are highlighted; original CAD colours return on exit."
+            text: "In paint mode: white plastics, blue glass, gold metal, dark grey composites, grey unidentified. All classified faces are highlighted; CAD colours with your colour overrides return on exit."
             wrapMode: Text.WordWrap
             color: UM.Theme.getColor("text_inactive")
         }

@@ -1819,6 +1819,13 @@ stationary containing frame, not the handle that moves during the drag.
 
 ### Toolhead materials, reflections and visual rotors (5.3.0)
 
+PreviewPresentation persists previewReflectionsEnabled with the global display
+preferences, publishes it to View Options, and uses sceneLightingRequested to
+refresh the Presenter. ToolheadSceneNode gates capture and queued wakeups with
+this flag; disabling closes the environment owner and invalidates the frame
+cache without rebuilding mesh buffers. Re-enable creates a fresh capture owner.
+Lighting off retains the separate reflection choice.
+
 MPFHEAD3 retains per-triangle material/body occurrence IDs and bounded immutable
 annotation tables; MPFHEAD1/2 remain readable. STEP physical material labels and
 clear part names choose conservative finishes. Unknown remains nonmetallic;
@@ -1897,3 +1904,5 @@ geometry; those colours never reach normal rendering or persistence. Whole-body
 edits clear descendant face opacity before applying explicitly selected faces.
 Oversized edits fail atomically. Draft Cancel, asset replacement and printer
 rebinding clear the editor selection and retain existing adoption fences.
+
+Toolhead selected-part colour overrides are independent RGB-only sparse body/face maps. Face RGB overrides take precedence over body RGB; imported face resets bypass the body and use immutable source RGB. The shared opacity/colour resolver preserves alpha. The editor owns a lazy RGB dialog fenced by printer, asset, generation and selection; rejection or editor closure cancels pending colour edits. Both maps participate in preview cache keys and stationary presenter redraws.

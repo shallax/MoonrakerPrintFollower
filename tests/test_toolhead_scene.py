@@ -141,6 +141,24 @@ class ToolheadSceneTests(unittest.TestCase):
             node.set_opacity_overrides({},{})
             self.assertTrue(node.rotors_moving())
 
+    def test_body_and_face_colour_rebuilds_preserve_alpha_and_rotor_ranges(self):
+        node = self.node
+        node.set_colour_overrides({'0': '#ff0000'}, {})  # No imported mesh yet.
+        mesh = self.mesh((.3, 1))
+        node.set_model(mesh, (0, 0, 0))
+        node.setVisible(True)
+        before = mesh.colours.copy()
+        node.set_colour_overrides({'0': '#00ff00'}, {'0': '#ff0000', '1': 'imported'})
+        np.testing.assert_array_equal(node._body_colours, {'0': '#00ff00'})
+        self.assertEqual(node._face_colours, {'0': '#ff0000', '1': 'imported'})
+        self.assertEqual(node._transparent_body_count, 1)
+        np.testing.assert_array_equal(mesh.colours, before)
+        packed = node._translucent_mesh.colors
+        self.assertTrue(np.any(np.all(packed[:, :3] == [1, 0, 0], axis=1)))
+        node.set_colour_overrides({'0': '#00ff00'}, {'0': '#ff0000', '1': 'imported'})
+        node.set_colour_overrides({}, {})
+        self.assertEqual((node._body_colours, node._face_colours), ({}, {}))
+
     def test_retired_environment_textures_are_removed_from_cached_shader(self):
         from mpf.toolhead.ToolheadEnvironment import TEXTURE_UNIT,DEPTH_UNIT
         textures={}
@@ -165,6 +183,38 @@ class ToolheadSceneTests(unittest.TestCase):
         self.shader.setTexture.side_effect=lambda unit,value: (_ for _ in ()).throw(RuntimeError('registration failed')) if unit==TEXTURE_UNIT else None
         with self.assertRaisesRegex(RuntimeError,'registration failed'): node._draw(self.camera)
         self.shader.setTexture.assert_any_call(DEPTH_UNIT,None)
+
+    def test_reflection_disable_retires_maps_and_invalidates_frame_without_mesh_rebuild(self):
+        from mpf.toolhead.ToolheadEnvironment import TEXTURE_UNIT, DEPTH_UNIT
+        for alphas in ((1,), (.4,)):
+            node = self.node
+            node.set_reflections_enabled(True)
+            node.set_model(self.mesh(alphas), (0, 0, 0))
+            opaque, translucent = node.getMeshData(), node._translucent_mesh
+            textures = {}
+            self.shader.setTexture.side_effect = lambda unit, value, textures=textures: textures.pop(unit, None) if value is None else textures.update({unit: value})
+            storage = object()
+            owner = Mock(available=True, revision=7)
+            owner.apply.side_effect = lambda shader, storage=storage: [shader.setTexture(unit, storage) for unit in (TEXTURE_UNIT, DEPTH_UNIT)]
+            node._environment = owner
+            cache = Mock()
+            cache.draw.side_effect = lambda gl, camera, bounds, transform, state, render, **kw: render(camera)
+            node._frame_cache = cache
+            node.draw(self.camera)
+            state = cache.draw.call_args.args[4]
+            self.assertEqual(textures, {TEXTURE_UNIT: storage, DEPTH_UNIT: storage})
+            node.set_reflections_enabled(False)
+            node.set_reflections_enabled(False)
+            owner.close.assert_called_once()
+            self.assertIsNone(node._environment)
+            self.assertIsNone(node._environment_scene)
+            node.draw(self.camera)
+            self.assertNotEqual(cache.draw.call_args.args[4], state)
+            self.assertEqual(textures, {})
+            self.shader.setUniformValue.assert_any_call("u_environmentEnabled", 0)
+            self.assertTrue(node._lighting_enabled)
+            self.assertIs(node.getMeshData(), opaque)
+            self.assertIs(node._translucent_mesh, translucent)
 
     def test_native_mesh_is_not_transformed_or_lit_and_uses_stock_colour_shader(self):
         mesh = SimpleNamespace(vertices=np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]]))
@@ -830,6 +880,45 @@ class RotorDelta(unittest.TestCase):
 class OptionalRenderTests(unittest.TestCase):
     setUp=ToolheadSceneTests.setUp
     mesh=ToolheadSceneTests.mesh
+
+    def test_reflection_disable_fences_published_and_partial_owners_and_reenable_is_fresh(self):
+        for available in (True, False):
+            node = self.node
+            node.set_reflections_enabled(True)
+            node.setVisible(True)
+            old = Mock(ready=True, available=available, wake_delay=5.)
+            fresh = Mock(ready=True, wake_delay=0.)
+            scene = Mock()
+            scene.signature.return_value = ('file',)
+            window = Mock()
+            app = Mock(getMainWindow=lambda window=window: window)
+            app.callLater.side_effect = lambda callback: callback()
+            factory = Mock(return_value=fresh)
+            modules = {'UM.Application': SimpleNamespace(Application=SimpleNamespace(getInstance=lambda app=app: app)),
+                'mpf.toolhead.ToolheadEnvironment': SimpleNamespace(ToolheadEnvironment=factory),
+                'mpf.toolhead.ToolheadEnvironmentScene': SimpleNamespace(ToolheadEnvironmentScene=Mock(return_value=scene))}
+            timers = []
+            with patch.dict(sys.modules, modules), patch('PyQt6.QtCore.QTimer.singleShot', side_effect=lambda delay, callback, timers=timers: timers.append(callback)):
+                node._environment = old
+                node._environment_scene = object()
+                node._view = Mock()
+                node._view.getCurrentLayer.return_value = 2
+                node._view.getCurrentPath.return_value = 3.
+                node._root = object()
+                node._schedule_environment()
+                node.set_reflections_enabled(False)
+                timers[0]()
+                window.update.assert_not_called()
+                old.close.assert_called_once()
+                node.prepare_environment(self.renderer, self.camera, self.gl)
+                factory.assert_not_called()
+                node.set_reflections_enabled(True)
+                node.prepare_environment(self.renderer, self.camera, self.gl)
+                factory.assert_called_once()
+                self.assertIs(node._environment, fresh)
+                fresh.step.assert_called_once()
+                window.update.assert_called_once()
+                node.set_reflections_enabled(False)
 
     def test_environment_wakes_belong_to_their_owner_and_stale_timer_cannot_suppress_new_capture(self):
         node=self.node; node.setVisible(True)

@@ -284,10 +284,11 @@ class ToolheadModelPreview(QQuickPaintedItem):
         gpu = self._gpu is not None and not self._gpu_failed
         painted = getattr(self._model, "surfaceMaterials", {})
         bodies, faces = getattr(self._model, "bodyOpacity", {}), getattr(self._model, "faceOpacity", {})
+        body_colours, face_colours = getattr(self._model, "bodyColours", {}), getattr(self._model, "faceColours", {})
         selected_bodies, selected_faces = getattr(self._model, "opacityBodies", []), getattr(self._model, "opacityFaces", [])
         body_materials = getattr(self._model, "bodyMaterials", {})
         body_finishes, face_finishes = getattr(self._model, "bodyFinishes", {}), getattr(self._model, "faceFinishes", {})
-        material_key = repr((painted, body_materials, body_finishes, face_finishes, bodies, faces, self._selecting_opacity, selected_bodies, selected_faces))
+        material_key = repr((painted, body_materials, body_finishes, face_finishes, bodies, faces, body_colours, face_colours, self._selecting_opacity, selected_bodies, selected_faces))
         if self._material_key != material_key:
             self._material_key = material_key
             self._packed = None
@@ -295,7 +296,7 @@ class ToolheadModelPreview(QQuickPaintedItem):
             self._update_gpu()
             return
         self._generation += 1
-        colours = opacity_colours(self._model.mesh, bodies, faces)
+        colours = opacity_colours(self._model.mesh, bodies, faces, body_colours=body_colours, face_colours=face_colours)
         if self._selecting_opacity: colours = opacity_preview(self._model.mesh, colours, selected_bodies, selected_faces)
         self._preview_colours = colours
         self._pending = (self._generation, self._model.mesh, self._yaw, self._pitch,

@@ -1502,7 +1502,16 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
             stops.append(1)
             return len(stops) >= 2          # abandon on the second gate
 
-        with harness.patch.object(module, "passive_yield", recorded):
+        # Cancellation uses elapsed time; own that clock so host contention
+        # cannot reach the second stop before the counted gate floor.
+        ticks = [0.0]
+        def clock():
+            ticks[0] += .001
+            return ticks[0]
+        clock_source = harness.SimpleNamespace(monotonic=clock, sleep=lambda _: None)
+        with harness.patch.object(module, "passive_yield", recorded), \
+                harness.patch.object(module, "time", clock_source), \
+                harness.patch.object(self.qt.load("IndexWork"), "time", clock_source):
             with self.assertRaises(self.qt.load("IndexWork").HydrationYield):
                 module.hydrate_layer_from_file(index, path, 0, should_stop=stop)
         # A heartbeat sibling for this walk was withdrawn rather than

@@ -5,7 +5,7 @@ import numpy as np
 
 from mpf.geometry.ToolheadGeometry import mesh_from_arrays, preview_buffer, pick_projected
 from mpf.geometry.ToolheadMaterials import material_parameters, local_finish_parameters, local_finish_overrides, resolved_finishes
-from mpf.geometry.ToolheadOpacity import opacity_overrides, opacity_colours, opacity_preview
+from mpf.geometry.ToolheadOpacity import opacity_overrides, opacity_colours, opacity_preview, colour_overrides, colour_value
 
 
 class OpacityTests(unittest.TestCase):
@@ -68,3 +68,34 @@ class OpacityTests(unittest.TestCase):
             {'petg': {'roughness': .3}}, {'0': {'roughness': .8}}, {'5': {'roughness': 'automatic'}})
         np.testing.assert_allclose(resolved[:, 0], [.8, .3, .5])
         self.assertEqual(local_finish_overrides({'0': {'roughness': True, 'reflectivity': 2, 'opacity': .5}}), {})
+
+
+    def test_rgb_precedence_imported_reset_preserves_independent_alpha_and_mesh(self):
+        original = self.mesh.colours.copy()
+        colours = opacity_colours(self.mesh, {'0': .4}, {'5': .6},
+            body_colours={'0': '#00ff00'}, face_colours={'4': 'imported', '5': '#112233'})
+        np.testing.assert_array_equal(colours[0, :3], original[0, :3])
+        np.testing.assert_allclose(colours[1, :3], np.array([17, 34, 51])/255.)
+        np.testing.assert_array_equal(colours[2], original[2])
+        np.testing.assert_allclose(colours[:, 3], [.4, .6, 1])
+        np.testing.assert_array_equal(self.mesh.colours, original)
+        only_rgb = opacity_colours(self.mesh, body_colours={'0': '#ff0000'})
+        np.testing.assert_array_equal(only_rgb[:, 3], original[:, 3])
+        self.assertFalse(only_rgb.flags.writeable)
+        packed = np.frombuffer(preview_buffer(self.mesh, colours=colours)[0], np.float32).reshape(-1, 3, 18)
+        order = np.argsort(packed[:, 0, 10])
+        np.testing.assert_array_equal(packed[order, 0, 6:10], colours)
+
+    def test_rgb_values_reject_alpha_names_numbers_and_stale_ids(self):
+        for value in ('red', '#abcd', '#ff112233', '112233', '#gg1122', True, None, 0):
+            self.assertIsNone(colour_value(value))
+        self.assertEqual(colour_value('#ABCDEF'), '#abcdef')
+        self.assertEqual(colour_overrides(None), {})
+        raw = {0: '#abcdef', '1': 'imported', 2: '#ffffff', 'x': '#ffffff', -1: '#ffffff',
+            '2': '#ffffff', True: 'red', '4': '#ff112233', '16777216': '#ffffff'}
+        self.assertEqual(colour_overrides(raw, self.mesh, bodies=True), {'0': '#abcdef', '1': 'imported'})
+        self.assertEqual(colour_overrides({'4': '#123456', '5': 'imported', '9': '#ffffff'}, self.mesh), {'4': '#123456', '5': 'imported'})
+        self.assertEqual(len(colour_overrides({str(i): '#ffffff' for i in range(2050)})), 2048)
+        invalid = {str(i): 'invalid' for i in range(2048)}
+        invalid['2048'] = '#112233'
+        self.assertEqual(colour_overrides(invalid), {'2048': '#112233'})

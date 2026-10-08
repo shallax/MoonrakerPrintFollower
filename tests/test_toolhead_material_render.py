@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 
 from mpf.geometry.ToolheadGeometry import mesh_from_arrays, preview_buffer
+from mpf.geometry.ToolheadOpacity import opacity_colours
 from tools.capture_toolhead import create_context, program, uniforms
 
 try:
@@ -33,7 +34,7 @@ class MaterialRenderTests(unittest.TestCase):
         self.anchor.use()
         target.release()
 
-    def render(self, name, detail, *, alpha=.35, translation=0, orthographic=False, eye_offset=0, environment=False, local_finish=None):
+    def render(self, name, detail, *, alpha=.35, translation=0, orthographic=False, eye_offset=0, environment=False, local_finish=None, colour=None):
         metadata = {"materials": [dict(name=name, description="", source="step-material")],
                     "bodies": [dict(name="Part", source="unknown", centre=None, axis=None)]}
         mesh = mesh_from_arrays([[[-1, -1, 0], [1, -1, 0], [1, 1, 0]],
@@ -41,7 +42,7 @@ class MaterialRenderTests(unittest.TestCase):
                                 [[.6, .25, .1, alpha]] * 2, metadata=metadata)
         shader = program(self.context, "toolhead.shader")
         self.addCleanup(shader.release)
-        buffer = self.context.buffer(preview_buffer(mesh, face_finishes={"0": local_finish, "1": local_finish} if local_finish else None)[0])
+        buffer = self.context.buffer(preview_buffer(mesh, colours=opacity_colours(mesh, body_colours={"0": colour} if colour else None), face_finishes={"0": local_finish, "1": local_finish} if local_finish else None)[0])
         self.addCleanup(buffer.release)
         vao = self.context.vertex_array(shader, [(buffer, "3f 3f 4f 1f 4f 1f 2f",
                                         "a_vertex", "a_normal", "a_color", "a_surface", "a_material", "a_body", "a_finish")])
@@ -81,6 +82,13 @@ class MaterialRenderTests(unittest.TestCase):
         uniforms(shader, values)
         vao.render()
         return np.frombuffer(target.read(components=4, dtype="f4"), dtype=np.float32).reshape(128, 128, 4).copy()
+
+    def test_body_rgb_override_changes_actual_pixels_and_retains_alpha(self):
+        original = self.render("ABS", 0)
+        green = self.render("ABS", 0, colour="#00ff00")
+        np.testing.assert_array_equal(original[:, :, 3], green[:, :, 3])
+        self.assertGreater(float(green[:, :, 1].mean()), float(green[:, :, 0].mean()) * 2)
+        self.assertGreater(np.count_nonzero(np.any(abs(original[:, :, :3]-green[:, :, :3]) > .01, axis=2)), 1000)
 
     def test_plastic_grain_changes_light_only_and_zero_is_smooth(self):
         smooth = self.render("ABS", 0)

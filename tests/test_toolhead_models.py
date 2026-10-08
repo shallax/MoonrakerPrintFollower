@@ -99,6 +99,120 @@ class ToolheadModelsTests(unittest.TestCase):
         self.assertEqual(len(self.model.rotors),1)
         self.assertIn('64 translucent',self.model.status)
 
+    def test_colour_selection_reset_cancel_save_and_unrelated_fields(self):
+        original = self.model.mesh.colours.copy()
+        self.assertEqual(self.model.selectedColour, "")
+        self.assertFalse(self.model.beginColourChoice())
+        self.assertFalse(self.model.setSelectedColour('#ffffff'))
+        self.model.beginEdit()
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedOpacity(.3)
+        self.model.setSelectedMaterial('metal')
+        self.model.setSelectedFinish('roughness', .2)
+        self.assertTrue(self.model.beginColourChoice())
+        self.assertTrue(self.model.acceptColourChoice('#aAbBcC'))
+        self.assertEqual(self.model.bodyColours, {'0': '#aabbcc'})
+        self.assertEqual(self.model.selectedColour, '#aabbcc')
+        self.assertEqual(self.model.selectedSources['colour'], 'Body override')
+        self.model.clearOpacitySelection()
+        self.model.selectOpacityKind('face')
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedColour('#ff0000')
+        self.assertEqual(self.model.faceColours, {'0': '#ff0000'})
+        self.model.resetSelectedColour()
+        self.assertEqual(self.model.faceColours, {'0': 'imported'})
+        self.assertEqual(self.model.selectedSources['colour'], 'Automatic')
+        np.testing.assert_array_equal(self.model.mesh.colours, original)
+        self.assertEqual(self.model.bodyOpacity, {'0': .3})
+        self.assertEqual(self.model.bodyMaterials, {'0': 'metal'})
+        self.assertEqual(self.model.bodyFinishes, {'0': {'roughness': .2}})
+        self.assertEqual(self.model.fields()['toolhead_body_colours'], {'0': '#aabbcc'})
+        self.model.endEdit(False)
+        self.assertEqual((self.model.bodyColours, self.model.faceColours), ({}, {}))
+
+    def test_colour_mixed_cad_body_and_body_edit_clears_only_descendant_rgb(self):
+        self.model._mesh = mesh_from_arrays(np.repeat(self.saved.triangles, 2, axis=0),
+            [[.2,.3,.4,1],[.8,.7,.6,.3]], [0,1])
+        self.model.toggleOpacitySelection(0)
+        self.assertEqual(self.model.selectedColour, '')
+        self.model.clearOpacitySelection()
+        self.model.selectOpacityKind('face')
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedColour('#ffffff')
+        self.model.setSelectedOpacity(.5)
+        self.model.setSelectedFinish('roughness', .8)
+        self.model.setSelectedMaterial('petg')
+        self.model.clearOpacitySelection()
+        self.model.selectOpacityKind('body')
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedColour('#112233')
+        self.assertEqual(self.model.faceColours, {})
+        self.assertEqual(self.model.faceOpacity, {'0': .5})
+        self.assertEqual(self.model.faceFinishes, {'0': {'roughness': .8}})
+        self.assertEqual(self.model.surfaceMaterials, {'0': 'petg'})
+        self.model.resetSelectedColour()
+        self.assertEqual(self.model.bodyColours, {})
+        self.assertEqual(self.model.selectedColour, '')
+
+    def test_colour_reset_without_body_inheritance_never_fills_sparse_map(self):
+        count = 2049
+        self.model._mesh = mesh_from_arrays(np.repeat(self.saved.triangles, count, axis=0))
+        self.model._opacity_faces = set(range(count))
+        self.assertTrue(self.model.resetSelectedColour())
+        self.assertEqual(self.model.faceColours, {})
+        self.model._body_colours = {'0': '#ffffff'}
+        self.assertFalse(self.model.resetSelectedColour())
+        self.assertEqual(self.model.faceColours, {})
+        self.assertIn('2,048', self.model.status)
+        self.model._opacity_bodies = {0}
+        self.assertTrue(self.model.resetSelectedColour())
+        self.assertEqual((self.model.bodyColours, self.model.faceColours), ({}, {}))
+
+    def test_colour_save_reload_done_reimport_and_mixed_selection(self):
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedColour('#112233')
+        self.model.selectOpacityKind('face')
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedColour('#445566')
+        # Same triangle belongs to both selected targets, so face wins.
+        self.assertEqual(self.model.selectedColour, '#445566')
+        self.model.endEdit(True)
+        self.config.__dict__.update(self.model.fields())
+        self.model.reset()
+        self.assertEqual(self.model.bodyColours, {'0': '#445566'})
+        self.assertEqual(self.model.faceColours, {'0': '#445566'})
+        self.import_replacement()
+        self.assertEqual((self.model.bodyColours, self.model.faceColours), ({}, {}))
+
+    def test_colour_picker_rejects_cancel_selection_rebind_reset_or_editor_closure(self):
+        self.model.toggleOpacitySelection(0)
+        for action in (self.model.cancelColourChoice, lambda: self.model.endEdit(True),
+                       lambda: self.model.endEdit(False), self.model.reset, self.model.useDefault,
+                       self.model.clearOpacitySelection):
+            self.model.selectOpacityKind('body')
+            if not self.model.opacitySelectionCount: self.model.toggleOpacitySelection(0)
+            self.assertTrue(self.model.beginColourChoice())
+            action()
+            self.assertFalse(self.model.acceptColourChoice('#ff0000'))
+            self.assertEqual((self.model.bodyColours, self.model.faceColours), ({}, {}))
+        self.model.toggleOpacitySelection(0)
+        self.model.beginColourChoice()
+        self.identity = 'other printer'
+        self.assertFalse(self.model.acceptColourChoice('#ff0000'))
+
+    def test_colour_bulk_overflow_is_atomic_and_invalid_values_do_nothing(self):
+        self.model._body_colours = {str(i): '#ffffff' for i in range(2048)}
+        self.model._opacity_bodies = {2048}
+        before = self.model.bodyColours
+        self.assertFalse(self.model.setSelectedColour('#123456'))
+        self.assertEqual(self.model.bodyColours, before)
+        self.assertIn('2,048', self.model.status)
+        self.assertFalse(self.model.setSelectedColour('#ff123456'))
+        self.model._busy = True
+        self.assertFalse(self.model.setSelectedColour('#123456'))
+        self.model.reportColourError('Picker unavailable')
+        self.assertEqual(self.model.status, 'Picker unavailable')
+
     def test_opacity_body_face_precedence_reset_and_cancel_preserve_source(self):
         source = self.model.mesh.colours.copy()
         self.model.beginEdit()
@@ -331,7 +445,7 @@ class ToolheadModelsTests(unittest.TestCase):
         self.until(lambda: not self.model.busy)
         self.assertEqual(self.model.fields(), {"toolhead_model": second_key,
                                               "toolhead_model_name": "printer-b.stl",
-                                              "toolhead_tip": [51, 61, 1], "toolhead_lights": [], "toolhead_surface_detail": .35, "toolhead_rotors": [], "toolhead_material_overrides": {}, "toolhead_surface_materials": {}, "toolhead_body_opacity": {}, "toolhead_face_opacity": {}, "toolhead_body_materials": {}, "toolhead_body_finishes": {}, "toolhead_face_finishes": {}})
+                                              "toolhead_tip": [51, 61, 1], "toolhead_lights": [], "toolhead_surface_detail": .35, "toolhead_rotors": [], "toolhead_material_overrides": {}, "toolhead_surface_materials": {}, "toolhead_body_opacity": {}, "toolhead_face_opacity": {}, "toolhead_body_materials": {}, "toolhead_body_finishes": {}, "toolhead_face_finishes": {}, "toolhead_body_colours": {}, "toolhead_face_colours": {}})
         np.testing.assert_array_equal(self.model.mesh.triangles, second.triangles)
 
     def test_changed_printer_identity_refuses_save_even_without_reset_signal(self):
@@ -362,7 +476,7 @@ class ToolheadModelsTests(unittest.TestCase):
     def test_use_default_is_a_draft_until_config_adopts_its_fields(self):
         self.model.useDefault()
         self.assertEqual(self.model.name, "Default indicator")
-        self.assertEqual(self.model.fields(), {"toolhead_model": "", "toolhead_model_name": "", "toolhead_tip": [], "toolhead_lights": [], "toolhead_surface_detail": .35, "toolhead_rotors": [], "toolhead_material_overrides": {}, "toolhead_surface_materials": {}, "toolhead_body_opacity": {}, "toolhead_face_opacity": {}, "toolhead_body_materials": {}, "toolhead_body_finishes": {}, "toolhead_face_finishes": {}})
+        self.assertEqual(self.model.fields(), {"toolhead_model": "", "toolhead_model_name": "", "toolhead_tip": [], "toolhead_lights": [], "toolhead_surface_detail": .35, "toolhead_rotors": [], "toolhead_material_overrides": {}, "toolhead_surface_materials": {}, "toolhead_body_opacity": {}, "toolhead_face_opacity": {}, "toolhead_body_materials": {}, "toolhead_body_finishes": {}, "toolhead_face_finishes": {}, "toolhead_body_colours": {}, "toolhead_face_colours": {}})
         self.assertEqual(self.config.toolhead_model, self.saved_key)
         self.model.reset()
         self.assertEqual(self.model.name, "saved.stl")
@@ -384,7 +498,7 @@ class ToolheadModelsTests(unittest.TestCase):
         self.config.toolhead_rotors = [dict(body=0, centre=[1,2,3], axis=[0,0,1], rpm=3000, direction=1, fan='', blur=True)]
         self.model.reset()
         self.assertIn("Saved model unavailable", self.model.status)
-        self.assertEqual(self.model.fields(), {"toolhead_model": "", "toolhead_model_name": "", "toolhead_tip": [], "toolhead_lights": [], "toolhead_surface_detail": .35, "toolhead_rotors": [], "toolhead_material_overrides": {}, "toolhead_surface_materials": {}, "toolhead_body_opacity": {}, "toolhead_face_opacity": {}, "toolhead_body_materials": {}, "toolhead_body_finishes": {}, "toolhead_face_finishes": {}})
+        self.assertEqual(self.model.fields(), {"toolhead_model": "", "toolhead_model_name": "", "toolhead_tip": [], "toolhead_lights": [], "toolhead_surface_detail": .35, "toolhead_rotors": [], "toolhead_material_overrides": {}, "toolhead_surface_materials": {}, "toolhead_body_opacity": {}, "toolhead_face_opacity": {}, "toolhead_body_materials": {}, "toolhead_body_finishes": {}, "toolhead_face_finishes": {}, "toolhead_body_colours": {}, "toolhead_face_colours": {}})
         self.assertEqual(self.model.tip, (0, 0, 0))
         self.assertEqual(self.model.rotors, [])
         self.assertEqual(self.model.rotorCandidate, {})

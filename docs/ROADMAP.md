@@ -3157,3 +3157,5 @@ sets the chart's shipped resolution.
   timeout); on timeout the entry stays, restyled missed/failed,
   dismissible by click, and all entries clear at print end. NO automatic
   PAUSE retry — a retry could double a command that was merely slow.
+
+5.3.0 live qualification follow-up: correct the fan-animation window-state API, add independent selected-body/face RGB colour editing, and provide a saved Preview reflection enable switch beside lighting. Local and CI qualification of this delta is in progress.
