@@ -74,7 +74,7 @@ def probe_camera(origin, face, light, near=.2, far=10000.):
 
 class EnvironmentSnapshot:
     cpu_preparation = True  # prepare() never binds, creates or calls Qt/GL resources.
-    def __init__(self, owner, origin, light, plates, paths, uniforms, compatibility):
+    def __init__(self, owner, origin, light, plates, paths, uniforms, compatibility, *, plate_renderer=None):
         self.owner, self.origin, self.light = owner, tuple(origin), light
         self.plates, self.paths = plates, paths
         self.uniforms, self.compatibility = uniforms, compatibility
@@ -85,6 +85,28 @@ class EnvironmentSnapshot:
         self.path_bounds = {}
         self._visibility = {}
         self._turn = self._draw_key = self._draw = None
+        self._plate_renderer = plate_renderer
+
+    def _render_plate(self, shader, item, camera, gl, phase):
+        if self._plate_renderer is not None:
+            self._plate_renderer(shader, item, camera, gl, phase)
+            return
+        from UM.View.RenderBatch import RenderBatch
+        transparent = phase == 'colour'
+        setup = (lambda bindings: (bindings.glDepthMask(False), bindings.glDepthFunc(bindings.GL_LESS),
+            bindings.glBlendEquation(bindings.GL_FUNC_ADD))) if transparent else (
+            lambda bindings: (bindings.glColorMask(False, False, False, False), bindings.glDepthMask(True),
+                bindings.glDepthFunc(bindings.GL_LESS))) if phase == 'depth' else (
+            lambda bindings: self._light_state(bindings, shader))
+        batch = RenderBatch(shader, type=RenderBatch.RenderType.Transparent if transparent else RenderBatch.RenderType.Solid,
+            backface_cull=phase == 'light', state_setup_callback=setup)
+        batch.addItem(item['transformation'], mesh=item['mesh'], uniforms=item.get('uniforms') if phase != 'light' else None,
+            normal_transformation=item.get('normal_transformation'))
+        try: batch.render(camera)
+        finally:
+            try: shader.release()
+            finally:
+                if phase == 'depth': gl.glColorMask(True, True, True, True)
 
     def _close_draw(self):
         turn, self._turn = self._turn, None
@@ -270,21 +292,13 @@ class EnvironmentSnapshot:
         yield from self.visible_chunks(geometry, camera, first, last, lights=lights)
 
     def commands(self, face):
-        from UM.View.RenderBatch import RenderBatch
         descriptor = self.descriptor
         camera = probe_camera(self.origin, face, self.light, descriptor.near, descriptor.far)
         for shader, item, settings in self.plates:
             def plate(gl, shader=shader, item=item, settings=settings):
                 self._break_draw()
                 for name, value in settings.items(): shader.setUniformValue(name, value)
-                batch = RenderBatch(shader, type=RenderBatch.RenderType.Transparent, backface_cull=False,
-                                    state_setup_callback=lambda bindings: (
-                                        bindings.glDepthMask(False), bindings.glDepthFunc(bindings.GL_LESS),
-                                        bindings.glBlendEquation(bindings.GL_FUNC_ADD)))
-                batch.addItem(item["transformation"], mesh=item["mesh"], uniforms=item.get("uniforms"),
-                              normal_transformation=item.get("normal_transformation"))
-                try: batch.render(camera)
-                finally: shader.release()
+                self._render_plate(shader, item, camera, gl, 'colour')
             yield plate
         # Native transparent plate surfaces do not occlude each other while
         # their colours blend: a negative heightmap still shows beneath the
@@ -293,15 +307,7 @@ class EnvironmentSnapshot:
             def plate_depth(gl, shader=shader, item=item, settings=settings):
                 self._break_draw()
                 for name, value in settings.items(): shader.setUniformValue(name, value)
-                batch = RenderBatch(shader, type=RenderBatch.RenderType.Solid, backface_cull=False,
-                    state_setup_callback=lambda bindings:(bindings.glColorMask(False,False,False,False),
-                        bindings.glDepthMask(True),bindings.glDepthFunc(bindings.GL_LESS)))
-                batch.addItem(item['transformation'],mesh=item['mesh'],uniforms=item.get('uniforms'),
-                    normal_transformation=item.get('normal_transformation'))
-                try: batch.render(camera)
-                finally:
-                    try: shader.release()
-                    finally: gl.glColorMask(True,True,True,True)
+                self._render_plate(shader, item, camera, gl, 'depth')
             yield plate_depth
         for geometry, transform, bounds, partial, shadow in self.paths:
             # Native shadow geometry has distinct helper/start-marker rules,
@@ -345,13 +351,9 @@ class EnvironmentSnapshot:
                     self._break_draw()
                     self._light_state(gl, shader)
                     shader.setUniformValue('u_hasColour', 0)
-                    batch = RenderBatch(shader, type=RenderBatch.RenderType.Solid, backface_cull=True,
-                        state_setup_callback=lambda bindings: self._light_state(bindings, shader))
-                    batch.addItem(item['transformation'], mesh=mesh, normal_transformation=item.get('normal_transformation'))
-                    try: batch.render(camera)
-                    finally: shader.release()
+                    self._render_plate(shader, dict(item, mesh=mesh), camera, gl, 'light')
                 yield lit_plate
-        if light_models:
+        if light_models and self.paths:
             shader = self.owner.light_path_shader(self.compatibility)
             for geometry, transform, bounds, partial, shadow in self.paths:
                 for start, end in self.lit_chunks(geometry, camera, bounds[0], bounds[1]):

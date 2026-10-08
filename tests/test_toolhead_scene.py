@@ -953,8 +953,8 @@ class OptionalRenderTests(unittest.TestCase):
             node = self.node
             node.set_reflections_enabled(True)
             node.setVisible(True)
-            old = Mock(ready=True, available=available, wake_delay=5.)
-            fresh = Mock(ready=True, wake_delay=0.)
+            old = Mock(ready=True, available=available, wake_delay=5., requires_replacement=False)
+            fresh = Mock(ready=True, wake_delay=0., requires_replacement=False)
             scene = Mock()
             scene.signature.return_value = ('file',)
             window = Mock()
@@ -963,6 +963,7 @@ class OptionalRenderTests(unittest.TestCase):
             factory = Mock(return_value=fresh)
             modules = {'UM.Application': SimpleNamespace(Application=SimpleNamespace(getInstance=lambda app=app: app)),
                 'mpf.toolhead.ToolheadEnvironment': SimpleNamespace(ToolheadEnvironment=factory, EnvironmentNotReady=EnvironmentNotReady),
+                'mpf.toolhead.ToolheadAsyncEnvironment': SimpleNamespace(create_environment=factory),
                 'mpf.toolhead.ToolheadEnvironmentScene': SimpleNamespace(ToolheadEnvironmentScene=Mock(return_value=scene))}
             timers = []
             with patch.dict(sys.modules, modules), patch('PyQt6.QtCore.QTimer.singleShot', side_effect=lambda delay, callback, timers=timers: timers.append(callback)):
@@ -1027,12 +1028,13 @@ class OptionalRenderTests(unittest.TestCase):
             self.assertIsNone(node._environment_wake)
 
     def test_environment_schedule_is_bounded_fenced_by_visibility_and_optional_failure(self):
-        owner, scene=Mock(ready=True, wake_delay=0.),Mock()
+        owner, scene=Mock(ready=True, wake_delay=0., requires_replacement=False),Mock()
         scene.signature.return_value=('file',);scene.snapshot.return_value='frozen scene'
         owner.step.side_effect=lambda gl,context,hard,soft,snapshot: bool(snapshot())
         window=Mock();app=Mock(getMainWindow=lambda:window)
         app.callLater.side_effect=lambda callback:callback()
         modules={'mpf.toolhead.ToolheadEnvironment':SimpleNamespace(ToolheadEnvironment=Mock(return_value=owner), EnvironmentNotReady=EnvironmentNotReady),
+            'mpf.toolhead.ToolheadAsyncEnvironment':SimpleNamespace(create_environment=Mock(return_value=owner)),
             'mpf.toolhead.ToolheadEnvironmentScene':SimpleNamespace(ToolheadEnvironmentScene=Mock(return_value=scene)),
             'UM.Application':SimpleNamespace(Application=SimpleNamespace(getInstance=lambda:app))}
         with patch.dict(sys.modules,modules):

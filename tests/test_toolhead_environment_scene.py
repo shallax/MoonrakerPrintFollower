@@ -28,6 +28,17 @@ with patch.dict(sys.modules, {
 
 
 class EnvironmentSceneTests(unittest.TestCase):
+    def test_empty_parsing_snapshot_does_not_require_a_path_lighting_shader(self):
+        owner = Mock()
+        owner.light_path_shader.side_effect = AssertionError('No path shader exists before paths are loaded')
+        snapshot = module.EnvironmentSnapshot(owner, (0, 0, 0), 'light', [], [], {}, False)
+        snapshot.lighting = {'u_strength': 1.}
+        snapshot.light_effects = (False, True)
+        for command in snapshot.prepare(): command()
+        for face in range(6):
+            self.assertEqual(list(snapshot.commands(face)), [])
+        owner.light_path_shader.assert_not_called()
+
     def test_turn_batches_frozen_bindings_and_breaks_on_camera_geometry_or_fault(self):
         from contextlib import contextmanager
         geometry=Mock();shader=Mock();camera=Mock();transform=Matrix()

@@ -139,12 +139,15 @@ class ToolheadSceneNode(SceneNode):
 
     def prepare_environment(self, renderer, camera, gl):
         if self._native_model or self._view is None or self._root is None or not self._lighting_enabled or not self._reflections_enabled: return
-        from .ToolheadEnvironment import EnvironmentNotReady, ToolheadEnvironment
+        from .ToolheadEnvironment import EnvironmentNotReady
         from .ToolheadEnvironmentScene import ToolheadEnvironmentScene
+        if (self._environment is not None and getattr(self._environment, 'requires_replacement', False)
+                and self._environment.ready): self._environment = None
         if self._environment is None:
             from UM.Application import Application
             window = getattr(Application.getInstance(), "getMainWindow", lambda: None)()
-            self._environment = ToolheadEnvironment(window=window, diagnostic=self._render_timing.enabled)
+            from .ToolheadAsyncEnvironment import create_environment
+            self._environment = create_environment(gl, self._render_context, window, diagnostic=self._render_timing.enabled)
         if self._environment_scene is None: self._environment_scene = ToolheadEnvironmentScene()
         if not self._environment.ready:
             self._schedule_environment()
@@ -168,6 +171,9 @@ class ToolheadSceneNode(SceneNode):
     def _schedule_environment(self):
         owner = self._environment
         delay = owner.wake_delay
+        if delay is None:
+            self._environment_wake = None
+            return
         deadline = time.monotonic() + delay
         pending = getattr(self, "_environment_wake", None)
         if pending is not None and pending[0] is owner and pending[1] <= deadline: return

@@ -45,7 +45,7 @@ class DepthSampler:
 
 class CubeStorage:
     """Atomic colour/depth pairs and one single-sample face target."""
-    def __init__(self, gl, context):
+    def __init__(self, gl, context, *, face_factory=None):
         from PyQt6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
         self.context = context
         self.group = context.shareGroup()
@@ -75,7 +75,7 @@ class CubeStorage:
             format_ = QOpenGLFramebufferObjectFormat()
             format_.setAttachment(QOpenGLFramebufferObject.Attachment.Depth)
             format_.setInternalTextureFormat(0x8058)
-            self.face = QOpenGLFramebufferObject(SIZE, SIZE, format_)
+            self.face = (face_factory or QOpenGLFramebufferObject)(SIZE, SIZE, format_)
             if not self.face.isValid(): raise RuntimeError("Environment face target unavailable")
         except Exception:
             self.close(); raise

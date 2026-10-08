@@ -99,13 +99,8 @@ def scene_meshes():
     segments = cube_segments() + offset
     paths = mesh_from_arrays(tubes(segments), np.tile((.37, .39, .42, 1), (len(segments)*16, 1)))
     bed_z = offset[2] - .025
-    plate = [quad(-125, -125, 125, 125, bed_z)]
-    colours = [np.tile((.15, .165, .19, 1), (2, 1))]
-    for axis in range(-120, 121, 10):
-        plate.extend((quad(axis-.055, -125, axis+.055, 125, bed_z+.01),
-                      quad(-125, axis-.055, 125, axis+.055, bed_z+.01)))
-        colours.extend((np.tile((.22, .24, .27, 1), (2, 1)),)*2)
-    bed = mesh_from_arrays(np.concatenate(plate), np.concatenate(colours))
+    bed = mesh_from_arrays(quad(-125, -125, 125, 125, bed_z),
+                           np.tile((.15, .165, .19, 1), (2, 1)))
     return head, paths, bed, lights
 
 
@@ -194,18 +189,13 @@ def create_context():
     return context, dll_directory
 
 
-def render_receivers(context, framebuffer, bed, paths, bed_vertices):
-    """Paint the opaque grid decal without competing with base-plane depth."""
-    import moderngl
-    bed.render(vertices=6)
+def render_receivers(bed, paths, shader):
+    """Sample the grid on the plane, avoiding thin-strip MSAA coverage drift."""
+    shader["u_captureGrid"].value = 1
     try:
-        framebuffer.depth_mask = False
-        context.disable(moderngl.DEPTH_TEST)
-        bed.render(first=6, vertices=bed_vertices - 6)
+        bed.render()
     finally:
-        framebuffer.depth_mask = True
-        context.enable(moderngl.DEPTH_TEST)
-    # The base plane, paths and opaque head still write/test their real depth.
+        shader["u_captureGrid"].value = 0
     paths.render()
 
 
@@ -230,8 +220,18 @@ def capture(output_dir):
     # Compose the neutral base and unchanged production lightSurface function
     # in one pass. Separate compiled vertex programs need not produce bitwise
     # identical depth; using LEQUAL between them can stripe tiny layer tubes.
-    fragment = fragment.replace(output, """float diffuse=max(dot(normalize(f_normal),normalize(vec3(-.4,-.5,1.))),0.);
-frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_color.rgb),f_color.a);""")
+    if fragment.count("#version 410") != 1:
+        raise RuntimeError("Scene shader version changed; update the capture grid adapter")
+    fragment = fragment.replace("#version 410", "#version 410\nuniform bool u_captureGrid;")
+    fragment = fragment.replace(output, """vec3 baseColour=f_color.rgb;
+if(u_captureGrid){
+    vec2 distanceToGrid=abs(mod(f_vertex.xy+vec2(5.0),vec2(10.0))-vec2(5.0));
+    vec2 footprint=max(fwidth(f_vertex.xy),vec2(1e-6));
+    vec2 coverage=vec2(1.0)-smoothstep(vec2(.055)-.5*footprint,vec2(.055)+.5*footprint,distanceToGrid);
+    baseColour=mix(baseColour,vec3(.22,.24,.27),max(coverage.x,coverage.y));
+}
+float diffuse=max(dot(normalize(f_normal),normalize(vec3(-.4,-.5,1.))),0.);
+frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseColour),f_color.a);""")
     base_shader = context.program(vertex_shader=source["shaders"]["vertex41core"], fragment_shader=fragment)
     buffers, vaos = [], {}
     for label, mesh in (("head", head), ("paths", paths), ("bed", bed)):
@@ -266,8 +266,7 @@ frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_col
         context.depth_func = "<"
         context.disable(moderngl.BLEND)
         if receivers:
-            render_receivers(context, framebuffer, vaos["bed", base_shader],
-                             vaos["paths", base_shader], len(bed.triangles) * 3)
+            render_receivers(vaos["bed", base_shader], vaos["paths", base_shader], base_shader)
         # The reference CAD materials are opaque. A single shaded,
         # depth-writing pass avoids cross-pass MSAA coverage mismatches on
         # Apple's software renderer; equal-depth faces retain draw order.

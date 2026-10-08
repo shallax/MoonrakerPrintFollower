@@ -4,6 +4,9 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 5.3.0
 
+- Build reflection maps in an owned graphics worker where supported, reusing
+  path vertex storage and retaining complete maps during replacement. Handle
+  untextured platform meshes and empty G-code parsing snapshots correctly.
 - Retire deferred Print Follower paint and presentation work with its closed
   popover, preventing callbacks into a destroyed QML context.
 - Batch reflection path bindings and frozen uniforms within each render turn,

@@ -66,6 +66,184 @@ class EnvironmentGLTests(unittest.TestCase):
         flush_texture_deletions()  # Idempotent on an empty current group.
         self.assertEqual(int(self.gl.glGetError()),0)
 
+    def test_private_capture_resources_roundtrip_and_retire_without_host_wrappers(self):
+        if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
+        from mpf.toolhead.ToolheadCaptureBuffers import CaptureBuffer, CaptureVertexArray, CaptureFace, CaptureTexture
+        gl, context = self.gl, self.context
+        vao, buffer = CaptureVertexArray(context), CaptureBuffer(context, 0x8892)
+        vao.create(); vao.bind(); buffer.create()
+        body = b'\x12\x34\x56\x78' * 16
+        buffer.upload(body)
+        self.assertEqual(buffer.size, len(body))
+        result = ctypes.create_string_buffer(len(body))
+        procedure(context, 'glGetBufferSubData', None, ctypes.c_uint, ctypes.c_ssize_t,
+                  ctypes.c_ssize_t, ctypes.c_void_p)(0x8892, 0, len(body), result)
+        self.assertEqual(result.raw, body)
+        names = vao.name, buffer.name
+        buffer.close(); buffer.close(); vao.close(); vao.close()
+        self.assertFalse(gl.glIsBuffer(names[1]))
+        self.assertFalse(procedure(context, 'glIsVertexArray', ctypes.c_ubyte, ctypes.c_uint)(names[0]))
+        face = CaptureFace(gl, context, 8, 8)
+        self.assertTrue(face.isValid()); self.assertTrue(face.bind())
+        gl.glClearColor(.25, .5, .75, 1.); gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+        pixel = (ctypes.c_ubyte * 4)()
+        procedure(context, 'glReadPixels', None, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                  ctypes.c_int, ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p)(0, 0, 1, 1, 0x1908, 0x1401, pixel)
+        self.assertEqual(tuple(pixel), (64, 128, 191, 255))
+        face.close(); face.close(); self.assertFalse(face.isValid())
+        for image in (None, (1, 1, b'\x12\x34\x56\xff')):
+            texture = CaptureTexture(gl, context, image)
+            texture.bind(3)
+            self.assertEqual(int(gl.glGetIntegerv(0x8069)), texture.name)
+            texture.release(3)
+            self.assertEqual(int(gl.glGetIntegerv(0x8069)), 0)
+            name = texture.name
+            texture.close(); texture.close(); self.assertFalse(gl.glIsTexture(name))
+        gl.glActiveTexture(0x84C0)
+        self.assertEqual(int(gl.glGetError()), 0)
+
+    def test_private_capture_allocation_failures_clean_partial_resources(self):
+        if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
+        from unittest.mock import patch
+        from mpf.toolhead import ToolheadCaptureBuffers as module
+        gl, context = self.gl, self.context
+        original = module.procedure
+        for kind in ('glGenBuffers', 'glGenVertexArrays', 'glGenTextures'):
+            def resolve(ctx, name, *signature, kind=kind):
+                return (lambda *args: None) if name == kind else original(ctx, name, *signature)
+            with patch.object(module, 'procedure', side_effect=resolve):
+                with self.assertRaisesRegex(RuntimeError, 'allocation failed'):
+                    if kind == 'glGenBuffers': module.CaptureBuffer(context, 0x8892).create()
+                    elif kind == 'glGenVertexArrays': module.CaptureVertexArray(context).create()
+                    else: module.CaptureTexture(gl, context, None)
+        with self.assertRaisesRegex(RuntimeError, 'depth format'):
+            module.CaptureFace(gl, context, 8, 8, 0)
+        def incomplete(ctx, name, *signature):
+            return (lambda *args: 0) if name == 'glCheckFramebufferStatus' else original(ctx, name, *signature)
+        with patch.object(module, 'procedure', side_effect=incomplete):
+            with self.assertRaisesRegex(RuntimeError, 'target unavailable'):
+                module.CaptureFace(gl, context, 8, 8)
+        for image in ((0, 1, b''), (1, 1, b'bad'), (16777217, 1, b'')):
+            with self.assertRaisesRegex(RuntimeError, 'layout is invalid'):
+                module.CaptureTexture(gl, context, image)
+        buffer = module.CaptureBuffer(context, 0x8892); buffer.create()
+        try:
+            def wrong_size(ctx, name, *signature):
+                return (lambda *args: None) if name == 'glGetBufferParameteriv' else original(ctx, name, *signature)
+            with patch.object(module, 'procedure', side_effect=wrong_size):
+                with self.assertRaisesRegex(RuntimeError, 'storage incomplete'): buffer.upload(b'abcd')
+        finally: buffer.close()
+        self.assertEqual(int(gl.glGetError()), 0)
+
+    def test_worker_raw_program_transfers_uniforms_and_reports_native_compile_failures(self):
+        if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
+        from unittest.mock import patch
+        from PyQt6.QtGui import QMatrix4x4, QVector2D, QVector3D, QVector4D, QColor
+        from PyQt6.QtOpenGL import QOpenGLShader
+        with patch.dict(sys.modules, {'UM.View.GL.ShaderProgram': SimpleNamespace(ShaderProgram=object)}):
+            from mpf.toolhead import ToolheadCaptureGL as module
+        raw = module.RawBindings(self.context, {'GL_DEPTH_TEST': 0x0B71})
+        self.assertIs(raw._resolve('glFlush'), raw.glFlush)
+        with self.assertRaisesRegex(RuntimeError, 'Unqualified'): raw._resolve('glUnknown')
+        with self.assertRaises(ValueError): module.RawBindings(self.context, {'not_a_constant': 1})
+        raw.glViewport(0, 0, 16, 16)
+        self.assertEqual(raw.glGetIntegerv(0x0BA2), (0, 0, 16, 16))
+        raw.glClearColor(.25, .5, .75, 1.)
+        self.assertEqual(raw.glGetFloatv(0x0C22), (.25, .5, .75, 1.))
+        raw.glDepthMask(True)
+        self.assertEqual(raw.glGetBooleanv(0x0B72), 1)
+        raw.glClearDepth(.5); self.assertEqual(raw.glGetDoublev(0x0B73), .5)
+        program = module.RawProgram()
+        try:
+            self.assertFalse(program.isLinked())
+            program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Vertex, '''#version 410
+                in vec3 position; uniform mat4 transform;
+                void main() { gl_Position = transform * vec4(position, 1.); }''')
+            program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Fragment, '''#version 410
+                uniform vec2 two; uniform vec3 three; uniform vec4 four, tint;
+                uniform float scalar, floats[2]; uniform int integer;
+                uniform vec2 pairs[2]; uniform vec3 triples[2]; out vec4 colour;
+                void main() { colour = four + tint + vec4(two, scalar, float(integer))
+                    + vec4(three, 0.) + vec4(pairs[0] + pairs[1], floats[0], floats[1])
+                    + vec4(triples[0] + triples[1], 0.); }''')
+            program.link(); self.assertTrue(program.isLinked()); program.bind()
+            self.assertGreaterEqual(program.attributeLocation('position'), 0)
+            values = {'two': QVector2D(2., 3.), 'three': QVector3D(4., 5., 6.),
+                      'four': QVector4D(7., 8., 9., 10.), 'tint': QColor.fromRgbF(.2, .4, .6, 1.),
+                      'scalar': .75, 'integer': 3, 'transform': QMatrix4x4()}
+            for name, value in values.items(): program.setUniformValue(program.uniformLocation(name), value)
+            program.setUniformValueArray(program.uniformLocation('floats'), [.2, .3])
+            program.setUniformValueArray(program.uniformLocation('pairs'), [QVector2D(1., 2.), QVector2D(3., 4.)])
+            program.setUniformValueArray(program.uniformLocation('triples'), [QVector3D(1., 2., 3.), QVector3D(4., 5., 6.)])
+            get = procedure(self.context, 'glGetUniformfv', None, ctypes.c_uint, ctypes.c_int, ctypes.POINTER(ctypes.c_float))
+            actual = (ctypes.c_float * 16)()
+            for name, expected in (('two', (2., 3.)), ('three', (4., 5., 6.)), ('four', (7., 8., 9., 10.)),
+                                   ('scalar', (.75,)), ('pairs[1]', (3., 4.)), ('triples[1]', (4., 5., 6.))):
+                get(program.programId(), program.uniformLocation(name), actual)
+                self.assertEqual(tuple(actual)[:len(expected)], expected)
+            with self.assertRaisesRegex(RuntimeError, 'Unqualified uniform'):
+                program.setUniformValue(-1, object())
+            program.release()
+        finally: program.close(); program.close()
+        bad = module.RawProgram()
+        try:
+            with self.assertRaises(RuntimeError):
+                bad.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Vertex, '#version 410\nnot valid GLSL')
+            bad.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Vertex,
+                '#version 410\nout vec3 value; void main(){value=vec3(1.);gl_Position=vec4(0.);}')
+            bad.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Fragment,
+                '#version 410\nin vec4 value; out vec4 colour; void main(){colour=value;}')
+            with self.assertRaises(RuntimeError): bad.link()
+        finally: bad.close()
+        self.assertEqual(raw.glGetError(), 0)
+
+    def test_async_depth_format_matches_real_native_attachment_and_restores_binding(self):
+        if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
+        from unittest.mock import Mock, patch
+        with patch.dict(sys.modules, {
+            'mpf.toolhead.ToolheadEnvironmentWorker': SimpleNamespace(EnvironmentWorker=object, CaptureJob=object),
+            'mpf.toolhead.ToolheadCaptureRecipe': SimpleNamespace(CaptureFreezer=object),
+        }):
+            from mpf.toolhead import ToolheadAsyncEnvironment as async_module
+        gl, context = self.gl, self.context
+        previous = int(gl.glGetIntegerv(0x8CA7))
+        native = async_module.native_depth_format(gl, context)
+        self.assertIn(native, (0x81A5, 0x81A6, 0x81A7, 0x8CAC))
+        self.assertEqual(int(gl.glGetIntegerv(0x8CA7)), previous)
+        self.assertEqual(int(gl.glGetError()), 0)
+        invalid = Mock(return_value=Mock(isValid=lambda: False))
+        invalid.Attachment = QOpenGLFramebufferObject.Attachment
+        with patch('PyQt6.QtOpenGL.QOpenGLFramebufferObject', invalid):
+            with self.assertRaisesRegex(RuntimeError, 'format unavailable'):
+                async_module.native_depth_format(gl, context)
+        def unexpected(_ctx, name, *_args):
+            if name == 'glGetFramebufferAttachmentParameteriv':
+                return lambda _target, _attachment, _parameter, output: setattr(output._obj, 'value', 0)
+            return procedure(_ctx, name, *_args)
+        with patch.object(async_module, 'procedure', side_effect=unexpected):
+            with self.assertRaisesRegex(RuntimeError, 'attachment unsupported'):
+                async_module.native_depth_format(gl, context)
+        self.assertEqual(int(gl.glGetError()), 0)
+
+    def test_worker_storage_selects_physical_pair_and_retires_all_names(self):
+        if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
+        from unittest.mock import patch
+        with patch.dict(sys.modules, {
+            'mpf.toolhead.ToolheadCaptureGL': SimpleNamespace(RawBindings=object),
+            'mpf.toolhead.ToolheadCaptureRecipe': SimpleNamespace(CaptureScene=object),
+        }):
+            from mpf.toolhead.ToolheadEnvironmentWorker import WorkerStorage
+        storage = WorkerStorage(self.gl, self.context, 0x81A6)
+        names = tuple(storage.names)
+        try:
+            for target in (1, 0, 1):
+                storage.select(target)
+                self.assertEqual((storage.back, storage.back_depth), (names[target], names[target+2]))
+            with self.assertRaisesRegex(RuntimeError, 'pair target'): storage.select(2)
+        finally: storage.close(); storage.close()
+        self.assertTrue(all(not self.gl.glIsTexture(name) for name in names))
+        self.assertEqual(int(self.gl.glGetError()), 0)
+
     def test_failure_restores_vao_depth_clear_offset_and_high_active_texture(self):
         if not self.available: self.skipTest("Offscreen Qt OpenGL unavailable")
         gl = self.gl

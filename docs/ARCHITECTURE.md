@@ -186,6 +186,14 @@ correct package ownership.
 | `ToolheadOpaqueShader.py` | Shared toolhead shader variant without alpha discard for the fully opaque single-pass path | Shader formula duplication, settings or telemetry |
 | `ToolheadGLState.py` | Independent host graphics-state restoration around owned optional effects | Native framebuffer mutation or scene recursion |
 | `ToolheadEnvironment.py` | Paired colour/depth cubemaps, frozen six-face capture, atomic probe publication and optional failure backoff | Scene discovery or printer state |
+| `ToolheadAsyncEnvironment.py` | Main-context capture admission, VBO leases, pair adoption and consumer retirement | Worker-context drawing or printer commands |
+| `ToolheadEnvironmentWorker.py` | Private shared-context capture with bounded GPU submissions and fence retirement | Native renderer singletons or GUI mutation |
+| `ToolheadEnvironmentMailbox.py` | Epoch/generation tickets for producer, consumer and pair retirement | Qt or graphics calls under its lock |
+| `ToolheadCaptureValues.py` | Immutable mesh and uniform values and validated buffer descriptors | Native graphics ownership |
+| `ToolheadCaptureRecipe.py` | Main-thread scene freezing and worker-local reconstruction | Mutable native scene objects crossing threads |
+| `ToolheadCaptureGL.py` | Context-local graphics entry points and shader programs | Native shared shader state |
+| `ToolheadCaptureBuffers.py` | Worker-owned buffers, textures and framebuffer resources | Host buffer ownership |
+| `ToolheadCaptureDraw.py` | Private draw adapters and retained borrowed-buffer reads | Main-thread resource mutation |
 | `ToolheadEnvironmentScene.py` | Owned shaders reading platform/grid/visible bed-height meshes and the visible public LayerData prefix | Native program mutation or recursive renderer calls |
 | `ToolheadSceneNode.py` | Non-selectable lit triangle node; private head depth above final scene composition, cleared before Qt controls; opaque single pass and completed-image opacity | Telemetry or nozzle suppression |
 | `ToolheadPresenter.py` | Reported-position freshness/homing gate, estimated public LayerData adapter and one native-nozzle suppression owner | Print progress matching or native class patches |
@@ -1888,14 +1896,45 @@ Six complete colour and depth faces publish with their origin, near/far and
 bounds atomically. Same-context slice, visibility, filter and source changes keep
 the last complete map visible while its replacement builds; abandoned partial
 faces never publish. Disable, context retirement and capture failure remove it.
+On supported main-thread OpenGL contexts, an owned shared-context worker advances
+capture without waiting for foreground render frames. It receives frozen arrays,
+typed uniforms and shader recipes, and borrows validated existing path VBO names
+while the main context retains their wrappers. Shaders, VAOs, chunk index buffers
+and face targets belong to the worker. At most two submitted GPU turns remain
+outstanding. The original synchronous owner handles unsupported capabilities and
+the first missing native upload.
+
+An epoch/generation mailbox owns the two physical map pairs. Producer poll tickets
+and consumer read tickets prevent reuse during a pending fence poll or draw.
+Hard source changes reject obsolete pending jobs; soft changes retain only the
+latest pending request. Adoption preserves the complete colour/depth/descriptor
+pair and a monotonic facade revision, including synchronous fallback publication.
+Disable seals demand immediately; the worker drains producer and last-consumer
+fences without requiring another ordinary frame. Fence failures request an
+explicit cleanup frame in the original main context. Only that context's verified
+completion may release retained read tickets. Context destruction withdraws
+bindings and finishes its outstanding consumer work before retirement. The direct
+Qt destruction signal may outlive its Python wrapper; a cached native pointer is
+used only inside that signal, with a retired epoch rejecting later address reuse.
+Late shader-finally callbacks do not invoke the retired context. If exact-main
+activation or completion fails, the producer exits without returning unresolved
+read tickets/input leases or deleting shared resources. One process-lifetime
+quarantine retains that group's owner and blocks another async owner; the
+synchronous backend remains available in a usable replacement context.
+
+Optional mesh channels use native presence flags: an empty UV array on an
+untextured 3MF platform is absent. Empty parsing snapshots do not request path
+lighting shaders until path geometry exists. Native proofs cover empty-to-loaded
+and loaded-to-empty transitions with the same worker owner.
 Changed pose/path/light state coalesces with a 150 ms minimum interval after
 publication; unchanged scenes refresh at most once per second. Earlier wake
 deadlines supersede old idle timers, and obsolete callbacks cannot request a
 frame. Empty LayerData during active slice/layer production defers replacement
 and retains the complete map; a stable empty bed remains capturable. The adapter
 reads only the backend slicing/layer-job flags and public Preview busy state.
-The opt-in rendering marker also logs bounded capture wall/submission time and
-turn counts, at most one report per ten seconds, without waiting for GPU work.
+The opt-in rendering marker logs synchronous capture wall/submission time and
+turn counts at most once per ten seconds, and completed worker capture wall time
+and worker turns on adoption. Neither report claims whole-window frame latency.
 After a successful stock draw, the simulation adapter can observe the identities
 of the stock layer, shadow and current shaders to initialize stationary previews.
 This narrow read-only host-layout dependency never changes native state; unknown

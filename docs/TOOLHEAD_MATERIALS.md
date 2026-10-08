@@ -83,6 +83,9 @@ immediate allocation receipt.
 
 Large-print capture reuses visibility tests and batches frozen path state within
 bounded turns, without lowering map resolution or simplifying visible paths.
+Supported graphics contexts build replacement maps in a dedicated shared-context
+worker, keeping the previous complete map visible until all six new faces finish.
+The worker reuses existing path vertex storage and bounds outstanding GPU work.
 Preparation and an initial vertex upload still depend on print size. Isolated
 pixel parity and submission measurements are not promises of live frame rate
 or capture latency on a particular loaded print.

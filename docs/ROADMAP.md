@@ -57,12 +57,14 @@ strict branch CI must qualify it. Face-owned deferred paint timers also prevent
 callbacks after a Print Follower popover closes, with reopening and delivered
 ink covered by regression tests.
 
-Large-print latency remains unresolved: the loaded macOS session takes 16–30
-seconds for warm maps across roughly 400–500 foreground render turns. An owned
-shared-context worker is being qualified to reuse existing vertex storage and
-remove that foreground scheduling dependency. Exact native map parity, bounded
-GPU submission, producer/consumer fences, retirement, cold-start responsiveness
-and memory costs must be proven before integration. Stock Cura's recurring
+The installed shared-context worker reduces the measured large-print warm map
+latency from 14–19 seconds to a median of 3.1 seconds across 18 captures, normally
+2.1–5.1 seconds. The first cold capture took 10.35 seconds. It borrows retained
+vertex storage and removes foreground scheduling from capture continuation.
+Native empty/loaded transitions preserve all six colour/depth faces exactly;
+bounded submissions, producer/consumer fences and retirement without subsequent
+GUI frames have separate native proofs. New-module coverage, the complete local
+gate and whole branch CI remain unfinished. Stock Cura's recurring
 removable-drive subprocess launches also cause observed allocator stalls; that
 is a separate upstream issue. Staged first uploads, worker bounds and complete
 mutable-input revision tracking remain separate candidates. Unculled shadow
@@ -71,6 +73,32 @@ parity or driver-memory failures. Fresh full local and branch CI gates for the
 current defect follow-up remain required.
 These effects issue no printer commands and
 never require per-face material setup.
+
+The next authorized checkpoint is an unsigned annotated `5.3.0-reflections`
+tag on the fully tested, pushed head after whole branch CI succeeds. It has no
+`v` prefix and must not publish a release. The current single-probe reflection
+map cannot reveal surfaces hidden from its capture point; opaque occlusion can
+therefore create dark gaps and incomplete reflected extrusion silhouettes.
+This limitation remains documented in the checkpoint.
+
+After that checkpoint, geometry ray tracing will resolve actual scene hits and
+shade their own material, colour and texture. Embree is the proposed portable
+CPU baseline. A standalone prototype traces the actual screenshot toolhead and
+half-printed green Voron cube on CPU and on Apple Metal; this is visual and API
+evidence, not production integration or a benchmark of the large loaded print.
+The production GPU path must also support qualified Windows and Linux targets,
+with a CPU fallback. Existing material metadata, face/body edits, alpha and the
+active perspective or orthographic camera remain authoritative; the demo's
+polished-silver override is not an automatic material rule.
+
+Preview will initially keep quick access to Enable reflections, Environment map
+/ Ray traced radio buttons and a Use GPU checkbox. Choices are global and saved;
+unavailable GPU capability disables its checkbox with an explanation. Backend
+replacement must fence ownership and preserve coherent publication. Production
+output needs full resolution and consistent antialiasing during motion; coarse
+interactive demo previews are not the intended product quality. A previous
+screen-space image is reusable only while its camera and receiver state match.
+Controls may move into Settings in a later iteration.
 
 ### 5.3.0 — Toolhead controls in Preview (final planned 5.x feature release)
 
