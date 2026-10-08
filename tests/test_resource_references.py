@@ -245,6 +245,7 @@ class ResourceReferenceTests(unittest.TestCase):
             ("toolhead/ToolheadSceneLighting.py", "toolhead/scene-lighting.shader"),
             ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.vert.qsb"),
             ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.frag.qsb"),
+            ("toolhead/ToolheadEnvironmentScene.py", "toolhead/scene-lighting.shader"),
         })
 
     def test_stale_upload_dialog_path_is_detected(self):

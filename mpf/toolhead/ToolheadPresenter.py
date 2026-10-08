@@ -5,7 +5,7 @@ import math
 import time
 from contextlib import contextmanager
 
-from PyQt6.QtCore import QObject, QTimer
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from ..geometry.ToolheadGeometry import default_mesh, valid_tip
 
@@ -38,6 +38,7 @@ def estimated_position(view, root):
 
 
 class ToolheadPresenter(QObject):
+    fanReadingsChanged = pyqtSignal(object)
     def __init__(self, application, cura, client, binding, presentation, store, parent=None):
         super().__init__(parent)
         self._application, self._cura, self._client = application, cura, client
@@ -49,6 +50,7 @@ class ToolheadPresenter(QObject):
         self._native = None
         self._native_parent = None
         self._updating = self._closed = False
+        self._fan_readings = {}
         self._status = {}
         self._identity = binding.identity
         self._received = 0.0
@@ -57,6 +59,9 @@ class ToolheadPresenter(QObject):
         self._timer.setInterval(250)
         self._timer.timeout.connect(self.update)
         self._timer.start()
+        self._animation_timer = QTimer(self)
+        self._animation_timer.setInterval(33)
+        self._animation_timer.timeout.connect(self._animate)
         getattr(client, "statusSnapshotReceived", client.statusReceived).connect(self._observe)
         client.statusAdmitted.connect(self._admitted)
         client.sessionInvalidated.connect(self._invalidate)
@@ -68,6 +73,22 @@ class ToolheadPresenter(QObject):
         presentation.toolheadVisibilityRequested.connect(self.update)
         presentation.reportedPositionRequested.connect(self.update)
         presentation.toolheadOpacityRequested.connect(self.update)
+
+    def _animate(self):
+        node = self._node
+        if node is None or not node.visible_for_render() or not node.rotors_moving():
+            self._animation_timer.stop()
+            return
+        window = getattr(self._application, "getMainWindow", lambda: None)()
+        if window is None or not window.isVisible() or window.isMinimized():
+            self._animation_timer.stop()
+            return
+        window.update()
+
+    def set_fan_readings(self, values):
+        self._fan_readings = values
+        self.fanReadingsChanged.emit(values)
+        self.update()
 
     def _observe(self, status):
         self._status = status
@@ -82,6 +103,8 @@ class ToolheadPresenter(QObject):
             self._homing_available = "homed_axes" in toolhead
 
     def _invalidate(self, *_args):
+        self._fan_readings = {}
+        self.fanReadingsChanged.emit({})
         self._status, self._received = {}, 0
         self._live_available = self._homing_available = False
         self.update()
@@ -225,7 +248,8 @@ class ToolheadPresenter(QObject):
                     except (OSError, ValueError):
                         model = default_mesh()
                         self._model_error = " · saved model unavailable; default shown"
-                    self._node.set_model(model, valid_tip(config.toolhead_tip) or model.automatic_tip)
+                    tip = valid_tip(config.toolhead_tip) if not self._model_error else None
+                    self._node.set_model(model, tip or model.automatic_tip)
                 else:
                     self._node.set_native_model(native_mesh)
                 self._model_key = key
@@ -237,8 +261,19 @@ class ToolheadPresenter(QObject):
             show = point is not None and config.show_toolhead_indicator and config.enabled
             opacity = self._presentation.toolhead_opacity if custom else 1.0
             self._node.set_opacity(opacity)
-            attached = getattr(config, "toolhead_lights", []) if custom else []
+            attached = getattr(config, "toolhead_lights", []) if custom and not self._model_error else []
             self._node.set_attached_lights(attached)
+            self._node.set_surface_detail(getattr(config, "toolhead_surface_detail", .35))
+            self._node.set_material_finishes(getattr(config, "toolhead_material_overrides", {}) if custom and not self._model_error else {})
+            self._node.set_surface_materials(getattr(config, "toolhead_surface_materials", {}) if custom and not self._model_error else {})
+            self._node.set_local_appearance(
+                getattr(config, "toolhead_body_materials", {}) if custom and not self._model_error else {},
+                getattr(config, "toolhead_body_finishes", {}) if custom and not self._model_error else {},
+                getattr(config, "toolhead_face_finishes", {}) if custom and not self._model_error else {})
+            self._node.set_opacity_overrides(
+                getattr(config, "toolhead_body_opacity", {}) if custom and not self._model_error else {},
+                getattr(config, "toolhead_face_opacity", {}) if custom and not self._model_error else {})
+            self._node.set_rotors(getattr(config, "toolhead_rotors", []) if custom and not self._model_error else [], getattr(self, "_fan_readings", {}))
             effects = (self._presentation.light_bed, self._presentation.light_models) if custom else (False, False)
             lighting = custom and self._presentation.lighting_enabled
             self._node.set_lighting_enabled(lighting)
@@ -255,7 +290,13 @@ class ToolheadPresenter(QObject):
                 if custom and all(math.isfinite(v) and v > 0 for v in dimensions): self._node.set_lights(*dimensions)
             except (AttributeError, TypeError, ValueError):
                 pass
-            scene_state = (key, show, (point.x, point.y, point.z) if show else None, id(root), opacity, dimensions, repr(attached), effects, lighting)
+            window = getattr(self._application, "getMainWindow", lambda: None)()
+            if show and custom and self._node.visible_for_render() and self._node.rotors_moving() and window is not None and window.isVisible() and not window.isMinimized(): self._animation_timer.start()
+            else: self._animation_timer.stop()
+            local_appearance = tuple(repr(getattr(config, name, {})) for name in (
+                "toolhead_body_materials", "toolhead_body_finishes", "toolhead_face_finishes",
+                "toolhead_body_opacity", "toolhead_face_opacity"))
+            scene_state = (key, show, (point.x, point.y, point.z) if show else None, id(root), opacity, dimensions, repr(attached), effects, lighting, getattr(config, "toolhead_surface_detail", .35), repr(getattr(config, "toolhead_material_overrides", {})), repr(getattr(config, "toolhead_surface_materials", {})), local_appearance, repr(getattr(config, "toolhead_rotors", [])), repr(getattr(self, "_fan_readings", {})))
             scene_changed = scene_state != self._last_scene_state
             if scene_changed:
                 if show: self._node.set_render_position(point)
@@ -264,7 +305,8 @@ class ToolheadPresenter(QObject):
             if not config.show_toolhead_indicator: status = "Toolhead indicator disabled in settings"
             failure = getattr(self._node, "render_failure", lambda: "")()
             if failure: status = failure
-            self._presentation.publish_toolhead(status + self._model_error)
+            animation_status = getattr(self._node, "animation_status", lambda: "")()
+            self._presentation.publish_toolhead(status + self._model_error + (" · "+animation_status if animation_status else ""))
             if scene_changed or simulation_changed:
                 window = getattr(self._application, "getMainWindow", lambda: None)()
                 if window is not None and not simulation_changed and not self._node.requires_full_render():
@@ -276,6 +318,7 @@ class ToolheadPresenter(QObject):
 
     def close(self):
         self._timer.stop()
+        self._animation_timer.stop()
         self._closed = True
         if self._node is not None:
             self._node.close()

@@ -4,6 +4,7 @@ import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
 import MoonrakerPrintFollower 1.0
+import "../widgets"
 
 RowLayout {
     id: root
@@ -71,7 +72,7 @@ RowLayout {
         }
         UM.Label {
             Layout.fillWidth: true
-            text: preview.addingLight ? "Click a surface to place an outward-facing light." : preview.picking ? "Click a visible nozzle surface. Use XYZ to centre a hole. Escape cancels picking." : "Right drag: rotate · Middle drag: pan · Scroll: zoom · Orange marker: nozzle tip"
+            text: preview.selectingOpacity ? "Click to add or remove bodies/faces for appearance. Cyan marks selection; invisible geometry appears faintly. Escape exits selection." : preview.paintingMaterial ? "Click bodies or faces to assign the brush material. Escape exits painting." : preview.addingRotor ? "Click the rotating body, then confirm its axis in Fans. Nothing sends printer commands." : preview.addingLight ? "Click a surface to place an outward-facing light." : preview.picking ? "Click a visible nozzle surface. Use XYZ to centre a hole. Escape cancels picking." : "Right drag: rotate · Middle drag: pan · Scroll: zoom · Orange marker: nozzle tip"
             wrapMode: Text.WordWrap
             color: UM.Theme.getColor("text_inactive")
         }
@@ -80,9 +81,16 @@ RowLayout {
             spacing: UM.Theme.getSize("thin_margin").width
             Cura.SecondaryButton {
                 objectName: "toolheadPickTip"
-                text: preview.picking ? "Cancel picking" : "Pick nozzle tip"
+                text: preview.picking && !preview.addingLight && !preview.addingRotor && !preview.paintingMaterial && !preview.selectingOpacity ? "Cancel picking" : "Pick nozzle tip"
                 enabled: root.model && !root.model.busy
-                onClicked: preview.picking = !preview.picking
+                onClicked: {
+                    const tipPicking = preview.picking && !preview.addingLight && !preview.addingRotor && !preview.paintingMaterial && !preview.selectingOpacity;
+                    preview.addingLight = false;
+                    preview.addingRotor = false;
+                    preview.paintingMaterial = false;
+                    preview.selectingOpacity = false;
+                    preview.picking = !tipPicking;
+                }
             }
             Cura.SecondaryButton {
                 text: "Reset view"
@@ -145,10 +153,53 @@ RowLayout {
             color: UM.Theme.getColor("error")
         }
     }
-    ToolheadLightSettings {
+    ColumnLayout {
         Layout.preferredWidth: 300 * screenScaleFactor
         Layout.fillHeight: true
-        model: root.model
-        preview: preview
+        Cura.ComboBox {
+            id: section
+            objectName: "toolheadEditorSection"
+            Layout.fillWidth: true
+            model: [
+                {
+                    "label": "Appearance"
+                },
+                {
+                    "label": "Lights"
+                },
+                {
+                    "label": "Fans"
+                }
+            ]
+            textRole: "label"
+            defaultTextOnEmptyModel: ""
+            Accessible.name: "Toolhead settings section"
+            onCurrentIndexChanged: {
+                preview.picking = false;
+                preview.addingLight = false;
+                preview.addingRotor = false;
+            }
+        }
+        ToolheadAppearanceSettings {
+            visible: section.currentIndex === 0
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            model: root.model
+            preview: preview
+        }
+        ToolheadFanSettings {
+            visible: section.currentIndex === 2
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            model: root.model
+            preview: preview
+        }
+        ToolheadLightSettings {
+            visible: section.currentIndex === 1
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            model: root.model
+            preview: preview
+        }
     }
 }

@@ -66,7 +66,9 @@ class SceneLightingTests(unittest.TestCase):
         self.native.addItem(self.transform, Mesh(np.array([[-125, 0, -125], [125, 0, -125], [125, 0, 125]], dtype=float)))
         self.batches = [self.native]
         self.renderer = SimpleNamespace(getBatches=lambda: self.batches)
-        self.root, self.camera = object(), object()
+        self.root = object()
+        matrix = SimpleNamespace(getData=lambda: np.eye(4))
+        self.camera = SimpleNamespace(getProjectionMatrix=lambda: matrix, getInverseWorldTransformation=lambda: matrix)
         Batch.rendered = []
 
     def draw(self):

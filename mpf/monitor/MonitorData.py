@@ -11,6 +11,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from .console.ConsolePolicy import MAX_LINE
 from .MonitorFormatting import number, preview_block, result, wanted_object
 from .MonitorPermissions import Observation
+from ..geometry.ToolheadFanReadings import FanReadings
 from ..moonraker.MoonrakerSession import RequestCategory, FrozenStatus
 
 
@@ -147,6 +148,7 @@ class MonitorData(QObject):
         client.commandChanged.connect(self.commandChanged.emit)
         client.sessionInvalidated.connect(self._session_invalidated)
         client.connectionChanged.connect(self._connection_changed)
+        if hasattr(client, "statusAdmitted"): client.statusAdmitted.connect(self._admit_fans)
 
     def _session_invalidated(self):
         # Suspends the RUNTIME only: ownership stays with the selected
@@ -215,6 +217,7 @@ class MonitorData(QObject):
         return self._connection_detail
 
     def _clear(self):
+        self._fans = FanReadings()
         self._core_memo = _CoreMemo()
         empty = freeze({})
         self._snapshot = MonitorSnapshot(empty, empty, (), empty, empty, (), (), empty, empty)
@@ -224,6 +227,15 @@ class MonitorData(QObject):
         self.previewBlockChanged.emit(preview_block(
             {}, self._observation, stamp=time.monotonic(), inactive=True,
         ))
+
+    def _admit_fans(self, patch, origin, stamp):
+        if self._active and origin == "sync" and self._client.effective_feed_mode == "websocket":
+            self._fans.accept(patch, stamp, full=True)
+
+    @property
+    def fan_readings(self):
+        return self._fans.values(time.monotonic(), connected=self.connected and self._active,
+            streaming=self._client.effective_feed_mode == "websocket" and self._client.rpc_available())
 
     @property
     def snapshot(self): return self._snapshot
@@ -543,6 +555,7 @@ class MonitorData(QObject):
         value = result(payload)
         names = value.get("objects") if isinstance(value, Mapping) else None
         if error or not isinstance(names, (tuple, list)): return
+        self._fans.retain(names)
         self._update(objects=tuple(sorted(str(name) for name in names)))
         self._reconcile_aux_subscription()
         if "configfile" in names:
@@ -577,21 +590,25 @@ class MonitorData(QObject):
             # auxiliary timer drains the accumulated fragments.
             patch, _stamp = self._client.drain_aux()
             if patch:
-                self._merge_aux(patch)
+                self._merge_aux(patch, stamp=_stamp)
             else:
                 self._reconcile_aux_subscription()
             return
         objects = {name: ["save_config_pending", "save_config_pending_items"] if name == "configfile" else None
                    for name in self._snapshot.objects if self.wants_object(name)}
-        if objects: self.request("aux", "POST", "printer/objects/query", self._aux, body={"objects": objects})
+        if objects: self.request("aux", "POST", "printer/objects/query", self._full_aux, body={"objects": objects})
 
-    def _aux(self, payload, error):
+    def _full_aux(self, payload, error):
+        self._aux(payload, error, full=True)
+
+    def _aux(self, payload, error, *, full=False):
         value = result(payload)
         incoming = value.get("status") if isinstance(value, Mapping) else None
         if error or not isinstance(incoming, Mapping): return
-        self._merge_aux(incoming)
+        self._merge_aux(incoming, full=full)
 
-    def _merge_aux(self, incoming):
+    def _merge_aux(self, incoming, *, full=False, stamp=None):
+        self._fans.accept(incoming, time.monotonic() if stamp is None else stamp, full=full)
         # Rebuild from the current wanted set so objects that were renamed or
         # hot-removed stop rendering instead of staying in the snapshot for
         # the rest of the session. Newly-seen objects join the set even when

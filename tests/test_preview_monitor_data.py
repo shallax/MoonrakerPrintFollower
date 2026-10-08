@@ -298,6 +298,20 @@ class MonitorProjectionTests(harness.MonitorProjectionTests):
 
 
 class MonitorAuxTests(harness.MonitorAuxTests):
+    def test_core_and_config_only_poll_cannot_drop_read_only_fan_telemetry(self):
+        self.activate()
+        self.data._full_aux({'result': {'status': {'fan': {'speed': .5, 'rpm': 0}}}}, None)
+        self.data._admit_fans({'print_stats': {'state': 'printing'}}, 'sync', 10.)
+        self.data._aux({'result': {'status': {'configfile': {'settings': {}}}}}, None)
+        self.assertEqual(self.data._fans.rows['fan']['rpm'], 0.)
+        self.client.effective_feed_mode = 'websocket'
+        self.data._admit_fans({'fan': {'speed': .2}}, 'sync', 20.)
+        self.assertIsNone(self.data._fans.rows['fan']['rpm'])
+        self.assertEqual(self.data._fans.rows['fan']['speed'], .2)
+        self.data._objects({'result': {'objects': ['heater_bed']}}, None)
+        self.assertEqual(self.data._fans.rows, {})
+        self.assertEqual(self.data._fans.values(20., connected=True, streaming=True), {})
+
     def test_the_aux_lane_heals_the_discovery_chain_before_objects_arrive(self):
         self.data.refresh_discovery = harness.Mock()
         self.activate()

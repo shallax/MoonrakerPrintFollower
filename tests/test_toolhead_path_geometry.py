@@ -239,6 +239,16 @@ class PathRenderContracts(unittest.TestCase):
         self.geometry.render(self.shader, self.camera, self.transform,
                              [(np.int64(0), np.int64(2)), (2, 4)] if ranges is None else ranges, self.gl)
 
+    def test_reflection_upload_is_bounded_and_preserves_original_primitive_offsets(self):
+        self.geometry._index_chunk = 2
+        self.indices.size.return_value = 8
+        self.render([(2, 4)])
+        self.indices.allocate.assert_called_once_with(np.array([2, 3], dtype=np.uint32).tobytes(), 8)
+        self.assertIsNone(self.draw.call_args.args[3].value)
+        self.shader.setUniformValue.assert_called_with('u_drawElementStart', 2)
+        with self.assertRaisesRegex(RuntimeError, 'chunk exceeds budget'): self.render([(0, 4)])
+        with self.assertRaisesRegex(RuntimeError, 'chunk exceeds budget'): self.render([(0, 2), (2, 4)])
+
     def test_public_buffer_layout_draw_offsets_and_normal_matrix_are_reused(self):
         self.render()
         self.render()
@@ -260,7 +270,8 @@ class PathRenderContracts(unittest.TestCase):
         self.shader.updateBindings.assert_called_with(model_matrix=self.transform, normal_matrix=self.normal,
             view_matrix=self.camera.getInverseWorldTransformation.return_value,
             projection_matrix=self.camera.getProjectionMatrix.return_value,
-            view_position=self.camera.getWorldPosition.return_value)
+            view_position=self.camera.getWorldPosition.return_value,
+            light_0_position=self.camera.getCameraLightPosition.return_value)
         self.assertEqual([entry.args[1] for entry in self.draw.call_args_list], [2, 2, 2, 2])
         self.assertEqual([entry.args[3].value for entry in self.draw.call_args_list], [None, 8, None, 8])
         self.assertTrue(all(type(entry.args[1]) is int for entry in self.draw.call_args_list))

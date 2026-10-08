@@ -1391,6 +1391,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The tri-state (4.2.0): unknown folds to False, exactly the
         # bool every existing consumer saw before.
         values["monitorConnected"] = self._data.connection_state == "yes"
+        values["toolheadFanReadings"] = self._data.fan_readings
         # The policy projections (4.2.0): the caption and the restart
         # gate come from the table — one derivation, both view
         # models. A missing observation fails closed.
@@ -1597,6 +1598,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             getattr(self, signal_name).emit()
 
     previewToolheadReadout = value_property(QVariant, "previewToolheadReadout", monitorChanged, {})
+    toolheadFanReadings = value_property(QVariant, "toolheadFanReadings", monitorChanged, {})
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
     # The migration-failure surfaces (the UX ruling): the dialog's
     # banner and the permanent diagnostics row read these.

@@ -56,6 +56,19 @@ class FrameCacheTests(unittest.TestCase):
         self.assertLess(self.factory.call_args.args[0], 800)
         self.assertLess(self.factory.call_args.args[1], 600)
 
+    def test_final_image_uses_additive_equations_and_restores_host_even_on_failure(self):
+        original = self.gl.glGetIntegerv.side_effect
+        self.gl.glGetIntegerv.side_effect = lambda key: {0x8009: 0x800A, 0x883D: 0x8007}.get(key, original(key))
+        current = [None]
+        self.gl.glBlendEquationSeparate.side_effect = lambda *value: current.__setitem__(0, value)
+        def blit(*args):
+            self.assertEqual(current[0], (0x8006, 0x8006))
+            raise RuntimeError('final image failed')
+        self.blitter.blit.side_effect = blit
+        with self.assertRaisesRegex(RuntimeError, 'final image failed'): self.draw()
+        self.assertEqual(current[0], (0x800A, 0x8007))
+        self.cache._bind.assert_called_with(0x8D40, 17)
+
     def test_scene_depth_revision_invalidates_cached_head_and_seed_receives_native_camera_crop(self):
         seed = Mock(return_value=True)
         for revision in ("prefix-1", "prefix-1", "fraction-.5", "fraction-.75"):
@@ -138,6 +151,16 @@ class FrameCacheTests(unittest.TestCase):
         self.viewport = (0, 0, 900, 700)
         self.draw("opacity .35")
         self.assertEqual(self.render.call_count, 4)
+
+    def test_projection_switch_invalidates_pixels_and_crop_retains_camera_mode(self):
+        projection = np.eye(4)
+        self.camera.getProjectionMatrix = lambda: SimpleNamespace(getData=lambda: projection)
+        for orthographic in (True, True, False, False, True):
+            projection[3] = [0, 0, 0, 1] if orthographic else [0, 0, -1, 0]
+            self.draw()
+            cropped = self.render.call_args.args[0].getProjectionMatrix().getData()
+            np.testing.assert_array_equal(cropped[3], projection[3])
+        self.assertEqual(self.render.call_count, 3)
 
     def test_crop_projection_preserves_the_original_screen_position(self):
         self.draw()
@@ -248,6 +271,19 @@ class FrameCacheTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "release failed"): self.draw()
         self.cache._bind.assert_called_with(0x8D40, 17)
         self.gl.glViewport.assert_called_with(*self.viewport)
+
+    def test_multisample_animation_fallback_is_resolved_after_the_single_pose(self):
+        self.gl.glGetIntegerv.side_effect = lambda name: self.viewport if name == 0x0BA2 else 4 if name == 0x80A9 else 17
+        static, resolved = Mock(), Mock()
+        static.texture.return_value = 0
+        resolved.texture.return_value = 321
+        self.factory.side_effect = [static, resolved]
+        animation = Mock(return_value=static)
+        self.cache.draw(self.gl,self.camera,self.bounds,self.transform,'pose',self.render,animate=animation)
+        self.assertEqual(self.factory.blitFramebuffer.call_count,2)
+        self.factory.blitFramebuffer.assert_called_with(resolved,static)
+        self.blitter.blit.assert_called_once_with(321,'quad',1)
+        self.assertIs(animation.call_args.args[1],static)
 
     def test_multisample_head_is_resolved_before_texture_composition(self):
         self.gl.glGetIntegerv.side_effect = lambda name: self.viewport if name == 0x0BA2 else 4 if name == 0x80A9 else 17

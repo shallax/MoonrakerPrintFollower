@@ -27,8 +27,12 @@ from typing import List, Tuple
 WHATS_NEW: Tuple[dict, ...] = (
     {
         "version": "5.3.0",
-        "headline": "Version 5.3.0 adds a collapsible Toolhead control pane to Cura Preview.",
+        "headline": "Version 5.3.0 adds Preview toolhead controls, material finishes, reflections and animated fan bodies.",
         "items": (
+            "STEP retains material annotations, transparency and separate body occurrences. Recognized material names choose visual finishes automatically; Surface detail adds subtle plastic grain, with zero restoring smooth surfaces.",
+            "Select bodies or CAD faces to assign material types and adjust roughness, reflectivity and opacity independently. Temporary paint colours identify types; separate resets restore imported appearance, and Cancel discards the draft.",
+            "Reflect the actual bed and visible G-code in custom toolheads using a cached environment map. Legacy Preview mode keeps ordinary shading; glass retains its alpha, without refraction or ray tracing.",
+            "Pick whole fan bodies, inspect and confirm their axis, and set visual speed, direction and blur. Optionally follow read-only printer fan telemetry: measured RPM wins, otherwise power scales your visual full-speed RPM and is labelled estimated. Missing readings stop rotation; no fan commands are sent.",
             "Find Toolhead at the top left beneath the Preview stage menu. Collapse it left and reopen it with the right-pointing arrow; Cura's object list and perspective controls remain available.",
             "Jog with the compass and Z arrows. Select a preset on the snapping distance slider or type an exact distance; the handle follows values between presets.",
             "Read physical XYZ positions and move to absolute G-code coordinates. Leave target axes blank to keep them unchanged. Homing and supported levelling, bed-mesh and motor actions are available while idle.",

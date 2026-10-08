@@ -4,6 +4,23 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 5.3.0
 
+- Preserve STEP material annotations, transparency and distinct body occurrences.
+  Authored material names or clear part names select conservative roughness and
+  metalness presets; unknown parts stay nonmetallic. Add one **Surface detail**
+  slider for subtle plastic grain, with zero restoring smooth surfaces.
+- Add body/face material painting and independent roughness, reflectivity and
+  opacity controls alongside per-type defaults. Temporary type colours, mixed
+  selection, invisible-body recovery and separate Automatic/Imported resets
+  retain the original CAD palette and the existing Done/Save/Cancel workflow.
+- Reflect the bed and currently visible G-code in custom toolheads using a
+  bounded, cached environment map. Complete maps replace each other atomically;
+  legacy Preview mode retains ordinary shading. Reflections are approximate,
+  without ray tracing or glass refraction.
+- Animate selected whole-body fan rotors with confirmed centre/axis, direction,
+  visual RPM and rotational blur. Optionally follow an actual printer fan using
+  read-only telemetry: measured RPM takes precedence, including zero, otherwise
+  power scales the configured visual full-speed RPM and is labelled estimated.
+  Missing or disconnected readings stop bound animation. No fan commands are sent.
 - Add a collapsible **Toolhead** pane at the top left of Cura Preview, beneath
   the stage menu and clear of the object list, job summary and perspective
   controls. Its nozzle icon and right-pointing expansion tab work in light

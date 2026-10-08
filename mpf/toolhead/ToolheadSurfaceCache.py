@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 import logging
+from .ToolheadCamera import apply_camera_view
 
 
 def surface_fragment():
@@ -196,6 +197,7 @@ void main() {
             self._vao = QOpenGLVertexArrayObject()
             if not self._vao.create(): raise RuntimeError("Deferred lighting VAO unavailable")
         node.apply_attached_lights(shader)
+        apply_camera_view(shader, camera)
         shader.setUniformValue("u_viewPosition", camera.getWorldPosition())
         bed, models = node.scene_lighting_effects()
         shader.setUniformValue("u_lightBed", int(bed))

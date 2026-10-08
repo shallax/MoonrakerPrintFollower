@@ -13,6 +13,34 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 
 ## What changed in 5.3.0
 
+Custom toolheads now retain STEP material names, transparency and separate body
+occurrences. Recognized material annotations or clear part names select appearance
+presets automatically. Unknown parts remain nonmetallic; colour alone does not
+identify a material. **Surface detail** adds subtle model-anchored plastic grain;
+set it to zero for smooth surfaces. Glass and metal receive no generated grain.
+These are visual presets, not measured physical finishes. Older cached models
+still load; reimport STEP to recover annotations absent from the old cache.
+
+The editor's **Appearance** section lets you select bodies and CAD faces together,
+assign material types, and adjust roughness, reflectivity and opacity independently.
+Temporary colours identify material types while painting; leaving edit mode restores
+CAD colours. Automatic and Imported reset each property separately, and invisible
+parts remain selectable through the body list. See [appearance controls and defaults](docs/TOOLHEAD_MATERIALS.md).
+
+In normal Cura Preview, reflective parts show a cached approximation of the actual
+bed and visible G-code. Layer progress and head movement refresh the map without
+recursively rendering Cura. Legacy compatibility mode keeps ordinary shading.
+Glass retains its imported alpha; refraction and ray tracing are not implemented.
+
+The model editor's **Fans** section lets you pick a whole rotor body, inspect or
+override its centre and axis, and use **Update preview** before confirming rotation.
+Direction is viewed from the positive axis toward the centre. Choose visual RPM
+and optional blur, or bind an actual printer fan. Valid reported RPM takes precedence,
+including zero; otherwise the fan's power scales your full-speed visual RPM and is
+shown as estimated. Unavailable readings stop rotation. This binding only reads
+telemetry and never changes printer fans. The editor's slow preview is independent
+of printer speed. Settings apply through the existing Done/Save workflow.
+
 The new **Toolhead** pane puts printer controls at the top left of Cura
 **Preview**, below the stage menu. Collapse it to the left and reopen it with
 the right-pointing arrow. It leaves Cura's object list, job summary and

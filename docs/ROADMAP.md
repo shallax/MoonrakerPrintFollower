@@ -15,8 +15,29 @@ Release notes are maintained in
 The `release/v5.3.0` branch starts from the 5.2.0 merge at
 `5683a1f081dfd79f56e417c5c4b2192abaffcbcc`. The author approved the design and
 installed control snapshots, then authorized release documentation, version
-5.3.0 and the branch push. Implementation is complete; publication still
-requires the normal PR, CI and explicit release authorization.
+5.3.0 and the branch push. The finalized controls/deadline baseline passed the
+full local gate and branch CI, then was retained as `baseline/v5.3.0` at
+`96a5e484c418dba8262115b0da8db92085ccaa1a`. The author waived an additional CI
+repeat and requested rendering work next. No PR, merge or release is authorized.
+The baseline tag is a rollback checkpoint and does not trigger publication.
+
+The authorized rendering extension adds cached reflections of the actual bed
+and visible G-code, annotation-based material roughness/metalness, preserved STEP
+transparency and subtle object-anchored plastic grain with one Surface detail
+strength slider. Unknown materials remain conservative nonmetals; RGB is not
+material evidence. Body occurrences support selected fan rotors with direction,
+axis/centre preview and overrides, bounded rotational blur and optional read-only
+fan telemetry binding. Valid measured RPM, including zero, takes precedence;
+otherwise normalized fan speed scales a configured visual full-speed RPM and is
+labelled estimated. Missing, stale or disconnected telemetry stops animation.
+Optional body/face painting adds independently adjustable roughness, reflectivity
+and opacity above per-type defaults. Imported metadata preclassifies surfaces;
+edit highlights are temporary, invisible bodies remain recoverable, and each
+property has its own reset. Reflection captures respect active orthographic and
+perspective cameras and retain native scene depth under attached illumination.
+Implementation is under final local validation; no rendering-extension push or
+whole-CI success is recorded yet. These effects issue no printer commands and
+never require per-face material setup.
 
 ### 5.3.0 — Toolhead controls in Preview (final planned 5.x feature release)
 

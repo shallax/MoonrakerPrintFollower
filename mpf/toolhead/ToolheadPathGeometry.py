@@ -14,9 +14,12 @@ class ToolheadPathGeometry:
     """
     BLOCK = 1024  # Two index elements per line.
 
-    def __init__(self, mesh, indices=None):
+    def __init__(self, mesh, indices=None, *, build_bounds=True, index_chunk=None):
         self.mesh = mesh
-        self._indices = np.asarray(mesh.getIndices() if indices is None else indices, dtype=np.uint32).reshape(-1)
+        self._index_chunk = index_chunk
+        self._indices = np.asarray(mesh.getIndices() if indices is None else indices,
+            dtype=None if index_chunk else np.uint32).reshape(-1)
+        self._element_base = 0
         self._exterior = self._exterior_offsets = None
         self._index_buffer = self._draw_elements = None
         self._context = None
@@ -28,8 +31,8 @@ class ToolheadPathGeometry:
         self._bounds = []
         try: dimensions = mesh.getAttribute("line_dimensions")
         except KeyError: dimensions = None
-        padding = max(0.1, float(np.max(dimensions["value"])) * 2) if dimensions is not None else 2.0
-        for start in range(0, len(self._indices), self.BLOCK):
+        padding = max(0.1, float(np.max(dimensions["value"])) * 2) if build_bounds and dimensions is not None else 2.0
+        for start in range(0, len(self._indices) if build_bounds else 0, self.BLOCK):
             points = vertices[self._indices[start:start + self.BLOCK]]
             self._bounds.append((points.min(axis=0) - padding, points.max(axis=0) + padding))
         self._bounds = np.asarray(self._bounds, dtype=np.float32).reshape(-1, 2, 3)
@@ -111,6 +114,8 @@ class ToolheadPathGeometry:
             if any(start < 0 or end < start or end > len(self._indices) or end-start > 0x7fffffff
                    for start, end in ranges):
                 raise RuntimeError("Lighting index range exceeds owned buffer")
+            if self._index_chunk and (len(ranges) != 1 or ranges[0][1]-ranges[0][0] > self._index_chunk):
+                raise RuntimeError("Reflection index chunk exceeds budget")
             if self._draw_elements is None:
                 address = context.getProcAddress(b"glDrawElements")
                 if not address: raise RuntimeError("Lighting index draw unavailable")
@@ -135,8 +140,10 @@ class ToolheadPathGeometry:
             if int(index_buffer.bufferId()) <= 0: raise RuntimeError("Lighting path index buffer unavailable")
             index_bound = True
             if not index_buffer.bind(): raise RuntimeError("Lighting path index buffer could not be bound")
-            if self._index_buffer is None:
-                body = self._indices.tobytes()
+            if self._index_buffer is None or self._index_chunk:
+                self._element_base = ranges[0][0] if self._index_chunk else 0
+                elements = self._indices[ranges[0][0]:ranges[0][1]] if self._index_chunk else self._indices
+                body = np.asarray(elements, dtype=np.uint32).tobytes()
                 index_buffer.allocate(body, len(body))
                 if index_buffer.size() != len(body): raise RuntimeError("Lighting path index storage incomplete")
                 self._index_buffer = index_buffer
@@ -152,7 +159,7 @@ class ToolheadPathGeometry:
                 self._normal_key, self._normal_matrix = normal_key, normal
             shader.updateBindings(model_matrix=transform, normal_matrix=self._normal_matrix,
                 view_matrix=camera.getInverseWorldTransformation(), projection_matrix=camera.getProjectionMatrix(),
-                view_position=camera.getWorldPosition())
+                view_position=camera.getWorldPosition(), light_0_position=camera.getCameraLightPosition())
             if cached is None:
                 required = self._configure_attributes(shader)
                 if vertex_buffer.size() < required: raise RuntimeError("Lighting vertex buffer storage incomplete")
@@ -200,4 +207,4 @@ class ToolheadPathGeometry:
 
     def _draw_range(self, gl, start, end):
         self._draw_elements(gl.GL_LINES, int(end) - int(start), gl.GL_UNSIGNED_INT,
-            ctypes.c_void_p(int(start) * 4))
+            ctypes.c_void_p((int(start)-self._element_base) * 4))

@@ -4,7 +4,6 @@ from UM.Extension import Extension
 
 from ..FollowerRuntime import FollowerRuntime
 
-
 class MoonrakerPrintFollower(QObject, Extension):
     def __init__(self, application):
         QObject.__init__(self)
@@ -49,6 +48,7 @@ class MoonrakerPrintFollower(QObject, Extension):
     def whats_new(self): return self._runtime.whats_new
     @pyqtSlot()
     def confirmForceLoadCurrentPrint(self): self._runtime.coordinator.confirm_load()
+    def receive_toolhead_fans(self, values): self._runtime.toolhead.set_fan_readings(values)
     def receive_preview_block(self, block): self._runtime.coordinator.receive_preview_block(block)
     def confirmDownloadForMonitor(self): self._runtime.coordinator.download_for_monitor()
 

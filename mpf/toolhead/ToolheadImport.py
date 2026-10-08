@@ -11,7 +11,8 @@ import time
 from pathlib import Path
 import struct
 import numpy as np
-from ..geometry.ToolheadGeometry import MAX_TRIANGLES, mesh_from_arrays
+from ..geometry.ToolheadGeometry import MAX_TRIANGLES, mesh_from_arrays, mesh_from_payload
+from ..geometry.ToolheadMeshFormat import MAX_METADATA_BYTES, read_payload
 
 MAX_FILE_BYTES = 128 * 1024 * 1024
 
@@ -106,7 +107,7 @@ def read_step(path, runtime, cancelled, *, progress=None):
                             progress(text)
                             previous = text
                     if os.path.getsize(log) > 64*1024: raise ValueError("STEP reader produced excessive diagnostics")
-                    if os.path.exists(output) and os.path.getsize(output) > MAX_TRIANGLES*56+12:
+                    if os.path.exists(output) and os.path.getsize(output) > MAX_TRIANGLES*64+16+MAX_METADATA_BYTES:
                         raise ValueError("STEP conversion exceeded its mesh limit")
                 if process.returncode:
                     with open(log, "rb") as handle:
@@ -121,14 +122,5 @@ def read_step(path, runtime, cancelled, *, progress=None):
         if cancelled.is_set(): raise ValueError("Model import cancelled")
         if progress is not None: progress("Checking display mesh…")
         with open(output, "rb") as handle:
-            header = handle.read(12)
-            if len(header) != 12: raise ValueError("STEP reader returned a truncated mesh")
-            magic, count = struct.unpack("<8sI", header)
-            if magic not in (b"MPFHEAD1", b"MPFHEAD2") or not 0 < count <= MAX_TRIANGLES:
-                raise ValueError("STEP reader returned an invalid mesh")
-            stride = 56 if magic == b"MPFHEAD2" else 52
-            body = handle.read(count*stride+1)
-        if len(body) != count*stride: raise ValueError("STEP reader returned an invalid mesh length")
-        values = np.frombuffer(body, dtype="<f4")
-        return mesh_from_arrays(values[:count*9].reshape(count,3,3), values[count*9:count*13].reshape(count,4),
-            np.frombuffer(body, dtype="<u4", offset=count*52) if stride == 56 else None)
+            _header, body, count, stride, metadata = read_payload(handle, MAX_TRIANGLES)
+        return mesh_from_payload(body, count, stride, metadata)

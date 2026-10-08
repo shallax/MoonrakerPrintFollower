@@ -117,6 +117,9 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         if pane is not None:
             def publish_toolhead():
                 if self._routed_monitor is monitor:
+                    if hasattr(self._follower, "receive_toolhead_fans"):
+                        fans = monitor.toolheadFanReadings
+                        self._follower.receive_toolhead_fans(fans.value() if isinstance(fans, QVariant) else fans)
                     values = monitor.previewToolheadReadout
                     pane.publish(values.value() if isinstance(values, QVariant) else values)
             self._routed_toolhead = publish_toolhead
@@ -157,6 +160,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             except (RuntimeError, TypeError):
                 pass
             self._routed_toolhead = None
+        if hasattr(self._follower, "receive_toolhead_fans"): self._follower.receive_toolhead_fans({})
         pane = getattr(self._follower, "preview_toolhead", None)
         if pane is not None:
             pane.bind_controls(None)

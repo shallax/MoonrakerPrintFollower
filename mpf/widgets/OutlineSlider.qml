@@ -199,7 +199,7 @@ Slider {
         Cura.RoundedRectangle {
             anchors.fill: parent
             color: "transparent"
-            border.color: UM.Theme.getColor("lining")
+            border.color: UM.Theme.getColor(control.activeFocus ? "primary" : "lining")
             border.width: UM.Theme.getSize("default_lining").width
             radius: Math.min(UM.Theme.getSize("progressbar_radius").width, height / 2)
             cornerSide: Cura.RoundedRectangle.Direction.All

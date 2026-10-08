@@ -78,6 +78,187 @@ class ToolheadModelsTests(unittest.TestCase):
         self.assertTrue(entered.wait(1), "import worker did not enter the controlled reader")
         self.assertTrue(self.model.busy)
 
+    def test_successful_profile_or_restore_actions_clear_old_refusal(self):
+        for action in (lambda:self.model.setMaterialFinish('abs','roughness',.4),
+                       lambda:self.model.resetMaterialFinish('abs','roughness'),
+                       self.model.clearMaterialPaint):
+            self.model._status='Too many selected faces; nothing changed.'
+            action()
+            self.assertEqual(self.model.status,'')
+
+    def test_invisible_bodies_do_not_use_the_translucent_rotor_budget(self):
+        from mpf.geometry.ToolheadGeometry import mesh_metadata
+        metadata=mesh_metadata(self.saved)
+        metadata['bodies']=[dict(name='Body',source='unknown',centre=None,axis=None) for _ in range(66)]
+        mesh=mesh_from_arrays(np.repeat(self.saved.triangles,66,axis=0),[(1,0,0,0)]*66,body_ids=np.arange(66),metadata=metadata)
+        self.model._mesh=mesh
+        self.model.setRotor(dict(body=0,centre=[0,0,0],axis=[0,0,1],rpm=100,direction=1))
+        self.assertEqual(len(self.model.rotors),1)
+        self.model._body_opacity={str(index):.5 for index in range(65)}
+        self.model.setRotor(dict(body=1,centre=[0,0,0],axis=[0,0,1],rpm=100,direction=1))
+        self.assertEqual(len(self.model.rotors),1)
+        self.assertIn('64 translucent',self.model.status)
+
+    def test_opacity_body_face_precedence_reset_and_cancel_preserve_source(self):
+        source = self.model.mesh.colours.copy()
+        self.model.beginEdit()
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedOpacity(.2)
+        self.assertEqual(self.model.bodyOpacity, {'0': .2})
+        self.model.clearOpacitySelection()
+        self.model.selectOpacityKind('face')
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedOpacity(0)
+        self.assertEqual(self.model.faceOpacity, {'0': 0.})
+        self.assertEqual(self.model.selectedOpacity, 0)
+        self.model.resetSelectedOpacity()
+        self.assertEqual(self.model.faceOpacity, {'0': 'imported'})
+        self.assertEqual(self.model.selectedOpacity, 1)
+        self.model.selectOpacityKind('body')
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedOpacity(.7)
+        # Whole-body edits clear descendant face edits; explicitly selected
+        # mixed faces then receive the same value, without material changes.
+        self.assertEqual(self.model.faceOpacity, {'0': .7})
+        self.model.resetSelectedOpacity()
+        self.assertEqual((self.model.bodyOpacity, self.model.faceOpacity), ({}, {}))
+        self.model.setSelectedOpacity(.3)
+        self.assertEqual(self.model.fields()['toolhead_body_opacity'], {'0': .3})
+        self.model.endEdit(False)
+        self.assertEqual((self.model.bodyOpacity, self.model.faceOpacity, self.model.opacitySelectionCount), ({}, {}, 0))
+        np.testing.assert_array_equal(source, self.model.mesh.colours)
+
+    def test_local_material_finishes_reset_independently_and_cancel_all_properties(self):
+        self.model.beginEdit()
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedMaterial('petg')
+        self.model.setSelectedFinish('roughness', .8)
+        self.model.setSelectedFinish('reflectivity', .7)
+        self.model.setSelectedOpacity(.4)
+        self.assertEqual(self.model.bodyMaterials, {'0': 'petg'})
+        self.assertAlmostEqual(self.model.selectedRoughness, .8, places=6)
+        self.model.clearOpacitySelection()
+        self.model.selectOpacityKind('face')
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedFinish('roughness', .1)
+        self.model.resetSelectedFinish('roughness')
+        self.assertEqual(self.model.faceFinishes, {'0': {'roughness': 'automatic'}})
+        self.assertAlmostEqual(self.model.selectedRoughness, .25, places=6)
+        self.assertAlmostEqual(self.model.selectedReflectivity, .7, places=6)
+        self.model.setSelectedMaterial('automatic')
+        self.assertEqual(self.model.selectedMaterial, 'unknown')
+        self.assertEqual(self.model.bodyOpacity, {'0': .4})
+        self.assertEqual(self.model.bodyFinishes, {'0': {'roughness': .8, 'reflectivity': .7}})
+        self.assertEqual(self.model.fields()['toolhead_body_materials'], {'0': 'petg'})
+        self.model.endEdit(False)
+        self.assertEqual((self.model.bodyMaterials, self.model.surfaceMaterials, self.model.bodyFinishes, self.model.faceFinishes, self.model.bodyOpacity), ({}, {}, {}, {}, {}))
+
+    def test_body_material_paint_preserves_other_properties_and_clears_descendant_type_only(self):
+        self.model.selectMaterialPaint('glass')
+        self.model.paintSurface(0)
+        self.model.toggleOpacitySelection(0)
+        self.model.setSelectedFinish('reflectivity', .3)
+        self.model.setSelectedOpacity(.6)
+        self.model.selectMaterialPaint('abs')
+        self.model.paintBody(0)
+        self.assertEqual(self.model.surfaceMaterials, {})
+        self.assertEqual(self.model.bodyMaterials, {'0': 'abs'})
+        self.assertEqual(self.model.bodyFinishes, {'0': {'reflectivity': .3}})
+        self.assertEqual(self.model.bodyOpacity, {'0': .6})
+
+    def test_opacity_overrides_reload_and_new_asset_clears_selection(self):
+        self.config.toolhead_body_opacity = {'0': .4, '1000': .5}
+        self.config.toolhead_face_opacity = {'0': .6}
+        self.model.reset()
+        self.assertEqual(self.model.bodyOpacity, {'0': .4})
+        self.assertEqual(self.model.faceOpacity, {'0': .6})
+        self.model.toggleOpacitySelection(0)
+        self.model.useDefault()
+        self.assertEqual((self.model.bodyOpacity, self.model.faceOpacity, self.model.opacitySelectionCount), ({}, {}, 0))
+
+    def test_rotor_proposal_confirmation_telemetry_and_cancel_are_separate(self):
+        self.model.beginEdit()
+        self.model.pickedBody(0)
+        proposal = self.model.rotorCandidate
+        self.assertEqual(self.model.rotors, [])
+        self.assertIn("Proposed axis", self.model.status)
+        self.model.previewRotor(dict(proposal, rpm=60, fan="fan", direction=-1))
+        self.assertEqual(self.model.rotors, [])
+        self.assertEqual(self.model.rotorReadout, "Fan unavailable")
+        self.model.setFanReadings({'fan': dict(available=True, speed=.5)})
+        self.assertIn("Estimated from power · 30 RPM", self.model.rotorReadout)
+        self.model.setFanReadings({'fan': dict(available=True, speed=1, rpm=0)})
+        self.assertIn("Measured RPM · 0 RPM", self.model.rotorReadout)
+        self.model.setRotor(self.model.rotorCandidate)
+        self.assertEqual(self.model.rotors[0]['direction'], -1)
+        self.assertFalse(self.model.rotorReadout.startswith("Proposal"))
+        self.model.setRotor(dict(proposal, axis=[0,0,0]))
+        self.assertIn("nonzero axis", self.model.status)
+        self.assertEqual(len(self.model.rotors), 1)
+        self.model.endEdit(False)
+        self.assertEqual(self.model.fields()['toolhead_rotors'], [])
+        self.assertEqual(self.model.rotorCandidate, {})
+        self.model.pickedBody(0)
+        self.model.setRotor(proposal)
+        self.model.removeRotor(0)
+        self.assertEqual(self.model.rotors, [])
+        self.assertEqual(self.model.rotorCandidate, {})
+        self.model.pickedBody(99999)
+        self.assertEqual(self.model.rotorCandidate, {})
+
+    def test_empty_occurrences_keep_stable_ids_but_cannot_be_rotors(self):
+        from mpf.geometry.ToolheadRotors import rotors
+        metadata = dict(materials=[dict(name='ABS', description='', source='step-material')],
+            bodies=[dict(name=name, source='unknown', centre=None, axis=None) for name in ('First', 'Hidden', 'Last')])
+        self.model._mesh = mesh_from_arrays(self.saved.triangles, body_ids=[2], metadata=metadata)
+        self.assertEqual(self.model.bodies, [dict(label='Last', body=2)])
+        self.model.pickedBody(1)
+        self.assertEqual(self.model.rotorCandidate, {})
+        self.assertIn('no visible triangles', self.model.status)
+        row=dict(body=1, centre=[0,0,0], axis=[0,0,1], rpm=1000)
+        self.assertEqual(rotors([row], self.model.mesh), [])
+        self.model.pickedBody(2)
+        self.assertEqual(self.model.rotorCandidate['body'],2)
+
+    def test_multiple_bodies_keep_the_same_printer_fan_binding_in_saved_fields(self):
+        metadata=dict(materials=[dict(name='ABS',description='',source='step-material')],
+            bodies=[dict(name=name,source='unknown',centre=None,axis=None) for name in ('Left fan','Right fan')])
+        self.model._mesh=mesh_from_arrays(np.concatenate((self.saved.triangles,self.saved.triangles+[10,0,0])),
+            body_ids=[0,1],metadata=metadata)
+        for body,direction,rpm in ((0,1,6000.),(1,-1,4000.)):
+            self.model.pickedBody(body)
+            self.model.setRotor(dict(self.model.rotorCandidate,fan='fan_generic cooling',direction=direction,rpm=rpm))
+        saved=self.model.fields()['toolhead_rotors']
+        self.assertEqual([row['fan'] for row in saved],['fan_generic cooling']*2)
+        self.assertEqual([row['body'] for row in saved],[0,1])
+        self.assertEqual([row['direction'] for row in saved],[1,-1])
+        self.assertEqual([row['rpm'] for row in saved],[6000.,4000.])
+        self.model.previewRotor(dict(self.model.rotorCandidate,rpm=1000.))
+        self.assertTrue(self.model.rotorReadout=='Fan unavailable')
+        self.model.setFanReadings({'fan_generic cooling':dict(available=True,speed=.5)})
+        self.assertTrue(self.model.rotorReadout.startswith('Proposal'))
+
+    def test_surface_detail_is_transactional_without_geometry_rebuild_or_publication_during_drag(self):
+        mesh = self.model.mesh
+        changed, preview = [], []
+        self.model.changed.connect(lambda: changed.append(True))
+        self.model.lightingPreviewChanged.connect(lambda: preview.append(True))
+        self.model.beginEdit()
+        self.model.previewSurfaceDetail(.8)
+        self.assertEqual(self.model.surfaceDetail, .8)
+        self.assertEqual((changed, preview), ([], [True]))
+        self.assertIs(self.model.mesh, mesh)
+        self.model.endEdit(False)
+        self.assertEqual(self.model.surfaceDetail, .35)
+        self.model.beginEdit()
+        self.model.setSurfaceDetail(0)
+        self.model.endEdit(True)
+        self.assertEqual(self.model.fields()["toolhead_surface_detail"], 0)
+        self.assertEqual(self.model.materials[0]["kind"], "unknown")
+        self.config.toolhead_surface_detail = .7
+        self.model.reset()
+        self.assertEqual(self.model.surfaceDetail, .7)
+
     def test_saved_model_and_manual_tip_rehydrate_when_the_editor_opens(self):
         self.config.toolhead_tip = [2.25, 3.5, -2]
         self.model.reset()
@@ -150,7 +331,7 @@ class ToolheadModelsTests(unittest.TestCase):
         self.until(lambda: not self.model.busy)
         self.assertEqual(self.model.fields(), {"toolhead_model": second_key,
                                               "toolhead_model_name": "printer-b.stl",
-                                              "toolhead_tip": [51, 61, 1], "toolhead_lights": []})
+                                              "toolhead_tip": [51, 61, 1], "toolhead_lights": [], "toolhead_surface_detail": .35, "toolhead_rotors": [], "toolhead_material_overrides": {}, "toolhead_surface_materials": {}, "toolhead_body_opacity": {}, "toolhead_face_opacity": {}, "toolhead_body_materials": {}, "toolhead_body_finishes": {}, "toolhead_face_finishes": {}})
         np.testing.assert_array_equal(self.model.mesh.triangles, second.triangles)
 
     def test_changed_printer_identity_refuses_save_even_without_reset_signal(self):
@@ -181,7 +362,7 @@ class ToolheadModelsTests(unittest.TestCase):
     def test_use_default_is_a_draft_until_config_adopts_its_fields(self):
         self.model.useDefault()
         self.assertEqual(self.model.name, "Default indicator")
-        self.assertEqual(self.model.fields(), {"toolhead_model": "", "toolhead_model_name": "", "toolhead_tip": [], "toolhead_lights": []})
+        self.assertEqual(self.model.fields(), {"toolhead_model": "", "toolhead_model_name": "", "toolhead_tip": [], "toolhead_lights": [], "toolhead_surface_detail": .35, "toolhead_rotors": [], "toolhead_material_overrides": {}, "toolhead_surface_materials": {}, "toolhead_body_opacity": {}, "toolhead_face_opacity": {}, "toolhead_body_materials": {}, "toolhead_body_finishes": {}, "toolhead_face_finishes": {}})
         self.assertEqual(self.config.toolhead_model, self.saved_key)
         self.model.reset()
         self.assertEqual(self.model.name, "saved.stl")
@@ -200,10 +381,13 @@ class ToolheadModelsTests(unittest.TestCase):
     def test_missing_saved_asset_has_visible_refusal_and_usable_default_draft(self):
         os.unlink(os.path.join(self.store.root, self.saved_key + ".mesh"))
         self.config.toolhead_tip = [5, 5, 5]
+        self.config.toolhead_rotors = [dict(body=0, centre=[1,2,3], axis=[0,0,1], rpm=3000, direction=1, fan='', blur=True)]
         self.model.reset()
         self.assertIn("Saved model unavailable", self.model.status)
-        self.assertEqual(self.model.fields(), {"toolhead_model": "", "toolhead_model_name": "", "toolhead_tip": [], "toolhead_lights": []})
+        self.assertEqual(self.model.fields(), {"toolhead_model": "", "toolhead_model_name": "", "toolhead_tip": [], "toolhead_lights": [], "toolhead_surface_detail": .35, "toolhead_rotors": [], "toolhead_material_overrides": {}, "toolhead_surface_materials": {}, "toolhead_body_opacity": {}, "toolhead_face_opacity": {}, "toolhead_body_materials": {}, "toolhead_body_finishes": {}, "toolhead_face_finishes": {}})
         self.assertEqual(self.model.tip, (0, 0, 0))
+        self.assertEqual(self.model.rotors, [])
+        self.assertEqual(self.model.rotorCandidate, {})
 
     def test_remote_url_or_unsupported_format_never_start_an_import(self):
         for url in ("https://example.invalid/nozzle.stl",

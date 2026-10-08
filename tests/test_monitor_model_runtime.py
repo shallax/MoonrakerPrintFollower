@@ -3,6 +3,40 @@ import time
 from tests import monitor_test_support as harness
 
 class MonitorQtTests(harness.MonitorQtTests):
+    def test_fan_only_zero_and_expiry_reach_presenter_when_job_is_stationary(self):
+        model=self.monitor()
+        self.deliver_state('complete')
+        self.qt.events()
+        for timer in model._data._timers.values(): timer.stop()
+        model._chart_timer.stop()
+        def settle():
+            self.qt.events(); model._publish(); self.qt.events()
+            model._publish(); self.qt.events()
+        presenter=self.follower._runtime.toolhead
+        model._data._merge_aux({'fan':{'rpm':1200.,'speed':1.}},full=True)
+        settle()
+        self.assertEqual(presenter._fan_readings['fan']['rpm'],1200.)
+        notices=[]
+        model.monitorChanged.connect(lambda:notices.append(True))
+        model._data._merge_aux({'fan':{'rpm':0.,'speed':1.}},full=True)
+        settle()
+        self.assertEqual(presenter._fan_readings['fan']['rpm'],0.)
+        self.assertTrue(notices)
+        model._data._merge_aux({'fan':{'rpm':900.,'speed':1.}},full=True)
+        settle()
+        notices.clear()
+        model._data._fans.rows['fan']['stamp']=time.monotonic()-11.
+        model._on_chart_tick()
+        settle()
+        self.assertFalse(presenter._fan_readings['fan']['available'])
+        self.assertTrue(notices)
+        self.follower.client.stop()
+        self.qt.events()
+        self.assertEqual(presenter._fan_readings,{})
+        model._data._merge_aux({'fan':{'rpm':2400.,'speed':1.}},full=True)
+        settle()
+        self.assertFalse(presenter._fan_readings.get('fan',{}).get('available',False))
+
     def test_position_mode_controls_monitor_smoothing_without_a_custom_model(self):
         model = self.monitor()
         self.deliver()
@@ -3869,6 +3903,9 @@ Item {
             # Download actions retain a permanent row; only the optional
             # consent/cancel buttons change opacity through visibility.
             "visible: text.length > 0",  # Empty import status reserves no row.
+            "visible: section.currentIndex === 0",
+            "visible: section.currentIndex === 1",
+            "visible: section.currentIndex === 2",
             "visible: root.model && root.model.needsDownload",
             "visible: root.model && (root.model.busy || root.model.needsDownload)",
             "visible: root.printerModel != null && root.activeRows.length === 0",

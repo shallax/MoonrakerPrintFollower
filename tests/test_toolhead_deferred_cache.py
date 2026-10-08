@@ -160,6 +160,9 @@ class DeferredShadeTests(unittest.TestCase):
         node.scene_light_bounds.return_value = [((0, 0, 0), 1)]
         node.scene_lighting_effects.return_value = (True, False)
         camera = Mock()
+        import numpy as np
+        camera.getProjectionMatrix.return_value.getData.return_value = np.eye(4)
+        camera.getInverseWorldTransformation.return_value.getData.return_value = np.eye(4)
         modules = {
             'PyQt6.QtOpenGL': SimpleNamespace(QOpenGLVertexArrayObject=lambda: vao),
             'UM.View.GL.ShaderProgram': SimpleNamespace(ShaderProgram=lambda: shader),
@@ -169,6 +172,8 @@ class DeferredShadeTests(unittest.TestCase):
             cache.shade(gl, camera, node)
             self.assertEqual(node.apply_attached_lights.call_count, 2)
             shader.setFragmentShader.assert_called_once()
+            shader.setUniformValue.assert_any_call('u_orthographic', 1)
+            shader.setUniformValue.assert_any_call('u_viewDirection', [0.,0.,1.])
             shader.setUniformValue.assert_any_call('u_lightBed', 1)
             shader.setUniformValue.assert_any_call('u_lightModels', 0)
             gl.glScissor.assert_called_with(18, 32, 30, 40)

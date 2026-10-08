@@ -157,7 +157,14 @@ correct package ownership.
 | `ObjectWork.py` | Bounded per-object extrusion checkpoints, cache validation and finish-time projection | File reading, Qt or presentation |
 | `BedMeshPresenter.py` | Active mesh overlay, visibility preference and Preview mesh controls | Macro execution |
 | `ToolheadGeometry.py` | Immutable canonical Z-up millimetre triangles, lowest-surface bounds anchor and isolated projection/picking | Qt, I/O or printer state |
-| `ToolheadAssetStore.py` | Atomic content-addressed triangle/colour assets with bounded checksum-verified reads | Settings adoption or CAD conversion |
+| `ToolheadMeshFormat.py` | Stdlib-only bounded versioned triangle-plane and CAD material/body metadata format, shared with the isolated worker | Qt, NumPy, settings or printer state |
+| `ToolheadRotorAxis.py` | Conservative coaxial cylinder consensus in placed CAD coordinates | Qt, GPU or printer state |
+| `ToolheadRotors.py` | Bounded visual rotor configuration, body axes, phases and read-only speed selection | Printer commands, Qt or persistence |
+| `ToolheadFanReadings.py` | Raw fan-field observations, snapshot/delta semantics and freshness projection | Printer commands, Qt or networking |
+| `ToolheadRotorRender.py` | Fixed shutter samples seeded from the same static colour/depth, averaged once | Telemetry, scene discovery or static-head redraw |
+| `ToolheadOpacity.py` | Bounded asset-bound body/face opacity precedence, immutable colour projection and edit-only selection ghosts | Printer commands, Qt, material inference or source mesh mutation |
+| `ToolheadMaterials.py` | Conservative annotation-based roughness, metalness and generated plastic-detail presets | RGB inference, alpha changes or printer state |
+| `ToolheadAssetStore.py` | Atomic content-addressed triangle/colour/material/body assets with bounded checksum-verified reads | Settings adoption or CAD conversion |
 | `ToolheadLighting.py` | Bounded model-local emitters, outward normals, colour/brightness validation and light-origin offset | Qt, settings writes or scene objects |
 | `ToolheadImport.py` | Local bounded STL parsing and isolated STEP process ownership, source snapshot, stage progress, cancellation and mesh validation | Cura scene or configuration writes |
 | `StepWorker.py` | Stdlib-only isolated native STEP process, flattened millimetre triangles and colours | Cura, Qt, NumPy or parent-process configuration |
@@ -174,8 +181,12 @@ correct package ownership.
 | `ToolheadSurfaceCache.py` | Private visible-surface framebuffer, incremental completed paths and moving-light shading with bounded storage | Native framebuffer mutation or telemetry |
 | `ToolheadSimulationPass.py` | Public render-pass adapter for eligible previews with a visible custom head; retained native index storage, guarded shadow instancing and native fallback | Native class patches or scene mutation |
 | `ToolheadSimulationCache.py` | Retained native path colour/depth with completed-prefix append and bounded storage | Fractional paths, telemetry or native framebuffer mutation |
+| `ToolheadCamera.py` | Parallel orthographic or perspective view rays from delivered camera matrices | Saved preferences or scene mutation |
 | `ToolheadSceneLighting.py` | Owned additive bed/path illumination using light-independent surfaces; legacy/compatibility forward fallback | Host shader mutation, settings writes or telemetry |
 | `ToolheadOpaqueShader.py` | Shared toolhead shader variant without alpha discard for the fully opaque single-pass path | Shader formula duplication, settings or telemetry |
+| `ToolheadGLState.py` | Independent host graphics-state restoration around owned optional effects | Native framebuffer mutation or scene recursion |
+| `ToolheadEnvironment.py` | Paired colour/depth cubemaps, frozen six-face capture, atomic probe publication and optional failure backoff | Scene discovery or printer state |
+| `ToolheadEnvironmentScene.py` | Owned shaders reading actual platform/grid meshes and the complete visible public LayerData prefix | Native program mutation or recursive renderer calls |
 | `ToolheadSceneNode.py` | Non-selectable lit triangle node; private head depth above final scene composition, cleared before Qt controls; opaque single pass and completed-image opacity | Telemetry or nozzle suppression |
 | `ToolheadPresenter.py` | Reported-position freshness/homing gate, estimated public LayerData adapter and one native-nozzle suppression owner | Print progress matching or native class patches |
 | `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
@@ -704,6 +715,19 @@ STL/STEP imports produce one immutable flattened mesh with per-triangle colours,
 at most one million triangles and a 128 MiB source-file limit. Source deletion
 after Save is harmless. Asset publication precedes the existing settings commit;
 failed saves and cancelled drafts preserve the previously saved selection.
+The MPFHEAD3 asset format also retains immutable material tables, per-triangle
+material IDs, body-occurrence tables and separate per-triangle body IDs. Face IDs
+continue to identify lighting and surface picks; names and geometry equality do
+not identify bodies. Repeated or coincident STEP instances remain independent.
+Physical material names/descriptions and meaningful component names retain their
+provenance, without deriving material or transparency from RGB. STEP alpha remains
+independent. Metadata is hash-covered, at most 1 MiB, with 4,096 entries per
+table, 160-character plain names, exact array/table ranges and no duplicate JSON
+keys or trailing bytes. Legacy MPFHEAD1/2 meshes retain their geometry and alpha
+with unknown metadata; loading needs neither the original file nor the CAD runtime.
+The worker resolves definitions with actual accumulated occurrence location
+chains, applies each placement once, and carries assembly styles into descendants.
+Absent native XCAF attributes are checked before invoking OCP output-handle APIs.
 STEP external references are refused before native Transfer. A background worker
 owns one disposable CPython 3.12 child process running `StepWorker.py`, with no
 Cura, Qt or NumPy imports. It receives a private, bounded regular-file snapshot;
@@ -1792,3 +1816,84 @@ screen lays it out beside the camera and does not access the transcript's ids.
 A printer change resets the transcript inside its owner; initial creation is
 reconciled once after its children exist. The resize still measures against the
 stationary containing frame, not the handle that moves during the drag.
+
+### Toolhead materials, reflections and visual rotors (5.3.0)
+
+MPFHEAD3 retains per-triangle material/body occurrence IDs and bounded immutable
+annotation tables; MPFHEAD1/2 remain readable. STEP physical material labels and
+clear part names choose conservative finishes. Unknown remains nonmetallic;
+colour is never a metal detector. Intrinsic CAD alpha is retained. Exact-position
+normal welding uses a conservative 192 MiB working budget (512 bytes per
+triangle); larger meshes retain cached read-only flat normals without welding. Plastic detail
+perturbs model-local normals and fades unresolved grain; one saved strength is
+live-previewed transactionally. Glass and metal do not gain generated grain.
+
+The normal Preview renderer supplies a frozen visible source/prefix and cloned
+public grid/platform/layer shaders to a 512-pixel colour/depth cube capture. Each composition
+executes at most one bed batch or 32,768-index path chunk; chunk uploads retain
+native VBOs and cap owned EBO copies. Bounds preparation reduces at most 65,536
+vertices per turn and caches each immutable mesh's bounds. Six complete colour
+and depth faces publish with their origin, near/far and bounds atomically.
+Backward scrubs, visibility/filter/source/context changes retire old maps; motion
+coalesces and refreshes at most once per second. Unsupported compatibility mode
+keeps ordinary shading. The map excludes the head. One local reflected ray uses
+16 coarse depth samples and at most two six-step candidate refinements, then
+seven colour taps for roughness. Bounds only restrict the search interval;
+invalid depth and unconverged silhouette crossings cannot become surfaces.
+Single-probe visibility and finite sampling can miss hidden or thin geometry;
+this is an approximate reflection, not a complete scene ray tracer.
+Attached-light receiver passes add colour with frozen emitter settings after
+native geometry; alpha and the paired native depth remain unchanged. Their
+light toggles and source settings participate in refresh invalidation.
+Independent framebuffer,
+VAO, texture, sampler, depth/blend and raster state is restored on failures too.
+Owned shader release also unwinds interrupted Uranium batches.
+Optional capture failures back off for five seconds. Platform image dimensions
+and bytes are checked before decoding. Raw cube textures retire through their
+own share group, with deferred render-thread deletion when no owning context is
+current; context-group destruction releases the remaining names. Depth sampling
+uses nearest filtering without comparison; owned sampler bindings clear and
+restore host sampler objects. Refresh wake tokens belong to each capture owner,
+so retired timers cannot stall a replacement. Switching to
+the native nozzle releases capture, shutter and occlusion resources.
+
+Rotor selection addresses whole body occurrences. Analytic coaxial cylinders
+provide an axis; other bounds only propose an axis that the user confirms.
+Centre/axis/direction and visual RPM are saved per printer. Rotor triangles are
+packed separately once; only those meshes animate, while static head colour and
+depth remain cached. Up to three shutter poses each copy the same static depth;
+premultiplied samples are averaged before the existing whole-head opacity fade.
+Opaque geometry writes depth first; translucent body groups composite back to
+front for each pose, preserving glass over rotating parts. Both accumulation and
+the final image choose additive blend equations independently of host state.
+New shutter storage is capped at 128 MiB; allocation faults retain sharp rotation
+and show a fallback status. Models exceeding 64 translucent bodies refuse fan
+animation while keeping ordinary rendering available.
+Conservative all-angle bounds prevent rotor clipping. A visible moving rotor
+requests composition at 30 Hz; hidden/stopped rotors stop that timer.
+
+The selected Monitor routes raw read-only fan observations. Full samples replace
+old RPM fields; deltas retain unchanged values. Finite nonnegative measured RPM,
+including zero, wins; otherwise normalized power scales a configured visual RPM
+and is labelled estimated. Disconnected, missing and stale polling observations
+stop bound animation. A healthy change-only socket retains unchanged values;
+its session invalidation clears them. No animation owner can send fan or motion
+commands. Printer controls are never exercised during development.
+
+
+Toolhead appearance follows the delivered Cura camera projection, including
+perspective/orthographic switches and retained-image crops. Perspective eye
+vectors vary per fragment; orthographic vectors use the active camera world
+back axis. Projection/view bytes invalidate cached shading. The editor uses
+parallel orthographic rays, and translucent rotating bodies sort by view depth
+in that mode. Cura's saved preference is not a rendering authority.
+
+Opacity overrides are separate sparse body and face maps (2,048 entries each),
+bound to the immutable asset. Face opacity overrides body opacity, then STEP
+alpha; original RGB and metadata remain untouched. Effective colours determine
+opaque/translucent batches, picks and the translucent-body animation limit.
+Selection mode temporarily tints selected geometry cyan and ghosts invisible
+geometry; those colours never reach normal rendering or persistence. Whole-body
+edits clear descendant face opacity before applying explicitly selected faces.
+Oversized edits fail atomically. Draft Cancel, asset replacement and printer
+rebinding clear the editor selection and retain existing adoption fences.

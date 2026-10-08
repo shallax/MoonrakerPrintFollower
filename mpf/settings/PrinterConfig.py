@@ -8,6 +8,9 @@ from math import isfinite
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
+from ..geometry.ToolheadOpacity import opacity_overrides
+from ..geometry.ToolheadMaterials import surface_detail, material_overrides, painted_materials, local_finish_overrides
+from ..geometry.ToolheadRotors import rotors
 from ..geometry.ToolheadLighting import validated_lights
 
 # ConsolePolicy owns these bounds; PrinterConfig may not import it
@@ -164,6 +167,15 @@ class PrinterConfig:
     toolhead_model_name: str = ""
     toolhead_tip: List[float] = field(default_factory=list)
     toolhead_lights: List[dict] = field(default_factory=list)
+    toolhead_surface_detail: float = .35
+    toolhead_material_overrides: dict = field(default_factory=dict)
+    toolhead_surface_materials: dict = field(default_factory=dict)
+    toolhead_body_materials: dict = field(default_factory=dict)
+    toolhead_body_finishes: dict = field(default_factory=dict)
+    toolhead_face_finishes: dict = field(default_factory=dict)
+    toolhead_body_opacity: dict = field(default_factory=dict)
+    toolhead_face_opacity: dict = field(default_factory=dict)
+    toolhead_rotors: List[dict] = field(default_factory=list)
     follow_mode: str = "exact"
 
     # Integrated Moonraker upload settings.
@@ -248,6 +260,15 @@ class PrinterConfig:
         except (TypeError, ValueError):
             data["poll_interval_ms"] = defaults.poll_interval_ms
         data["toolhead_lights"] = validated_lights(data["toolhead_lights"])
+        data["toolhead_surface_detail"] = surface_detail(data["toolhead_surface_detail"])
+        data["toolhead_material_overrides"] = material_overrides(data["toolhead_material_overrides"])
+        data["toolhead_surface_materials"] = painted_materials(data["toolhead_surface_materials"])
+        data["toolhead_body_materials"] = painted_materials(data["toolhead_body_materials"], bodies=True)
+        data["toolhead_body_finishes"] = local_finish_overrides(data["toolhead_body_finishes"], bodies=True)
+        data["toolhead_face_finishes"] = local_finish_overrides(data["toolhead_face_finishes"])
+        data["toolhead_body_opacity"] = opacity_overrides(data["toolhead_body_opacity"], bodies=True)
+        data["toolhead_face_opacity"] = opacity_overrides(data["toolhead_face_opacity"])
+        data["toolhead_rotors"] = rotors(data["toolhead_rotors"])
 
         try:
             tolerance = float(data["z_tolerance"])

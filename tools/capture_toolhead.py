@@ -216,9 +216,9 @@ frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_col
         buffers.append(buffer)
         for shader in ((head_shader,) if label == "head" else (base_shader,)):
             if shader is head_shader:
-                layout, attrs = "3f 3f 4f 1f", ("a_vertex", "a_normal", "a_color", "a_surface")
+                layout, attrs = "3f 3f 4f 1f 4f 1f 2f", ("a_vertex", "a_normal", "a_color", "a_surface", "a_material", "a_body", "a_finish")
             else:
-                layout, attrs = "3f 3f 4f 4x", ("a_vertex", "a_normal", "a_color")
+                layout, attrs = "3f 3f 4f 32x", ("a_vertex", "a_normal", "a_color")
             vaos[label, shader] = context.vertex_array(shader, [(buffer, layout, *attrs)])
     framebuffer = context.simple_framebuffer(SIZE, components=4, samples=4)
     resolved = context.simple_framebuffer(SIZE, components=4)
@@ -235,7 +235,8 @@ frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_col
         projection, eye = camera(target, yaw, pitch, height)
         for shader in (head_shader, base_shader):
             uniforms(shader, dict(light_values_, u_modelMatrix=identity, u_normalMatrix=identity,
-                                  u_viewMatrix=identity, u_projectionMatrix=projection, u_viewPosition=eye))
+                                  u_viewMatrix=identity, u_projectionMatrix=projection, u_viewPosition=eye,
+                                  u_orthographic=1, u_viewDirection=tuple((np.asarray(eye)-target)/500)))
         framebuffer.use()
         framebuffer.depth_mask = True
         framebuffer.clear(.09, .105, .125, 1, depth=1)

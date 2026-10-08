@@ -208,6 +208,7 @@ class FollowerRuntime:
         self.preview.bind_position_mode(lambda: self.presentation.reported_position)
         self.toolhead = ToolheadPresenter(application, self.cura, self.client, self.binding,
             self.presentation, self.toolhead_store, parent)
+        self.toolhead.fanReadingsChanged.connect(self.toolhead_models.setFanReadings)
         self.bed_mesh = BedMeshPresenter(application, self.cura, self.presentation, parent,
                                          persistence=self.persistence)
         self.coordinator = PrintCoordinator(client=self.client, binding=self.binding,

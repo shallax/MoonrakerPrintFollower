@@ -12,5 +12,12 @@ Expected maximum bounds are (22,3,9) mm. Nozzle minimum Z is zero, and its
 automatic tip is centred at (0,0,0), despite the central hole. Conversion
 produces 232 triangles and four colours with the pinned meshing settings.
 
+appearance.step is a separate owned material fixture, reproduced by
+generate_appearance.py using the verified OCP runtime. It contains an ABS
+housing, a Glass window with authored alpha 0.35, and three Aluminium fan
+rotor occurrences. One nested occurrence is rotated 90 degrees; the other
+two coincide deliberately, proving geometry equality cannot serve as body
+identity. The fixture carries the same GPL-3.0 licence as the repository.
+
 The large Stealthburner_CW2_Assembly.step supplied by the author was tested
 from /tmp/mpf and is not distributed with this repository or its packages.

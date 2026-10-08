@@ -16,6 +16,7 @@ from UM.View.RenderBatch import RenderBatch
 from ..resources.PluginPaths import plugin_path
 from .ToolheadPathGeometry import ToolheadPathGeometry
 from .ToolheadDepthCache import ToolheadDepthCache
+from .ToolheadCamera import apply_camera_view
 
 
 def layer_range(data, view):
@@ -182,6 +183,7 @@ class ToolheadSceneLighting:
             self._mesh_shader = OpenGL.getInstance().createShaderProgram(plugin_path("toolhead", "scene-lighting.shader"))
         if self._mesh_shader is None: return
         node.apply_attached_lights(self._mesh_shader)
+        apply_camera_view(self._mesh_shader, camera)
         light_bed, light_models = node.scene_lighting_effects()
         batches = []
         surface_batches = []
@@ -238,6 +240,7 @@ class ToolheadSceneLighting:
             if shader is None:
                 shader = self._path_shaders[compatibility] = create_path_shader(compatibility)
             node.apply_attached_lights(shader)
+            apply_camera_view(shader, camera)
             for uniform, getter in (("u_show_travel_moves", "getShowTravelMoves"), ("u_show_helpers", "getShowHelpers"),
                     ("u_show_skin", "getShowSkin"), ("u_show_infill", "getShowInfill"), ("u_show_starts", "getShowStarts"),
                     ("u_layer_view_type", "getSimulationViewType"), ("u_extruder_opacity", "getExtruderOpacities")):

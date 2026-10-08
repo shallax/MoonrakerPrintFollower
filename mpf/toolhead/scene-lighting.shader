@@ -31,9 +31,11 @@ fragment =
     uniform vec3 u_attachedColour[8];
     uniform float u_attachedRange[8];
     uniform vec3 u_viewPosition;
+    uniform int u_orthographic;
+    uniform vec3 u_viewDirection;
     vec3 lightSurface(vec3 position, vec3 surfaceNormal, vec3 baseColour) {
         vec3 normal = normalize(surfaceNormal);
-        vec3 eye = normalize(u_viewPosition - position);
+        vec3 eye = u_orthographic == 1 ? normalize(u_viewDirection) : normalize(u_viewPosition - position);
         vec3 result = vec3(0.0);
         for (int i = 0; i < 8; ++i) {
             if (i >= u_attachedCount) break;
@@ -94,9 +96,11 @@ fragment41core =
     uniform vec3 u_attachedColour[8];
     uniform float u_attachedRange[8];
     uniform vec3 u_viewPosition;
+    uniform int u_orthographic;
+    uniform vec3 u_viewDirection;
     vec3 lightSurface(vec3 position, vec3 surfaceNormal, vec3 baseColour) {
         vec3 normal = normalize(surfaceNormal);
-        vec3 eye = normalize(u_viewPosition - position);
+        vec3 eye = u_orthographic == 1 ? normalize(u_viewDirection) : normalize(u_viewPosition - position);
         vec3 result = vec3(0.0);
         for (int i = 0; i < 8; ++i) {
             if (i >= u_attachedCount) break;
@@ -127,6 +131,8 @@ u_depthOnly = 0
 u_lightOpacity = 1.0
 u_hasColour = 0
 u_attachedCount = 0
+u_orthographic = 0
+u_viewDirection = [0.0, 0.0, 1.0]
 [bindings]
 u_modelMatrix = model_matrix
 u_viewMatrix = view_matrix

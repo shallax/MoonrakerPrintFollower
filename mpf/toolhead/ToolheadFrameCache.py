@@ -34,7 +34,7 @@ class ToolheadFrameCache:
         self._context = None
 
     def draw(self, gl, camera, bounds, transform, state, render, *, additive=False, opacity=1.0,
-             depth_seed=None, depth_revision=None, post_render=None):
+             depth_seed=None, depth_revision=None, post_render=None, animate=None):
         from PyQt6.QtCore import QRect, QRectF
         from PyQt6.QtGui import QOpenGLContext
         from PyQt6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat, QOpenGLTextureBlitter
@@ -61,6 +61,7 @@ class ToolheadFrameCache:
             if not address: raise RuntimeError("Toolhead framebuffer binding unavailable")
             self._bind = ctypes.CFUNCTYPE(None, ctypes.c_uint, ctypes.c_uint)(int(address))
         blend_colour = None
+        blend_equations = (int(gl.glGetIntegerv(0x8009)), int(gl.glGetIntegerv(0x883D)))
         try:
             if self._size != (cw, ch, samples):
                 self._key = None
@@ -115,6 +116,7 @@ class ToolheadFrameCache:
                         getWorldPosition=camera.getWorldPosition,
                         getCameraLightPosition=camera.getCameraLightPosition)
                     render(cropped_camera)
+                self._cropped_camera = cropped_camera
                 if post_render is not None:
                     try:
                         seeded = bool(post_render(gl, self._fbo, cropped_camera)) and seeded
@@ -123,12 +125,21 @@ class ToolheadFrameCache:
                 if self._resolved is not None:
                     QOpenGLFramebufferObject.blitFramebuffer(self._resolved, self._fbo)
                 self._key = key if seeded else None
+            texture = self._resolved if self._resolved is not None else self._fbo
+            if animate is not None:
+                texture = animate(gl, self._fbo, self._cropped_camera, self._size)
+                if texture is self._fbo and self._resolved is not None:
+                    # Optional animation may return the single-pose MSAA
+                    # fallback. A multisample FBO has no sampleable texture.
+                    QOpenGLFramebufferObject.blitFramebuffer(self._resolved, self._fbo)
+                    texture = self._resolved
             self._bind(0x8D40, target)
             gl.glViewport(*viewport)
             gl.glDisable(gl.GL_DEPTH_TEST)
             gl.glDisable(gl.GL_CULL_FACE)
             gl.glDisable(0x0C11)
             gl.glEnable(gl.GL_BLEND)
+            gl.glBlendEquationSeparate(0x8006, 0x8006)  # GL_FUNC_ADD, including final shutter composition
             # Fade the completed premultiplied image once, never overlapping
             # CAD faces individually. Qt's blitter scales alpha only, so the
             # constant source factor supplies the matching RGB scaling.
@@ -141,7 +152,6 @@ class ToolheadFrameCache:
                 gl.glBlendFunc(gl.GL_ONE, gl.GL_ONE if additive else gl.GL_ONE_MINUS_SRC_ALPHA)
             self._blitter.bind()
             self._blitter.setOpacity(opacity)
-            texture = self._resolved if self._resolved is not None else self._fbo
             destination = QRectF(vx + left, vy + height - bottom - ch, cw, ch)
             matrix = QOpenGLTextureBlitter.targetTransform(destination, QRect(vx, vy, width, height))
             self._blitter.blit(texture.texture(), matrix, QOpenGLTextureBlitter.Origin.OriginBottomLeft)
@@ -149,6 +159,10 @@ class ToolheadFrameCache:
             try:
                 if self._blitter is not None: self._blitter.release()
             finally:
-                if blend_colour is not None: gl.glBlendColor(*blend_colour)
-                self._bind(0x8D40, target)
-                gl.glViewport(*viewport)
+                try:
+                    try:
+                        if blend_colour is not None: gl.glBlendColor(*blend_colour)
+                    finally: gl.glBlendEquationSeparate(*blend_equations)
+                finally:
+                    try: self._bind(0x8D40, target)
+                    finally: gl.glViewport(*viewport)

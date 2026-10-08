@@ -9,7 +9,7 @@ import time
 from tests import qml_engine_support as harness
 
 if harness.QT_AVAILABLE:
-    from PyQt6.QtCore import Qt
+    from PyQt6.QtCore import Qt, Q_ARG
     from PyQt6.QtTest import QTest
     from PyQt6.QtQml import QQmlExpression, qmlContext
     from mpf.toolhead.ToolheadAssetStore import ToolheadAssetStore
@@ -87,6 +87,9 @@ class ToolheadEditorTests(harness.RealEngineTestCase):
         self.addCleanup(self.dialog.close)
         harness.QMetaObject.invokeMethod(self.dialog, "openEditor")
         self.pump()
+        self.find("toolheadEditorSection").setProperty("currentIndex", 1)
+        self.dialog.grabWindow()
+        self.pump()
 
     def find(self, name):
         # Repeater delegates have visual ownership, not QObject parentage.
@@ -100,6 +103,184 @@ class ToolheadEditorTests(harness.RealEngineTestCase):
     def assert_always_visible(self, bar):
         expression = QQmlExpression(qmlContext(bar), bar, "policy === 2")
         self.assertEqual(expression.evaluate(), (True, False))
+
+    def test_selected_body_finish_keyboard_and_imported_opacity_reset(self):
+        self.find("toolheadEditorSection").setProperty("currentIndex", 0)
+        self.draft.toggleOpacitySelection(0)
+        self.pump()
+        slider = self.find("toolheadSelectedroughness")
+        before = self.draft.selectedRoughness
+        scroll = self.find("toolheadAppearanceScroll")
+        point = slider.mapToItem(scroll.property("contentItem"), harness.QPointF(0, 0))
+        scroll.setProperty("contentY", max(0, point.y()-100))
+        self.dialog.grabWindow()
+        self.pump()
+        self.assertTrue(slider.isEnabled())
+        label=self.find("toolheadSelectedLabelroughness")
+        reset=self.find("toolheadSelectedAutoroughness")
+        right=reset.mapToItem(scroll,harness.QPointF(reset.width(),0)).x()
+        self.assertLessEqual(right,scroll.width())
+        self.assertGreater(label.height(),20, 'source provenance wraps beside the reset control')
+        slider.forceActiveFocus()
+        self.assertTrue(slider.hasActiveFocus())
+        QTest.keyClick(self.dialog, Qt.Key.Key_Right)
+        deadline = time.monotonic() + 3
+        while self.draft.selectedRoughness == before and time.monotonic() < deadline:
+            QTest.qWait(10)
+        self.pump()
+        self.assertAlmostEqual(self.draft.selectedRoughness, round(before*100+1)/100, places=6)
+        self.draft.setSelectedOpacity(.2)
+        self.draft.clearOpacitySelection()
+        self.draft.selectOpacityKind("face")
+        self.draft.toggleOpacitySelection(0)
+        self.draft.resetSelectedOpacity()
+        self.pump()
+        self.assertEqual(self.find("toolheadOpacityPickKind").property("currentIndex"), 1)
+        self.assertEqual(self.draft.selectedOpacity, 1.)
+        # Safe synthetic editor capture: no CuraApplication or printer.
+        import os
+        folder = os.environ.get("MPF_APPEARANCE_RENDER_DIR")
+        if folder:
+            from pathlib import Path
+            Path(folder).mkdir(parents=True, exist_ok=True)
+            self.dialog.grabWindow().save(str(Path(folder)/"appearance-selected-parts.png"))
+
+    def test_body_only_material_paint_enables_restore_all_and_success_clears_old_error(self):
+        self.find("toolheadEditorSection").setProperty("currentIndex",0)
+        self.draft._status="This edit exceeds the limit; nothing changed."
+        self.draft.selectMaterialPaint("petg")
+        self.draft.paintBody(0)
+        self.pump()
+        self.assertEqual(self.draft.status,"")
+        self.assertEqual(self.draft.paintedBodyCount,1)
+        self.assertEqual(self.draft.paintedFaceCount,0)
+        self.assertTrue(self.find("toolheadResetPaintMaterials").isEnabled())
+        self.draft.clearMaterialPaint();self.pump()
+        self.assertFalse(self.find("toolheadResetPaintMaterials").isEnabled())
+
+    def test_surface_detail_keyboard_preserves_intermediate_strengths(self):
+        self.find("toolheadEditorSection").setProperty("currentIndex", 0)
+        self.pump()
+        slider = self.find("toolheadSurfaceDetail")
+        self.assertAlmostEqual(slider.property("value"), 35)
+        slider.forceActiveFocus()
+        QTest.keyClick(self.dialog, Qt.Key.Key_Right)
+        self.pump()
+        self.assertAlmostEqual(self.draft.surfaceDetail, .36)
+        self.assertAlmostEqual(slider.property("value"), 36)
+        QTest.keyClick(self.dialog, Qt.Key.Key_Left)
+        self.pump()
+        self.assertAlmostEqual(self.draft.surfaceDetail, .35)
+
+    def test_fan_settings_scroll_without_overlapping_fixed_footer_at_minimum_size(self):
+        self.dialog.setWidth(760)
+        self.dialog.setHeight(520)
+        self.find("toolheadEditorSection").setProperty("currentIndex", 2)
+        self.draft.pickedBody(0)
+        self.pump()
+        self.dialog.grabWindow()
+        scroll = self.find("toolheadFansScroll")
+        self.assertTrue(scroll.property("clip"))
+        self.assertGreater(scroll.property("contentHeight"), scroll.height())
+        self.assertLessEqual(scroll.mapToScene(harness.QPointF(0,scroll.height())).y(), 450)
+        self.find("toolheadRotorCentreX").setProperty("text", "8")
+        harness.QMetaObject.invokeMethod(self.find("toolheadUpdateRotorPreview"), "clicked")
+        self.pump()
+        self.assertEqual(self.draft.rotorCandidate['centre'][0],8.)
+        self.assertEqual(self.draft.rotors, [])
+
+    def test_fan_confirmation_collects_axis_direction_and_actual_fan_without_commands(self):
+        self.find("toolheadEditorSection").setProperty("currentIndex", 2)
+        self.draft.pickedBody(0)
+        self.draft.setFanReadings({'fan': dict(available=True, speed=.5)})
+        self.pump()
+        self.find("toolheadRotorAxisX").setProperty("text", "0")
+        self.find("toolheadRotorAxisY").setProperty("text", "1")
+        self.find("toolheadRotorAxisZ").setProperty("text", "0")
+        self.find("toolheadRotorRPM").setProperty("text", "1200")
+        self.find("toolheadRotorDirection").setProperty("currentIndex", 1)
+        self.find("toolheadRotorFan").setProperty("currentIndex", 1)
+        harness.QMetaObject.invokeMethod(self.find("toolheadRotorFan"), "activated", Q_ARG(int,1))
+        harness.QMetaObject.invokeMethod(self.find("toolheadConfirmRotor"), "clicked")
+        self.pump()
+        self.assertEqual(self.draft.rotors[0]['axis'], [0.,1.,0.])
+        self.assertEqual(self.draft.rotors[0]['direction'], -1)
+        self.assertEqual(self.draft.rotors[0]['fan'], 'fan')
+        self.assertIn('600 RPM', self.draft.rotorReadout)
+        self.find("toolheadRotorAxisY").setProperty("text", "0")
+        harness.QMetaObject.invokeMethod(self.find("toolheadConfirmRotor"), "clicked")
+        self.pump()
+        self.assertIn('nonzero axis', self.find("toolheadRotorValidation").property("text"))
+        self.assertEqual(self.draft.rotors[0]['axis'], [0.,1.,0.])
+
+    def test_pending_fan_binding_survives_discovery_and_missing_telemetry(self):
+        self.find('toolheadEditorSection').setProperty('currentIndex',2)
+        self.draft.pickedBody(0)
+        self.draft.setFanReadings({'fan':dict(available=True,speed=.2),'heater_fan hotend':dict(available=True,rpm=1000)})
+        self.pump()
+        combo=self.find('toolheadRotorFan')
+        combo.setProperty('currentIndex',2)
+        harness.QMetaObject.invokeMethod(combo,'activated',Q_ARG(int,2))
+        self.draft.setFanReadings({'controller_fan electronics':dict(available=True,speed=.5),'fan':dict(available=True,speed=.2),'heater_fan hotend':dict(available=True,rpm=1000)})
+        self.pump()
+        self.assertEqual(combo.property('currentIndex'),3)
+        self.draft.setFanReadings({})
+        self.pump()
+        self.assertEqual(combo.property('currentIndex'),1)
+        harness.QMetaObject.invokeMethod(self.find('toolheadConfirmRotor'),'clicked')
+        self.pump()
+        self.assertEqual(self.draft.rotors[0]['fan'],'heater_fan hotend')
+        self.assertEqual(self.draft.rotorReadout,'Fan unavailable')
+
+    def test_invalid_confirmation_preserves_other_fields_until_corrected(self):
+        self.find('toolheadEditorSection').setProperty('currentIndex',2)
+        self.draft.pickedBody(0)
+        self.pump()
+        self.find('toolheadRotorCentreX').setProperty('text','8')
+        self.find('toolheadRotorRPM').setProperty('text','1234')
+        self.find('toolheadRotorDirection').setProperty('currentIndex',1)
+        self.find('toolheadRotorBlur').setProperty('checked',False)
+        for name in ('X','Y','Z'):
+            self.find('toolheadRotorAxis'+name).setProperty('text','0')
+        harness.QMetaObject.invokeMethod(self.find('toolheadConfirmRotor'),'clicked')
+        self.pump()
+        self.assertEqual(self.find('toolheadRotorCentreX').property('text'),'8')
+        self.assertEqual(self.find('toolheadRotorRPM').property('text'),'1234')
+        self.assertEqual(self.find('toolheadRotorDirection').property('currentIndex'),1)
+        self.assertFalse(self.find('toolheadRotorBlur').property('checked'))
+        self.assertEqual(self.draft.rotors,[])
+        self.find('toolheadRotorAxisY').setProperty('text','1')
+        harness.QMetaObject.invokeMethod(self.find('toolheadConfirmRotor'),'clicked')
+        self.pump()
+        row=self.draft.rotors[0]
+        self.assertEqual(row['centre'][0],8)
+        self.assertEqual(row['rpm'],1234)
+        self.assertEqual(row['direction'],-1)
+        self.assertFalse(row['blur'])
+
+    def test_tip_and_section_entry_retire_other_picker_modes(self):
+        preview=self.find('toolheadModelPreview')
+        preview.setProperty('addingRotor',True)
+        preview.setProperty('picking',True)
+        harness.QMetaObject.invokeMethod(self.find('toolheadPickTip'),'clicked')
+        self.assertFalse(preview.property('addingRotor'))
+        self.assertTrue(preview.property('picking'))
+        self.find('toolheadEditorSection').setProperty('currentIndex',2)
+        self.assertFalse(preview.property('picking'))
+
+    def test_sparse_body_ids_resolve_the_visible_combo_index(self):
+        from mpf.geometry.ToolheadGeometry import default_mesh, mesh_from_arrays
+        metadata=dict(materials=[dict(name='ABS',description='',source='step-material')],
+            bodies=[dict(name=name,source='unknown',centre=None,axis=None) for name in ('Hidden','Hidden too','Rotor')])
+        self.draft._mesh=mesh_from_arrays(default_mesh().triangles, body_ids=[2]*len(default_mesh().triangles), metadata=metadata)
+        self.draft.changed.emit()
+        self.find('toolheadEditorSection').setProperty('currentIndex',2)
+        self.draft.pickedBody(2)
+        self.pump()
+        combo=self.find('toolheadRotorBody')
+        self.assertEqual(combo.property('count'),1)
+        self.assertEqual(combo.property('currentIndex'),0)
+        self.assertEqual(self.draft.rotorCandidate['body'],2)
 
     def test_eight_lights_scroll_with_permanent_themed_gutter(self):
         scroll = self.find("toolheadLightsScroll")

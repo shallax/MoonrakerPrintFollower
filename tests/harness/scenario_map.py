@@ -1322,3 +1322,45 @@ EXCLUSIONS["previewToolheadReadout"] = {
     "date": "2026-10-07",
     "recheck": "dedicated native Preview Toolhead coverage before the 5.3 release gate",
 }
+
+
+# Rendering configuration is exercised in isolated real-QML and native GPU
+# tests; the installed-Cura simulator does not import owned STEP fixtures.
+for _name in (
+    "ToolheadModels.pickedBody", "ToolheadModels.previewRotor", "ToolheadModels.removeRotor",
+    "ToolheadModels.setRotor", "ToolheadModels.previewSurfaceDetail", "ToolheadModels.setSurfaceDetail",
+    "toolheadEditorSection", "toolheadSurfaceDetail", "toolheadPickRotor", "toolheadRotorBody",
+    "toolheadRotorCentreX", "toolheadRotorCentreY", "toolheadRotorCentreZ",
+    "toolheadRotorAxisX", "toolheadRotorAxisY", "toolheadRotorAxisZ", "toolheadRotorFan",
+    "toolheadRotorRPM", "toolheadRotorDirection", "toolheadRotorBlur", "toolheadRotorSlowPreview",
+    "toolheadRotorValidation", "toolheadConfirmRotor", "toolheadUpdateRotorPreview", "toolheadFansScroll",
+):
+    EXCLUSIONS[_name] = {
+        "reason": "native simulator scenarios do not import a material/body annotated CAD fixture",
+        "evidence": "test_qml_toolhead_editor verifies confirmation, validation, explicit preview and clipped minimum-size fans layout; test_toolhead_models verifies transactional drafts; test_toolhead_material_render and test_toolhead_rotor_render verify real GPU pixels",
+        "date": "2026-10-07",
+        "recheck": "native settings scenario imports the owned appearance STEP fixture",
+    }
+
+# The material/body editor uses the same isolated CAD-fixture boundary as fans.
+for _name in (
+    'ToolheadModels.clearMaterialPaint', 'ToolheadModels.clearOpacitySelection',
+    'ToolheadModels.paintBody', 'ToolheadModels.paintSurface',
+    'ToolheadModels.resetMaterialFinish', 'ToolheadModels.resetSelectedFinish',
+    'ToolheadModels.resetSelectedOpacity', 'ToolheadModels.selectMaterialPaint',
+    'ToolheadModels.selectOpacityKind', 'ToolheadModels.setMaterialFinish',
+    'ToolheadModels.setSelectedFinish', 'ToolheadModels.setSelectedMaterial',
+    'ToolheadModels.setSelectedOpacity', 'ToolheadModels.toggleOpacitySelection',
+    'toolheadAppearanceScroll', 'toolheadClearOpacitySelection', 'toolheadMaterial',
+    'toolheadMaterialAuto', 'toolheadMaterialBrush', 'toolheadMaterialType',
+    'toolheadOpacityBodyList', 'toolheadOpacityPickKind', 'toolheadPaintMaterials',
+    'toolheadResetOpacity', 'toolheadResetPaintMaterials', 'toolheadSelectOpacity',
+    'toolheadSelected', 'toolheadSelectedAuto', 'toolheadSelectedLabel',
+    'toolheadSelectedMaterial', 'toolheadSelectedOpacity', 'toolheadFanReadings',
+):
+    EXCLUSIONS[_name] = {
+        'reason': 'native simulator does not import an annotated CAD fixture; isolated real-QML and GPU suites own this editor',
+        'evidence': 'test_qml_toolhead_editor verifies selected property editing, wrapping, reset and body-only restore; test_toolhead_models verifies precedence, mixed selection, cancellation and atomic caps; test_toolhead_opacity and test_toolhead_material_render verify immutable source alpha, local finishes and actual pixels; test_monitor_telemetry and test_toolhead_rotors verify read-only fan observations',
+        'date': '2026-10-08',
+        'recheck': 'native settings scenario imports the owned appearance STEP fixture',
+    }

@@ -91,6 +91,40 @@ class PreviewTests(unittest.TestCase):
                      for x in range(240) for y in range(200))
         self.assertGreater(orange, 10)
 
+    def test_body_face_painting_and_opacity_selection_are_exclusive_and_pick_visible_identity(self):
+        preview=self.preview;draft=self.draft
+        draft.opacityKind='body';draft.bodyMaterials={'0':'glass'}
+        draft.paintBody=Mock();draft.paintSurface=Mock();draft.toggleOpacitySelection=Mock();draft.pickedBody=Mock()
+        original=self.mesh.colours.copy()
+        preview.addingLight=True
+        preview.paintingMaterial=True
+        self.drain()
+        self.assertTrue(preview.picking);self.assertFalse(preview.addingLight)
+        point=preview._projection[0].mean(axis=0)
+        preview.pick(float(point[0]),float(point[1]))
+        draft.paintBody.assert_called_once_with(0)
+        self.assertTrue(preview.paintingMaterial)
+        colour=self.paint().pixelColor(int(point[0]),int(point[1]))
+        self.assertGreater(colour.blue(),colour.red()+100)
+        draft.opacityKind='face'
+        preview.pick(float(point[0]),float(point[1]))
+        draft.paintSurface.assert_called_once_with(0)
+        preview.selectingOpacity=True
+        self.drain()
+        self.assertFalse(preview.paintingMaterial);self.assertTrue(preview.picking)
+        preview.pick(float(point[0]),float(point[1]))
+        draft.toggleOpacitySelection.assert_called_once_with(0)
+        draft.opacityKind='body'
+        preview.pick(float(point[0]),float(point[1]))
+        self.assertEqual(draft.toggleOpacitySelection.call_count,2)
+        preview.addingRotor=True
+        self.drain()
+        self.assertFalse(preview.selectingOpacity)
+        preview.pick(float(point[0]),float(point[1]))
+        draft.pickedBody.assert_called_once_with(0)
+        self.assertFalse(preview.picking)
+        np.testing.assert_array_equal(self.mesh.colours,original)
+
     def test_pick_requires_mode_and_visible_surface_then_exits(self):
         self.preview.pick(120, 100)
         self.assertEqual(self.draft.hits, [])
@@ -214,7 +248,7 @@ class PreviewTests(unittest.TestCase):
         self.preview._gpu = Mock()
         entered, release = threading.Event(), threading.Event()
 
-        def blocked(mesh):
+        def blocked(mesh, painted=None, colours=None, *appearance):
             entered.set()
             if not release.wait(5): raise AssertionError("packing worker never released")
             return b"stale", np.zeros(3), 1, len(mesh.triangles)*3
@@ -334,3 +368,47 @@ class PreviewTests(unittest.TestCase):
         projected = np.array(points, dtype=float)
         self.assertEqual(len(visible_triangles(projected, 20, 20, mesh.colours)), 0)
         self.assertIsNone(pick_projected(mesh, projected, .01, .01))
+
+
+    def test_rotor_pick_uses_body_identity_and_paints_confirmable_axis_without_motion(self):
+        self.draft.pickedBody=Mock()
+        self.draft.rotorCandidate=dict(body=0,centre=[0,0,1],axis=[1,0,0],direction=1)
+        self.preview.addingLight=True
+        self.preview.slowRotation=True
+        self.preview.addingRotor=True
+        self.assertFalse(self.preview.addingLight)
+        self.assertFalse(self.preview.slowRotation)
+        self.assertTrue(self.preview.picking)
+        point=self.preview._projection[0].mean(axis=0)
+        self.preview.pick(*map(float,point[:2]))
+        self.draft.pickedBody.assert_called_once_with(0)
+        self.assertEqual(self.draft.hits,[])
+        image=self.paint()
+        cyan=sum(image.pixelColor(x,y).blue()>180 and image.pixelColor(x,y).green()>120 and image.pixelColor(x,y).red()<100 for x in range(240) for y in range(200))
+        self.assertGreater(cyan,20)
+
+    def test_slow_preview_uses_bounded_time_and_sleeps_without_a_visible_window(self):
+        self.preview._gpu=Mock()
+        self.assertTrue(self.preview.animationAvailable)
+        self.preview.slowRotation=True
+        self.preview._preview_stamp=1.
+        with patch.object(self.preview,'window',return_value=Mock(isVisible=lambda:True)),patch('mpf.toolhead.ToolheadModelPreview.time.monotonic',return_value=100.):
+            self.preview._animate_preview()
+        self.assertAlmostEqual(self.preview._preview_phase,np.pi*.2)
+        self.preview._gpu.update.assert_called()
+        with patch.object(self.preview,'window',return_value=None):self.preview._animate_preview()
+        self.assertFalse(self.preview.slowRotation)
+        self.assertFalse(self.preview._preview_timer.isActive())
+        self.preview._gpu_failed=True
+        self.assertFalse(self.preview.animationAvailable)
+
+    def test_light_entry_retires_rotor_picking_and_slow_rotation(self):
+        self.preview.addingRotor=True
+        self.preview.slowRotation=True
+        self.preview.addingLight=True
+        self.assertFalse(self.preview.addingRotor)
+        self.assertFalse(self.preview.slowRotation)
+        self.assertTrue(self.preview.addingLight)
+        self.assertTrue(self.preview.picking)
+        self.preview.picking=False
+        self.assertFalse(self.preview.addingLight)
