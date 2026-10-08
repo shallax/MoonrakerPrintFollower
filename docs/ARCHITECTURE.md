@@ -1237,6 +1237,11 @@ captures fixed views. Cube contours are a documented partial-print illustration;
 the receiver base palette is neutral. The normal capture and repeatability
 entry points include both images; no live profile or CuraApplication is used.
 Native smoke captures use host OpenGL (Mesa on headless Windows CI).
+The opaque showcase bed writes its base-plane depth first. Its narrow grid
+strips are a capture-only decal without depth testing/writes; paths and the
+head then resume depth-tested rendering. This isolates grid sample coverage
+from near-coplanar base depth without changing 4x MSAA or production Cura
+rendering. Strict native and canonical comparisons remain required.
 
 Canonical QML screenshot captures pin the amd64 container architecture as well
 as Qt and fonts, and disable optional AVX/FMA raster paths for parity between
@@ -1263,6 +1268,10 @@ matches the current demand; receipt, front texture and prefix ownership switch
 together. Superseded uploads retain the committed image and coalesce a new
 request. Each staging paint rebuilds only its eligible retained-prefix tail.
 The native GPU renderer bypasses this software staging work.
+Deferred presentation capture, background/progress paint and layer handoff
+wakes belong to zero-delay, coalescing timers inside the face. Destroying its
+Loader cancels those callbacks; no retained Qt.callLater method may evaluate
+the retired QML context. Reopening creates independent delivery owners.
 
 Two further Qt-free libraries sit beside it. `PlateViewPolicy.js` owns the
 camera's arithmetic: the one printer-to-widget bed transform every consumer

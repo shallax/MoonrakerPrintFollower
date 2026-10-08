@@ -49,10 +49,26 @@ weak native-procedure caching, conservative light-range filtering, snapshot
 visibility reuse and turn-scoped path bindings. Stopped fan images can be reused,
 disabled lighting retires its viewport caches, and native signed index storage
 can share unsigned upload bytes. Native million-line proofs retain exact paired
-maps; the loaded-print capture latency still needs qualification. Staged first
-uploads, worker bounds, uncullled shadow instancing and complete mutable-input
-revision tracking remain separate candidates requiring native proofs. Fresh
-full local and branch CI gates for this follow-up remain in progress.
+maps. The first bundle passed 5,572 local tests and 98% coverage, but its branch
+CI failed the macOS capture comparison; its other active jobs passed and the
+dependent smoke set did not run. The capture-only bed-grid depth isolation
+candidate remains byte-identical in fresh Apple Software Renderer processes;
+strict branch CI must qualify it. Face-owned deferred paint timers also prevent
+callbacks after a Print Follower popover closes, with reopening and delivered
+ink covered by regression tests.
+
+Large-print latency remains unresolved: the loaded macOS session takes 16–30
+seconds for warm maps across roughly 400–500 foreground render turns. An owned
+shared-context worker is being qualified to reuse existing vertex storage and
+remove that foreground scheduling dependency. Exact native map parity, bounded
+GPU submission, producer/consumer fences, retirement, cold-start responsiveness
+and memory costs must be proven before integration. Stock Cura's recurring
+removable-drive subprocess launches also cause observed allocator stalls; that
+is a separate upstream issue. Staged first uploads, worker bounds and complete
+mutable-input revision tracking remain separate candidates. Unculled shadow
+instancing and unconditional larger path draws were rejected after native
+parity or driver-memory failures. Fresh full local and branch CI gates for the
+current defect follow-up remain required.
 These effects issue no printer commands and
 never require per-face material setup.
 

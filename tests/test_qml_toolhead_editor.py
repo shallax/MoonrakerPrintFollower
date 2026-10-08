@@ -279,10 +279,13 @@ class ToolheadEditorTests(harness.RealEngineTestCase):
                 slider = self.find('toolheadMaterial' + field)
                 self._nudge_appearance(slider)
                 before = copy.deepcopy(draft._material_overrides)
-                self._reveal_appearance(combo)
                 combo.forceActiveFocus()
                 # Native ComboBox keyboard input changes the actual profile.
-                QTest.keyClick(self.dialog, Qt.Key.Key_Down)
+                # Do not render/scroll between the nudge and this switch: a
+                # slow grabWindow can legitimately deliver the old profile's
+                # 250ms commit before any target change has been requested.
+                QTest.keyClick(self.dialog, Qt.Key.Key_Down, delay=0)
+                self.assertFalse(slider.property('interacting'))
                 self.pump(20)
                 self.assertEqual(combo.property('currentIndex'), 1)
                 self._pump_ms(400)

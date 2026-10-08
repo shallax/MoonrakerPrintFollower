@@ -4,6 +4,8 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 5.3.0
 
+- Retire deferred Print Follower paint and presentation work with its closed
+  popover, preventing callbacks into a destroyed QML context.
 - Batch reflection path bindings and frozen uniforms within each render turn,
   reuse conservative visibility checks, and skip additive draws beyond light
   reach. Avoid graphics work during idle/CPU bounds turns and defer unused

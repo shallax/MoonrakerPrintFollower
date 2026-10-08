@@ -2,6 +2,40 @@
 from tests import qml_engine_support as harness
 
 class PlateFaceRenderTests(harness.PlateFaceRenderTests):
+    def test_closing_before_deferred_paints_retires_the_face_callbacks(self):
+        monitor, window = self.mount_window("MoonrakerMonitor.qml", 900, 760)
+        self._open(monitor, "")
+        message_start = len(harness._APPLICATION["messages"])
+        for _ in range(8):
+            # Loader creation queues presentation/paint work synchronously.
+            # Close in that same event turn, before any queued work runs.
+            previous = set(self._popover_faces(monitor, "moonrakerPlateProgressFace"))
+            monitor.setProperty("openPopOver", "plateprogress")
+            self.assertTrue(set(self._popover_faces(monitor, "moonrakerPlateProgressFace")) - previous)
+            monitor.setProperty("openPopOver", "")
+            self._pump_ms(40)
+        failures = [message for message in harness._APPLICATION["messages"][message_start:]
+                    if "invalid context" in message.lower()
+                    or ("PlateProgressFace.qml" in message and "TypeError" in message)]
+        self.assertEqual(failures, [], "a retired face ran deferred presentation work")
+        # A newly opened face must still deliver its complete picture.
+        monitor.setProperty("openPopOver", "plateprogress")
+        self.pump(30)
+        faces = [face for face in self._popover_faces(monitor, "moonrakerPlateProgressFace")
+                 if harness.QQmlEngine.contextForObject(face).isValid() and face.isVisible()]
+        self.assertEqual(len(faces), 1)
+        face = faces[0]
+        face.setProperty("lineScale", 8.0)
+        self._pump_ms(40)
+        payload = {"classes": {"WALL-OUTER": [
+            [[20.0 + motion * 10.0, 125.0, float(motion)] for motion in range(21)]]},
+            "travels": [], "travelStarts": [], "travelEnds": [], "motions": 21}
+        self._printer.setScrub(payload)
+        self._printer.setLayers({"prev": None, "current": self._native_layer(payload, face), "next": None})
+        self._printer.setSplit(18)
+        self._wait_until(window, lambda image: self._red_pixels(image, face, window) > 0)
+        self.assertGreater(self._red_pixels(window.grabWindow(), face, window), 0)
+
     def test_the_bounded_walk_leaves_the_full_repaint_s_picture(self):
         # The walk skips the runs whose last motion is below the paint's
         # own start — a bound that is only sound while the geometry it

@@ -11,6 +11,34 @@ from tools import capture_toolhead as capture
 
 
 class ToolheadCaptureTests(unittest.TestCase):
+    def test_grid_decal_keeps_base_depth_and_restores_path_depth_after_failure(self):
+        events = []
+        framebuffer = Mock()
+        context = Mock()
+        bed = Mock()
+        paths = Mock()
+        module = Mock(DEPTH_TEST=17)
+        context.disable.side_effect = lambda capability: events.append(("disable", capability))
+        context.enable.side_effect = lambda capability: events.append(("enable", capability))
+        def paint(**options):
+            events.append(("bed", options, framebuffer.depth_mask))
+            if options.get("first") and fail[0]: raise RuntimeError("failed grid draw")
+        bed.render.side_effect = paint
+        paths.render.side_effect = lambda: events.append(("paths", framebuffer.depth_mask))
+        framebuffer.depth_mask = True
+        fail = [False]
+        with patch.dict(capture.sys.modules, {"moderngl": module}):
+            capture.render_receivers(context, framebuffer, bed, paths, 300)
+            self.assertEqual(events, [("bed", {"vertices": 6}, True), ("disable", 17),
+                ("bed", {"first": 6, "vertices": 294}, False), ("enable", 17), ("paths", True)])
+            fail[0] = True
+            events.clear()
+            with self.assertRaisesRegex(RuntimeError, "failed grid draw"):
+                capture.render_receivers(context, framebuffer, bed, paths, 300)
+        self.assertTrue(framebuffer.depth_mask)
+        self.assertEqual(events[-1], ("enable", 17))
+        self.assertFalse(any(event[0] == "paths" for event in events))
+
     def test_headless_windows_shader_tests_use_capture_cpu_renderer(self):
         module = Mock()
         directory = Mock()

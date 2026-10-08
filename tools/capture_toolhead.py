@@ -194,6 +194,21 @@ def create_context():
     return context, dll_directory
 
 
+def render_receivers(context, framebuffer, bed, paths, bed_vertices):
+    """Paint the opaque grid decal without competing with base-plane depth."""
+    import moderngl
+    bed.render(vertices=6)
+    try:
+        framebuffer.depth_mask = False
+        context.disable(moderngl.DEPTH_TEST)
+        bed.render(first=6, vertices=bed_vertices - 6)
+    finally:
+        framebuffer.depth_mask = True
+        context.enable(moderngl.DEPTH_TEST)
+    # The base plane, paths and opaque head still write/test their real depth.
+    paths.render()
+
+
 def capture(output_dir):
     import moderngl
     from PyQt6.QtGui import QImage
@@ -251,8 +266,8 @@ frag_color=vec4(f_color.rgb*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,f_col
         context.depth_func = "<"
         context.disable(moderngl.BLEND)
         if receivers:
-            for label in ("bed", "paths"):
-                vaos[label, base_shader].render()
+            render_receivers(context, framebuffer, vaos["bed", base_shader],
+                             vaos["paths", base_shader], len(bed.triangles) * 3)
         # The reference CAD materials are opaque. A single shaded,
         # depth-writing pass avoids cross-pass MSAA coverage mismatches on
         # Apple's software renderer; equal-depth faces retain draw order.
