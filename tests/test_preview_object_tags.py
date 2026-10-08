@@ -207,6 +207,7 @@ class BannerHostTests(harness.RealEngineTestCase):
         host.setParentItem(window.contentItem())
         host.setProperty("dockVisible", True)
         host.setProperty("controlsExpanded", True)
+        host.setProperty("customToolheadAvailable", True)
         window.show()
         bed = self.find(host, "moonrakerLightBed")
         models = self.find(host, "moonrakerLightModels")
@@ -221,12 +222,24 @@ class BannerHostTests(harness.RealEngineTestCase):
         self.assertLessEqual(right.x(), edge.x())
         def background(control):
             return control.property("indicator").property("color").name()
-        expected = background(bed)
+        from theme_support import ThemeBackend
+        theme = ThemeBackend(str(harness.ROOT / "tests/theme_assets/cura-light"))
+        expected = theme.getColor("checkbox").name()
+        disabled = theme.getColor("checkbox_disabled").name()
+        self.assertNotEqual(expected, disabled)
+        self._wait_until(window, lambda _: background(bed) == expected and background(models) == expected,
+                         timeout=3.0)
+        self.assertTrue(models.property("visible"))
+        self.assertEqual(background(models), expected)
+        self.assertEqual(background(bed), expected)
         position = models.mapToScene(harness.QPointF(models.width() / 2, models.height() / 2))
         for hovered in (True, False, True):
             QTest.mouseMove(window, QPoint(round(position.x()), round(position.y())) if hovered else QPoint(2, 2))
             host.setProperty("lightingEnabled", False)
-            self._pump_ms(100)
+            self._wait_until(window, lambda _: background(models) == disabled and background(bed) == disabled,
+                             timeout=3.0)
+            self.assertEqual(background(models), disabled)
+            self.assertEqual(background(bed), disabled)
             self.assertFalse(reflections.property("enabled"))
             self.assertTrue(reflections.property("checked"))
             host.setProperty("lightingEnabled", True)
@@ -238,9 +251,13 @@ class BannerHostTests(harness.RealEngineTestCase):
             self.assertEqual(background(models), expected)
             self.assertEqual(background(bed), expected)
         host.setProperty("toolheadVisible", False)
-        self._pump_ms(100)
-        self.assertEqual(background(models), background(bed))
-        self.assertNotEqual(background(models), expected)
+        # Wait for the actual animated disabled value on a delivered frame;
+        # a fixed wall-clock delay does not establish animation delivery.
+        self._wait_until(window, lambda _: background(models) == disabled and background(bed) == disabled,
+                         timeout=3.0)
+        self.assertFalse(models.property("enabled"))
+        self.assertEqual(background(models), disabled)
+        self.assertEqual(background(bed), disabled)
         host.setProperty("toolheadVisible", True)
         self._wait_until(window, lambda _: background(models) == expected, timeout=3.0)
         self.assertEqual(background(models), expected)
