@@ -54,6 +54,12 @@ are visible; a Python 3.14 patch release difference is acceptable.
   missing, obtain it from the distro's binary packages and add its
   directory to `LD_LIBRARY_PATH`, and run the suite with
   `QT_QPA_PLATFORM=offscreen`.
+  The Linux compatibility CI jobs run under Xvfb with Mesa software OpenGL,
+  including the coverage workers. `MPF_REQUIRE_OFFSCREEN_GL=1` makes an
+  unavailable context fail the environment/rotor tests instead of skipping
+  their GPU assertions. The material shader tests share the showcase's
+  context setup, including the CPU renderer and retained Mesa DLL directory
+  on headless Windows.
 - Linters: `ruff` (`pip install ruff`, configuration in `ruff.toml` —
   correctness core only, not style) and `qmlformat` from
   `qt6-declarative-dev-tools`. QML files must stay qmlformat-canonical:

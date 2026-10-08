@@ -4,7 +4,7 @@ import os
 import sys
 import unittest
 # Cocoa supports windowless QOffscreenSurface; Qt's offscreen plugin does not.
-if sys.platform == "darwin": os.environ["QT_QPA_PLATFORM"] = "cocoa"
+os.environ["QT_QPA_PLATFORM"] = "cocoa" if sys.platform == "darwin" else "offscreen"
 from PyQt6.QtGui import QGuiApplication, QOffscreenSurface, QOpenGLContext, QSurfaceFormat
 from PyQt6.QtOpenGL import QOpenGLVersionFunctionsFactory, QOpenGLVersionProfile, QOpenGLFramebufferObject, QOpenGLVertexArrayObject
 from mpf.toolhead.ToolheadEnvironment import CubeStorage, ToolheadEnvironment, ProbeDescriptor, SIZE
@@ -20,14 +20,23 @@ class EnvironmentGLTests(unittest.TestCase):
         format_.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
         cls.context = QOpenGLContext(); cls.context.setFormat(format_)
         cls.available = cls.context.create()
-        if not cls.available: return
+        if not cls.available:
+            if os.environ.get("MPF_REQUIRE_OFFSCREEN_GL") == "1":
+                raise RuntimeError("Required offscreen OpenGL context could not be created")
+            return
         cls.surface = QOffscreenSurface(); cls.surface.setFormat(cls.context.format()); cls.surface.create()
         cls.available = cls.context.makeCurrent(cls.surface)
-        if not cls.available: return
+        if not cls.available:
+            if os.environ.get("MPF_REQUIRE_OFFSCREEN_GL") == "1":
+                raise RuntimeError("Required offscreen OpenGL context could not become current")
+            return
         profile = QOpenGLVersionProfile(); profile.setVersion(4, 1); profile.setProfile(format_.profile())
         cls.gl = QOpenGLVersionFunctionsFactory.get(profile, cls.context)
         cls.available = cls.gl is not None
-        if not cls.available: return
+        if not cls.available:
+            if os.environ.get("MPF_REQUIRE_OFFSCREEN_GL") == "1":
+                raise RuntimeError("Required OpenGL 4.1 functions are unavailable")
+            return
         cls.gl.initializeOpenGLFunctions()
 
     @classmethod

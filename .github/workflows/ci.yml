@@ -279,7 +279,7 @@ jobs:
         name: Install Qt runtime
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1 libxkbcommon0
+          sudo apt-get install -y libegl1 libxkbcommon0 libgl1 libglx-mesa0 xvfb xauth
           # Match the native and pinned-container suites: without NumPy,
           # the bed-mesh tests skip and GPU packing takes only its fallback.
           python -m pip install PyQt6==6.11.0 numpy
@@ -288,7 +288,7 @@ jobs:
         if: matrix.python-version != '3.12'
         run: |
           python -c "from PyQt6.QtCore import QCoreApplication"
-          env JOBS=2 LEGS=host tools/run_tests.sh
+          xvfb-run -a env QT_QPA_PLATFORM=offscreen LIBGL_ALWAYS_SOFTWARE=1 MPF_REQUIRE_OFFSCREEN_GL=1 JOBS=2 LEGS=host tools/run_tests.sh
 
       - name: Install coverage
         if: matrix.python-version == '3.12'
@@ -307,7 +307,7 @@ jobs:
           COVERAGE_CORE: sysmon
         run: |
           python -c "from PyQt6.QtCore import QCoreApplication"
-          python - <<'PY'
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 MPF_REQUIRE_OFFSCREEN_GL=1 python - <<'PY'
           import os
           from pathlib import Path
           import subprocess

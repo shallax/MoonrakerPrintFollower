@@ -1,13 +1,11 @@
 """Offscreen production GLSL: authored finishes, alpha and model-anchored grain."""
-import os
 import configparser
-import sys
 import unittest
 
 import numpy as np
 
 from mpf.geometry.ToolheadGeometry import mesh_from_arrays, preview_buffer
-from tools.capture_toolhead import program, uniforms
+from tools.capture_toolhead import create_context, program, uniforms
 
 try:
     import moderngl
@@ -19,11 +17,8 @@ except ImportError:
 class MaterialRenderTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        options = dict(standalone=True, require=410)
-        if sys.platform.startswith("linux"):
-            options["backend"] = "egl"
-            os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
-        cls.context = moderngl.create_context(**options)
+        cls.context, cls.dll_directory = create_context()
+        print("Material test renderer:", cls.context.info["GL_RENDERER"], flush=True)
         cls.anchor = cls.context.simple_framebuffer((1,1))
         cls.anchor.use()
 
@@ -31,6 +26,8 @@ class MaterialRenderTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.anchor.release()
         cls.context.release()
+        if cls.dll_directory is not None:
+            cls.dll_directory.close()
 
     def release_target(self, target):
         self.anchor.use()

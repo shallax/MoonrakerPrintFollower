@@ -3,6 +3,7 @@ import hashlib
 import json
 import struct
 import unittest
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -10,6 +11,23 @@ from tools import capture_toolhead as capture
 
 
 class ToolheadCaptureTests(unittest.TestCase):
+    def test_headless_windows_shader_tests_use_capture_cpu_renderer(self):
+        module = Mock()
+        directory = Mock()
+        def context(**options):
+            self.assertEqual(options, dict(standalone=True, require=410))
+            self.assertEqual(capture.os.environ["GALLIUM_DRIVER"], "llvmpipe")
+            self.assertEqual(capture.os.environ["LP_NUM_THREADS"], "1")
+            return "context"
+        with patch.object(capture.sys, "platform", "win32"), \
+             patch.dict(capture.os.environ, {"GLCONTEXT_WIN_LIBGL": "/mesa/opengl32.dll"}, clear=True), \
+             patch.object(capture.os, "add_dll_directory", return_value=directory, create=True) as add, \
+             patch.dict(capture.sys.modules, {"moderngl": module}):
+            module.create_context.side_effect = context
+            self.assertEqual(capture.create_context(), ("context", directory))
+            add.assert_called_once_with(str(capture.Path("/mesa/opengl32.dll").parent))
+            directory.close.assert_not_called()
+
     def test_mesh_is_losslessly_the_reference_step_import(self):
         with np.load(capture.FIXTURE / "stealthburner.npz", allow_pickle=False) as data:
             count = len(data["triangles"])

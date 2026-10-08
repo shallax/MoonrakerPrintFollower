@@ -169,9 +169,9 @@ def camera(target, yaw, pitch, height):
     return rows.T, tuple(target + depth*500)
 
 
-def capture(output_dir):
+def create_context():
+    """Use the same headless driver for shader tests and showcase captures."""
     import moderngl
-    from PyQt6.QtGui import QImage
 
     dll_directory = None
     if sys.platform == "win32" and os.environ.get("GLCONTEXT_WIN_LIBGL"):
@@ -191,6 +191,14 @@ def capture(output_dir):
         context = moderngl.create_context(standalone=True, require=410, backend="egl")
     else:
         context = moderngl.create_context(standalone=True, require=410)
+    return context, dll_directory
+
+
+def capture(output_dir):
+    import moderngl
+    from PyQt6.QtGui import QImage
+
+    context, dll_directory = create_context()
     print("Toolhead capture renderer:", context.info["GL_RENDERER"], flush=True)
     head, paths, bed, lights = scene_meshes()
     if np.any(head.colours[:, 3] != 1.0):

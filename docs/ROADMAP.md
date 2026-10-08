@@ -35,8 +35,10 @@ and opacity above per-type defaults. Imported metadata preclassifies surfaces;
 edit highlights are temporary, invisible bodies remain recoverable, and each
 property has its own reset. Reflection captures respect active orthographic and
 perspective cameras and retain native scene depth under attached illumination.
-Implementation is under final local validation; no rendering-extension push or
-whole-CI success is recorded yet. These effects issue no printer commands and
+The rendering extension passed the full local gate (5,510 tests, all lint checks,
+46 byte-identical capture pairs and verified packages) and 98% coverage with every
+module above 95%, then was pushed. Canonical Linux captures have been refreshed
+from that head; whole branch CI validation remains in progress. These effects issue no printer commands and
 never require per-face material setup.
 
 ### 5.3.0 — Toolhead controls in Preview (final planned 5.x feature release)
