@@ -222,6 +222,10 @@ def resolve_capture_samples(raw, scale):
 def capture_bed_uniforms(projection, z, viewport):
     # Solve the plane using the exact FLOAT32 matrix uploaded to the driver.
     rows = np.asarray(projection, dtype=np.float32).astype(np.float64).T
+    if not np.isfinite(rows).all() or not np.isfinite(z):
+        raise ValueError("Nonfinite analytic showcase camera")
+    if not np.array_equal(rows[3], (0.0, 0.0, 0.0, 1.0)):
+        raise ValueError("Analytic showcase coverage requires the fixed orthographic camera")
     inverse = np.linalg.inv(rows[:2, :2])
     constant = -inverse @ (rows[:2, 2] * z + rows[:2, 3])
     return dict(u_captureBedX=tuple((*inverse[0], constant[0])),
@@ -234,10 +238,117 @@ def capture_receiver_vertex(vertex, renderer):
         return vertex
     if vertex.count("#version 410") != 1 or vertex.count("gl_Position =") != 1:
         raise RuntimeError("Receiver vertex shader changed; update the capture position adapter")
-    # A software-raster seam between the two triangles of one tube facet can
-    # expose its much brighter backside. Keep shared vertex arithmetic invariant
-    # and precise, rather than moving samples or altering the original geometry.
-    return vertex.replace("#version 410", "#version 410\ninvariant gl_Position;\nprecise gl_Position;")
+    # The geometry stage supplies conservative support; the fragment stage
+    # tests the original edges. A driver triangle edge crack cannot then expose
+    # the bright backside of an otherwise continuous deposition tube.
+    vertex = vertex.replace("#version 410", "#version 410\ninvariant gl_Position;\nprecise gl_Position;")
+    for name in ("vertex", "normal", "color"):
+        vertex = vertex.replace("f_" + name, "g_" + name)
+    return vertex
+
+
+def capture_receiver_geometry(renderer):
+    if renderer != "Apple Software Renderer":
+        return None
+    return """#version 410
+layout(triangles) in;
+layout(triangle_strip, max_vertices=3) out;
+uniform vec2 u_captureViewport;
+in vec3 g_vertex[]; in vec3 g_normal[]; in vec4 g_color[];
+flat out dvec3 captureEdges[3];
+flat out vec3 captureVertices[3];
+flat out vec3 captureNormals[3];
+flat out vec4 captureColours[3];
+flat out dvec3 captureDepths;
+flat out double captureArea;
+flat out ivec3 captureInclusive;
+
+// Evaluate shared endpoints in one canonical order, then negate the complete
+// equation for the opposite orientation. Both adjacent facets use exactly the
+// same arithmetic, including at the problematic near-edge supersample.
+dvec3 edgeEquation(dvec2 a, dvec2 b) {
+    bool reverse = a.x > b.x || (a.x == b.x && a.y > b.y);
+    dvec2 low = reverse ? b : a;
+    dvec2 high = reverse ? a : b;
+    precise dvec3 edge = dvec3(low.y-high.y, high.x-low.x,
+                             low.x*high.y-low.y*high.x);
+    return reverse ? -edge : edge;
+}
+void main() {
+    dvec2 point[3];
+    for(int i=0;i<3;++i)
+        point[i]=(dvec2(gl_in[i].gl_Position.xy)*0.5+0.5)*dvec2(u_captureViewport);
+    precise double area = dot(edgeEquation(point[0],point[1]),dvec3(point[2],1.0));
+    if(area==0.0) return;
+    int order[3]; order[0]=0; order[1]=area>0.0 ? 1 : 2; order[2]=area>0.0 ? 2 : 1;
+    dvec2 p[3];
+    for(int i=0;i<3;++i) {
+        int j=order[i]; p[i]=point[j];
+    }
+    dvec3 edges[3]; ivec3 inclusive;
+    for(int i=0;i<3;++i) {
+        dvec2 a=p[(i+1)%3], b=p[(i+2)%3];
+        edges[i]=edgeEquation(a,b);
+        dvec2 delta=b-a;
+        inclusive[i]=(delta.y>0.0 || (delta.y==0.0 && delta.x<0.0)) ? 1 : 0;
+    }
+    // Expand support only. Analytic coverage below discards everything outside
+    // the original triangle and writes the original interpolated depth.
+    dvec2 low=floor(min(p[0],min(p[1],p[2])))-1.0;
+    dvec2 high=ceil(max(p[0],max(p[1],p[2])))+1.0;
+    // One enclosing support triangle has no internal shared diagonal that the
+    // software rasterizer could crack before original-edge testing runs.
+    dvec2 extent=high-low;
+    dvec2 corner[3]; corner[0]=low;
+    corner[1]=low+dvec2(2.0*extent.x,0.0);
+    corner[2]=low+dvec2(0.0,2.0*extent.y);
+    for(int i=0;i<3;++i) {
+        // EmitVertex makes every output undefined, even flat values. Republish
+        // the original triangle payload for every support vertex.
+        captureArea=abs(area); captureInclusive=inclusive;
+        for(int k=0;k<3;++k) {
+            int j=order[k]; captureEdges[k]=edges[k];
+            captureVertices[k]=g_vertex[j]; captureNormals[k]=g_normal[j];
+            captureColours[k]=g_color[j]; captureDepths[k]=double(gl_in[j].gl_Position.z)*0.5+0.5;
+        }
+        gl_Position=vec4(vec2(corner[i]/dvec2(u_captureViewport)*2.0-1.0),0.0,1.0);
+        EmitVertex();
+    }
+    EndPrimitive();
+}
+"""
+
+
+def capture_receiver_coverage(fragment, renderer):
+    if renderer != "Apple Software Renderer":
+        return fragment
+    declarations = """flat in dvec3 captureEdges[3];
+flat in vec3 captureVertices[3]; flat in vec3 captureNormals[3];
+flat in vec4 captureColours[3]; flat in dvec3 captureDepths;
+flat in double captureArea; flat in ivec3 captureInclusive;
+"""
+    for field in ("vec3 f_vertex", "vec3 f_normal", "vec4 f_color"):
+        if fragment.count("in " + field + ";") != 1:
+            raise RuntimeError("Receiver fragment inputs changed; update the analytic coverage adapter")
+        fragment = fragment.replace("in " + field + ";", field + ";")
+    if fragment.count("void main() {") != 1:
+        raise RuntimeError("Receiver fragment entry changed; update the analytic coverage adapter")
+    reconstruction = """void main() {
+    precise dvec3 samplePoint=dvec3(gl_FragCoord.xy,1.0);
+    precise dvec3 edges;
+    for(int i=0;i<3;++i) {
+        edges[i]=dot(captureEdges[i],samplePoint);
+        if(edges[i]<0.0 || (edges[i]==0.0 && captureInclusive[i]==0)) discard;
+    }
+    precise dvec3 barycentric=edges/captureArea;
+    precise double originalDepth=dot(barycentric,captureDepths);
+    if(originalDepth<0.0 || originalDepth>1.0) discard;
+    gl_FragDepth=float(originalDepth);
+    f_vertex=vec3(barycentric.x*dvec3(captureVertices[0])+barycentric.y*dvec3(captureVertices[1])+barycentric.z*dvec3(captureVertices[2]));
+    f_normal=vec3(barycentric.x*dvec3(captureNormals[0])+barycentric.y*dvec3(captureNormals[1])+barycentric.z*dvec3(captureNormals[2]));
+    f_color=vec4(barycentric.x*dvec4(captureColours[0])+barycentric.y*dvec4(captureColours[1])+barycentric.z*dvec4(captureColours[2]));
+"""
+    return fragment.replace("#version 410", "#version 410\n" + declarations).replace("void main() {", reconstruction)
 
 
 def capture_receiver_fragment(fragment, renderer):
@@ -248,6 +359,11 @@ uniform vec3 u_captureBedX; uniform vec3 u_captureBedY;
 uniform float u_captureBedZ; uniform vec2 u_captureViewport;""")
     start = fragment.index("vec3 baseColour=f_color.rgb;")
     tail = fragment[start:].replace("f_vertex", "capturePosition").replace("f_normal", "captureNormal")
+    # The fixed plane has an exact pixel footprint. Derivatives after analytic
+    # edge discard would be undefined along the original triangle diagonal.
+    tail = tail.replace("fwidth(capturePosition.xy)", """vec2(
+        2.0*(abs(u_captureBedX.x)/u_captureViewport.x+abs(u_captureBedX.y)/u_captureViewport.y),
+        2.0*(abs(u_captureBedY.x)/u_captureViewport.x+abs(u_captureBedY.y)/u_captureViewport.y))""")
     # Software varying interpolation drifts at byte-rounding boundaries even
     # in a single-sample target. Reconstruct the same physical bed plane from
     # fixed pixel coordinates; raster coverage and depth remain unchanged.
@@ -298,7 +414,8 @@ if(u_captureGrid){
 float diffuse=max(dot(normalize(f_normal),normalize(vec3(-.4,-.5,1.))),0.);
 frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseColour),f_color.a);""")
     base_shader = context.program(vertex_shader=capture_receiver_vertex(source["shaders"]["vertex41core"], renderer),
-                                  fragment_shader=capture_receiver_fragment(fragment, renderer))
+                                  geometry_shader=capture_receiver_geometry(renderer),
+                                  fragment_shader=capture_receiver_coverage(capture_receiver_fragment(fragment, renderer), renderer))
     buffers, vaos = [], {}
     for label, mesh in (("head", head), ("paths", paths), ("bed", bed)):
         buffer = context.buffer(preview_buffer(mesh)[0])
@@ -326,12 +443,15 @@ frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseCo
               ("14-toolhead-printing.png", (-12, 0, 10), -28, 7, 80, True))
     for filename, target, yaw, pitch, height, receivers in scenes:
         projection, eye = camera(target, yaw, pitch, height)
+        if sample_scale == 2:
+            # Validate the uploaded projection before any rendering, including
+            # the head-only scene. Model/view transforms here are identity.
+            values = capture_bed_uniforms(projection, float(bed.triangles[0, 0, 2]), render_size)
+            uniforms(base_shader, values)
         for shader in (head_shader, base_shader):
             uniforms(shader, dict(light_values_, u_modelMatrix=identity, u_normalMatrix=identity,
                                   u_viewMatrix=identity, u_projectionMatrix=projection, u_viewPosition=eye,
                                   u_orthographic=1, u_viewDirection=tuple((np.asarray(eye)-target)/500)))
-        if sample_scale == 2:
-            uniforms(base_shader, capture_bed_uniforms(projection, float(bed.triangles[0, 0, 2]), render_size))
         framebuffer.use()
         framebuffer.depth_mask = True
         framebuffer.clear(.09, .105, .125, 1, depth=1)

@@ -82,12 +82,18 @@ therefore create dark gaps and incomplete reflected extrusion silhouettes.
 This limitation remains documented in the checkpoint.
 
 After that checkpoint, geometry ray tracing will resolve actual scene hits and
-shade their own material, colour and texture. Embree is the proposed portable
-CPU baseline. A standalone prototype traces the actual screenshot toolhead and
+shade their own material, colour and texture. GPU acceleration is required on
+Windows, Linux and macOS; Embree remains a possible CPU fallback, not a complete
+solution to that requirement. Prebuilt native libraries shipped with the plugin
+are now authorized, with no user compiler or SDK installation. The proposed
+backend boundary uses Metal on macOS and Vulkan on Windows/Linux, with shared
+scene and shading contracts; the library and cross-platform integration are
+not yet qualified. A standalone prototype traces the actual screenshot toolhead and
 half-printed green Voron cube on CPU and on Apple Metal; this is visual and API
 evidence, not production integration or a benchmark of the large loaded print.
-The production GPU path must also support qualified Windows and Linux targets,
-with a CPU fallback. Existing material metadata, face/body edits, alpha and the
+The native reflection component will preserve Cura's viewport, selection,
+camera and layer controls, composing completed results into its current
+rendering. Existing material metadata, face/body edits, alpha and the
 active perspective or orthographic camera remain authoritative; the demo's
 polished-silver override is not an automatic material rule.
 
@@ -99,6 +105,14 @@ output needs full resolution and consistent antialiasing during motion; coarse
 interactive demo previews are not the intended product quality. A previous
 screen-space image is reusable only while its camera and receiver state match.
 Controls may move into Settings in a later iteration.
+
+Ray tracing is optional. Environment-map reflections remain available when it
+is disabled or the GPU lacks required features, and Enable reflections can
+disable both. An independent Cast shadows control is also authorized: shadow
+maps in the current renderer and shadow rays in ray-traced mode. It must skip
+shadow work when disabled and attenuate actual direct lighting rather than
+darkening ambient, emission or the entire already-composed Cura image. These
+controls and backends are planned follow-up work, not installed features.
 
 ### 5.3.0 — Toolhead controls in Preview (final planned 5.x feature release)
 

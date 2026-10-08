@@ -11,6 +11,83 @@ from tools import capture_toolhead as capture
 
 
 class ToolheadCaptureTests(unittest.TestCase):
+    def test_analytic_coverage_is_software_only_and_retains_original_depth_and_attributes(self):
+        source = capture.configparser.ConfigParser(interpolation=None, comment_prefixes=(';',))
+        source.read(capture.ROOT / 'mpf/toolhead/scene-lighting.shader')
+        vertex = source['shaders']['vertex41core']
+        fragment = source['shaders']['fragment41core']
+        for renderer in ('Apple M1 Pro', 'llvmpipe', 'AMD Radeon', 'NVIDIA'):
+            self.assertIsNone(capture.capture_receiver_geometry(renderer))
+            self.assertIs(capture.capture_receiver_coverage(fragment, renderer), fragment)
+        adapted = capture.capture_receiver_coverage(fragment, 'Apple Software Renderer')
+        self.assertEqual(adapted.count('void main() {'), 1)
+        self.assertIn('gl_FragDepth=float(originalDepth)', adapted)
+        self.assertIn('edges[i]<0.0', adapted)
+        self.assertIn('captureInclusive[i]==0', adapted)
+        # The actual production light function remains identical.
+        start = fragment.index('vec3 lightSurface(')
+        stop = fragment.index('void main() {')
+        self.assertIn(fragment[start:stop], adapted)
+        transformed = capture.capture_receiver_vertex(vertex, 'Apple Software Renderer')
+        self.assertIn('out vec3 g_vertex;', transformed)
+        self.assertIn('gl_Position = u_projectionMatrix * u_viewMatrix * world;', transformed)
+        geometry = capture.capture_receiver_geometry('Apple Software Renderer')
+        self.assertIn('low=floor(min(p[0],min(p[1],p[2])))-1.0', geometry)
+        self.assertIn('max_vertices=3', geometry)
+        self.assertIn('2.0*extent.x', geometry)
+        self.assertIn('2.0*extent.y', geometry)
+        emission = geometry[geometry.index('for(int i=0;i<3;++i) {\n        // EmitVertex'):]
+        for output in ('captureArea=', 'captureInclusive=', 'captureEdges[k]=',
+                       'captureVertices[k]=', 'captureNormals[k]=', 'captureColours[k]=', 'captureDepths[k]='):
+            self.assertIn(output, emission[:emission.index('EmitVertex();')])
+        for changed in (fragment.replace('in vec3 f_vertex;', ''), fragment.replace('void main() {', 'void different() {')):
+            with self.assertRaises(RuntimeError):
+                capture.capture_receiver_coverage(changed, 'Apple Software Renderer')
+
+    def test_opposite_canonical_edges_have_complementary_ownership_without_a_crack(self):
+        # This is deliberately near a float32 raster edge at large supersample
+        # coordinates, the failure class observed at actual CI pixel(867,807).
+        # Actual projected shared endpoints of fixture facets16314/44780.
+        a = np.array((1790.3144240379333, 588.3523762226105))
+        b = np.array((1620.789098739624, 579.5307874679565))
+        sample = np.array((1735.5, 585.5))
+        a32, b32, sample32 = (value.astype(np.float32) for value in (a, b, sample))
+        coefficients32 = np.array((a32[1]-b32[1], b32[0]-a32[0],
+                                   a32[0]*b32[1]-a32[1]*b32[0]))
+        coefficient_value = coefficients32 @ np.r_[sample32, np.float32(1)]
+        endpoint_value = (b32[0]-a32[0])*(sample32[1]-a32[1])-(b32[1]-a32[1])*(sample32[0]-a32[0])
+        # Equivalent float32 edge arithmetic can disagree about which side the
+        # sample lies on, even though the shared endpoints are byte-identical.
+        self.assertGreater(coefficient_value, 0)
+        self.assertLess(endpoint_value, 0)
+        def edge(first, second):
+            reverse = tuple(first) > tuple(second)
+            low, high = (second, first) if reverse else (first, second)
+            values = np.array((low[1]-high[1], high[0]-low[0],
+                               low[0]*high[1]-low[1]*high[0]))
+            return -values if reverse else values
+        forward, backward = edge(a, b), edge(b, a)
+        np.testing.assert_array_equal(forward, -backward)
+        include_forward = b[1] > a[1] or (b[1] == a[1] and b[0] < a[0])
+        include_backward = a[1] > b[1] or (a[1] == b[1] and a[0] < b[0])
+        self.assertNotEqual(include_forward, include_backward)
+        for offset in (-1e-6, -1e-12, 0.0, 1e-12, 1e-6):
+            point = np.r_[sample + (0, offset), 1.0]
+            first, second = forward @ point, backward @ point
+            self.assertEqual(first, -second)
+            admitted = int(first > 0 or (first == 0 and include_forward))
+            admitted += int(second > 0 or (second == 0 and include_backward))
+            self.assertEqual(admitted, 1)
+
+        c = np.array((1621.5831965208054, 577.4187386035919))
+        d = np.array((1789.5203053951263, 590.4644250869751))
+        for triangle in (np.array((a, b, c)), np.array((a, d, b))):
+            low, high = np.floor(triangle.min(axis=0))-1, np.ceil(triangle.max(axis=0))+1
+            extent = high-low
+            relative = (triangle-low)/(2*extent)
+            self.assertTrue(np.all(relative > 0))
+            self.assertTrue(np.all(relative.sum(axis=1) < 1), 'support hypotenuse must stay outside original vertices')
+
     def test_software_shared_vertex_transform_is_precise_without_geometry_or_sample_changes(self):
         vertex = '#version 410\nvoid main(){gl_Position = projection * view * world;}'
         for renderer in ('Apple M1 Pro', 'llvmpipe', 'AMD Radeon', 'NVIDIA'):
@@ -62,6 +139,10 @@ class ToolheadCaptureTests(unittest.TestCase):
                 point = np.array([np.dot(ndc, values['u_captureBedX']),
                                   np.dot(ndc, values['u_captureBedY']), z, 1])
                 np.testing.assert_allclose((rows @ point)[:2], ndc[:2], atol=1e-12, rtol=0)
+        perspective = np.eye(4, dtype=np.float32)
+        perspective[2, 3] = -1
+        with self.assertRaisesRegex(ValueError, 'orthographic camera'):
+            capture.capture_bed_uniforms(perspective, -.1, (2800, 2200))
 
     def test_plane_adapter_keeps_other_drivers_shader_source_unchanged(self):
         fragment = 'uniform bool u_captureGrid;\nvec3 baseColour=f_color.rgb;\nlightSurface(f_vertex,f_normal,baseColour);'

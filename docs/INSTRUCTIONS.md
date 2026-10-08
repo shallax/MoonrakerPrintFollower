@@ -284,9 +284,13 @@ What differs on this leg, and why:
   with one CPU resolve and final byte conversion. Its bed lighting/grid use
   the same physical plane reconstructed from pixel coordinates and the exact
   uploaded camera matrix, avoiding drift in interpolated positions. This is
-  a capture-only adapter. Its receiver vertex positions are precise and
-  invariant so shared tube-facet edges retain identical transform arithmetic;
-  other drivers retain their shader source and native
+  a capture-only adapter. Precise/invariant vertex transforms alone did not
+  prevent a software-raster shared-edge crack. Receiver triangles therefore
+  supply one enclosing support triangle without an internal raster seam, then use canonical double-precision
+  original edge equations with complementary edge ownership in the fragment
+  shader. Original barycentrics restore their attributes and depth; samples
+  outside the original triangle are discarded. This adapter requires the
+  fixed orthographic showcase camera. Other drivers retain their shader source and native
   four-sample MSAA. The pixel and alpha requirements above remain unchanged.
 - **`make ui_test MODE=suite` and `make ui_release_gate` use the native
   desktop harness.** They stage Cura, the plugin and the driver, then
