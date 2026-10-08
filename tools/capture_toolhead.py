@@ -229,6 +229,17 @@ def capture_bed_uniforms(projection, z, viewport):
                 u_captureBedZ=float(z), u_captureViewport=viewport)
 
 
+def capture_receiver_vertex(vertex, renderer):
+    if renderer != "Apple Software Renderer":
+        return vertex
+    if vertex.count("#version 410") != 1 or vertex.count("gl_Position =") != 1:
+        raise RuntimeError("Receiver vertex shader changed; update the capture position adapter")
+    # A software-raster seam between the two triangles of one tube facet can
+    # expose its much brighter backside. Keep shared vertex arithmetic invariant
+    # and precise, rather than moving samples or altering the original geometry.
+    return vertex.replace("#version 410", "#version 410\ninvariant gl_Position;\nprecise gl_Position;")
+
+
 def capture_receiver_fragment(fragment, renderer):
     if renderer != "Apple Software Renderer":
         return fragment  # Preserve the exact canonical/native shader source.
@@ -286,7 +297,7 @@ if(u_captureGrid){
 }
 float diffuse=max(dot(normalize(f_normal),normalize(vec3(-.4,-.5,1.))),0.);
 frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseColour),f_color.a);""")
-    base_shader = context.program(vertex_shader=source["shaders"]["vertex41core"],
+    base_shader = context.program(vertex_shader=capture_receiver_vertex(source["shaders"]["vertex41core"], renderer),
                                   fragment_shader=capture_receiver_fragment(fragment, renderer))
     buffers, vaos = [], {}
     for label, mesh in (("head", head), ("paths", paths), ("bed", bed)):

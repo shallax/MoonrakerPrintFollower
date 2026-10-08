@@ -11,6 +11,17 @@ from tools import capture_toolhead as capture
 
 
 class ToolheadCaptureTests(unittest.TestCase):
+    def test_software_shared_vertex_transform_is_precise_without_geometry_or_sample_changes(self):
+        vertex = '#version 410\nvoid main(){gl_Position = projection * view * world;}'
+        for renderer in ('Apple M1 Pro', 'llvmpipe', 'AMD Radeon', 'NVIDIA'):
+            self.assertIs(capture.capture_receiver_vertex(vertex, renderer), vertex)
+        adapted = capture.capture_receiver_vertex(vertex, 'Apple Software Renderer')
+        self.assertEqual(adapted.replace('invariant gl_Position;\nprecise gl_Position;\n', ''), vertex)
+        self.assertEqual(adapted.count('gl_Position = projection * view * world;'), 1)
+        for changed in ('void main(){}', vertex + '\ngl_Position = another;'):
+            with self.assertRaisesRegex(RuntimeError, 'vertex shader changed'):
+                capture.capture_receiver_vertex(changed, 'Apple Software Renderer')
+
     def test_four_sample_resolve_is_only_for_apple_software_and_preserves_spatial_rgba(self):
         for renderer, scale in (("Apple Software Renderer", 2), ("Apple M1 Pro", 1),
                 ("llvmpipe", 1), ("AMD Radeon", 1), ("NVIDIA", 1)):
