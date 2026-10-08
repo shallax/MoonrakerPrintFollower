@@ -379,6 +379,14 @@ if(u_captureGrid){
 """ + tail
 
 
+def capture_receiver_sources(vertex, fragment, renderer, *, planar=False):
+    """Keep the large bed on native raster coverage; adapt only tube facets."""
+    fragment = capture_receiver_fragment(fragment, renderer)
+    return dict(vertex_shader=vertex if planar else capture_receiver_vertex(vertex, renderer),
+                geometry_shader=None if planar else capture_receiver_geometry(renderer),
+                fragment_shader=fragment if planar else capture_receiver_coverage(fragment, renderer))
+
+
 def capture(output_dir):
     import moderngl
     from PyQt6.QtGui import QImage
@@ -413,14 +421,16 @@ if(u_captureGrid){
 }
 float diffuse=max(dot(normalize(f_normal),normalize(vec3(-.4,-.5,1.))),0.);
 frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseColour),f_color.a);""")
-    base_shader = context.program(vertex_shader=capture_receiver_vertex(source["shaders"]["vertex41core"], renderer),
-                                  geometry_shader=capture_receiver_geometry(renderer),
-                                  fragment_shader=capture_receiver_coverage(capture_receiver_fragment(fragment, renderer), renderer))
+    vertex = source["shaders"]["vertex41core"]
+    base_shader = context.program(**capture_receiver_sources(vertex, fragment, renderer))
+    bed_shader = (context.program(**capture_receiver_sources(vertex, fragment, renderer, planar=True))
+                  if renderer == "Apple Software Renderer" else base_shader)
+    receiver_shaders = (base_shader, bed_shader) if bed_shader is not base_shader else (base_shader,)
     buffers, vaos = [], {}
     for label, mesh in (("head", head), ("paths", paths), ("bed", bed)):
         buffer = context.buffer(preview_buffer(mesh)[0])
         buffers.append(buffer)
-        for shader in ((head_shader,) if label == "head" else (base_shader,)):
+        for shader in ((head_shader,) if label == "head" else (bed_shader,) if label == "bed" else (base_shader,)):
             if shader is head_shader:
                 layout, attrs = "3f 3f 4f 1f 4f 1f 2f", ("a_vertex", "a_normal", "a_color", "a_surface", "a_material", "a_body", "a_finish")
             else:
@@ -447,8 +457,9 @@ frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseCo
             # Validate the uploaded projection before any rendering, including
             # the head-only scene. Model/view transforms here are identity.
             values = capture_bed_uniforms(projection, float(bed.triangles[0, 0, 2]), render_size)
-            uniforms(base_shader, values)
-        for shader in (head_shader, base_shader):
+            for shader in receiver_shaders:
+                uniforms(shader, values)
+        for shader in (head_shader, *receiver_shaders):
             uniforms(shader, dict(light_values_, u_modelMatrix=identity, u_normalMatrix=identity,
                                   u_viewMatrix=identity, u_projectionMatrix=projection, u_viewPosition=eye,
                                   u_orthographic=1, u_viewDirection=tuple((np.asarray(eye)-target)/500)))
@@ -458,7 +469,7 @@ frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseCo
         context.depth_func = "<"
         context.disable(moderngl.BLEND)
         if receivers:
-            render_receivers(vaos["bed", base_shader], vaos["paths", base_shader], base_shader)
+            render_receivers(vaos["bed", bed_shader], vaos["paths", base_shader], bed_shader)
         # The reference CAD materials are opaque. A single shaded,
         # depth-writing pass avoids cross-pass MSAA coverage mismatches on
         # Apple's software renderer; equal-depth faces retain draw order.
@@ -480,7 +491,7 @@ frag_color=vec4(baseColour*(.5+.5*diffuse)+lightSurface(f_vertex,f_normal,baseCo
         vao.release()
     for buffer in buffers:
         buffer.release()
-    for shader in (head_shader, base_shader):
+    for shader in (head_shader, *receiver_shaders):
         shader.release()
     framebuffer.release()
     resolved.release()

@@ -11,6 +11,31 @@ from tools import capture_toolhead as capture
 
 
 class ToolheadCaptureTests(unittest.TestCase):
+    def test_planar_bed_keeps_native_coverage_and_depth_while_tubes_keep_edge_ownership(self):
+        source = capture.configparser.ConfigParser(interpolation=None, comment_prefixes=(';',))
+        source.read(capture.ROOT / 'mpf/toolhead/scene-lighting.shader')
+        vertex = source['shaders']['vertex41core']
+        fragment = source['shaders']['fragment41core'].replace('#version 410',
+            '#version 410\nuniform bool u_captureGrid;').replace('void main() {',
+            'void main() {\nvec3 baseColour=f_color.rgb;')
+        # CI lost a complete large bed triangle when its enclosing geometry
+        # support was clipped. That plane needs no original-edge adapter: its
+        # physical pixel/grid position is reconstructed from fixed uniforms.
+        bed = capture.capture_receiver_sources(vertex, fragment, 'Apple Software Renderer', planar=True)
+        paths = capture.capture_receiver_sources(vertex, fragment, 'Apple Software Renderer')
+        self.assertIs(bed['vertex_shader'], vertex)
+        self.assertIsNone(bed['geometry_shader'])
+        self.assertIn('in vec3 f_vertex;', bed['fragment_shader'])
+        self.assertIn('gl_FragCoord.xy/u_captureViewport', bed['fragment_shader'])
+        self.assertNotIn('captureEdges', bed['fragment_shader'])
+        self.assertNotIn('gl_FragDepth', bed['fragment_shader'])
+        self.assertIsNotNone(paths['geometry_shader'])
+        self.assertIn('out vec3 g_vertex;', paths['vertex_shader'])
+        self.assertIn('gl_FragDepth=float(originalDepth)', paths['fragment_shader'])
+        for renderer in ('Apple M1 Pro', 'llvmpipe', 'AMD Radeon', 'NVIDIA'):
+            self.assertEqual(capture.capture_receiver_sources(vertex, fragment, renderer, planar=True),
+                             capture.capture_receiver_sources(vertex, fragment, renderer))
+
     def test_analytic_coverage_is_software_only_and_retains_original_depth_and_attributes(self):
         source = capture.configparser.ConfigParser(interpolation=None, comment_prefixes=(';',))
         source.read(capture.ROOT / 'mpf/toolhead/scene-lighting.shader')

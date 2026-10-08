@@ -285,12 +285,17 @@ What differs on this leg, and why:
   the same physical plane reconstructed from pixel coordinates and the exact
   uploaded camera matrix, avoiding drift in interpolated positions. This is
   a capture-only adapter. Precise/invariant vertex transforms alone did not
-  prevent a software-raster shared-edge crack. Receiver triangles therefore
-  supply one enclosing support triangle without an internal raster seam, then use canonical double-precision
+  prevent a software-raster shared-edge crack. Tube facets therefore supply
+  one enclosing support triangle without an internal raster seam, then use canonical double-precision
   original edge equations with complementary edge ownership in the fragment
   shader. Original barycentrics restore their attributes and depth; samples
   outside the original triangle are discarded. This adapter requires the
-  fixed orthographic showcase camera. Other drivers retain their shader source and native
+  fixed orthographic showcase camera. The large bed plane retains its original
+  vertex/raster coverage and depth with no geometry stage: CI lost a whole bed
+  triangle with heavily clipped enclosing support. Its physical lighting/grid
+  position still uses the fixed-plane uniforms. Both receiver programs receive
+  the same camera, lighting and viewport values for each scene.
+  Other drivers retain their shader source and native
   four-sample MSAA. The pixel and alpha requirements above remain unchanged.
 - **`make ui_test MODE=suite` and `make ui_release_gate` use the native
   desktop harness.** They stage Cura, the plugin and the driver, then
