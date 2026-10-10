@@ -75,6 +75,8 @@ class GuardedDispatchTests(unittest.TestCase):
         request.callback({} if error else {'result': 'ok'}, error)
 
     def test_no_mutation_before_query_and_fresh_state_rechecks_after_each_ack(self):
+        self.data.firmware = state(position=(100, 100, .03))
+        self.data.poll()
         self.controller.jog('z', -1, .01)
         self.controller.z_offset(-.01)
         self.assertEqual(self.scripts(), [])
@@ -84,10 +86,42 @@ class GuardedDispatchTests(unittest.TestCase):
         # unchanged screen poll. The offset shares this same motion queue.
         self.data.firmware['toolhead']['position'][2] = .02
         self.data.firmware['gcode_move']['position'][2] = .02
-        self.data.firmware['gcode_move']['gcode_position'][2] = -.01
+        self.data.firmware['gcode_move']['gcode_position'][2] = .02
         self.ack()
         self.assertEqual(len(self.scripts()), 2)
         self.assertEqual(self.scripts()[-1], 'SET_GCODE_OFFSET Z_ADJUST=-0.01 MOVE=1')
+
+    def test_jog_reaches_calibrated_zero_then_fresh_query_blocks_below_zero(self):
+        for axis in range(3):
+            self.controller._reset()
+            self.data.requests.clear()
+            self.data.firmware = state(position=(.1, .1, .1), base=(-.2, -.2, -.2),
+                                       mesh=[[-.1, .3], [.2, 0]])
+            self.data.poll()
+            distance = self.data.firmware['gcode_move']['gcode_position'][axis]
+            self.controller.jog('xyz'[axis], -1, distance)
+            self.query()
+            self.assertEqual(len(self.scripts()), 1)
+            for key in ('toolhead', 'gcode_move'):
+                self.data.firmware[key]['position'][axis] = -.2
+            self.data.firmware['gcode_move']['gcode_position'][axis] = 0
+            self.ack()
+            self.data.poll()
+            self.controller.jog('xyz'[axis], -1, .01)
+            self.query()
+            self.assertEqual(len(self.scripts()), 1)
+            self.assertTrue('below zero' in self.controller.values['jogStatus'] or 'below 0.00 Z' in self.controller.values['jogStatus'])
+
+    def test_compensated_z_does_not_refuse_nominal_upper_limit_or_request_mesh(self):
+        self.data.firmware = state(position=(100,100,199.8),mesh=[[-1,1],[1,-1]])
+        self.data.firmware['toolhead']['position'][2]=200.1
+        self.data.poll()
+        self.controller.jog('z',1,.2)
+        self.assertEqual(set(self.data.requests[-1].body['objects']),
+                         {'toolhead','gcode_move','configfile','print_stats'})
+        self.query()
+        self.assertEqual(len(self.scripts()),1)
+        self.assertIn('G1 Z0.2 F600',self.scripts()[0])
 
     def test_repeated_offsets_remain_operator_controlled_across_zero(self):
         self.data.firmware = state(position=(100, 100, .01), base=(0, 0, .01), origin=(0, 0, .01))
@@ -262,7 +296,13 @@ class GuardedDispatchTests(unittest.TestCase):
         self.data.poll()
         for axis, direction in (('x', -1), ('y', 1), ('z', 1)):
             self.controller.jog(axis, direction, 1)
-            self.assertIn('travel limit', self.controller.values['jogStatus'])
+            if direction < 0 or axis == 'z':
+                self.query()
+                self.assertIn('below zero' if direction < 0 else 'travel limits', self.controller.values['jogStatus'])
+            else:
+                self.assertIn('travel limit', self.controller.values['jogStatus'])
+        self.assertEqual(self.scripts(), [])
+        self.data.requests.clear()
         self.data.snapshot.core['motion_report']['live_position'] = []
         self.controller._reset()
         self.controller.jog('z', -1, 1)

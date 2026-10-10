@@ -241,12 +241,23 @@ class ResourceReferenceTests(unittest.TestCase):
             ("whatsnew/WhatsNewOverlay.py", "detection/DetectionOffer.qml"),
             ("toolhead/ToolheadPreviewGL.py", "toolhead/toolhead.shader"),
             ("toolhead/ToolheadOpaqueShader.py", "toolhead/toolhead.shader"),
+            ("toolhead/ToolheadEnvironmentRecovery.py", "toolhead/toolhead.shader"),
+            ("toolhead/ToolheadEnvironmentRecovery.py", "toolhead/environment-path-query.glsl"),
+            ("toolhead/ToolheadEnvironmentRecovery.py", "toolhead/environment-path-source.glsl"),
+            ("toolhead/ToolheadEnvironmentRecovery.py", "toolhead/environment-path-shade.glsl"),
+            ("toolhead/ToolheadEnvironmentRecovery.py", "toolhead/environment-path-light.glsl"),
+            ("toolhead/ToolheadEnvironmentRecovery.py", "toolhead/environment-path-compose.glsl"),
+            ("toolhead/ToolheadEnvironmentRecovery.py", "toolhead/environment-recovery.glsl"),
+            ("toolhead/ToolheadEnvironmentRecovery.py", "toolhead/environment-recovery-query.glsl"),
+            ("toolhead/ToolheadEnvironmentRecovery.py", "toolhead/environment-recovery-lookup.glsl"),
+            ("toolhead/ToolheadEnvironmentRecovery.py", "toolhead/environment-layer-lookup.glsl"),
             ("toolhead/ToolheadSceneNode.py", "toolhead/toolhead.shader"),
             ("toolhead/ToolheadSceneLighting.py", "toolhead/scene-lighting.shader"),
             ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.vert.qsb"),
             ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.frag.qsb"),
         ("toolhead/ToolheadEnvironmentScene.py", "toolhead/scene-lighting.shader"),
-        ("toolhead/ToolheadCaptureRecipe.py", "toolhead/scene-lighting.shader"),
+            ("toolhead/ToolheadCaptureRecipe.py", "toolhead/scene-lighting.shader"),
+            ("toolhead/ToolheadEnvironmentPrograms.py", "toolhead/toolhead.shader"),
         })
 
     def test_stale_upload_dialog_path_is_detected(self):
@@ -284,6 +295,11 @@ class ResourceReferenceTests(unittest.TestCase):
     def test_entrypoints_and_resources_ship_in_both_archive_formats(self):
         package_id = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["package_id"]
         targets = {target for _, _, target in (*runtime_paths(), *qml_file_paths())}
+        # These complete-path resources are still unwired. Their author-proof
+        # transport must nevertheless ship the exact tested bytes, not a stale
+        # scratch query/decoder or an absent hit-local appearance include.
+        for name in ("environment-path-query.glsl", "environment-path-source.glsl", "environment-path-shade.glsl", "environment-path-light.glsl", "environment-path-compose.glsl", "environment-plate-query.glsl", "environment-recovery.glsl"):
+            targets.add(PLUGINS.root / "toolhead" / name)
         self.assertGreater(len(targets), 20)
         with tempfile.TemporaryDirectory() as directory:
             for script, extension, prefix in (

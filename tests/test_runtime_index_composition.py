@@ -502,6 +502,8 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         for _ in range(100):
             if app.loaded_paths: break
             self.qt.events(10)
+        self.assertEqual(app.loaded_paths, [parts.files.path])
+        self.assertTrue(parts.cura.loading)
         app.controller.view = harness.SimpleNamespace(getActivity=lambda: True, getLayerData=lambda: object())
         app.controller.activeViewChanged.emit()
         for _ in range(300):
@@ -951,4 +953,3 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         device._has_slice = lambda: True
         device.leaveMonitorStage()
         self.assertEqual(self.app.controller.stage, "PreviewStage")
-

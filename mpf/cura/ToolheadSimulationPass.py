@@ -134,6 +134,128 @@ class ToolheadSimulationPass:
         except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
             return None
 
+    def get_sample_depth_revision(self, camera, viewport):
+        """Certify rendered paths OR their current absence; unknown is not empty."""
+        revision = self.get_visible_depth_revision(camera,viewport)
+        if revision is not None:return ('paths',revision)
+        from UM.Scene.SceneNode import SceneNode
+        from UM.Scene.ToolHandle import ToolHandle
+        try:
+            if (self._closed or not self._eligible() or self._view.getCompatibilityMode()
+                    or self._view.getCurrentLayerMesh() is not None
+                    or self._view.getCurrentLayerJumps() is not None):return None
+            # An unsupported/incomplete prefix still owns geometry. Refuse it
+            # rather than manufacture an empty seed during source replacement.
+            for child in self._root.getAllChildren():
+                if isinstance(child,ToolHandle) or not isinstance(child,SceneNode) or not child.isVisible():continue
+                if child.callDecoration('getLayerData') is not None:return None
+            return ('empty',id(self._view),id(self._root),viewport,
+                    value_key(camera.getInverseWorldTransformation()),value_key(camera.getProjectionMatrix()))
+        except (AttributeError,KeyError,RuntimeError,TypeError,ValueError):return None
+
+    def render_visible_depth(self, gl, output, camera, cropped_camera, viewport, crop, revision):
+        """Replay the exact admitted native prefix into an owned D32/four-sample crop.
+
+        The normal simulation colour/cache stays single-sample. No resolved seed
+        is replicated: original lower/current/fractional shaders rasterize their
+        actual geometry and discard/filter rules at the crop's sample positions.
+        """
+        from PyQt6.QtGui import QOpenGLContext
+        from ..toolhead.ToolheadGLState import preserved_state, preserved_samples
+        from ..toolhead.ToolheadSampleTarget import ToolheadSampleTarget
+        if revision is None or self.get_visible_depth_revision(camera, viewport) != revision:
+            return False
+        context = QOpenGLContext.currentContext()
+        left, bottom, width, height = crop
+        snapshot = self._depth_snapshot
+        source = self._source()
+        if (context is not self._context or not isinstance(output, ToolheadSampleTarget)
+                or output._context is not context or not output.isValid()
+                or output.format().samples() != 4 or int(gl.glGetIntegerv(0x80A9)) != 4
+                or (output.width(), output.height()) != (width, height)
+                or output.handle() != int(gl.glGetIntegerv(0x8CA6))
+                or left < 0 or bottom < 0 or width <= 0 or height <= 0
+                or left+width > viewport[2] or bottom+height > viewport[3]
+                or source is None or self._geometry is None or self._shaders is None
+                or snapshot['shadow'] not in (True, False) or snapshot.get('filled') is not True
+                or snapshot['raster'] != (0x0901, 0x0405, (0., 1.), False, False)):
+            return False
+        child, data, ranges = source
+        start, top, end, partial = ranges
+        if (data is not snapshot['data'] or child is not snapshot['child']
+                or (start, top, end) != (snapshot['start'], snapshot['top'], snapshot['end'])):
+            return False
+        normal, shadow = self._shaders
+        try:
+            # Live metrics, active extruder, start colour and delivered light
+            # must match the authoritative original draw, not only view filters.
+            if self._uniforms(camera) != snapshot['key'][-1]: return False
+            if not self._filled_raster(self._coverage_state(gl)): return False
+            depth_range = tuple(map(float, gl.glGetFloatv(0x0B70)))
+            depth_clamp = bool(gl.glIsEnabled(0x864F))
+            with preserved_state(gl, context), preserved_samples(gl, context):
+                try:
+                    gl.glViewport(0, 0, width, height)
+                    gl.glDisable(0x0C11)
+                    gl.glDisable(0x864F)
+                    gl.glDepthRange(0., 1.)
+                    gl.glDisable(0x8037)
+                    gl.glEnable(0x809D)
+                    for flag in (0x8E51, 0x80A0, 0x809E, 0x809F, 0x8C36): gl.glDisable(flag)
+                    gl.glFrontFace(0x0901); gl.glCullFace(0x0405)
+                    gl.glEnable(gl.GL_DEPTH_TEST); gl.glDepthFunc(gl.GL_LESS); gl.glDepthMask(True)
+                    gl.glDisable(gl.GL_BLEND); gl.glColorMask(False, False, False, False)
+                    self._partial_uniforms(normal, None)
+                    gl.glEnable(gl.GL_CULL_FACE)
+                    if top > start:
+                        self._geometry.render(shadow if snapshot['shadow'] else normal,
+                            cropped_camera, child.getWorldTransformation(), [(start, top)], gl)
+                    gl.glDisable(gl.GL_CULL_FACE)
+                    if end > top:
+                        self._geometry.render(normal, cropped_camera, child.getWorldTransformation(), [(top, end)], gl)
+                    if partial is not None:
+                        self._partial_uniforms(normal, partial)
+                        self._geometry.render(normal, cropped_camera, child.getWorldTransformation(), [(end, end+2)], gl)
+                    if gl.glGetError(): raise RuntimeError('Native sampled path-depth replay failed')
+                finally:
+                    failure = None
+                    actions = (lambda: self._partial_uniforms(normal, partial),
+                               lambda: gl.glDepthRange(*depth_range),
+                               lambda: (gl.glEnable if depth_clamp else gl.glDisable)(0x864F))
+                    for action in actions:
+                        try: action()
+                        except Exception as error:
+                            if failure is None: failure = error
+                    if failure is not None: raise RuntimeError('Native depth replay restoration failed') from failure
+            return self.get_visible_depth_revision(camera, viewport) == revision
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _coverage_state(gl):
+        try:
+            return (tuple(map(int, gl.glGetIntegerv(0x0B40))),
+                    tuple(bool(gl.glIsEnabled(flag)) for flag in
+                          (0x8C89, 0x0B90, 0x0BF2, *range(0x3000, 0x3008))))
+        except (KeyError, TypeError, ValueError): return None
+
+    @staticmethod
+    def _filled_raster(coverage):
+        return coverage == ((0x1B02, 0x1B02), (False,)*11)
+
+    @staticmethod
+    def _partial_uniforms(shader, partial):
+        """Restore each independent transient uniform even after one fault."""
+        values = (("u_last_vertex", [math.nan]*3 if partial is None else list(map(float, partial[0]))),
+                  ("u_next_vertex", [math.nan]*3 if partial is None else list(map(float, partial[1]))),
+                  ("u_last_line_ratio", 1. if partial is None else float(partial[2])))
+        failure = None
+        for name, value in values:
+            try: shader.setUniformValue(name, value)
+            except Exception as error:
+                if failure is None: failure = error
+        if failure is not None: raise RuntimeError('Native partial path uniform restoration failed') from failure
+
     def copy_visible_depth(self, gl, output, camera, viewport, crop, revision):
         """Copy only our owned full-output depth into a matching head crop."""
         if revision is None or self.get_visible_depth_revision(camera, viewport) != revision:
@@ -304,9 +426,17 @@ class ToolheadSimulationPass:
                         camera, transform, start, top, self._view, gl)
                     if not instanced: self._geometry.render(shadow if self._shadow else normal, camera, transform, [(start, top)], gl)
                 completed(top, end)
+            try:
+                raster = (int(gl.glGetIntegerv(0x0B46)), int(gl.glGetIntegerv(0x0B45)),
+                    tuple(map(float, gl.glGetFloatv(0x0B70))),
+                    bool(gl.glIsEnabled(0x8037)), bool(gl.glIsEnabled(0x864F)))
+            except (KeyError, TypeError, ValueError): raster = None
+            coverage = self._coverage_state(gl)
+            # Raster provenance belongs to the retained prefix identity. A
+            # later FILL frame cannot certify a previously cached wire image.
             key = (id(data), id(child), value_key(transform), value_key(camera.getInverseWorldTransformation()),
                    value_key(camera.getProjectionMatrix()), int(self._view.getCurrentLayer()),
-                   int(self._view.getMinimumLayer()), self._shadow, signature)
+                   int(self._view.getMinimumLayer()), self._shadow, (raster, coverage), signature)
             self._cache.restore(gl, self._fbo, key, end, rebuild, completed)
             if partial is not None:
                 gl.glEnable(gl.GL_DEPTH_TEST)
@@ -319,12 +449,7 @@ class ToolheadSimulationPass:
                 normal.setUniformValue("u_next_vertex", list(map(float, partial[1])))
                 normal.setUniformValue("u_last_line_ratio", float(partial[2]))
                 self._geometry.render(normal, camera, transform, [(end, end + 2)], gl)
-            try:
-                raster = (int(gl.glGetIntegerv(0x0B46)), int(gl.glGetIntegerv(0x0B45)),
-                    tuple(map(float, gl.glGetFloatv(0x0B70))),
-                    bool(gl.glIsEnabled(0x8037)), bool(gl.glIsEnabled(0x864F)))
-            except (TypeError, ValueError): raster = None
-            self._depth_snapshot = dict(data=data, child=child, key=key, start=start, top=top, end=end,
+            self._depth_snapshot = dict(data=data, child=child, key=key, filled=self._filled_raster(coverage), start=start, top=top, end=end,
                 settings=self._depth_view_key(self._view), shadow=self._shadow,
                 starts_alpha=self._depth_starts_alpha, raster=raster, path=float(self._view.getCurrentPath()))
             self._draw_handles(camera)

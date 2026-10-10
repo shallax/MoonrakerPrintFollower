@@ -6,6 +6,7 @@ replaced per owned instance, without changing the native class or globals.
 """
 from __future__ import annotations
 import ctypes
+import struct
 from PyQt6.QtGui import QOpenGLContext, QMatrix4x4, QVector2D, QVector3D, QVector4D, QColor
 from UM.View.GL.ShaderProgram import ShaderProgram
 from .ToolheadGLState import procedure
@@ -54,7 +55,7 @@ class RawBindings:
 
 class RawProgram:
  def __init__(self):
-  self.context=QOpenGLContext.currentContext();self.functions={};self.shaders=[];self.linked=False
+  self.context=QOpenGLContext.currentContext();self.functions={};self.shaders=[];self.linked=False;self._uniform_cache={}
   self.name=self.fn('glCreateProgram',ctypes.c_uint)();
   if not self.name: raise RuntimeError('Reflection program allocation failed')
  def fn(self,name,result,*args):
@@ -79,6 +80,7 @@ class RawProgram:
   out=ctypes.create_string_buffer(max(1,size.value));self.fn('glGetShaderInfoLog',None,ctypes.c_uint,ctypes.c_int,ctypes.POINTER(ctypes.c_int),ctypes.c_void_p)(shader,len(out),None,out)
   return out.value.decode('utf-8',errors='replace')
  def link(self):
+  self._uniform_cache.clear()
   self.fn('glLinkProgram',None,ctypes.c_uint)(self.name);status=ctypes.c_int()
   self.fn('glGetProgramiv',None,ctypes.c_uint,ctypes.c_uint,ctypes.POINTER(ctypes.c_int))(self.name,0x8B82,ctypes.byref(status))
   if not status.value: raise RuntimeError(self.log())
@@ -100,18 +102,28 @@ class RawProgram:
  def setUniformValue(self,location,value):
   I,F=ctypes.c_int,ctypes.c_float
   if isinstance(value,QMatrix4x4):
-   body=(F*16)(*value.copyDataTo())
-   self.fn('glUniformMatrix4fv',None,I,I,ctypes.c_ubyte,ctypes.POINTER(F))(location,1,1,body)
-  elif isinstance(value,(QVector2D,QVector3D,QVector4D)):
-   n=2 if isinstance(value,QVector2D) else 3 if isinstance(value,QVector3D) else 4
-   values=[value.x(),value.y()]+([value.z()] if n>=3 else [])+([value.w()] if n==4 else [])
-   self.fn('glUniform'+str(n)+'f',None,I,*([F]*n))(location,*values)
-  elif isinstance(value,QColor):
-   self.fn('glUniform4f',None,I,F,F,F,F)(location,value.redF(),value.greenF(),value.blueF(),value.alphaF())
-  elif type(value) in (int,bool):self.fn('glUniform1i',None,I,I)(location,int(value))
-  elif type(value) is float:self.fn('glUniform1f',None,I,F)(location,value)
+   body=(F*16)(*value.copyDataTo());key=('matrix',bytes(body))
+   function=lambda:self.fn('glUniformMatrix4fv',None,I,I,ctypes.c_ubyte,ctypes.POINTER(F))(location,1,1,body)
+  elif isinstance(value,(QVector2D,QVector3D,QVector4D,QColor)):
+   if isinstance(value,QColor):values=(value.redF(),value.greenF(),value.blueF(),value.alphaF())
+   else:
+    n=2 if isinstance(value,QVector2D) else 3 if isinstance(value,QVector3D) else 4
+    values=[value.x(),value.y()]+([value.z()] if n>=3 else [])+([value.w()] if n==4 else [])
+   n=len(values);key=('vector',struct.pack('='+str(n)+'f',*values))
+   function=lambda:self.fn('glUniform'+str(n)+'f',None,I,*([F]*n))(location,*values)
+  elif type(value) in (int,bool):
+   key=('int',I(int(value)).value);function=lambda:self.fn('glUniform1i',None,I,I)(location,int(value))
+  elif type(value) is float:
+   key=('float',bytes(F(value)));function=lambda:self.fn('glUniform1f',None,I,F)(location,value)
   else:raise RuntimeError('Unqualified uniform value '+repr(type(value)))
+  # This program is private to one capture context. Uniform values survive
+  # unbinding; cache their exact delivered representation, not mutable objects.
+  if self._uniform_cache.get(location)==key:return
+  function();self._uniform_cache[location]=key
  def setUniformValueArray(self,location,values):
+  # Bulk arrays can overlap locations set through individual element names.
+  # Invalidate before delivery so neither ordering can leave a stale cache.
+  self._uniform_cache.clear()
   F=ctypes.c_float
   if values and isinstance(values[0],(QVector2D,QVector3D)):
    n=2 if isinstance(values[0],QVector2D) else 3

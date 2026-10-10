@@ -28,9 +28,12 @@ CAD colours with any explicit colour overrides. Automatic and Imported reset eac
 parts remain selectable through the body list. See [appearance controls and defaults](docs/TOOLHEAD_MATERIALS.md).
 
 In normal Cura Preview, reflective parts show a cached approximation of the actual
-bed and visible G-code. Layer progress and head movement refresh the map without
+bed and visible G-code through six exterior views. Complete depth searches retain
+thin reflected features, while opposite views share their traversal work.
+Unchanged maps sleep instead of rebuilding periodically. Layer progress and
+lighting changes refresh the map without
 recursively rendering Cura. Legacy compatibility mode keeps ordinary shading.
-Glass retains its imported alpha; refraction and ray tracing are not implemented.
+Glass retains its imported alpha without refraction.
 
 The model editor's **Fans** section lets you pick a whole rotor body, inspect or
 override its centre and axis, and use **Update preview** before confirming rotation.
@@ -58,8 +61,10 @@ levelling, bed-mesh calibration and motor-release operations while idle.
 Jog and Move-to require a non-printing state and fresh, usable firmware
 position, travel limits and coordinate-transform data. Both Preview and Monitor
 share a queue that checks every position move before sending it and restores
-the previous coordinate mode and feedrate. Conservative whole-mesh bounds can
-refuse near-bed moves; unsupported kinematics or transforms also show a reason.
+the previous coordinate mode and feedrate. G-code zero is an inclusive lower
+bound on each commanded axis; negative targets are rejected. Firmware alone
+handles bed-mesh compensation. Upper travel limits still apply, and unsupported
+kinematics or transforms show a reason.
 These checks cannot make a firmware query and later command atomic against
 commands from another client, and do not replace firmware protections.
 

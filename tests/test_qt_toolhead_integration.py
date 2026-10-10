@@ -78,22 +78,18 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
         self.controller.jog("z", -1)
         self.controller.jog("z", -1)
         self.assertEqual(self.controller._pending, ())
-        # On the maximum side the FIRST tap clamps to the boundary,
-        # and the client-side Z estimate (the live report:
-        # stale-poll clamping let rapid taps overshoot) makes the
-        # second tap a no-op.
+        # Z uses the fresh planned endpoint. An oversized request is rejected;
+        # an explicit move to the upper boundary succeeds exactly once.
         self.data.snapshot.core["motion_report"]["live_position"][2] = 195.0
         self.data.changed.emit()
         self.controller.jog("z", 1)
-        self.assertIn('SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 Z5 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0', self.scripts())
+        self.assertEqual(self.scripts(), [])
+        self.controller.set_distance(5)
         self.controller.jog("z", 1)
-        self.assertEqual(len(self.scripts()), 1)  # at the boundary: no-op
-        self.assertEqual(self.controller._axis_estimate["z"], 200.0)
+        self.assertIn('G1 Z5 F600', self.scripts()[-1])
         self.commands.complete()
-        # A fresh poll at the boundary keeps the tap a no-op.
-        self.data.snapshot.core["motion_report"]["live_position"][2] = 200.0
-        self.data.changed.emit()
         self.controller.jog("z", 1)
+        self.assertEqual(len(self.scripts()), 1)
         self.assertEqual(self.controller._pending, ())
 
     def test_merged_x_and_y_tails_never_overshoot_the_axis_limits(self):
@@ -159,10 +155,11 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
         # reflection lagging (the dispatch seam), not the head the
         # nudge is measured against.
         self.controller.jog("z", 1)
+        self.commands.complete()
         self.data.snapshot.core["motion_report"]["live_position"][2] = 1.1
         self.data.changed.emit()  # the head reported at the moved level
-        self.data.snapshot.core["motion_report"]["live_position"][2] = 0.1
-        self.data.changed.emit()  # ...and back one nudge above the floor
+        self.data.snapshot.core["motion_report"]["live_position"][2] = 0.2
+        self.data.changed.emit()  # ...and a fresh position less than one nudge above the floor
         self.controller.jog("z", -1)
         self.assertEqual(len(notes), 2)
 

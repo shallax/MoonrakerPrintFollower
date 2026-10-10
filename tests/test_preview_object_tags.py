@@ -196,6 +196,13 @@ class BannerHostTests(harness.RealEngineTestCase):
         self.assertEqual(tooltip.property("text"),
                          "This Cura version does not provide camera projection to plugins.")
 
+
+    def test_obsolete_renderer_controls_and_status_are_absent(self):
+        host = self.mount("PreviewObjectTagsHost.qml")
+        for name in ("moonrakerEnvironmentReflections", "moonrakerRayTracedReflections",
+                     "moonrakerEnvironmentFallback", "moonrakerReflectionStatus"):
+            self.assertIsNone(host.findChild(harness.QObject, name))
+
     def test_lighting_checkbox_indicators_restore_identical_enabled_colours(self):
         from PyQt6.QtCore import QPoint
         from PyQt6.QtTest import QTest
@@ -261,6 +268,7 @@ class BannerHostTests(harness.RealEngineTestCase):
         host.setProperty("toolheadVisible", True)
         self._wait_until(window, lambda _: background(models) == expected, timeout=3.0)
         self.assertEqual(background(models), expected)
+
 
     def test_view_options_reservation_keeps_native_extension_chain_clear(self):
         from PyQt6.QtCore import QUrl

@@ -7,6 +7,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 import numpy as np
 from PyQt6.QtGui import QImage, QColor
+from mpf.toolhead.ToolheadCaptureValues import UniformValue
 
 with patch.dict(sys.modules, {
     'mpf.toolhead.ToolheadCaptureGL': NS(RawShaderProgram=Mock),
@@ -19,6 +20,44 @@ with patch.dict(sys.modules, {
 class Matrix:
     def __init__(self, data=None): self.data = np.eye(4) if data is None else np.array(data)
     def getData(self): return self.data
+
+
+class CaptureMemoryReceiptTests(unittest.TestCase):
+    def test_snapshot_retires_derived_receiver_when_same_plate_stops_lighting(self):
+        mesh = module.CaptureMesh(19, np.zeros((3, 3), np.float32),
+            np.array([[0, 1, 2]], np.uint32), None, None, None, ())
+        settings = (('u_grid', UniformValue('scalar', 1)),)
+        entry = ('grid', mesh, UniformValue('scalar', 1), None, (), settings)
+        for lighting, effects, current_settings, expected in (
+                ((('light', UniformValue('scalar', 1)),), (True, False), settings, {19, -19}),
+                ((), (True, False), settings, {19}),
+                ((('light', UniformValue('scalar', 1)),), (False, False), settings, {19}),
+                ((('light', UniformValue('scalar', 1)),), (True, False), (), {19})):
+            with self.subTest(lighting=lighting, effects=effects, settings=current_settings):
+                scene = module.CaptureScene(Mock(), object(), Mock())
+                scene.receivers = {19: object()}
+                scene.shaders['grid'] = Mock()
+                scene.texture = object()
+                frame = module.CaptureFrame((0, 0, 0), UniformValue('scalar', 1),
+                    (entry[:-1]+(current_settings,),), (), (), lighting, effects, (), None)
+                scene.snapshot(frame)
+                scene.plates.retain.assert_called_once_with(expected)
+                self.assertEqual(bool(scene.receivers), -19 in expected)
+
+    def test_derived_receivers_and_upload_copies_are_charged_from_actual_layout(self):
+        vertices = np.zeros((3, 3), np.float32)
+        indices = np.array([[0, 1, 2]], np.uint32)
+        mesh = module.CaptureMesh(19, vertices, indices, None, None, np.zeros((3, 2), np.float32), ())
+        entry = ('grid', mesh, None, None, (), (('u_grid', 1),))
+        frame = module.CaptureFrame((), None, (entry,), (), (), (('light', UniformValue('scalar', 1)),), (True, False), (), (2, 2, bytes(16)))
+        # 72 original GPU + 84 receiver GPU + 36 retained normals,
+        # plus168 peak copied-parts/joined-receiver upload +16 texture GPU.
+        self.assertEqual(frame.capture_storage_bytes(), 376)
+        frame = module.CaptureFrame((), None, (entry,), (), (), (), (True, False), (), None)
+        self.assertEqual(frame.capture_storage_bytes(), 216)
+        path = (mesh, None, None, None, None, None, None)
+        frame = module.CaptureFrame((), None, (entry, entry), (path,), (), (('light', UniformValue('scalar', 1)),), (True, False), (), None)
+        self.assertEqual(frame.capture_storage_bytes(), 720+36)
 
 
 class CaptureRecipeTests(unittest.TestCase):
@@ -41,6 +80,19 @@ class CaptureRecipeTests(unittest.TestCase):
             getVertexCount=Mock(return_value=2), hasColors=Mock(return_value=False),
             hasNormals=Mock(return_value=False), hasUVCoordinates=Mock(return_value=False),
             attributeNames=Mock(return_value=[]))
+
+    def test_source_memory_receipt_counts_borrowed_vbo_cpu_and_texture_without_copy(self):
+        mesh = module.CaptureMesh.freeze(self.mesh())
+        lease = module.BufferLease(7, 24, mesh.layout()[0])
+        frame = module.CaptureFrame((0, 0, 0), None,
+            (('bed', mesh, None, None, (), ()),),
+            ((mesh, lease, None, (0, 2), None, 0, 0), (mesh, lease, None, (0, 2), None, 0, 0)),
+            (), (), (False, False), (), (1, 3, bytes(12)))
+        self.assertEqual(mesh.retained_bytes(), 32)
+        self.assertEqual(frame.retained_source_bytes(), 156)
+        self.assertIs(frame.paths[0][0], mesh)
+        no_paths = module.CaptureFrame((0, 0, 0), None, frame.plates, (), (), (), (False, False), (), None)
+        self.assertEqual(no_paths.retained_source_bytes(), 32)
 
     def test_same_texture_wrapper_republishes_changed_pixels_and_initial_lazy_image(self):
         freezer = module.CaptureFreezer()

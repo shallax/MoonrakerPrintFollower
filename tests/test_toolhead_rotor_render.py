@@ -23,6 +23,72 @@ class RotorRenderTests(unittest.TestCase):
         self.assertIsNone(owner._work)
         self.assertIsNone(owner._result)
 
+    def test_retiring_explicit_shutter_preserves_unknown_close_until_verified(self):
+        from mpf.toolhead import ToolheadRotorRender as module
+        class Target:
+            fails = True
+            def close(self):
+                if self.fails: raise RuntimeError('unretired shutter')
+        target = Target()
+        owner = ToolheadRotorRender()
+        owner._work = target
+        owner._size = (20, 10, 4)
+        owner._result = owner._resolve = object()
+        with patch.object(module, 'ToolheadSampleTarget', Target):
+            with self.assertRaisesRegex(RuntimeError, 'unretired shutter'): owner.release_targets()
+            self.assertIs(owner._work, target)
+            self.assertEqual(owner._size, (20, 10, 4))
+            target.fails = False
+            owner.release_targets()
+        for name in ('_work','_resolve','_result','_size','_key'):
+            self.assertIsNone(getattr(owner, name))
+
+    def test_explicit_shutter_rejects_foreign_context_and_preserves_failed_resize_lease(self):
+        if not self.available: self.skipTest('Offscreen OpenGL unavailable')
+        from mpf.toolhead.ToolheadSampleTarget import ToolheadSampleTarget
+        target = ToolheadSampleTarget(self.gl, 19, 13)
+        owner = ToolheadRotorRender()
+        try:
+            with patch('PyQt6.QtGui.QOpenGLContext.currentContext', return_value=None):
+                with self.assertRaisesRegex(RuntimeError, 'context unavailable'):
+                    owner.combine(self.gl,target,None,(19,13,4),None,blurred=False)
+            with self.assertRaisesRegex(RuntimeError, 'exact live owned target'):
+                owner.combine(self.gl,target,None,(19,13,0),None,blurred=False)
+            owner.combine(self.gl,target,None,(19,13,4),lambda *_:None,blurred=False)
+            old, size = owner._work, owner._size
+            with patch.object(ToolheadSampleTarget,'close',side_effect=RuntimeError('unknown resize retirement')):
+                with self.assertRaisesRegex(RuntimeError,'unknown resize retirement'):
+                    owner.combine(self.gl,target,None,(20,13,4),lambda *_:None,blurred=False)
+            self.assertIs(owner._work,old)
+            self.assertEqual(owner._size,size)
+            owner.release_targets()
+            self.assertIsNone(owner._work)
+        finally: target.close()
+
+    def test_same_size_ordinary_ms_and_explicit_float_depth_shutters_never_share_work(self):
+        if not self.available:self.skipTest('Offscreen OpenGL unavailable')
+        from mpf.toolhead.ToolheadSampleTarget import ToolheadSampleTarget
+        gl=self.gl
+        fmt=QOpenGLFramebufferObjectFormat();fmt.setSamples(4)
+        fmt.setAttachment(QOpenGLFramebufferObject.Attachment.CombinedDepthStencil)
+        ordinary=QOpenGLFramebufferObject(19,13,fmt)
+        sampled=ToolheadSampleTarget(gl,19,13)
+        owner=ToolheadRotorRender()
+        def render(*args):
+            gl.glColorMask(True,True,True,True);gl.glDepthMask(True)
+            gl.glClearColor(.2,.3,.4,1);gl.glClearDepth(.5)
+            gl.glClear(gl.GL_COLOR_BUFFER_BIT|gl.GL_DEPTH_BUFFER_BIT)
+        for static,expected in ((ordinary,False),(sampled,True),(ordinary,False)):
+            static.bind();gl.glViewport(0,0,19,13);render()
+            owner.combine(gl,static,None,(19,13,4),render,blurred=False,cache_key=('same',))
+            self.assertEqual(isinstance(owner._work,ToolheadSampleTarget),expected)
+        self.assertEqual(int(gl.glGetError()),0)
+        retired=owner._retirement;retired()
+        self.assertIsNone(owner._work);self.assertIsNone(owner._key)
+        owner.combine(gl,ordinary,None,(19,13,4),render,blurred=False,cache_key=('same',))
+        current=owner._work;retired();self.assertIs(owner._work,current)
+        sampled.close()
+
     def test_identical_stopped_pose_reuses_pixels_and_changed_scene_or_pose_rebuilds(self):
         if not self.available: self.skipTest('Offscreen OpenGL unavailable')
         gl=self.gl

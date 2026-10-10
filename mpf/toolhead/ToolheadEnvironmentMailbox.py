@@ -90,14 +90,14 @@ class EnvironmentMailbox:
             pair.state = 'ready' if pair.generation == self.generation and not self.closed else 'sealed'
             return pair.state == 'ready'
 
-    def abort(self, token, producer_fence, *, gpu_complete=False):
-        """Seal cancelled/failed work with its last submitted GPU command."""
+    def abort(self, token, producer_fence, *, gpu_complete=False, payload=None):
+        """Seal work and its retained sources with the last GPU command."""
         with self._lock:
             pair = self._pair(token)
             if pair.state != 'building': raise RuntimeError('Reflection producer ticket is not active')
             if producer_fence is None and not gpu_complete:
                 raise RuntimeError('Reflection producer completion is unverified')
-            pair.producer_fence = producer_fence
+            pair.payload, pair.producer_fence = payload, producer_fence
             pair.state = 'sealed'
 
     def begin_poll(self):

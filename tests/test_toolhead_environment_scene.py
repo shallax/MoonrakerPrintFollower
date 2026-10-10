@@ -91,6 +91,7 @@ class EnvironmentSceneTests(unittest.TestCase):
             'UM.View.RenderBatch': NS(RenderBatch=Mock()),
             'UM.View.GL.OpenGLContext': NS(OpenGLContext=NS(isLegacyOpenGL=lambda:False)),
             'UM.View.GL.ShaderProgram': NS(ShaderProgram=lambda:self.shader),
+            'UM.Math.Color': NS(Color=type('Color', (), {})),
             'UM.Math.Matrix': NS(Matrix=Matrix), 'UM.Math.Vector': NS(Vector=lambda *args: tuple(args)),
             'UM.Application': NS(Application=NS(getInstance=lambda: self.app)),
             'cura.Settings.ExtruderManager': NS(ExtruderManager=NS(getInstance=lambda: NS(activeExtruderIndex=2))),
@@ -203,6 +204,18 @@ class EnvironmentSceneTests(unittest.TestCase):
         self.assertEqual(list(snap.visible_chunks(geometry,camera,0,2)),[(0,2)])
         snap.path_bounds.clear()
         self.assertEqual(list(snap.visible_chunks(geometry,camera,0,2)),[(0,2)])
+
+    def test_directional_views_keep_all_prefix_ranges_without_retesting_frustum(self):
+        geometry=NS(mesh=object());chunk=module.PATH_CHUNK
+        snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[],{},False,projection=1)
+        # Raster clipping still owns visibility. Skipping the CPU test cannot
+        # remove any geometry, including a range straddling padded boxes.
+        camera=NS(getProjectionMatrix=lambda: (_ for _ in ()).throw(AssertionError('redundant camera test')))
+        snap.path_bounds[id(geometry),0]=(np.array([-6,-44,-6]),np.array([6,-34,6]))
+        snap.path_bounds[id(geometry),chunk]=(np.array([10,-1,-1]),np.array([20,1,1]))
+        self.assertEqual(list(snap.visible_chunks(geometry,camera,chunk-2,chunk+2)),[(chunk-2,chunk+2)])
+        self.assertEqual(snap._visibility,{})
+        self.assertEqual(list(snap.visible_chunks(geometry,camera,0,2,lights=[])),[])
 
     def test_frozen_visibility_reuses_boxes_but_new_box_or_camera_invalidates(self):
         geometry=NS(mesh=object());snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[],{},False)

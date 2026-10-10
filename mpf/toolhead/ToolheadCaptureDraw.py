@@ -28,6 +28,7 @@ class CapturePaths(ToolheadPathGeometry):
         self.index = CaptureBuffer(context, 0x8893)
         self.arrays = {}
         self.index.create()
+        self._index_uploaded = False
 
     @contextmanager
     def draw_session(self, shader, camera, transform, gl):
@@ -49,14 +50,18 @@ class CapturePaths(ToolheadPathGeometry):
             else:
                 vao.bind(); gl.glBindBuffer(0x8892, self.lease.name); shader.bind()
             self.index.bind()
+            if not self._index_uploaded:
+                # Frozen indices are shared by every face/pass and later capture.
+                # The capture receipt already admits the complete index storage.
+                self.index.upload(np.asarray(self._indices, dtype=np.uint32).tobytes())
+                self._index_uploaded = True
             camera_bindings(shader, camera, transform, self.mesh)
             draw_elements = procedure(self.context, 'glDrawElements', None, ctypes.c_uint, ctypes.c_int,
                 ctypes.c_uint, ctypes.c_void_p)
             def draw(ranges):
                 for start, end in self._validate_ranges(ranges):
-                    self.index.upload(np.asarray(self._indices[start:end], dtype=np.uint32).tobytes())
                     shader.setUniformValue('u_drawElementStart', start)
-                    draw_elements(0x0001, end-start, 0x1405, None)
+                    draw_elements(0x0001, end-start, 0x1405, ctypes.c_void_p(start*4))
             yield draw
         finally:
             try: shader.release()

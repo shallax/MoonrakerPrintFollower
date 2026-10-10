@@ -27,6 +27,39 @@ class PhysicalMotionTests(unittest.TestCase):
                 prepare(JogOp(kind='jog', axis=axis, distance=delta), state())
         self.assertIn('G1 Z-10 F600', prepare(JogOp(kind='jog', axis='z', distance=-10), state()))
 
+    def test_calibrated_zero_is_inclusive_on_every_axis_with_offsets_and_mesh(self):
+        for base in ((0, 0, 0), (-.2, -.3, -.4), (.2, .3, .4)):
+            for mesh in (None, [[-.1, .3], [.2, 0]]):
+                values = state(base=base, mesh=mesh)
+                for axis in range(3):
+                    target = [None]*3
+                    target[axis] = 0
+                    with self.subTest(base=base, mesh=mesh, axis=axis):
+                        script = prepare(JogOp(kind='move-to', targets=tuple(target)), values)
+                        self.assertIn(f'G1 {"XYZ"[axis]}0 F600', script)
+                        distance = -values['gcode_move']['gcode_position'][axis]
+                        self.assertIn('G91', prepare(JogOp(kind='jog', axis='xyz'[axis], distance=distance), values))
+                        target[axis] = -0.000000001
+                        with self.assertRaisesRegex(UnsafeMotion, 'below zero'):
+                            prepare(JogOp(kind='move-to', targets=tuple(target)), values)
+        values = state(position=(-.2, -.3, -.4), base=(-.2, -.3, -.4), mesh=[[-.1, .3], [.2, 0]])
+        self.assertIn('G1 Z0 F600', prepare(JogOp(kind='z0'), values))
+        for axis in 'xyz':
+            self.assertIn('G91', prepare(JogOp(kind='jog', axis=axis, distance=.1), values))
+
+    def test_each_axis_can_recover_to_zero_while_other_axes_are_negative(self):
+        values = state(position=(-1, -1, -1))
+        for axis in range(3):
+            targets = [None] * 3
+            targets[axis] = 0
+            self.assertIn(f'G1 {"XYZ"[axis]}0 F600',
+                          prepare(JogOp(kind='move-to', targets=tuple(targets)), values))
+            self.assertIn('G91', prepare(JogOp(kind='jog', axis='xyz'[axis], distance=1), values))
+            targets[axis] = -.001
+            with self.assertRaisesRegex(UnsafeMotion, 'below zero'):
+                prepare(JogOp(kind='move-to', targets=tuple(targets)), values)
+        self.assertIn('G1 Z0 F600', prepare(JogOp(kind='z0'), values))
+
     def test_g92_base_is_not_confused_with_homing_origin(self):
         values = state(base=(100, 0, 5), origin=(0, 0, .05))
         self.assertEqual(envelope(values).base, (100, 0, 5))
@@ -71,19 +104,14 @@ class PhysicalMotionTests(unittest.TestCase):
         with self.assertRaises(UnsafeMotion):
             envelope(values)
 
-    def test_mesh_bounds_cover_entire_path_fade_offsets_and_rounding(self):
+    def test_mesh_values_never_introduce_a_clearance_floor(self):
         values = state(mesh=[[-.1, .3], [.2, 0]])
-        # Z=0.35 looks positive, but global path/compensation bounds cannot
-        # prove clearance over a .3 high bed with a -.1 compensation.
-        with self.assertRaises(UnsafeMotion):
-            prepare(JogOp(kind='move-to', targets=(None, None, .35)), values)
+        # Compensation must not invent a positive lower clearance floor.
+        self.assertIn('G1 Z0.35 F600', prepare(JogOp(kind='move-to', targets=(None, None, .35)), values))
         self.assertIn('G1 Z1 F600', prepare(JogOp(kind='move-to', targets=(None, None, 1)), values))
-        bounds = envelope(values)
-        self.assertLess(bounds.compensation_min, -.1)
-        self.assertGreater(bounds.bed, .3)
+        original = prepare(JogOp(kind='z0'), values)
         values['bed_mesh']['mesh_matrix'][0][0] = float('nan')
-        with self.assertRaises(UnsafeMotion):
-            envelope(values)
+        self.assertEqual(prepare(JogOp(kind='z0'), values), original)
 
     def test_offsets_are_operator_calibration_independent_of_geometry(self):
         examples = [None, {}, state(position=(100, 100, 0)),
@@ -110,14 +138,14 @@ class PhysicalMotionTests(unittest.TestCase):
         with self.assertRaises(UnsafeMotion):
             prepare(JogOp(kind='move-to', targets=(None, None, -.01)), values)
 
-    def test_rounded_default_mesh_fade_target_is_included_in_position_bounds(self):
+    def test_mesh_fade_does_not_change_reported_upper_limit(self):
         values = state(position=(100, 100, 10), mesh=[[.0051, .0051], [.0051, .0051]])
         values['configfile']['config']['bed_mesh'].update(fade_start=1, fade_end=10)
-        self.assertGreater(envelope(values).compensation_max, .01)
+        self.assertIn('G1 Z200 F600', prepare(JogOp(kind='move-to', targets=(None, None, 200)), values))
         with self.assertRaises(UnsafeMotion):
-            prepare(JogOp(kind='move-to', targets=(None, None, 199.995)), values)
+            prepare(JogOp(kind='move-to', targets=(None, None, 200.001)), values)
 
-    def test_malformed_objects_and_physical_floor_fail_closed(self):
+    def test_malformed_objects_refuse_but_calibrated_zero_is_allowed(self):
         for key in ('toolhead', 'gcode_move', 'configfile'):
             values = state()
             values[key] = ['malformed']
@@ -129,8 +157,7 @@ class PhysicalMotionTests(unittest.TestCase):
             envelope(values)
         values = state(position=(100, 100, 0))
         values['toolhead']['position'][2] = -.000001
-        with self.assertRaises(UnsafeMotion):
-            envelope(values)
+        self.assertIn('G1 Z0 F600', prepare(JogOp(kind='z0'), values))
 
     def test_emitted_fractional_target_does_not_round_across_boundary(self):
         values = state()
@@ -163,23 +190,22 @@ class PhysicalMotionTests(unittest.TestCase):
         values = state()
         values['gcode_move']['axis_map'] = {'X': 0, 'Y': 1, 'Z': 2}
         self.assertEqual(envelope(values).position, (100, 100, 10))
-        for axis in range(3):
+        for axis in (0, 1):
             values = state()
             values['toolhead']['position'][axis] += .1
             with self.subTest(axis=axis), self.assertRaisesRegex(UnsafeMotion, 'coordinates do not agree'):
                 envelope(values)
 
-    def test_missing_or_malformed_mesh_cannot_authorize_position_moves(self):
+    def test_mesh_presence_values_and_shape_never_affect_position_moves(self):
         for mesh in (None, {}, [], {'mesh_matrix': None}, {'mesh_matrix': []},
                      {'mesh_matrix': [[0, 0]]}, {'mesh_matrix': [[0, 0], [0]]},
                      {'mesh_matrix': [[0, 0], 'bad']}):
             values = state(mesh=[[0, 0], [0, 0]])
             values['bed_mesh'] = mesh
-            with self.subTest(mesh=mesh), self.assertRaises(UnsafeMotion):
-                envelope(values)
-        # Klipper publishes one empty row when compensation is cleared.
-        cleared = envelope(state(mesh=[[]]))
-        self.assertEqual((cleared.compensation_min, cleared.compensation_max, cleared.bed), (0, 0, 0))
+            values['toolhead']['position'][2] = -20  # compensated Z is firmware-owned
+            with self.subTest(mesh=mesh):
+                self.assertIn('G1 Z0 F600', prepare(JogOp(kind='z0'), values))
+        self.assertIn('G1 Z0 F600', prepare(JogOp(kind='z0'), state(mesh=[[]])))
 
     def test_center_uses_physical_midpoint_and_z_zero_uses_gcode_coordinates(self):
         values = state(base=(10, 20, 5))

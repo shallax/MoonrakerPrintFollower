@@ -60,9 +60,9 @@ class CaptureDrawTests(unittest.TestCase):
         for _ in range(2):
             with paths.draw_session(self.shader, self.camera, Matrix(), self.gl) as draw:
                 draw([(0, 2)]); draw([(2, 4)])
-        self.assertEqual(paths.index.uploads, [np.array([0, 1], np.uint32).tobytes(),
-            np.array([2, 3], np.uint32).tobytes()] * 2)
-        self.assertEqual(self.draws, [(1, 2, 0x1405, None)] * 4)
+        self.assertEqual(paths.index.uploads, [np.array([0, 1, 2, 3], np.uint32).tobytes()])
+        self.assertEqual([(mode, count, kind, offset.value) for mode, count, kind, offset in self.draws],
+            [(1, 2, 0x1405, None), (1, 2, 0x1405, 8)] * 2)
         self.assertEqual([call.args for call in self.shader.setUniformValue.call_args_list],
             [('u_drawElementStart', 0), ('u_drawElementStart', 2)] * 2)
         self.assertEqual(self.shader.enableAttribute.call_count, 1)
@@ -71,6 +71,30 @@ class CaptureDrawTests(unittest.TestCase):
         vao = next(iter(paths.arrays.values()))
         paths.close(); self.assertEqual(vao.closed, 1)
         self.assertEqual(paths.arrays, {})
+
+    def test_failed_full_index_upload_retries_before_any_draw(self):
+        paths = self.paths()
+        paths.index.upload = Mock(side_effect=[RuntimeError('upload failed'), None])
+        with self.assertRaisesRegex(RuntimeError, 'upload failed'):
+            with paths.draw_session(self.shader, self.camera, Matrix(), self.gl): pass
+        self.assertFalse(paths._index_uploaded)
+        self.assertEqual(self.draws, [])
+        for _ in range(2):
+            with paths.draw_session(self.shader, self.camera, Matrix(), self.gl) as draw:
+                draw([(2, 4)])
+        self.assertEqual(paths.index.upload.call_count, 2)
+        self.assertTrue(paths._index_uploaded)
+        self.assertEqual([args[3].value for args in self.draws], [8, 8])
+
+    def test_retained_index_storage_still_rejects_out_of_range_draws(self):
+        paths = self.paths()
+        with paths.draw_session(self.shader, self.camera, Matrix(), self.gl) as draw:
+            for invalid in ((-1, 2), (2, 5), (3, 2)):
+                with self.assertRaisesRegex(RuntimeError, 'index range'):
+                    draw([invalid])
+            self.assertEqual(self.draws, [])
+            draw([(0, 2)])  # A shortened prefix never submits the future pair.
+        self.assertEqual(self.draws[0][1], 2)
 
     def test_borrowed_size_change_and_shader_fault_always_unbind(self):
         paths = self.paths(); self.size = 47

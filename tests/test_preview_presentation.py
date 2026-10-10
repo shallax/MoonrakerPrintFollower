@@ -253,6 +253,7 @@ def mount(host, item, name=CARD_NAME):
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime not available")
 class PreviewPresentationTests(unittest.TestCase):
+
     def setUp(self):
         context = runtime()
         self.qt = context.__enter__()
@@ -307,6 +308,16 @@ class PreviewPresentationTests(unittest.TestCase):
         invoke.assert_called_with(dialog, "openToolheadSettings")
         app.createQmlComponent.assert_called_once()
         self.assertEqual(app.createQmlComponent.call_args.args[1], {"configurationManager": action})
+
+
+    def test_obsolete_ray_settings_do_not_disable_environment_reflections(self):
+        document = {"previewRayTraced": True, "previewEnvironmentFallback": False,
+                    "previewReflectionsEnabled": True}
+        persistence = SimpleNamespace(state_global_document=lambda: dict(document), merge_state_global=document.update)
+        adapter = self.presentation(HostApplication(), persistence=persistence)
+        self.assertTrue(adapter.reflections_enabled)
+        self.assertFalse(hasattr(adapter, "ray_traced"))
+        self.assertFalse(hasattr(adapter, "environment_fallback"))
 
     def test_lighting_master_persists_without_erasing_receiver_choices(self):
         document = {"previewLightBed": False, "previewLightModels": True}

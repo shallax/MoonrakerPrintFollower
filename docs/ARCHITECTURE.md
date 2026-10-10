@@ -148,7 +148,7 @@ correct package ownership.
 | `PauseController.py` | Scheduled PAUSE command and acknowledgement lifecycle | Preview rendering |
 | `PreviewToolheadPresentation.py` | Preview Toolhead host, readouts, local chrome and epoch-fenced selected-machine intents | G-code, polling or physical-motion policy |
 | `ToolheadReadout.py` | Pure physical-position, Z offset and firmware-capability readouts | Qt, transport or movement permission |
-| `PhysicalMotion.py` | Pure physical path/travel guard, G92/base-coordinate conversion, conservative mesh bounds and validated manual-move scripts | Qt, telemetry acquisition or command transport |
+| `PhysicalMotion.py` | Pure physical path/travel guard, G92/base-coordinate conversion, inclusive G-code zero bounds and validated manual-move scripts | Qt, telemetry acquisition or command transport |
 | `PreviewPresentation.py` | Preview QML objects, displayed values and user-intent signals | Following or scheduling policy |
 | `RenderTiming.py` | Opt-in bounded asynchronous GPU queries for plugin draw commands, never system-wide GPU utilisation | Profile settings writes, synchronous GPU waits or native timer ownership |
 | `CameraProjection.py` | Camera-keyed banner projection matrices and hover rays; unchanged telemetry reuses camera-only work | Native camera mutation or settings |
@@ -161,7 +161,7 @@ correct package ownership.
 | `ToolheadRotorAxis.py` | Conservative coaxial cylinder consensus in placed CAD coordinates | Qt, GPU or printer state |
 | `ToolheadRotors.py` | Bounded visual rotor configuration, body axes, phases and read-only speed selection | Printer commands, Qt or persistence |
 | `ToolheadFanReadings.py` | Raw fan-field observations, snapshot/delta semantics and freshness projection | Printer commands, Qt or networking |
-| `ToolheadRotorRender.py` | Fixed shutter samples seeded from the same static colour/depth, averaged once | Telemetry, scene discovery or static-head redraw |
+| `ToolheadRotorRender.py` | Fixed shutter poses seeded from the same static colour/depth; original sample foreground precedes AA resolve and premultiplied averaging | Telemetry, scene discovery or static-head redraw |
 | `ToolheadOpacity.py` | Bounded asset-bound body/face opacity precedence, immutable colour projection and edit-only selection ghosts | Printer commands, Qt, material inference or source mesh mutation |
 | `ToolheadMaterials.py` | Conservative annotation-based roughness, metalness and generated plastic-detail presets | RGB inference, alpha changes or printer state |
 | `ToolheadAssetStore.py` | Atomic content-addressed triangle/colour/material/body assets with bounded checksum-verified reads | Settings adoption or CAD conversion |
@@ -175,25 +175,49 @@ correct package ownership.
 | `ToolheadInstancedShadow.py` | Fingerprint-guarded instanced native shadow tubes over cached vertex storage with owned bounded indices and context-safe GL cleanup | Current/fractional paths, visible travel, native shader mutation or telemetry |
 | `ToolheadPathGeometry.py` | Stable owned indices and per-shader VAOs over native vertex buffers, compact boundary indices and conservative spatial rejection | Native mesh mutation or telemetry |
 | `ToolheadDepthCache.py` | Private depth framebuffer retention and incremental completed-prefix updates, rebuilt on backward progress or scene/camera changes | Native framebuffer storage or colour composition |
-| `ToolheadFrameCache.py` | Private premultiplied image retention for the shaded head and additive illumination; camera/state invalidation and cropped head storage | Native shader mutation, telemetry or settings |
-| `ToolheadTransparency.py` | Blend native transparent surfaces ahead of the cropped head, preserving its premultiplied colour and alpha | G-code rasterization or native shader changes |
-| `ToolheadOcclusion.py` | Seed custom-head crops from the owned complete native path depth and small public solid/bed batches; retain depth provenance and retry failed acquisition | Native private FBO access, duplicate G-code rasterization or settings |
+| `ToolheadFrameCache.py` | Private premultiplied image retention for the shaded head and additive illumination; certified optional four-sample crops, shared crop camera and context-generation invalidation | Native shader mutation, telemetry or settings |
+| `ToolheadTransparency.py` | Blend native transparent surfaces ahead of the cropped head per original depth sample before AA resolve, preserving its premultiplied colour and alpha | G-code rasterization or native shader changes |
+| `ToolheadOcclusion.py` | Seed custom-head crops from certified original path depth replay or explicit path absence and public solid/bed batches; retain provenance and retry failed acquisition | Native private FBO access, duplicate G-code rasterization or settings |
 | `ToolheadSurfaceCache.py` | Private visible-surface framebuffer, incremental completed paths and moving-light shading with bounded storage | Native framebuffer mutation or telemetry |
-| `ToolheadSimulationPass.py` | Render-pass adapter for eligible previews with a visible custom head; retained native indices, guarded shadow instancing, read-only stock shader identity after native fallback | Native class patches or scene mutation |
+| `ToolheadSimulationPass.py` | Render-pass adapter for eligible previews with a visible custom head; retained native indices, guarded shadow instancing, read-only stock shader identity and certified original-shader four-sample depth replay | Native class patches or scene mutation |
 | `ToolheadSimulationCache.py` | Retained native path colour/depth with completed-prefix append and bounded storage | Fractional paths, telemetry or native framebuffer mutation |
 | `ToolheadCamera.py` | Parallel orthographic or perspective view rays from delivered camera matrices | Saved preferences or scene mutation |
 | `ToolheadSceneLighting.py` | Owned additive bed/path illumination using light-independent surfaces; legacy/compatibility forward fallback | Host shader mutation, settings writes or telemetry |
 | `ToolheadOpaqueShader.py` | Shared toolhead shader variant without alpha discard for the fully opaque single-pass path | Shader formula duplication, settings or telemetry |
 | `ToolheadGLState.py` | Independent host graphics-state restoration around owned optional effects | Native framebuffer mutation or scene recursion |
 | `ToolheadEnvironment.py` | Paired colour/depth cubemaps, frozen six-face capture, atomic probe publication and optional failure backoff | Scene discovery or printer state |
-| `ToolheadAsyncEnvironment.py` | Main-context capture admission, VBO leases, pair adoption and consumer retirement | Worker-context drawing or printer commands |
-| `ToolheadEnvironmentWorker.py` | Private shared-context capture with bounded GPU submissions and fence retirement | Native renderer singletons or GUI mutation |
+| `ToolheadEnvironmentPaths.py` | Pure bounded native path-source/layout validation, frozen element prefixes and complete moved aliases, conservative original-group bounds, immutable acceleration topology and combined replacement-memory admission | Qt/GL read leases, palette invention or declaring hidden-surface correction ready |
+| `ToolheadEnvironmentPlates.py` | Bounded complete original plate triangle preparation and certified public position/depth recipes for nearest-surface ordering | Plate radiance, analytic shape substitution or graphics ownership |
+| `ToolheadEnvironmentRecovery.py` | Completed-cohort complete-path recovery, frozen native radiance, conservative full-plate separation and owned core shader composition | New live scene values in old captures, uncertain plate distance admission or claiming an installed gap fix |
+| `ToolheadEnvironmentLayers.py` | Pure complete S1 receiver-layer validation, dynamic owned CSR identity/radiance compaction and conservative CPU/GPU replacement ledger | Qt/GL read leases, scene discovery, partial layer publication or declaring runtime glass/AA recovery ready |
+| `ToolheadEnvironmentLayerGL.py` | Experimental exact-context CSR/F32 buffer-texture upload, complete-only readiness, fallback read admission, producer/last-reader retirement and borrowed original-mesh draw delivery | Layer enumeration, scene discovery, partial lookup publication or installed Cura correction claims |
+| `ToolheadEnvironmentLayerCapture.py` | Experimental S1/S4 scalar-selector, original receiver, separate tiled query and dynamic completed-layer coordination with exact depth/source/readback ownership | Complete shutter/full-view qualification, live scene discovery, fixed layer truncation or installed no-holes claims |
+| `ToolheadEnvironmentLayerFrame.py` | Frozen view/source/receiver group selection, exact-ticket admission, complete all-pose publication and aggregate old/pending/front retirement ledger | Scene discovery, newer mutable callback inputs, unfinished pose publication or installed full-view correction claims |
+| `ToolheadEnvironmentFrame.py` | Experimental static receiver correction parent, exact view/source selection, source pin, original four-sample depth and aggregate retained ownership | Moving rotor correction, partial lookup publication or queries inside CAD draws |
+| `ToolheadEnvironmentReceiver.py` | Owned native receiver mesh copies with pre-admitted receipts, frozen camera/PBR and complete original shutter plans, exact completed map/source publication pin | Live scene discovery, arbitrary host-generation validation, graphics drain ownership or installed missing-face correction claims |
+| `ToolheadEnvironmentDepth.py` | Owned exact four-plane seeded scene depth, original-context replay and verified drain or whole-owner quarantine | Newer live scene depth, resolved depth substitution or installed full-view correction claims |
+| `ToolheadEnvironmentPrograms.py` | Original receiver collection/lookup programs and independent bounded query program, exact-context lexical read/draw admission, host restoration and verified program/VAO drain | Scene discovery, queries inside CAD PBR draws, unbounded query submission or installed missing-face correction claims |
+| `ToolheadEnvironmentRadiance.py` | Frozen original path palettes, visibility, metrics, camera and attached-light delivery from the retained capture cohort | Scene discovery, graphics ownership or substituting current live values into older captures |
+| `ToolheadEnvironmentGeometry.py` | Private complete original EBO, acceleration and alias buffer textures, borrowed planar VBO view, source-ready ordering, bounded upload and explicit buffer-texture state restoration | Owning native host wrappers, capture-pair ticket admission or declaring an installed gap correction |
+| `ToolheadAsyncEnvironment.py` | Main-context capture admission, pair-lifetime VBO wrapper leases, adoption and consumer retirement | Worker-context drawing or printer commands |
+| `ToolheadEnvironmentWorker.py` | Private shared-context capture with bounded GPU submissions, optional complete-query cohorts, source reservations through main collection and verified pair retirement | Native renderer singletons or GUI mutation |
 | `ToolheadEnvironmentMailbox.py` | Epoch/generation tickets for producer, consumer and pair retirement | Qt or graphics calls under its lock |
 | `ToolheadCaptureValues.py` | Immutable mesh and uniform values and validated buffer descriptors | Native graphics ownership |
 | `ToolheadCaptureRecipe.py` | Main-thread scene freezing and worker-local reconstruction | Mutable native scene objects crossing threads |
 | `ToolheadCaptureGL.py` | Context-local graphics entry points and shader programs | Native shared shader state |
 | `ToolheadCaptureBuffers.py` | Worker-owned buffers, textures and framebuffer resources | Host buffer ownership |
 | `ToolheadCaptureDraw.py` | Private draw adapters and retained borrowed-buffer reads | Main-thread resource mutation |
+| `ToolheadShadowValues.py` | Frozen existing world-space light delivery, complete depth-cube storage admission and projected depth values | Allocating maps, publishing shadow availability or inventing direct lights |
+| `ToolheadShadowStorage.py` | Worker-current private D32F point-light cube sets and all-face/all-light atomic completion | Scene discovery, GUI activation, shader visibility or claiming installed shadows |
+| `ToolheadShadowShader.py` | Strict optional owned direct-light shader variants and true raster receiver reconstruction | Final-frame darkening, map readiness or changing native shader classes |
+| `ToolheadShadowExchange.py` | Pure exact-source shadow admission, complete immutable light-map payloads and two-set mailbox tickets | Graphics fences, caster submission, GUI activation or private publication selecting a writer |
+| `ToolheadNativeBridge.py` | Private precompiled native C ABI admission, creating-worker ownership and completion-only paired image delivery | GUI waits, GL objects or claiming an unavailable CPU backend |
+| `ToolheadNativeImage.py` | Exact context-local ordered one/four-sample colour/depth import into an owned head crop, with unpack restoration and permanent context retirement | Stock scene depth, partial pair publication or native device ownership |
+| `ToolheadSampleTarget.py` | Explicit owned four-sample RGBA8/Depth32F attachments, certified sample order and original per-sample depth readback; detached Qt texture and R32F staging also budgeted | Stock framebuffer access, depth resolves or synthesizing samples |
+| `ToolheadTiledFrame.py` | One bounded original-sample workspace, complete resolved front/back images, frozen source/pose epochs and exact tile acknowledgements | Partial ray images, full-crop sample pairs, stale camera pixels or reduced resolution |
+| `ToolheadNativeWorker.py` | Latest-pending plain native DTOs with original ordered sample descriptors, sequential frozen pose groups, retained-front memory admission, atomic paired completion and non-GUI draining | Qt/GL calls, stale frame adoption or unbounded queues |
+| `ToolheadNativeMaterials.py` | Immutable original plate ranges, native shader defaults, transformed attributes and frozen texture recipes | Live Qt owners on workers, guessed bed shaders or unbounded scenes |
+| `ToolheadNativeSession.py` | Opt-in crop generation, frozen scene/material/shutter inputs, exact seed readback and per-pose foreground composition | Replacing Cura viewport, unsupported-mode claims or user compiler requirements |
 | `ToolheadEnvironmentScene.py` | Owned shaders reading platform/grid/visible bed-height meshes and the visible public LayerData prefix | Native program mutation or recursive renderer calls |
 | `ToolheadSceneNode.py` | Non-selectable lit triangle node; private head depth above final scene composition, cleared before Qt controls; opaque single pass and completed-image opacity | Telemetry or nozzle suppression |
 | `ToolheadPresenter.py` | Reported-position freshness/homing gate, estimated public LayerData adapter and one native-nozzle suppression owner | Print progress matching or native class patches |
@@ -513,7 +537,12 @@ and a theme-aware keyboard focus outline. The isolated
 values; real-QML host tests prove placement, stage gating, ownership cleanup
 and disabled controls without a printer. `ToolheadController` obtains a bounded
 fresh status query before position-move dispatch through the existing command lane;
-`PhysicalMotion` validates physical path, coordinate base and travel/bed bounds.
+`PhysicalMotion` accepts calibrated G-code zero on every axis and rejects targets below zero.
+Coordinate bases translate upper travel limits; firmware alone handles bed mesh. No inferred
+bed-clearance floor may prevent reaching zero. The physical jog preflight checks
+XY upper travel only; the fresh serialized dispatch query checks nominal Z travel
+and enforces the inclusive G-code lower bound on each commanded axis. An untouched
+axis already below zero does not block another axis returning to zero.
 The guard supports Cartesian/CoreXY-family kinematics with reported XYZ limits;
 it rejects unreported coordinate transforms and overridden movement commands.
 The three-second status-query deadline, connection/session identity, command
@@ -522,14 +551,13 @@ script saves firmware G-code state, restores it with `MOVE=0`, and never moves
 back to the saved position. Offset commands bypass that query but serialize
 through the same tracked command lane, including synchronous acknowledgements.
 Z-offset nudges and resets are operator calibration controls: they bypass the
-geometry guard and its status query, including bed-mesh, homing and travel bounds.
+geometry guard and its status query, including homing and travel bounds.
 They remain on the shared command lane with connection, ownership, control-lock
 and input-validation checks, and remain available while printing. Firmware owns
 whether a calibration command can execute; the client does not claim to know the
 nozzle's physical clearance. Missing or unsupported transforms, malformed/stale
 replies and changed ownership or command revision still fail closed for position
-moves. Whole-mesh bounds and numeric uncertainty may conservatively refuse
-near-bed position moves; the client cannot make its query/script atomic against
+moves. The client cannot make its query/script atomic against
 unrelated external G-code. Firmware owns its homing/probing paths.
 
 The Preview object-name bar belongs to `PreviewPresentation`. Its banner anchors
@@ -1927,7 +1955,7 @@ untextured 3MF platform is absent. Empty parsing snapshots do not request path
 lighting shaders until path geometry exists. Native proofs cover empty-to-loaded
 and loaded-to-empty transitions with the same worker owner.
 Changed pose/path/light state coalesces with a 150 ms minimum interval after
-publication; unchanged scenes refresh at most once per second. Earlier wake
+publication; unchanged directional scenes sleep until their captured scene key changes. Legacy central probes retain their periodic refresh. Earlier wake
 deadlines supersede old idle timers, and obsolete callbacks cannot request a
 frame. Empty LayerData during active slice/layer production defers replacement
 and retains the complete map; a stable empty bed remains capturable. The adapter
@@ -1939,12 +1967,209 @@ After a successful stock draw, the simulation adapter can observe the identities
 of the stock layer, shadow and current shaders to initialize stationary previews.
 This narrow read-only host-layout dependency never changes native state; unknown
 layouts retain transition-based observation. Unsupported compatibility mode
-keeps ordinary shading. The map excludes the head. One local reflected ray uses
-16 coarse depth samples and at most two six-step candidate refinements, then
-seven colour taps for roughness. Bounds only restrict the search interval;
-invalid depth and unconverged silhouette crossings cannot become surfaces.
-Single-probe visibility and finite sampling can miss hidden or thin geometry;
-this is an approximate reflection, not a complete scene ray tracer.
+keeps ordinary shading. The map excludes the head. The live directional path
+captures six exterior orthographic colour/depth views over scene bounds. The
+shader visits every crossed depth texel, testing both opposite views together
+in three shared axis walks. It retains the nearest admitted surface and uses
+the colour mip chain for roughness, with independent face-edge clamping.
+No sparse ray steps or repeated roughness depth searches are used. The legacy
+central perspective path remains available to older fixtures. Finite-resolution
+exterior depth views remain an approximation for arbitrary occluded geometry.
+Captured-depth traversal publishes hit confidence independently of sampled RGB.
+A central traversal miss leaves ordinary toolhead lighting unchanged; a valid
+black captured surface retains the original reflection equation.
+Directional capture cameras enclose the prepared scene bounds, so their CPU
+chunk iteration omits redundant frustum classification while retaining exact
+prefix ranges, raster clipping, light-range rejection and bounded checkpoints.
+Perspective fixtures retain the original frustum test. Scene signatures take
+one child snapshot and one layer-data lookup per child, retaining the same
+visibility, material and geometry invalidation inputs.
+Private capture programs cache uniforms by their exact delivered typed values;
+rebinding does not force identical uploads. Relinking and bulk-array writes
+invalidate the cache, including individually addressed array elements.
+Idle workers wait for notifications rather than polling. A wake revision guards
+the scan-to-sleep race, and scene-generation changes explicitly wake retirement
+even when no successor job exists. GPU fence waits and shutdown retain their
+bounded polling; no resource retirement depends on a later render frame.
+Worker path captures retain one complete immutable index buffer per borrowed
+vertex-buffer identity. Every bounded draw still validates its original element
+range and publishes its original element start, using a byte offset into that
+buffer. Later faces, passes and captures reuse the same upload; failed uploads
+must succeed before any draw. Existing capture storage receipts include the
+complete index buffer and temporary upload copies. A 200,000-path comparison
+kept all six colour/depth faces byte-identical while eliminating 84 repeated
+index uploads (9.6 MB) per warmed capture.
+The default draw uses this directional map directly at the current head pose;
+the experimental split receiver correction parent is not wired into this path.
+The experimental `ToolheadEnvironmentPaths.py` preparation and owned path-query
+resources investigate missing probe surfaces using original path geometry.
+They retain full original planar VBO/EBO data, prefix/history, starts, travel,
+moved endpoint aliases, model transforms and native visibility. Bounded work,
+unsafe addressing or numeric inputs refuse the whole query. Hit-local native
+base and attached-light radiance use frozen capture settings; normalized RGBA8
+composition clamps each source before blending and preserves stored alpha.
+Equal-distance original-line collection preserves native EBO order.
+
+`ToolheadEnvironmentRecovery.py` assembles a core shader variant with seven
+geometry-backed roughness samples and the complete original map function as
+fallback. Full original platform/grid/heightmesh bounds conservatively gate
+recovery: only strict origin-to-winning-path hull separation admits a correction.
+Overlap, equality, exhaustion or any missed lobe retain the existing map.
+This conservative gate does not guarantee complete visibility for arbitrary
+scenes. A small real GPU opening fixture and opaque/glass SceneNode draws pass,
+but the actual imported CAD receiver subsequently caused a Metal command-buffer
+GPU hang. The default AsyncEnvironment worker therefore has no recovery factory.
+The variant is NOT enabled in Cura and is not a qualified missing-face fix.
+Do not install or repeat larger probes based on a small GL_NO_ERROR result.
+
+An unwired split-program experiment records the original opaque receiver's
+FLOAT32 position, reflection direction and roughness, then runs geometry
+queries separately from the CAD PBR program. The PBR variant only reads a
+completed radiance texel; invalidity, size mismatch or a disabled lookup uses
+the byte-preserved ordinary map function. A bounded opaque single-sample test
+of the actual imported head repeated exactly, and recorded payload values
+matched an instrumented original PBR shader including grain. This does not
+qualify a full viewport or Cura installation. A subsequent small single-sample
+proof seeded original native path and bed depth, matched the instrumented PBR
+receiver inputs, and kept hidden pixels invalid through completed query and
+lookup. Its `RecoveryTargets` owner charges actual two-RGBA32F receiver records,
+depth and RGBA32F output before allocation. Tiles use constant-size metadata;
+capture and query are non-reentrant, each submission joins the original cohort
+ticket, and publication waits for the final fence. Last image reads fence the
+creating context, while uncertain completion or callback retirement retains the
+targets. This remains alpha-one, frozen-pose, single-sample evidence. Glass,
+all native sample planes, shutter poses, complete geometry ordering and useful
+latency remain requirements. The default worker still creates no recovery
+geometry or correction targets.
+
+The unwired S1 layer experiment selects minimum raw fragment depth and then
+minimum exact global primitive identity in separate floating scalar passes.
+Original depth remains visibility-only. Original normal/grain/finish derivatives
+run before the added layer discard; all owned passes retain the original vertex
+position expression with invariance. Canonical terminal-empty pairs differ from
+malformed input, whose record carries an explicit negative fault identity.
+
+The optional four-plane selector/receiver builders read all original
+`sampler2DMS` planes while retaining pixel-frequency interpolation. Output sample
+masks are written after original normal/grain/roughness derivatives, and intersect
+the unchanged hardware coverage and static depth. A covered malformed plane
+remains a negative fault, never terminal empty. The creating owner must certify
+actual four-sample texture storage and identical ordered sample positions; the
+GL4.1 certificate uniform is not a substitute for those native queries. Tiny
+actual multisample tests compare each raw plane, partial-edge coverage and
+original grain/roughness words. The experimental S4 collector now joins these
+builders to raw plane exports and independent complete radiance arrays. It is
+not connected to normal Cura frame updates or all shutter poses.
+
+S4 enumeration retains finite pixel-frequency depth as a rank, including
+extrapolation outside clip depth at partially covered edges. An RG32F selector
+carries that exact rank and a separate GL_MIN state: valid zero, canonical empty
+one with maximum finite rank, or sticky fault minus one. Hardware sample-depth
+visibility is unchanged; rank is never clamped or used as replacement depth.
+Exports, cursor records and CPU compaction retain the rank/state certificate.
+
+`ToolheadEnvironmentLayers.py` consumes only completed, fenced plain readbacks.
+Every valid selector must have its exact depth/identity record. Confidence-zero
+radiance is an ordinary map fallback, not the end of enumeration; valid black
+remains a correction. Only an entirely empty selector pass ends the dynamic
+sequence. Stalled cursors, reappearing empty pixels and duplicate original IDs
+reject the whole result. Owned read-only CSR ranges, sorted original IDs and
+unchanged FLOAT32 radiance allow query-free PBR lookup without changing original
+blend order. Full readback backings, retained per-layer array/container metadata,
+sort/gather scratch and simultaneous CPU/GPU outputs are charged before growth.
+Final cancellation is checked before value publication. Small original-shader
+and actual buffer-texture tests qualify these pieces. The separate experimental
+`ToolheadEnvironmentLayerGL.py` owner admits owned readonly values, recomputes
+CPU/GPU/dummy/old-owner charges, validates contiguous CSR and per-pixel ID order
+across bounded upload chunks, and publishes only after the final producer fence.
+Monotonic request identity prevents cancelled A-B-A reuse. Draws retain both its
+read pin and the matching source-map scope; last-reader and exact-context finish
+bound retirement. Failed upload, fence, restoration or retirement retains the
+whole uncertain owner and its memory receipt. Initial driver allocation remains
+indivisible. The separate S1/S4 `ToolheadEnvironmentLayerCapture.py` experiment joins
+raw-depth/identity minima, original derivative-bearing records, standalone 16-pixel
+query tiles and dynamic compaction. Selectors borrow one certified static depth;
+original opaque LEQUAL and translucent LESS are delivered per draw. Producer
+completion fences each transition and cursor copy. At most 1MiB of completed
+readback rows is copied per step with pack/PBO and floating read-clamp restoration;
+initial allocation and final CPU compaction remain indivisible. Explicit terminal
+selectors clear all payloads and finish the whole image, never a fixed layer count.
+Exact-context restoration and admitted-work pins retain uncertain resources.
+S4 allocates certified four-sample MRT/cursor textures and four S1 query targets;
+ordered sample positions and D32F visibility depth must match. Raw texelFetch
+plane exports are fenced and never resolved. Graphics charge460 bytes per pixel,
+plus53 bytes per sample for cursor/readback storage, before dynamic records and
+final CPU/GPU copies. Completed image ranges are plane-major and remain separate.
+The optional `LayerDraw` adapter joins completed storage to `_draw_mesh` through
+the original RenderBatch setup callback, after the real program bind. It retains
+the source-map read scope across opaque prepass, opaque colour, translucent colour
+and shader cleanup, delivering each mesh's original global primitive range without
+changing draw order or blending. Exact indexed/unindexed counts and publication
+descriptors are checked before enabling lookup; immutable byte contents remain
+the frozen scene owner's responsibility. Descriptor metadata is reserved before
+growth and belongs to the frame coordinator's retained ledger. S4 colour replays
+select one plane after every original colour exit, including unlit/material-edit
+glass; the original depth-only prepass retains all planes. Destination D32F depth
+format/dimensions and ordered sample positions are certified before reading.
+This hook excludes the unsafe combined-query shader. A bounded actual imported
+head/source S4 proof preserves all original disabled colour/depth samples and
+corrects781 samples, but no normal frame coordinator invokes it yet. Full-view
+coverage, shutter integration, responsiveness and live Cura wiring remain
+unqualified; these experiments are not an installed gap correction.
+
+`ToolheadEnvironmentLayerFrame.py` coordinates frozen receiver groups above
+those owners. Selection advances an admission epoch before work or retirement.
+Callback reselection is deferred until admitted work unwinds; request identity
+AND epoch participate in cancellation, including A-B-A during old-front close.
+Verification and source-scope exit are followed by fresh selection checks.
+Every shutter pose must finish capture, upload and an exact source-ticket check
+before the group publishes. No unfinished pose or old view/depth image is
+exposed. Complete fronts, pending captures/uploads, callback leases, original
+draw metadata and failed-constructor owners remain charged until verified drain;
+changed external graphics receipts are recharged before growth/submission.
+Context retirement or uncertain completion withdraws readiness and roots the
+entire graph. Original capture and lookup primitive ranges must agree.
+
+The frame cache has optional receiver-step and preparation hooks. Progress runs
+before cached-image lookup, so displaying an ordinary fallback cannot stall a
+pending collector. Preparation follows the exact crop depth seed and precedes
+ordinary head drawing; foreground, shutter composition and backend provenance
+are unchanged. Tiny actual GL group/cancellation/retirement tests and a bounded
+actual imported-head S4 coordinator proof qualify this lifecycle narrowly. The
+live scene adapter still must supply genuinely immutable camera/mesh/material/
+pose/source DTOs, a complete parent ledger and copied visibility. Neither hooks
+nor the experimental group owner enable recovery in normal Cura rendering.
+
+The optional recovery factory uses one original line per spatial leaf. Contiguous
+multi-line leaves can combine unrelated cube walls into a whole-object box;
+singleton leaves preserve the full EBO and let near-first traversal reject other
+walls. The selected group belongs to the owner key, capability receipt and
+complete CPU/GPU/old-owner memory plan. Insufficient capacity refuses recovery;
+it never drops lines or silently changes the admitted topology. Per-line boxes
+contain all original tube, travel and enabled start corners, with outward float
+padding. Inclusive closest-hit pruning preserves equal-distance lines, and a
+popped node reuses its already validated bounds. Small seeded tests preserve all
+previous complete payloads and radiance, but do not qualify moving-view latency.
+
+The private `ToolheadEnvironmentGeometry.py` owner verifies the actual borrowed
+VBO size after its readiness fence and reserves original EBO/tree/aliases.
+Uploads are chunked; independent buffer-texture/sampler state on units8–11 is
+restored. Optional injected worker factories join a query cohort to its physical
+map pair. Producer and last-consumer fences drain before cleanup and main source
+acknowledgement. Every attempted factory job, including no-query and cancelled
+results, stays charged through actual source collection. The separate current
+CaptureScene receipt survives main acknowledgement until cache replacement,
+including cancelled captures. Receipts charge frozen array backing allocations,
+borrowed VBOs, private uploads, derived receiver normals, textures and upload
+copies. Disabled or ineligible bed-light receivers retire their negative-identity
+buffers and CPU normals before the replacement receipt is published.
+
+Query scopes share the map read ticket and require the exact selected captured
+key and source/model/prefix certificate. Crop cache keys also include admitted
+cohort identity: retaining an old map cannot replay a recovered crop after query
+admission is withdrawn. A main finish cannot return an active lexical scope;
+unverified completion or state restoration quarantines the owner and wrappers.
+These ownership proofs do not qualify full-frame cost or installed gap repair.
 Attached-light receiver passes add colour with frozen emitter settings after
 native geometry; alpha and the paired native depth remain unchanged. Their
 light toggles and source settings participate in refresh invalidation.
@@ -2007,3 +2232,56 @@ Oversized edits fail atomically. Draft Cancel, asset replacement and printer
 rebinding clear the editor selection and retain existing adoption fences.
 
 Toolhead selected-part colour overrides are independent RGB-only sparse body/face maps. Face RGB overrides take precedence over body RGB; imported face resets bypass the body and use immutable source RGB. The shared opacity/colour resolver preserves alpha. The editor owns a lazy RGB dialog fenced by printer, asset, generation and selection; rejection or editor closure cancels pending colour edits. Both maps participate in preview cache keys and stationary presenter redraws.
+
+
+The independent shadow foundation freezes exactly the lights already delivered
+to ordinary head shaders. Platform recipe light overrides retain
+distinct identities; they are not merged with the path camera light. Optional
+map admission certifies GPU float representation and charges a complete front
+and back D32F cube set for every nonzero emitter, retained prior storage and a
+work-face reserve. Oversized sets refuse as a whole without dropping sources
+or changing the fixed 1024-face resolution. Projected cube depth uses dominant
+axis distance, not radial distance; a caller must certify its caster/receiver
+near/far interval. Unavailable intervals do not silently classify a receiver.
+
+The private creating-worker storage publishes only after all six faces of every
+light complete and graphics restoration succeeds. It neutralizes the unpack PBO
+for allocation and restores it independently. A capture lease excludes reentrant
+begin/capture/publish/close through guard restoration, so a nested update cannot
+redirect remaining draws into a published front. Direct context retirement fences
+access first; failed texture retirement retains names for a later cleanup retry.
+Raw completed names are current-worker values, not shared-context consumer leases;
+the future coordinator must fence/pin consumers before back-set reuse. This
+foundation has no scene coordinator, caster submission, consumer binding lease
+or saved Cast shadows control yet and does not publish shadow availability.
+
+The separate optional shader variants shadow only existing direct-light terms:
+the four white diffuse terms, light0 specular, and attached diffuse/highlights.
+Ambient, paint, emission, environment reflections and alpha remain separate.
+Disabled variants return the original source object without adding samplers.
+Core lookups use explicit level0; legacy variants use separately named cube
+samplers. Forward scene visibility reconstructs the actual raster receiver from
+the delivered inverse camera, viewport and depth range while retaining native
+centreline lighting arithmetic. Future deferred consumers must reconstruct from
+their stored raster depth and the same source camera, not fullscreen depth.
+
+Receiver comparison stays in projected space using the exact frozen float32
+caster coefficients; it does not invert depth samples into unstable world
+distances. An explicit projected comparison allowance must pass a separate
+measurement-error and physical-precision certificate. Admission includes worst
+float32 comparison-addition rounding and Euclidean cube-ray uncertainty, using
+exact rational arithmetic to avoid cancellation. The coordinator must supply
+actual geometry/footprint error bounds and complete near/far intervals; these
+helpers cannot certify grazing/sliver raster error from coefficients alone.
+These shader variants pass private core/legacy render/compiler checks but remain
+unwired until map readiness, resource bindings and consumer ownership are proven.
+
+
+Ray tracing and its Metal bridge, worker, tiled importer and packaged binaries
+have been removed. Preview retains Enable reflections, which directly controls
+the directional environment map. Obsolete ray/fallback preferences are ignored.
+Renderer radio buttons, the fallback checkbox and the backend status label are
+absent. FrameCache retains ordinary cropped rendering, coherent camera/depth
+handoff, foreground composition, rotor animation and context retirement.
+Generic explicit sample targets remain available to the unwired GL experiments;
+measured sample-pattern validation no longer imports a native ray bridge.

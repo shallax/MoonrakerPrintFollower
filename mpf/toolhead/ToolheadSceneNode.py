@@ -1,5 +1,6 @@
 """Ordinary plugin scene node, independent of Cura's estimated NozzleNode."""
 import time
+from contextlib import nullcontext
 import numpy as np
 from UM.Mesh.MeshData import MeshData
 from UM.Scene.SceneNode import SceneNode
@@ -13,6 +14,7 @@ from ..geometry.ToolheadLighting import light_values, validated_lights
 
 
 from .ToolheadCamera import camera_view
+from .ToolheadShadowValues import attached_light, head_lights
 
 class ToolheadCompositePass:
     """Delegate Cura's final composition, then draw the toolhead on top.
@@ -40,6 +42,7 @@ class ToolheadCompositePass:
     def setLayerBindings(self, bindings): self.composite.setLayerBindings(bindings)
 
     def render(self):
+        self.node._displayed_backend = None
         self.composite.render()
         if not self.node.visible_for_render(): return
         gl = None
@@ -96,11 +99,13 @@ class ToolheadSceneNode(SceneNode):
         self._light_bed = self._light_models = True
         self._lighting_enabled = True
         self._reflections_enabled = True
+        self._displayed_backend = None
         self._view = self._root = None
         self._render_position = self._render_transform = self._render_normal = None
         self._render_failure = ""
         self._lighting_failure = ""
         self._frame_cache = None
+        self._environment_frame = None
         self._render_context = None
         self._environment = self._environment_scene = None
         self._rotor_render = None
@@ -122,7 +127,9 @@ class ToolheadSceneNode(SceneNode):
         context = QOpenGLContext.currentContext()
         if context is None: raise RuntimeError("Toolhead graphics context unavailable")
         if self._render_context is not context:
-            if self._environment is not None: self._environment.close()
+            self._reset_reflection_display()
+            if self._environment is not None:
+                self._close_recovery();self._environment.close()
             self._environment = self._environment_scene = None
             self._rotor_render = None
             self._shader = self._scene_lighting = self._frame_cache = None
@@ -131,6 +138,22 @@ class ToolheadSceneNode(SceneNode):
             self._render_failure = ""
             self._lighting_failure = ""
             self._render_context = context
+            self._render_generation=object()
+            token=self._render_generation
+            from weakref import ref
+            owner=ref(self)
+            def retired():
+                node=owner()
+                if node is not None and node._render_generation is token:
+                    # Next live generation retires all old native/Qt owners;
+                    # no driver drain or Qt work from this destruction signal.
+                    node._render_context=None
+                    node._render_generation=None
+            self._render_retirement=retired
+            signal=getattr(context,'aboutToBeDestroyed',None)
+            if signal is not None:
+                from PyQt6.QtCore import Qt
+                signal.connect(retired,Qt.ConnectionType.DirectConnection)
 
     def fail_rendering(self, error):
         from UM.Logger import Logger
@@ -155,8 +178,15 @@ class ToolheadSceneNode(SceneNode):
         try:
             signature = self._environment_scene.signature(renderer, self._view, self._root)
             point = self.render_position()
+            from .ToolheadCaptureValues import freeze_uniform
+            light=camera.getCameraLightPosition()
             soft = (int(self._view.getCurrentLayer()), float(self._view.getCurrentPath()),
-                    round(point.x, 1), round(point.y, 1), round(point.z, 1), self.scene_lighting_signature())
+                    point.x, point.y, point.z, self.scene_lighting_signature(),
+                    np.asarray(getattr(self,'_model_bounds',()),dtype=np.float64).tobytes(),freeze_uniform(light),
+                    tuple((name,freeze_uniform(value)) for name,value in self.attached_light_uniforms().items()))
+            recovery=getattr(self,'_environment_frame',None)
+            if recovery is not None and recovery.mapping is not None and recovery.mapping.selected_key!=(signature[0],soft):
+                self._close_recovery()
             self._environment.step(gl, self._render_context, signature[0], soft,
                 lambda: self._environment_scene.snapshot(self, renderer, camera, signature))
             self._schedule_environment()
@@ -167,6 +197,32 @@ class ToolheadSceneNode(SceneNode):
             # Unsupported optional capture keeps ordinary shading available.
             self._environment.fail(error)
             self._schedule_environment()
+
+
+
+
+
+    def reflection_status(self):
+        if not self.isVisible() or self._opacity <= 0:
+            return "Toolhead is not visible"
+        if self._native_model:
+            return "Default toolhead: reflections unavailable"
+        if not self._lighting_enabled or not self._reflections_enabled:
+            return "Reflections: off"
+        if self._render_failure:
+            return "Reflection display unavailable: " + self._render_failure
+        displayed = "Displaying: " + self._displayed_backend if self._displayed_backend else "Waiting for a toolhead frame"
+        return displayed
+
+    def _close_recovery(self):
+        owner=getattr(self,'_environment_frame',None)
+        if owner is not None:owner.close()
+        self._environment_frame=None
+
+    def _reset_reflection_display(self):
+        self._close_recovery()
+        self._displayed_backend = None
+
 
     def _schedule_environment(self):
         owner = self._environment
@@ -276,12 +332,14 @@ class ToolheadSceneNode(SceneNode):
     def set_scene(self, view, root):
         if view is not self._view or root is not self._root:
             self._restore_simulation()
-            if self._environment is not None: self._environment.close()
+            if self._environment is not None:
+                self._close_recovery();self._environment.close()
             self._environment = self._environment_scene = None
             self._scene_lighting = None
             self._occlusion = None
             self._depth_seed = self._depth_revision = None
             self._lighting_failure = ""
+        if view is not self._view or root is not self._root: self._reset_reflection_display()
         self._view, self._root = view, root
 
     def set_simulation_active(self, active):
@@ -308,6 +366,7 @@ class ToolheadSceneNode(SceneNode):
         if enabled == self._lighting_enabled: return
         self._lighting_enabled = enabled
         if not enabled:
+            self._close_recovery()
             # Disabled effects must release their large viewport surfaces and
             # receiver buffers, not merely stop drawing into retained targets.
             self._scene_lighting = None
@@ -318,7 +377,9 @@ class ToolheadSceneNode(SceneNode):
         if enabled == self._reflections_enabled: return
         self._reflections_enabled = enabled
         if not enabled:
-            if self._environment is not None: self._environment.close()
+            self._reset_reflection_display()
+            if self._environment is not None:
+                self._close_recovery();self._environment.close()
             self._environment = self._environment_scene = None
             self._environment_wake = None
 
@@ -339,21 +400,35 @@ class ToolheadSceneNode(SceneNode):
     def light_dimensions(self): return self._lights
 
     def apply_attached_lights(self, shader):
-        shader.setUniformValue("u_lightOpacity", self._opacity)
-        shader.setUniformValue("u_attachedCount", len(self._attached_lights))
-        if not self._attached_lights: return
+        for name, value in self.attached_light_uniforms().items(): shader.setUniformValue(name, value)
+
+    def attached_light_uniforms(self):
+        """Value inputs shared by ordinary drawing and frozen receiver work."""
+        values = {"u_lightOpacity": self._opacity, "u_attachedCount": len(self._attached_lights)}
+        if not self._attached_lights: return values
         world = self.render_position()
         for index, light in enumerate(self._attached_lights):
-            position, direction, colour, reach = light_values(light)
-            position = np.asarray(position) - self._tip
-            position = [float(position[0]+world.x), float(position[2]+world.y), float(-position[1]+world.z)]
-            direction = [direction[0], direction[2], -direction[1]]
-            for name, vector in (("Position", position), ("Direction", direction), ("Colour", list(colour))):
-                shader.setUniformValue("u_attached"+name+"["+str(index)+"]", vector)
-            shader.setUniformValue("u_attachedRange["+str(index)+"]", float(reach))
-            shader.setUniformValue("u_attachedSurface["+str(index)+"]", float(light['surface']))
+            delivered = attached_light(index, light_values(light), self._tip, (world.x, world.y, world.z))
+            for name, vector in (("Position", delivered.position), ("Direction", delivered.direction), ("Colour", delivered.colour)):
+                values["u_attached"+name+"["+str(index)+"]"] = list(vector)
+            values["u_attachedRange["+str(index)+"]"] = delivered.reach
+            values["u_attachedSurface["+str(index)+"]"] = float(light['surface'])
             rgb = [int(light['colour'][j:j+2], 16)/255 for j in (1, 3, 5)]
-            shader.setUniformValue("u_attachedPaint["+str(index)+"]", rgb + [float(light['paint'])])
+            values["u_attachedPaint["+str(index)+"]"] = rgb + [float(light['paint'])]
+        return values
+
+    def receiver_uniforms(self, camera):
+        """Capture once before deferred work; never retain mutable node fields."""
+        orthographic, direction = self._camera_view(camera)
+        values = {"u_orthographic": int(orthographic), "u_viewDirection": direction.tolist(),
+            "u_opacity": 1.0, "u_lightingEnabled": int(self._lighting_enabled),
+            "u_surfaceDetail": self._surface_detail, "u_materialEditEnabled": 0}
+        values.update(finish_uniforms(self._material_overrides))
+        values.update(self.attached_light_uniforms())
+        for light in head_lights(self._lights):
+            values["u_light" + str(light.index)] = list(light.position)
+            values["u_direction" + str(light.index)] = list(light.direction)
+        return values
 
     def illuminate_scene(self, renderer, camera):
         if self._native_model: return
@@ -377,7 +452,9 @@ class ToolheadSceneNode(SceneNode):
         return Application.getInstance().getController().getScene().getActiveCamera()
 
     def close(self):
-        if self._environment is not None: self._environment.close()
+        self._reset_reflection_display()
+        if self._environment is not None:
+            self._close_recovery();self._environment.close()
         self._environment = self._environment_scene = None
         self._restore_simulation()
         owned = self._composite_pass
@@ -391,9 +468,12 @@ class ToolheadSceneNode(SceneNode):
         self._occlusion = None
         self._depth_seed = self._depth_revision = self._rotor_render = None
         self._opaque_shader_cache = None
+        self._recovery_shader_cache = None
 
     def set_model(self, model, tip):
-        if self._environment is not None: self._environment.close()
+        self._reset_reflection_display()
+        if self._environment is not None:
+            self._close_recovery();self._environment.close()
         self._environment = self._environment_scene = None
         self._native_model = False
         self._shader = None
@@ -486,9 +566,44 @@ class ToolheadSceneNode(SceneNode):
                    and speed(row, self._rotor_motion.readings)[0] > 0
                    for row in self._rotor_motion.rows)
 
+    def rotor_identity(self):
+        """Hard pose inputs; advancing the animation clock is not invalidation."""
+        return (self._rotor_key,
+            tuple((row['body'], speed(row, self._rotor_motion.readings)[0],
+                   self._rotor_motion.phases.get(row['body'], 0.) if not speed(row, self._rotor_motion.readings)[0] else None)
+                  for row in self._rotor_motion.rows),
+            tuple((body, tuple(map(id, meshes))) for body, meshes in sorted(self._rotor_meshes.items())),
+            tuple(map(id, self._static_transparent)))
+
+    def rotor_draw_plan(self, camera, poses, fraction):
+        """The ordinary and native paths share transforms and transparent order."""
+        from UM.Math.Matrix import Matrix
+        base = self.render_transformation().getData()
+        convert = np.array(((1,0,0),(0,0,1),(0,-1,0)))
+        opaque, transparent = [], []
+        for row, phase, blur, _label in poses:
+            centre = convert @ (np.array(row['centre'])-self._tip)
+            axis = convert @ row['axis']
+            local = rotation(centre,axis,phase+row['direction']*blur*fraction)
+            transform = Matrix(base @ local)
+            normal = Matrix(transform.getData()); normal.setRow(3,[0,0,0,1]); normal.setColumn(3,[0,0,0,1]); normal.invert(); normal.transpose()
+            solid, glass = self._rotor_meshes[row['body']]
+            if solid is not None: opaque.append((solid, False, transform, normal))
+            if glass is not None: transparent.append((glass, True, transform, normal))
+        for mesh in self._static_transparent:
+            if mesh is not None: transparent.append((mesh, True, self.render_transformation(), self._render_normal))
+        eye = camera.getWorldPosition()
+        position = np.array((eye.x,eye.y,eye.z))
+        orthographic, direction = self._camera_view(camera)
+        def distance(item):
+            mesh, _transparent, transform, _normal = item
+            world = transform.getData() @ np.append(self._mesh_centres[id(mesh)], 1.)
+            if orthographic: return -float(world[:3] @ direction)
+            return float(np.sum((world[:3]-position)**2))
+        return tuple(opaque + sorted(transparent, key=distance, reverse=True))
+
     def _animate_rotors(self, gl, static, camera, size):
         from .ToolheadRotorRender import ToolheadRotorRender
-        from UM.Math.Matrix import Matrix
         if self._rotor_render is None: self._rotor_render = ToolheadRotorRender()
         poses = self._rotor_motion.sample()
         static_key = self._frame_cache._key
@@ -499,35 +614,14 @@ class ToolheadSceneNode(SceneNode):
             tuple((body,tuple(map(id,meshes))) for body,meshes in sorted(self._rotor_meshes.items())),
             tuple(map(id,self._static_transparent)))
         current_target = [None]
-        base = self.render_transformation().getData()
-        convert = np.array(((1,0,0),(0,0,1),(0,-1,0)))
         def render(cropped_camera, fraction):
             if current_target[0] is None: current_target[0] = self._rotor_render._work
             transparent = []
-            for row, phase, blur, _label in poses:
-                centre = convert @ (np.array(row['centre'])-self._tip)
-                axis = convert @ row['axis']
-                local = rotation(centre,axis,phase+row['direction']*blur*fraction)
-                transform = Matrix(base @ local)
-                normal = Matrix(transform.getData()); normal.setRow(3,[0,0,0,1]); normal.setColumn(3,[0,0,0,1]); normal.invert(); normal.transpose()
-                opaque, translucent = self._rotor_meshes[row['body']]
-                self._draw_mesh(cropped_camera,opaque,None,transform,normal)
-                if translucent is not None: transparent.append((translucent,transform,normal))
-            # Translucent housing must composite after the moving opaque fan.
-            # It cannot be baked into colour before the rotor overwrites it.
-            for mesh in self._static_transparent:
-                transparent.append((mesh,self.render_transformation(),self._render_normal))
-            eye = cropped_camera.getWorldPosition()
-            position = np.array((eye.x,eye.y,eye.z))
-            orthographic, direction = self._camera_view(cropped_camera)
-            def distance(item):
-                mesh, transform, _normal = item
-                centre = self._mesh_centres[id(mesh)]
-                world = transform.getData() @ np.append(centre,1.)
-                if orthographic: return -float(world[:3] @ direction)
-                return float(np.sum((world[:3]-position)**2))
-            for mesh, transform, normal in sorted(transparent,key=distance,reverse=True):
-                self._draw_mesh(cropped_camera,None,mesh,transform,normal)
+            for mesh, glass, transform, normal in self.rotor_draw_plan(cropped_camera, poses, fraction):
+                recovery=getattr(self,'_environment_frame',None)
+                corrected=recovery is not None and recovery.draw(mesh)
+                if not corrected:self._draw_mesh(cropped_camera,None if glass else mesh,mesh if glass else None,transform,normal)
+                if glass: transparent.append((mesh,transform,normal))
             if self._depth_seed is not None:
                 self._write_translucent_depth(cropped_camera, transparent)
                 self._occlusion.overlay(gl, current_target[0], cropped_camera)
@@ -551,12 +645,15 @@ class ToolheadSceneNode(SceneNode):
 
     def set_native_model(self, mesh):
         """Use Cura's already Y-up nozzle mesh without CAD transforms/effects."""
-        if self._environment is not None: self._environment.close()
+        if self._environment is not None:
+            self._close_recovery();self._environment.close()
         self._environment = self._environment_scene = self._rotor_render = None
+        self._reset_reflection_display()
         self._static_transparent = []
         self._mesh_centres = {}
         self._occlusion = self._depth_seed = self._depth_revision = None
         self._opaque_shader_cache = None
+        self._recovery_shader_cache = None
         self._rotor_status = ""
         self.set_simulation_active(False)
         self._native_model = True
@@ -589,7 +686,23 @@ class ToolheadSceneNode(SceneNode):
                     renderer.addRenderPass(self._simulation_pass)
         return True
 
+
+
+    def _ordinary_retained_graphics(self, width, height, samples):
+        from .ToolheadFrameCache import retained_graphics
+        return retained_graphics(self, width, height, samples=samples)
+
+    def _retire_ordinary_graphics(self, width, height, samples):
+        from .ToolheadSampleTarget import ToolheadSampleTarget
+        rotor = self._rotor_render
+        if rotor is not None and (rotor._size != (width, height, samples)
+                                  or isinstance(rotor._work, ToolheadSampleTarget)):
+            rotor.release_targets()
+        foreground = getattr(self._occlusion, '_transparency', None)
+        if foreground is not None: foreground.retire_for_ordinary(width, height)
+
     def draw(self, camera):
+        self._displayed_backend = None
         if self._native_model:
             self._draw_native(camera)
             return
@@ -599,12 +712,21 @@ class ToolheadSceneNode(SceneNode):
             self._frame_cache = ToolheadFrameCache(depth_only=True)
         state = (id(self.getMeshData()), id(self._translucent_mesh), self._lighting_enabled, self._reflections_enabled,
             self._lights, repr(self._attached_lights), self._surface_detail, repr(self._material_overrides),
-            (self._environment.available, self._environment.revision) if self._environment else None)
-        self._frame_cache.draw(OpenGL.getInstance().getBindingsObject(), camera, self._model_bounds,
+            (self._environment.available, self._environment.revision,
+             getattr(self._environment, 'recovery_identity', None)) if self._environment else None,
+            self.rotor_identity() if self._rotor_meshes else None)
+        if self._environment_frame is not None:self._close_recovery()
+        fallback = "Environment map" if (self._lighting_enabled and self._reflections_enabled and
+            self._environment is not None and self._environment.available) else "Ordinary shading"
+        if fallback == "Environment map" and getattr(self._environment.descriptor,"projection",0)==1:
+            fallback="Environment map (six directional views)"
+        self._displayed_backend = self._frame_cache.draw(OpenGL.getInstance().getBindingsObject(), camera, self._model_bounds,
             self.render_transformation(), state, self._draw, opacity=self._opacity,
             depth_seed=self._depth_seed, depth_revision=self._depth_revision,
             post_render=self._occlusion.overlay if self._depth_seed is not None and not self._rotor_meshes else None,
-            animate=self._animate_rotors if self._rotor_meshes else None)
+            animate=self._animate_rotors if self._rotor_meshes else None,
+            fallback_backend=fallback,
+            retire_graphics=self._retire_ordinary_graphics)
 
     def _draw_native(self, camera):
         mesh = self.getMeshData()
@@ -621,7 +743,10 @@ class ToolheadSceneNode(SceneNode):
 
     def _draw(self, camera):
         translucent = None if self._rotor_meshes else self._translucent_mesh
-        self._draw_mesh(camera,self.getMeshData(),translucent,self.render_transformation(),self._render_normal)
+        recovery=getattr(self,'_environment_frame',None)
+        corrected=(recovery is not None and (not self._rotor_meshes or self.getMeshData() is not None)
+                   and recovery.draw(self.getMeshData() if self._rotor_meshes else None))
+        if not corrected:self._draw_mesh(camera,self.getMeshData(),translucent,self.render_transformation(),self._render_normal)
         if self._depth_seed is not None and translucent is not None:
             self._write_translucent_depth(camera, [(translucent, self.render_transformation(), self._render_normal)])
 
@@ -657,7 +782,12 @@ class ToolheadSceneNode(SceneNode):
     def _camera_view(camera):
         return camera_view(camera)
 
-    def _draw_mesh(self, camera, opaque, translucent, transform, normal_matrix):
+    def _draw_mesh(self, camera, opaque, translucent, transform, normal_matrix, *, layer_draw=None,
+                   receiver_values=None, receiver_map=None):
+        if receiver_values is not None and camera is not receiver_values.camera:
+            raise ValueError('Frozen receiver requires its exact captured camera')
+        if receiver_values is None and receiver_map is not None:
+            raise ValueError('Pinned receiver map requires frozen receiver values')
         normal = {"normal_transformation": normal_matrix} if normal_matrix is not None else {}
         if opaque is not None or translucent is not None:
             single_pass = translucent is None
@@ -672,15 +802,18 @@ class ToolheadSceneNode(SceneNode):
                 if self._shader is None:
                     self._shader = OpenGL.getInstance().createShaderProgram(plugin_path("toolhead", "toolhead.shader"))
                 shader = self._shader
-            orthographic, direction = self._camera_view(camera)
-            shader.setUniformValue("u_orthographic", int(orthographic))
-            shader.setUniformValue("u_viewDirection", direction.tolist())
-            shader.setUniformValue("u_opacity", 1.0)
-            shader.setUniformValue("u_lightingEnabled", int(self._lighting_enabled))
-            shader.setUniformValue("u_surfaceDetail", self._surface_detail)
-            for name, value in finish_uniforms(self._material_overrides).items(): shader.setUniformValue(name, value)
-            shader.setUniformValue("u_materialEditEnabled", 0)
-            if self._environment is not None: self._environment.apply(shader)
+            if layer_draw is not None:
+                shader = layer_draw.shader(single_pass)
+            # Completed query geometry is ONLY for the separate bounded query
+            # pass. Its presence must never activate the failed combined PBR
+            # shader while the safe layer adapter is being wired.
+            if receiver_values is None:
+                for name, value in self.receiver_uniforms(camera).items(): shader.setUniformValue(name, value)
+                environment = self._environment
+            else:
+                receiver_values.apply(shader)
+                environment = receiver_map
+            if environment is not None: environment.apply(shader)
             else:
                 from .ToolheadEnvironment import TEXTURE_UNIT, DEPTH_UNIT
                 shader.setUniformValue("u_environmentEnabled", 0)
@@ -689,44 +822,47 @@ class ToolheadSceneNode(SceneNode):
                     shader.setTexture(TEXTURE_UNIT, None)
                 finally:
                     shader.setTexture(DEPTH_UNIT, None)
-            self.apply_attached_lights(shader)
-            width, depth, height = self._lights
-            for index, (position, direction) in enumerate((
-                    ([-width/2, height, 0], [1, -1, 0]),
-                    ([width/2, height, 0], [-1, -1, 0]),
-                    ([0, height, -depth/2], [0, -1, 1]),
-                    ([0, height, depth/2], [0, -1, -1]))):
-                shader.setUniformValue("u_light" + str(index), position)
-                shader.setUniformValue("u_direction" + str(index), direction)
-            try:
-                if opaque is not None:
-                    # Opaque CAD uses early depth rejection in one lighting draw.
-                    # Intrinsically translucent models retain the depth prepass.
-                    # Global opacity belongs to the completed image composition.
-                    if not single_pass:
-                        depth = RenderBatch(shader, type=RenderBatch.RenderType.Solid, backface_cull=True,
-                            state_setup_callback=lambda gl: gl.glColorMask(False, False, False, False),
-                            state_teardown_callback=lambda gl: gl.glColorMask(True, True, True, True))
-                        depth.addItem(transform, mesh=opaque, **normal)
-                        shader.setUniformValue("u_depthOnly", 1)
-                        try:
-                            depth.render(camera)
-                        finally:
-                            shader.setUniformValue("u_depthOnly", 0)
-                    options = dict(state_setup_callback=lambda gl: (gl.glDepthFunc(gl.GL_LEQUAL),
-                        gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA, gl.GL_ONE, gl.GL_ONE_MINUS_SRC_ALPHA)),
-                        state_teardown_callback=lambda gl: gl.glDepthFunc(gl.GL_LESS))
-                    batch = RenderBatch(shader, type=RenderBatch.RenderType.Solid, backface_cull=True, **options)
-                    batch.addItem(transform, mesh=opaque, **normal)
-                    batch.render(camera)
-                if translucent is not None:
-                    batch = RenderBatch(shader, type=RenderBatch.RenderType.Transparent, backface_cull=True,
-                        state_setup_callback=lambda gl: gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA,
-                            gl.GL_ONE, gl.GL_ONE_MINUS_SRC_ALPHA))
-                    batch.addItem(transform, mesh=translucent, **normal)
-                    batch.render(camera)
-            finally:
+            scope = layer_draw.read() if layer_draw is not None else nullcontext()
+            def original_state(mesh, action):
+                def deliver(gl):
+                    if layer_draw is not None: layer_draw.apply(shader, mesh)
+                    action(gl)
+                return deliver
+            with scope:
                 try:
-                    shader.release()  # Uranium RenderBatch does not unwind failed binds/draws.
+                    if opaque is not None:
+                        # Opaque CAD uses early depth rejection in one lighting draw.
+                        # Intrinsically translucent models retain the depth prepass.
+                        # Global opacity belongs to the completed image composition.
+                        if not single_pass:
+                            depth = RenderBatch(shader, type=RenderBatch.RenderType.Solid, backface_cull=True,
+                                state_setup_callback=original_state(opaque, lambda gl: gl.glColorMask(False, False, False, False)),
+                                state_teardown_callback=lambda gl: gl.glColorMask(True, True, True, True))
+                            depth.addItem(transform, mesh=opaque, **normal)
+                            shader.setUniformValue("u_depthOnly", 1)
+                            try:
+                                depth.render(camera)
+                            finally:
+                                shader.setUniformValue("u_depthOnly", 0)
+                    for plane in layer_draw.planes() if layer_draw is not None else (0,):
+                        if layer_draw is not None: layer_draw.select_plane(plane)
+                        # Each colour replay shades original full coverage before
+                        # its output mask. Preserve opaque/glass order per sample.
+                        if opaque is not None:
+                            options = dict(state_setup_callback=original_state(opaque, lambda gl: (gl.glDepthFunc(gl.GL_LEQUAL),
+                                gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA, gl.GL_ONE, gl.GL_ONE_MINUS_SRC_ALPHA))),
+                                state_teardown_callback=lambda gl: gl.glDepthFunc(gl.GL_LESS))
+                            batch = RenderBatch(shader, type=RenderBatch.RenderType.Solid, backface_cull=True, **options)
+                            batch.addItem(transform, mesh=opaque, **normal)
+                            batch.render(camera)
+                        if translucent is not None:
+                            batch = RenderBatch(shader, type=RenderBatch.RenderType.Transparent, backface_cull=True,
+                                state_setup_callback=original_state(translucent, lambda gl: gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA,
+                                    gl.GL_ONE, gl.GL_ONE_MINUS_SRC_ALPHA)))
+                            batch.addItem(transform, mesh=translucent, **normal)
+                            batch.render(camera)
                 finally:
-                    if self._environment is not None: self._environment.release_bindings()
+                    try:
+                        shader.release()  # Uranium RenderBatch does not unwind failed binds/draws.
+                    finally:
+                        if environment is not None: environment.release_bindings()

@@ -181,6 +181,8 @@ class ToolheadPresenterLifecycleTests(unittest.TestCase):
             def set_scene_lighting(self, bed, models): self.effects = (bed, models)
             def set_lighting_enabled(self, enabled): self.lighting_enabled = enabled
             def set_reflections_enabled(self, enabled): self.reflections_enabled = enabled
+            def set_ray_traced(self, enabled): self.ray_traced = enabled
+            def set_environment_fallback(self, enabled): self.environment_fallback = enabled
             def set_scene(self, view, root): self.scene = (view, root)
             def set_simulation_active(self, active):
                 changed = getattr(self, "simulation_active", False) != active
@@ -254,6 +256,7 @@ class ToolheadPresenterLifecycleTests(unittest.TestCase):
         self.assertIsNone(self.native.parent)
         self.assertTrue(node.visible)
         self.assertIs(node.native_mesh, self.native.mesh)
+
 
 
     def test_missing_asset_never_applies_old_body_rotation_tip_or_lights_to_default(self):

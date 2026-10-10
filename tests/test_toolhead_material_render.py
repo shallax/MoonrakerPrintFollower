@@ -64,6 +64,7 @@ class MaterialRenderTests(unittest.TestCase):
             cube = self.context.texture_cube((4, 4), 3)
             self.addCleanup(cube.release)
             for face, colour in enumerate(((255,0,0), (0,255,0), (0,0,255), (255,255,0), (255,0,255), (0,255,255))):
+                if environment == 'black': colour = (0,0,0)
                 cube.write(face, bytes(colour)*16)
             cube.build_mipmaps()
             cube.use(location=7)
@@ -72,6 +73,7 @@ class MaterialRenderTests(unittest.TestCase):
             depth.filter = (moderngl.NEAREST, moderngl.NEAREST)
             near,far = .2,30.
             hardware = ((far+near-2*far*near/10.)/(far-near)+1)/2
+            if environment == 'missing': hardware = 1.
             for face in range(6): depth.write(face, np.full(16,hardware,np.float32).tobytes())
             depth.use(location=6)
             values.update(u_environmentEnabled=1, u_environment=7, u_sceneDepth=6, u_probe=(0,0,0),
@@ -200,20 +202,36 @@ class MaterialRenderTests(unittest.TestCase):
         self.assertGreater(np.count_nonzero(np.abs(original[:, :, :3]-polished[:, :, :3]) > .01), 1000)
         np.testing.assert_array_equal(original[:, :, 3], polished[:, :, 3])
 
-    def depth_direction(self, position, direction, *, hole=False, enclosure=False, jump=False, second_hit=False):
+    def test_missing_reflection_retains_lighting_but_valid_black_hit_remains_dark(self):
+        for material in ('ABS', 'Polished steel'):
+            with self.subTest(material=material):
+                finish = {'roughness': .05, 'reflectivity': .9}
+                ordinary = self.render(material, 0, local_finish=finish)
+                missing = self.render(material, 0, local_finish=finish, environment='missing')
+                black = self.render(material, 0, local_finish=finish, environment='black')
+                np.testing.assert_array_equal(missing, ordinary)
+                np.testing.assert_array_equal(black[:, :, 3], ordinary[:, :, 3])
+                self.assertLess(float(black[:, :, :3].mean()), float(ordinary[:, :, :3].mean()))
+                self.assertEqual(self.context.error, 'GL_NO_ERROR')
+
+    def depth_direction(self, position, direction, *, hole=False, enclosure=False, jump=False, second_hit=False,
+                        reflection=None, occluder=False):
         from pathlib import Path
         source = configparser.ConfigParser(interpolation=None, comment_prefixes=(';',))
         source.read(Path(__file__).parents[1] / 'mpf/toolhead/toolhead.shader')
         fragment = source['shaders']['fragment41core']
-        trace = fragment[fragment.index('float radialResidual'):fragment.index('vec3 environmentReflection')]
+        trace = fragment[fragment.index('float radialResidual'):fragment.index('float grainHash') if reflection is not None else fragment.index('vec3 environmentReflection')]
+        main = '\nvoid main(){colour=vec4(localReflectionDirection(normalize(ray)),1.);}'
+        if reflection is not None:
+            main = '\nvoid main(){float confidence;vec3 reflected=environmentReflection(normalize(ray),0.,confidence);colour=vec4(reflected,confidence);}'
         shader = self.context.program(vertex_shader='''#version 410
             void main() { vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-1.,0.,1.); }''',
             fragment_shader='''#version 410
-            uniform samplerCube u_sceneDepth;
+            uniform samplerCube u_sceneDepth, u_environment;
             uniform vec3 u_probe, u_sceneMin, u_sceneMax, v_position, ray;
             uniform float u_probeNear, u_probeFar;
             out vec4 colour;
-            ''' + trace + '\nvoid main(){colour=vec4(localReflectionDirection(normalize(ray)),1.);}')
+            ''' + trace + main)
         self.addCleanup(shader.release)
         cube = self.context.texture_cube((512,512), 1, dtype='f4')
         cube.filter = (moderngl.NEAREST, moderngl.NEAREST)
@@ -229,6 +247,10 @@ class MaterialRenderTests(unittest.TestCase):
             else:
                 with np.errstate(divide='ignore',invalid='ignore'):
                     forward = 10. / rays[:,:,2]
+                    if occluder:
+                        front = 3. / rays[:,:,2]
+                        blocked = (front>near)&(np.abs(rays[:,:,0]*front)<=1)&(np.abs(rays[:,:,1]*front)<=1)
+                        forward = np.where(blocked,front,forward)
                 if jump: forward = np.where(rays[:,:,0] < .3, 5., 15.) / np.maximum(rays[:,:,2], .000001)
                 if second_hit:
                     ratio = rays[:,:,0] / np.maximum(rays[:,:,2], .000001)
@@ -241,15 +263,33 @@ class MaterialRenderTests(unittest.TestCase):
             depth = np.round(depth*((1<<24)-1))/((1<<24)-1)
             cube.write(face,np.asarray(depth,dtype='f4').tobytes())
         cube.use(location=6)
+        if reflection is not None:
+            colour_cube = self.context.texture_cube((4,4), 3, dtype='f4')
+            self.addCleanup(colour_cube.release)
+            colour_cube.filter = (moderngl.NEAREST, moderngl.NEAREST)
+            for face in range(6): colour_cube.write(face, np.tile(reflection,(16,1)).astype('f4').tobytes())
+            colour_cube.use(location=7)
         limit = 16 if second_hit else 11
-        uniforms(shader,dict(u_sceneDepth=6,u_probe=(0,0,0),u_sceneMin=(-limit,-limit,-limit),u_sceneMax=(limit,limit,limit),
+        uniforms(shader,dict(u_sceneDepth=6,u_environment=7,u_probe=(0,0,0),u_sceneMin=(-limit,-limit,-limit),u_sceneMax=(limit,limit,limit),
             u_probeNear=near,u_probeFar=far,v_position=position,ray=direction))
         target = self.context.simple_framebuffer((1,1),components=4,dtype='f4')
         self.addCleanup(self.release_target, target)
         target.use(); self.context.disable(moderngl.DEPTH_TEST|moderngl.CULL_FACE|moderngl.BLEND)
         vao=self.context.vertex_array(shader,[]); self.addCleanup(vao.release); vao.render(vertices=3)
         self.assertEqual(self.context.error,'GL_NO_ERROR')
-        return np.frombuffer(target.read(components=4,dtype='f4'),np.float32)[:3].copy()
+        values = np.frombuffer(target.read(components=4,dtype='f4'),np.float32)
+        return values[:3 if reflection is None else 4].copy()
+
+    def test_disocclusion_confidence_distinguishes_missing_geometry_from_valid_black(self):
+        green = (.1,.9,.1)
+        missing = self.depth_direction((3,0,0),(0,0,1),reflection=green,occluder=True)
+        restored = self.depth_direction((3,0,0),(0,0,1),reflection=green)
+        black = self.depth_direction((3,0,0),(0,0,1),reflection=(0,0,0))
+        jump = self.depth_direction((3,0,0),(0,0,1),reflection=green,jump=True)
+        np.testing.assert_array_equal(missing, [0,0,0,0])
+        np.testing.assert_array_equal(jump, [0,0,0,0])
+        np.testing.assert_allclose(restored, [*green,1], atol=1e-7, rtol=0)
+        np.testing.assert_array_equal(black, [0,0,0,1])
 
     def test_depth_parallax_hits_the_actual_plane_from_an_offset_surface(self):
         actual = self.depth_direction((3,0,0),(0,0,1))

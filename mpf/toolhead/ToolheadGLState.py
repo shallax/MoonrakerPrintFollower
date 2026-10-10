@@ -11,6 +11,10 @@ _procedures = WeakKeyDictionary()
 _procedure_lock = threading.RLock()
 
 
+class SampleStateUnavailable(RuntimeError):
+    """Optional sample controls refused before any graphics mutation."""
+
+
 def procedure(context, name, result, *arguments):
     key = name, result, arguments
     with _procedure_lock:
@@ -41,8 +45,14 @@ def procedure(context, name, result, *arguments):
 
 
 @contextmanager
-def preserved_state(gl, context):
+def preserved_state(gl, context, *, exact_context=False):
     """Restore each independent state even when an optional cleanup fails."""
+    def current():
+        if exact_context:
+            from PyQt6.QtGui import QOpenGLContext
+            if QOpenGLContext.currentContext() is not context:
+                raise RuntimeError('Host graphics state lost its creating context')
+    current()
     bind = procedure(context, "glBindFramebuffer", None, ctypes.c_uint, ctypes.c_uint)
     use = procedure(context, "glUseProgram", None, ctypes.c_uint)
     vao = None
@@ -96,18 +106,129 @@ def preserved_state(gl, context):
             actions.append(lambda key=key, value=value: (gl.glEnable if value else gl.glDisable)(key))
         for unit, (texture, cube, sampler_name) in enumerate(textures):
             def restore_texture(unit=unit, texture=texture, cube=cube):
+                current()
                 gl.glActiveTexture(0x84C0 + unit)
+                current()
                 gl.glBindTexture(0x0DE1, texture)
+                current()
                 gl.glBindTexture(0x8513, cube)
             actions.append(restore_texture)
             if sampler: actions.append(lambda unit=unit, name=sampler_name: sampler(unit, name))
         actions.append(lambda: gl.glActiveTexture(active))
         failure = None
         for action in actions:
+            current()
             try: action()
             except Exception as error:
                 if failure is None: failure = error
+            current()
         if failure is not None: raise RuntimeError("Host graphics state could not be restored") from failure
+
+
+@contextmanager
+def preserved_samples(gl, context, *, texture_units=(0,1), exact_context=False):
+    """Preserve core4 sample controls and the specified owned MS texture units.
+
+    Caller already owns the ordinary GL-state guard. Independent restoration
+    continues after a failed mask/texture operation; no legacy enums are queried.
+    """
+    def current():
+        if exact_context:
+            from PyQt6.QtGui import QOpenGLContext
+            if QOpenGLContext.currentContext() is not context:
+                raise RuntimeError('Sample graphics state lost its creating context')
+    current()
+    if (type(texture_units) is not tuple or not texture_units or len(texture_units)>8
+            or len(set(texture_units))!=len(texture_units)
+            or any(type(unit) is not int or not 0<=unit<8 for unit in texture_units)):
+        raise ValueError('Bounded distinct sample texture units required')
+    if context.format().majorVersion() < 4:
+        raise SampleStateUnavailable("Native sample transport requires core4 graphics")
+    try:
+        mask = procedure(context, "glSampleMaski", None, ctypes.c_uint, ctypes.c_uint)
+        indexed = procedure(context, "glGetIntegeri_v", None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_int))
+    except RuntimeError as error:
+        raise SampleStateUnavailable(str(error)) from error
+    words = int(gl.glGetIntegerv(0x8E59))
+    if not 0 < words <= 64:
+        raise SampleStateUnavailable("Native sample-mask storage is invalid")
+    masks = []
+    for index in range(words):
+        value = ctypes.c_int()
+        indexed(0x8E52, index, ctypes.byref(value))
+        masks.append(value.value & 0xffffffff)
+    enabled = {key: bool(gl.glIsEnabled(key)) for key in (0x809D, 0x8E51, 0x80A0, 0x809E, 0x809F, 0x8C36)}
+    active = int(gl.glGetIntegerv(0x84E0))
+    textures = []
+    try:
+        for unit in texture_units:
+            current()
+            gl.glActiveTexture(0x84C0 + unit)
+            current()
+            textures.append(int(gl.glGetIntegerv(0x9104)))
+            current()
+    finally:
+        current()
+        gl.glActiveTexture(active)
+        current()
+    if gl.glGetError():
+        raise RuntimeError("Native sample-state capture failed")
+    try:
+        yield mask
+    finally:
+        actions = [lambda index=index, value=value: mask(index, value) for index, value in enumerate(masks)]
+        actions.extend(lambda key=key, value=value: (gl.glEnable if value else gl.glDisable)(key)
+                       for key, value in enabled.items())
+        for unit, texture in zip(texture_units,textures,strict=True):
+            def restore(unit=unit, texture=texture):
+                gl.glActiveTexture(0x84C0 + unit)
+                current()
+                gl.glBindTexture(0x9100, texture)
+            actions.append(restore)
+        actions.append(lambda: gl.glActiveTexture(active))
+        failure = None
+        for action in actions:
+            current()
+            try: action()
+            except Exception as error:
+                if failure is None: failure = error
+            current()
+        if failure is not None:
+            raise RuntimeError("Native sample state could not be restored") from failure
+
+
+def sample_depth_certificate(gl, context, width, height, *, expected_name=None):
+    """Certify the bound draw target's original four-sample floating depth."""
+    from PyQt6.QtGui import QOpenGLContext
+    def current():
+        if QOpenGLContext.currentContext() is not context:
+            raise RuntimeError('Sample depth lost its creating context')
+    def checked():
+        current()
+        if gl.glGetError(): raise RuntimeError('Sample depth graphics receipt is uncertain')
+        current()
+    current()
+    if int(gl.glGetIntegerv(0x80A9))!=4:
+        raise RuntimeError('Original sample depth requires a four-sample draw target')
+    checked()
+    attachment=procedure(context,'glGetFramebufferAttachmentParameteriv',None,
+        ctypes.c_uint,ctypes.c_uint,ctypes.c_uint,ctypes.POINTER(ctypes.c_int))
+    fields=[]
+    for parameter in (0x8CD0,0x8CD1,0x8216,0x8211):
+        current(); value=ctypes.c_int(); attachment(0x8CA9,0x8D00,parameter,ctypes.byref(value)); checked()
+        fields.append(value.value)
+    kind,name,bits,component=fields
+    if (kind!=0x1702 or name<=0 or bits!=32 or component!=0x1406
+            or (expected_name is not None and name!=expected_name)):
+        raise RuntimeError('Original sample visibility requires its D32F depth texture')
+    query=procedure(context,'glGetTexLevelParameteriv',None,ctypes.c_uint,ctypes.c_int,
+        ctypes.c_uint,ctypes.POINTER(ctypes.c_int))
+    with preserved_samples(gl,context,texture_units=(0,),exact_context=True):
+        gl.glActiveTexture(0x84C0); checked(); gl.glBindTexture(0x9100,name); checked()
+        for parameter,expected in ((0x1003,0x8CAC),(0x1000,width),(0x1001,height),(0x9106,4),(0x9107,1)):
+            value=ctypes.c_int(); query(0x9100,0,parameter,ctypes.byref(value)); checked()
+            if value.value!=expected: raise RuntimeError('Original sample depth storage differs from its certificate')
+    checked(); return name
 
 
 _retired_textures = {}

@@ -91,8 +91,10 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         data.set_state("paused", live=(10.0, 10.0, 5.0, 0.0))
         self.assertAlmostEqual(controller._axis_estimate["z"], 5.0)
         controller.jog("z", -1)  # lands exactly on the floor: allowed
-        controller.jog("z", -1)  # below it: the note fires again
+        controller.jog("z", -1)  # queued until the first move is acknowledged
+        commands.complete()
         self.assertEqual(len(notes), 2)
+        self.assertNotIn("G1 Z-25", self._scripts(commands))
 
     def test_a_configured_axis_floor_forbids_the_negative_side(self):
         controller, _, commands = self._make(live=(0.0, 0.0, 10.0, 0.0))
@@ -118,7 +120,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         clamped = controller._clamp_tail((make_jog_op("x", 250.0, True),))
         self.assertEqual([op.distance for op in clamped], [190.0])
         pending = (make_jog_op("x", 190.0, True), make_jog_op("x", -50.0, True))
-        self.assertEqual(controller._clamp_tail(pending), pending[:1])
+        self.assertEqual(controller._clamp_tail(pending), pending)  # lower bound awaits fresh dispatch
         # An in-range tail and a non-jog tail are both left alone.
         pending = (make_jog_op("x", 100.0, True),)
         self.assertEqual(controller._clamp_tail(pending), pending)
@@ -446,9 +448,9 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         controller.jog("x", 1)
         self.assertEqual(controller.values["jogStatus"],
                          "Too many queued moves — wait for the printer to catch up.")
-        self.assertEqual(len(controller._pending), 15)
-        self.assertAlmostEqual(controller._axis_estimate["x"], 1.0)
-        self.assertAlmostEqual(controller._axis_down_pending["x"], 15.0)
+        self.assertEqual(len(controller._pending), 16)
+        self.assertAlmostEqual(controller._axis_estimate["x"], 0.0)
+        self.assertAlmostEqual(controller._axis_down_pending["x"], 16.0)
         self.assertAlmostEqual(controller._axis_up_pending["x"], 0.0)
 
     def test_a_dropped_queue_reconciles_the_projection(self):
@@ -546,9 +548,12 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
             self.assertEqual(controller._pending, ())
             self.assertAlmostEqual(controller._axis_estimate["x"], 1.0)
             self.assertAlmostEqual(controller._axis_up_pending["x"], 0.0)
-            # The next tap is measured against the truth: -25 from 1 is
-            # refused rather than queued behind a pause that will not come.
+            # A later downward tap waits for pause and a fresh G-code query;
+            # physical polling cannot infer its calibrated lower boundary.
             controller.jog("x", -1)
+            self.assertEqual(len(controller._pending), 1)
+            data.set_state("paused")
+            commands.complete()  # acknowledge the newly requested pause
             self.assertEqual(controller._pending, ())
             self.assertNotIn("G1 X-25", self._scripts(commands))
 

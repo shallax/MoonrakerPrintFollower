@@ -352,7 +352,7 @@ Item {
                     onValueTuning: value => root.toolheadOpacityRequested(value / 100)
                 }
                 Row {
-                    spacing: UM.Theme.getSize("default_margin").width
+                    spacing: UM.Theme.getSize("default_margin").width / 2
                     ViewOptionsCheckBox {
                         objectName: "moonrakerEnableLighting"
                         text: "Enable lighting"

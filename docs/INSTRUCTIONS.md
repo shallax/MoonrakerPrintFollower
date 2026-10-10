@@ -22,6 +22,26 @@ files; the real-QML engine gate checks local types and singleton imports.
 
 ## Development environment
 
+The live environment map uses six exterior orthographic colour/depth views.
+Its shader traverses every crossed depth texel, including opposite views, and
+uses the colour mip chain for roughness. Unchanged directional captures sleep
+until their scene key changes; moving scene geometry or attached lights still
+refresh the map. Original CAD shading, opacity and depth remain in the raster
+path. The ray-tracing backend, binaries and renderer-selection controls have
+been removed. Old saved ray/fallback preferences are ignored; Enable reflections
+now directly controls the environment map.
+
+The earlier split receiver/query implementation remains experimental and is
+not wired into the default environment path. Never run the old combined
+geometry-query/CAD-PBR variant: it caused a Metal GPU hang on the imported head.
+A private 512-pixel actual-head benchmark of the directional path measured
+18–27 ms after removing six redundant roughness searches (previously
+112–167 ms). Pairing opposite views into three shared texel walks then reduced
+an alternating isolated comparison from 21.1 ms to 11.0 ms median. This is a bounded benchmark, not a live Cura frame-rate guarantee.
+The directional GPU regression tests cover thin surfaces, opposite captures,
+silhouette discontinuities and true misses. They do not prove all possible
+concave geometry is represented by the six finite-resolution depth views.
+
 The Makefile is the entry point on every host. Linux defaults to the
 pinned Docker image; macOS and Windows default to native host tools.
 On macOS and Windows, run `make dev_install` once. Linux builds its

@@ -1,18 +1,22 @@
 """Main-context ownership, cancellation and recovery without printer access."""
 import sys
 import unittest
+from contextlib import contextmanager
+from threading import Event
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 
 from mpf.toolhead.ToolheadEnvironment import ToolheadEnvironment
 from mpf.toolhead.ToolheadEnvironmentMailbox import EnvironmentMailbox
+from mpf.toolhead import ToolheadEnvironmentGeometry as query_geometry
 
 # Native GL/scene parity is qualified separately; these tests inject the
 # producer boundary to exercise failures that a healthy driver will not emit.
 with patch.dict(sys.modules, {
     'mpf.toolhead.ToolheadEnvironmentWorker': NS(EnvironmentWorker=object, CaptureJob=lambda *args: NS(
-        serial=args[0], soft=args[1], frame=args[2], ready_fence=args[3], generation=args[4])),
+        serial=args[0], soft=args[1], frame=args[2], ready_fence=args[3], generation=args[4], key=args[5])),
     'mpf.toolhead.ToolheadCaptureRecipe': NS(CaptureFreezer=object),
+    'mpf.toolhead.ToolheadEnvironmentGeometry': query_geometry,
 }):
     from mpf.toolhead import ToolheadAsyncEnvironment as module
 
@@ -30,6 +34,7 @@ class AsyncEnvironmentTests(unittest.TestCase):
             wrapinstance=lambda *_: owner._main_context))
         sip.start(); self.addCleanup(sip.stop)
         owner._worker = Mock(mailbox=EnvironmentMailbox(), failure='', timings=None)
+        owner._worker.abandoned = Event()
         owner._worker.completed.return_value = ()
         owner._worker.submit.return_value = None
         owner._window = Mock()
@@ -45,12 +50,223 @@ class AsyncEnvironmentTests(unittest.TestCase):
         owner._freezer = Mock()
         owner._freezer.freeze.return_value = ('frozen', ('retained-wrapper',))
 
+    def test_held_source_stops_adoption_and_submission_until_key_changes(self):
+        owner=self.owner
+        owner._selected_key=('file','pose');owner._hard='file'
+        owner._storage=object();token=object()
+        owner._recovery_hold=(token,owner._storage,owner._selected_key)
+        snapshot=Mock(return_value='snapshot')
+        owner.step(owner._gl,owner._main_context,'file','pose',snapshot)
+        snapshot.assert_not_called();owner._worker.submit.assert_not_called()
+        owner.release_recovery(object())
+        self.assertTrue(owner._held_recovery())
+        owner.step(owner._gl,owner._main_context,'file','new pose',snapshot)
+        self.assertIsNone(owner._recovery_hold)
+        snapshot.assert_called_once();owner._worker.submit.assert_called_once()
+
+    def test_generation_changes_wake_retirement_without_a_successor_job(self):
+        for deferred in (True, False):
+            payload=self.publish()
+            retired=[]
+            def wake(retired=retired):
+                result=self.owner._worker.mailbox.take_retirement()
+                if result is not None:
+                    retired.append(result[1])
+                    self.owner._worker.mailbox.retired(result[0])
+            self.owner._worker.wake.side_effect=wake
+            if deferred:
+                self.owner.defer()
+            else:
+                self.owner._freezer.freeze.return_value=None
+                self.owner._fallback.available=False
+                self.owner.step(self.owner._gl,self.owner._main_context,'replacement','pose',lambda:'scene')
+            self.assertEqual(retired,[payload])
+            self.owner._worker.submit.assert_not_called()
+
+    def test_unchanged_directional_map_sleeps_until_scene_changes(self):
+        owner = self.owner
+        owner.available = True
+        owner.descriptor = NS(projection=1)
+        owner._hard, owner._published = 'file', 'pose'
+        owner._selected_key = owner._submitted = ('file', 'pose')
+        owner._next = 0  # Even long after the old periodic refresh deadline.
+        snapshot = Mock(return_value='snapshot')
+        self.assertFalse(owner.step(owner._gl, owner._main_context, 'file', 'pose', snapshot))
+        snapshot.assert_not_called()
+        self.assertIsNone(owner.wake_delay)
+        self.assertTrue(owner.step(owner._gl, owner._main_context, 'file', 'changed pose', snapshot))
+        snapshot.assert_called_once()
+        owner._worker.submit.assert_called_once()
+
+    def test_new_geometry_generation_rebuilds_unchanged_directional_pose(self):
+        owner = self.owner
+        owner.available = True
+        owner.descriptor = NS(projection=1)
+        owner._hard, owner._published = 'file', 'pose'
+        owner._selected_key = owner._submitted = ('file', 'pose')
+        snapshot = Mock(return_value='snapshot')
+        self.assertTrue(owner.step(owner._gl, owner._main_context, 'other file', 'pose', snapshot))
+        snapshot.assert_called_once()
+
     def publish(self, serial=1, soft='pose'):
         payload = NS(colour=3, depth=4, descriptor='exact descriptor', soft=soft, serial=serial)
         box = self.owner._worker.mailbox
         token = box.reserve()
         box.complete(token, payload, 99)
         return payload
+
+    def query_binding(self, failure=False):
+        payload = self.publish()
+        payload.key, payload.frame = ('file', 'captured pose'), 'frozen source and uniforms'
+        geometry = payload.geometry = NS(key=('source publication', 'model', 'prefix'), epoch=7, reads=0)
+        @contextmanager
+        def read(gl, context, epoch):
+            self.assertIs(gl, self.owner._gl)
+            self.assertIs(context, self.owner._main_context)
+            self.assertEqual(epoch, 7)
+            geometry.reads += 1
+            try: yield geometry
+            finally:
+                geometry.reads -= 1
+                if failure: raise module.GeometryUncertain(geometry, 'uncertain query state restoration')
+        geometry.read = read
+        self.owner._adopt()
+        self.owner._worker.wake.reset_mock()
+        return self.owner._storage, payload, geometry
+
+    def test_runtime_scope_requires_selected_completed_cohort_and_always_withdraws_enabled_flag(self):
+        owner = self.owner
+        binding, payload, geometry = self.query_binding()
+        geometry.apply = Mock()
+        shader = Mock()
+        owner._selected_key = payload.key
+        self.assertTrue(owner.recovery_ready)
+        self.assertEqual(owner.recovery_identity, (payload.serial, geometry.key))
+        with owner.query_bindings(shader) as admitted:
+            self.assertIs(admitted, geometry)
+            geometry.apply.assert_called_once_with(shader)
+            self.assertIsNotNone(binding._use)
+        self.assertEqual(shader.setUniformValue.call_args.args, ('mpf_recoveryEnabled', 0))
+        self.assertIsNone(binding._use)
+        geometry.apply.reset_mock()
+        owner._selected_key = ('file', 'new pending pose')
+        self.assertFalse(owner.recovery_ready)
+        self.assertIsNone(owner.recovery_identity)
+        with owner.query_bindings(shader) as admitted: self.assertIsNone(admitted)
+        geometry.apply.assert_not_called()
+        self.assertIs(owner._storage, binding)
+        owner._selected_key = payload.key
+        geometry.apply.side_effect = RuntimeError('uniform publication failed')
+        with self.assertRaisesRegex(RuntimeError, 'publication'):
+            with owner.query_bindings(shader): pass
+        self.assertEqual(shader.setUniformValue.call_args.args, ('mpf_recoveryEnabled', 0))
+        self.assertIsNone(binding._use)
+        owner.defer(); self.assertIsNone(owner._selected_key)
+
+    def test_query_only_and_nested_queries_share_one_last_use_ticket(self):
+        owner = self.owner
+        binding, payload, geometry = self.query_binding()
+        with binding.query(payload.key, geometry.key) as admitted:
+            self.assertIs(admitted, geometry)
+            self.assertEqual(owner._reads, {binding})
+            with binding.query(payload.key, geometry.key):
+                self.assertEqual(geometry.reads, 2)
+                self.assertEqual(binding._queries, 2)
+            self.assertEqual(binding._queries, 1)
+            self.assertIsNotNone(binding._use)
+            owner._fence.assert_not_called()
+        self.assertEqual(owner._reads, set())
+        self.assertIsNone(binding._use)
+        owner._fence.assert_called_once()
+        owner._worker.wake.assert_called_once()
+
+    def test_cube_release_cannot_end_ticket_while_query_is_active(self):
+        owner = self.owner
+        binding, payload, geometry = self.query_binding()
+        owner._gl.glGetIntegerv.return_value = 12
+        binding.bind(7); binding.depth.bind(6)
+        with binding.query(payload.key, geometry.key):
+            binding.release(7); binding.depth.release(6)
+            self.assertEqual(binding._bindings, {})
+            self.assertIsNotNone(binding._use)
+            self.assertIsNone(owner._worker.mailbox.take_retirement())
+            owner._fence.assert_not_called()
+        owner._fence.assert_called_once()
+
+    def test_retained_old_map_cannot_query_new_scene_source_or_prefix(self):
+        owner = self.owner
+        binding, payload, geometry = self.query_binding()
+        for selected, source in ((None, geometry.key), (('file', 'new pose'), geometry.key),
+                                 (payload.key, ('source publication', 'model', 'new prefix'))):
+            with binding.query(selected, source) as admitted: self.assertIsNone(admitted)
+        self.assertEqual(geometry.reads, 0)
+        self.assertEqual(owner._reads, set())
+        owner._fence.assert_not_called()
+        payload.geometry = None
+        with binding.query(payload.key, geometry.key) as admitted: self.assertIsNone(admitted)
+        owner._fence.assert_not_called()
+
+    def test_query_body_failure_still_restores_and_fences_read(self):
+        owner = self.owner
+        binding, payload, geometry = self.query_binding()
+        with self.assertRaisesRegex(RuntimeError, 'draw failed'):
+            with binding.query(payload.key, geometry.key): raise RuntimeError('draw failed')
+        self.assertEqual(geometry.reads, 0)
+        self.assertEqual(owner._reads, set())
+        owner._fence.assert_called_once()
+        self.assertFalse(owner._quarantine)
+
+    def test_query_restoration_failure_quarantines_pair_and_main_source(self):
+        owner = self.owner
+        owner._leases[1] = 'original main VBO wrapper'
+        binding, payload, geometry = self.query_binding(failure=True)
+        self.addCleanup(module._quarantined.discard, owner)
+        with self.assertRaisesRegex(module.GeometryUncertain, 'uncertain query state'):
+            with binding.query(payload.key, geometry.key): pass
+        self.assertTrue(owner._quarantine)
+        self.assertIn(owner, module._quarantined)
+        self.assertEqual(owner._leases, {1: 'original main VBO wrapper'})
+        self.assertIsNotNone(binding._use)
+        self.assertIsNone(owner._worker.mailbox.take_retirement())
+        owner._fence.assert_not_called()
+        owner._worker.abandon.assert_called_once()
+
+    def test_exact_main_finish_cannot_return_still_active_query_scope(self):
+        owner = self.owner
+        binding, payload, geometry = self.query_binding()
+        with binding.query(payload.key, geometry.key):
+            owner._worker.mailbox.close()
+            self.assertIsNone(owner._worker.mailbox.take_retirement())
+            with patch.object(module.QOpenGLContext, 'currentContext', return_value=owner._main_context):
+                with self.assertRaisesRegex(RuntimeError, 'query scope'): owner._finish_main()
+            self.assertIsNotNone(binding._use)
+            self.assertIsNone(owner._worker.mailbox.take_retirement())
+            # More work is permitted until lexical exit; the retained ticket
+            # must still protect its source regardless of the finish request.
+            owner._gl.glDrawArrays(4, 0, 3)
+        self.assertEqual(owner._reads, set())
+        owner._main_finish.assert_not_called()
+        owner._fence.assert_called_once()
+        self.assertIsNotNone(owner._worker.mailbox.take_retirement())
+
+    def test_context_destruction_with_active_query_quarantines_future_reads(self):
+        owner = self.owner
+        owner._main_context = Mock(); owner._main_pointer = id(owner._main_context)
+        owner._leases[1] = 'main source wrapper'
+        binding, payload, geometry = self.query_binding()
+        self.addCleanup(module._quarantined.discard, owner)
+        with binding.query(payload.key, geometry.key):
+            with patch.object(module.QOpenGLContext, 'currentContext', return_value=owner._main_context):
+                owner._context_destroyed()
+            self.assertTrue(owner._main_retired)
+            self.assertTrue(owner._quarantine)
+            self.assertIsNotNone(binding._use)
+            self.assertIsNone(owner._worker.mailbox.take_retirement())
+        self.assertEqual(owner._leases, {1: 'main source wrapper'})
+        self.assertIsNotNone(binding._use)
+        owner._main_finish.assert_not_called()
+        owner._fence.assert_not_called()
+        owner._worker.abandon.assert_called_once()
 
     def test_old_result_does_not_clear_newer_submission_and_duplicate_it(self):
         owner = self.owner
@@ -149,6 +365,84 @@ class AsyncEnvironmentTests(unittest.TestCase):
         owner._worker.stop.assert_called_once()
         owner._fallback.close.assert_called_once()
 
+    def test_frozen_source_frames_drop_only_after_normal_worker_retirement(self):
+        owner = self.owner
+        owner._main_context = Mock()
+        owner._main_pointer = id(owner._main_context)
+        storage, freezer = object(), owner._freezer
+        owner._storage = storage
+        owner._leases[1] = 'main VBO wrapper'
+        owner.close()
+        self.assertIs(owner._storage, storage)
+        self.assertIs(owner._freezer, freezer)
+        self.assertEqual(owner._leases, {1: 'main VBO wrapper'})
+        owner._worker.completed.return_value = ((1, 0),)
+        with patch.object(module.QOpenGLContext, 'currentContext', return_value=owner._main_context), \
+                patch.object(module.QCoreApplication, 'instance', return_value=Mock()):
+            owner._finished()
+        self.assertEqual(owner._leases, {})
+        self.assertIsNone(owner._storage)
+        self.assertIsNone(owner._freezer)
+
+    def test_quarantine_keeps_frozen_source_frames_and_main_wrappers(self):
+        owner = self.owner
+        owner._main_context = Mock()
+        storage, freezer = object(), owner._freezer
+        owner._storage = storage
+        owner._leases[1] = 'unverified main VBO wrapper'
+        owner._quarantine = True
+        with patch.object(module.QCoreApplication, 'instance', return_value=Mock()):
+            owner._finished()
+        self.assertIs(owner._storage, storage)
+        self.assertIs(owner._freezer, freezer)
+        self.assertEqual(owner._leases, {1: 'unverified main VBO wrapper'})
+        owner._worker.completed.assert_not_called()
+
+    def test_worker_local_quarantine_roots_sources_without_ready_or_later_frame(self):
+        owner = self.owner
+        owner._main_context = Mock()
+        owner._group = object()
+        storage, freezer = object(), owner._freezer
+        owner._storage = storage
+        owner._leases[1] = 'unverified main VBO wrapper'
+        owner._worker.failure = 'Reflection producer finish failed; resources quarantined'
+        owner._worker.abandoned.set()
+        module._owners.add(owner)
+        self.addCleanup(module._owners.discard, owner)
+        self.addCleanup(module._quarantined.discard, owner)
+        with patch.object(module.QCoreApplication, 'instance', return_value=Mock()):
+            owner._finished()
+        self.assertTrue(owner._quarantine)
+        self.assertIn(owner, module._quarantined)
+        self.assertIs(owner._storage, storage)
+        self.assertIs(owner._freezer, freezer)
+        self.assertEqual(owner._leases, {1: 'unverified main VBO wrapper'})
+        self.assertIn('producer finish failed', owner.failure)
+        owner._worker.completed.assert_not_called()
+        owner._surface.destroy.assert_not_called()
+        owner._worker.context.deleteLater.assert_not_called()
+        context = Mock()
+        context.format().majorVersion.return_value = 4
+        context.shareGroup.return_value = owner._group
+        thread = object()
+        app = Mock(); app.thread.return_value = thread
+        with patch.object(module.QCoreApplication, 'instance', return_value=app), \
+                patch.object(module.QThread, 'currentThread', return_value=thread), \
+                patch.object(module, 'AsyncEnvironment') as replacement:
+            self.assertIsInstance(module.create_environment(Mock(), context, Mock()), ToolheadEnvironment)
+        replacement.assert_not_called()
+
+    def test_worker_quarantine_precedes_completed_source_collection(self):
+        owner = self.owner
+        owner._leases[1] = 'unverified source'
+        owner._worker.abandoned.set()
+        owner._worker.completed.return_value = ((1, 0),)
+        self.addCleanup(module._quarantined.discard, owner)
+        owner._collect()
+        self.assertTrue(owner._quarantine)
+        self.assertEqual(owner._leases, {1: 'unverified source'})
+        owner._worker.completed.assert_not_called()
+
     def test_busy_worker_schedules_no_repeated_foreground_capture_frames(self):
         self.owner._busy = True
         self.assertIsNone(self.owner.wake_delay)
@@ -216,6 +510,7 @@ class AsyncEnvironmentTests(unittest.TestCase):
         with patch.object(module.QOpenGLContext, 'currentContext', return_value=object()): owner._collect()
         self.assertEqual(owner._leases, {})
         self.assertEqual(owner._deletions, [92]); owner._delete.assert_not_called()
+        owner._worker.sources_released.assert_called_once_with(4)
         with patch.object(module.QOpenGLContext, 'currentContext', return_value=owner._main_context): owner._collect()
         self.assertEqual(owner._deletions, [])
         self.assertEqual(owner._delete.call_args.args[0].value, 92)
@@ -401,12 +696,13 @@ class AsyncEnvironmentTests(unittest.TestCase):
                 patch.object(module, 'QTimer', return_value=Mock()), \
                 patch.object(module, 'native_depth_format', return_value=0x81A6), \
                 patch.object(module, 'procedure', return_value=Mock()), \
-                patch.object(module, 'EnvironmentWorker', return_value=worker), \
+                patch.object(module, 'EnvironmentWorker', return_value=worker) as factory, \
                 patch.object(module, 'CaptureFreezer', return_value=Mock()), \
                 patch.object(module.QCoreApplication, 'instance', return_value=app), \
                 patch.object(module, '_owners', set()):
             owner = module.AsyncEnvironment(Mock(), context, Mock())
             self.assertEqual(owner._group, 'shared group')
+            self.assertNotIn('query_factory',factory.call_args.kwargs)
             worker.start.assert_called_once()
             context.moveToThread.assert_called_once_with(worker)
             surface.isValid.return_value = False

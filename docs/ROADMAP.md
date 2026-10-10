@@ -64,7 +64,8 @@ vertex storage and removes foreground scheduling from capture continuation.
 Native empty/loaded transitions preserve all six colour/depth faces exactly;
 bounded submissions, producer/consumer fences and retirement without subsequent
 GUI frames have separate native proofs. New-module coverage, the complete local
-gate and whole branch CI remain unfinished. Stock Cura's recurring
+gate and whole branch CI subsequently passed at the reflections checkpoint.
+Stock Cura's recurring
 removable-drive subprocess launches also cause observed allocator stalls; that
 is a separate upstream issue. Staged first uploads, worker bounds and complete
 mutable-input revision tracking remain separate candidates. Unculled shadow
@@ -74,45 +75,33 @@ current defect follow-up remain required.
 These effects issue no printer commands and
 never require per-face material setup.
 
-The next authorized checkpoint is an unsigned annotated `5.3.0-reflections`
-tag on the fully tested, pushed head after whole branch CI succeeds. It has no
-`v` prefix and must not publish a release. The current single-probe reflection
+The unsigned annotated `5.3.0-reflections` checkpoint is complete at
+`ca402a7613d31ffd7da2f57ddb8202a85ea98430`, after whole branch CI including
+repeat-boot smoke succeeded. It has no `v` prefix and did not publish a release.
+The checkpoint's single-probe reflection
 map cannot reveal surfaces hidden from its capture point; opaque occlusion can
 therefore create dark gaps and incomplete reflected extrusion silhouettes.
 This limitation remains documented in the checkpoint.
 
-After that checkpoint, geometry ray tracing will resolve actual scene hits and
-shade their own material, colour and texture. GPU acceleration is required on
-Windows, Linux and macOS; Embree remains a possible CPU fallback, not a complete
-solution to that requirement. Prebuilt native libraries shipped with the plugin
-are now authorized, with no user compiler or SDK installation. The proposed
-backend boundary uses Metal on macOS and Vulkan on Windows/Linux, with shared
-scene and shading contracts; the library and cross-platform integration are
-not yet qualified. A standalone prototype traces the actual screenshot toolhead and
-half-printed green Voron cube on CPU and on Apple Metal; this is visual and API
-evidence, not production integration or a benchmark of the large loaded print.
-The native reflection component will preserve Cura's viewport, selection,
-camera and layer controls, composing completed results into its current
-rendering. Existing material metadata, face/body edits, alpha and the
-active perspective or orthographic camera remain authoritative; the demo's
-polished-silver override is not an automatic material rule.
+The author has selected the six-directional-view environment map as the
+reflection renderer and removed ray tracing from scope. The Metal bridge,
+worker, build scripts and packaged binaries are removed, along with both
+renderer radio buttons, environment-fallback checkbox and displayed-backend
+label. Enable reflections controls the environment map directly. Saved ray and
+fallback preferences are ignored. The final optimisation pass retains complete
+texel traversal with opposite-view pairing, single-search mip roughness, immutable
+index uploads, uniform reuse and idle sleeping. Coarse depth-range skipping and
+axis-specialised search were rejected after slower or changed-image benchmarks;
+additional preparation/target-binding caches were rejected without a reliable CPU
+gain. Thin-surface coverage and original materials remain the acceptance criteria.
+Independent shadows remain a separate, unfinished feature.
 
-Preview will initially keep quick access to Enable reflections, Environment map
-/ Ray traced radio buttons and a Use GPU checkbox. Choices are global and saved;
-unavailable GPU capability disables its checkbox with an explanation. Backend
-replacement must fence ownership and preserve coherent publication. Production
-output needs full resolution and consistent antialiasing during motion; coarse
-interactive demo previews are not the intended product quality. A previous
-screen-space image is reusable only while its camera and receiver state match.
-Controls may move into Settings in a later iteration.
-
-Ray tracing is optional. Environment-map reflections remain available when it
-is disabled or the GPU lacks required features, and Enable reflections can
-disable both. An independent Cast shadows control is also authorized: shadow
-maps in the current renderer and shadow rays in ray-traced mode. It must skip
-shadow work when disabled and attenuate actual direct lighting rather than
-darkening ambient, emission or the entire already-composed Cura image. These
-controls and backends are planned follow-up work, not installed features.
+The first shadow foundation now centralizes delivered light values
+and owns atomic private depth-cube sets. Optional direct-only shader variants now
+pass private core rendering and legacy compiler checks, including true raster
+receiver reconstruction and explicit physical-precision admission. The scene
+coordinator, consumer map leases, actual caster submission and user-visible
+shadow controls remain unwired.
 
 ### 5.3.0 — Toolhead controls in Preview (final planned 5.x feature release)
 
@@ -168,11 +157,12 @@ selected printer changes. Preserve each action's existing permissions; Z-offset
 adjustment and jogging must not acquire a single shared enablement gate.
 
 Position-move safety is a release requirement for both Monitor and Preview.
-Jog and absolute move-to controls validate the requested physical target/path,
-coordinate origins, active offsets and bed-mesh compensation. Retain the
-ordinary jog zero floor, honour a stronger configured minimum and the configured
-maxima, and revalidate after queued/in-flight commands. Fresh, finite position,
-limits and transformation data are required for these position moves.
+Jog and absolute move-to controls validate fresh planned G-code endpoints.
+Zero is inclusive on each commanded axis, even when another untouched axis is
+already negative. Reject targets below zero and translate reported upper limits
+using the coordinate base. Firmware alone owns bed-mesh compensation; never
+infer a positive clearance floor or apply the mesh again. Revalidate after
+queued/in-flight commands using fresh, finite position and limits.
 
 Z-offset nudges and resets are a separate operator calibration action. The
 author's clarified policy excludes them from client geometry/bed-clearance
@@ -3235,3 +3225,28 @@ sets the chart's shipped resolution.
 and clear-selection action passed whole CI at ea3aa7db. The subsequent re-slice,
 translucency, bed-height capture, faster continuous reflection refresh and reset
 slider fixes await fresh full local and exact-head CI qualification.
+
+
+Environment-map repair qualification: original-path hit-local recovery and
+completed-cohort ownership now have isolated proofs, including real opaque and
+glass head draws. The larger imported head exposed a Metal GPU command failure;
+that synchronous GLSL correction remains disabled. Visible environment-map gaps
+remain unresolved. Finish a safe, responsive repair in Cura before any further rendering
+tracing or progressive rendering work. Preserve the native geometry and current
+rendering quality; small fixtures do not establish readiness.
+
+The separated opaque receiver/query/lookup experiment now has a bounded actual
+CAD proof: repeatable corrections, disabled-lookup parity with ordinary shading,
+and exact recorded reflection inputs against the original PBR shader. The
+separate completion owner also passed a tiny native path/bed depth-seeded test:
+hidden receivers stayed invalid, and completed source-ticket queries produced
+repeatable lookup corrections with unchanged alpha. Full
+viewport safety, complete receiver layers, native AA/shutter semantics,
+live scene-depth integration and responsive Cura presentation remain unfinished.
+
+The latest isolated source-locality correction separates original lines before
+spatial sorting instead of grouping different cube walls into overlapping bounds.
+Complete hit payloads and seeded correction colours remain unchanged in the
+small fixture. This improves the prototype's query cost without changing native
+geometry or roughness samples; it remains unwired and requires full receiver,
+sample, pose and viewport qualification before a Cura snapshot.

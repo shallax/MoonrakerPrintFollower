@@ -46,6 +46,16 @@ class FrameCacheTests(unittest.TestCase):
     def draw(self, state="pose"):
         self.cache.draw(self.gl, self.camera, self.bounds, self.transform, state, self.render)
 
+
+    def test_released_targets_reallocate_the_same_crop(self):
+        self.draw()
+        self.cache.release_targets()
+        for name in ('_fbo', '_resolved', '_key', '_size', '_output'):
+            self.assertIsNone(getattr(self.cache, name))
+        self.factory.reset_mock();self.render.reset_mock()
+        self.draw()
+        self.factory.assert_called_once();self.render.assert_called_once()
+
     def test_unrelated_compositions_reuse_shading_and_premultiplied_alpha(self):
         for _ in range(30): self.draw()
         self.render.assert_called_once()
@@ -55,6 +65,224 @@ class FrameCacheTests(unittest.TestCase):
         self.gl.glViewport.assert_called_with(*self.viewport)
         self.assertLess(self.factory.call_args.args[0], 800)
         self.assertLess(self.factory.call_args.args[1], 600)
+
+    def test_receiver_progress_pumps_cached_fallback_and_redraws_only_complete_group(self):
+        calls=[]; identity=[None]; original_keys=[]
+        def step(key):
+            calls.append('step'); original_keys.append(key); return identity[0]
+        def prepare(camera,output,key,seeded,viewport,crop):
+            calls.append('prepare')
+            self.assertIs(output,self.fbo); self.assertTrue(seeded)
+            self.assertEqual(key,original_keys[-1]); self.assertEqual(viewport,self.viewport)
+            self.assertEqual(crop[2:],self.factory.call_args.args[:2])
+        def draw():
+            return self.cache.draw(self.gl,self.camera,self.bounds,self.transform,'receiver',self.render,
+                fallback_backend='Environment map',receiver_step=step,receiver_prepare=prepare)
+        self.assertEqual(draw(),'Environment map')
+        self.assertEqual(draw(),'Environment map')
+        self.assertEqual(calls,['step','prepare','step']); self.render.assert_called_once()
+        identity[0]=('complete',4,'all shutter poses')
+        self.assertEqual(draw(),'Environment map'); self.assertEqual(self.render.call_count,2)
+        completed_key=self.cache._key
+        draw(); self.assertEqual(self.render.call_count,2); self.assertEqual(self.cache._key,completed_key)
+        self.assertTrue(all(key==original_keys[0] for key in original_keys))
+        self.matrix[0,3]=.1; identity[0]=None
+        draw(); self.assertNotEqual(original_keys[-1],original_keys[0]); self.assertEqual(self.render.call_count,3)
+
+    def test_receiver_prepare_follows_original_seed_and_keeps_foreground_and_shutter(self):
+        events=[]
+        seed=lambda *args:events.append('seed') or True
+        prepare=lambda *args:events.append(('prepare',args[3]))
+        render=lambda camera:events.append('render')
+        post=lambda *args:events.append('foreground') or True
+        animate=lambda *args:events.append('shutter') or self.fbo
+        status=self.cache.draw(self.gl,self.camera,self.bounds,self.transform,'receiver',render,
+            depth_seed=seed,receiver_step=lambda key:None,receiver_prepare=prepare,
+            post_render=post,animate=animate,fallback_backend='Environment map')
+        self.assertEqual(events,['seed',('prepare',True),'render','foreground','shutter'])
+        self.assertEqual(status,'Environment map')
+        self.cache.invalidate(); events.clear()
+        self.cache.draw(self.gl,self.camera,self.bounds,self.transform,'receiver',render,
+            depth_seed=lambda *args:False,receiver_step=lambda key:None,receiver_prepare=prepare)
+        self.assertEqual(events,[('prepare',False),'render'])
+
+
+
+
+
+
+    def test_obsolete_qt_siblings_retire_before_ordinary_constructor_without_a_worker(self):
+        retained = [270 << 20]
+        calls = []
+        self.viewport = (0, 0, 2176, 1024)
+        self.gl.glGetIntegerv.side_effect = lambda name: self.viewport if name == 0x0BA2 else 4 if name == 0x80A9 else 17
+        def retire(*args):
+            calls.append(('retire', args)); retained[0] = 0
+        def allocate(*args):
+            self.assertEqual(retained[0], 0)
+            self.assertEqual(calls[0][0], 'retire')
+            return self.fbo
+        self.factory.side_effect = allocate
+        self.cache.draw(self.gl,self.camera,None,self.transform,'ordinary',self.render,
+                animate=Mock(return_value=self.fbo), retire_graphics=retire)
+        self.factory.assert_called()
+        self.assertEqual(calls[0][1], (2176, 1024, 4))
+
+    def test_failed_external_retirement_never_constructs_an_ordinary_target(self):
+        retire = Mock(side_effect=RuntimeError('unretired sample owner'))
+        with self.assertRaisesRegex(RuntimeError,'unretired sample owner'):
+            self.cache.draw(self.gl,self.camera,self.bounds,self.transform,'ordinary',self.render,retire_graphics=retire)
+        self.factory.assert_not_called()
+
+
+    def test_same_size_host_ms_target_cannot_alias_explicit_float_depth_owner(self):
+        from contextlib import nullcontext
+        from mpf.toolhead import ToolheadFrameCache as module
+        self.gl.glGetIntegerv.side_effect=lambda name:self.viewport if name==0x0BA2 else 4 if name==0x80A9 else 17
+        class Explicit:
+            def __init__(self,gl,width,height):
+                self.positions=((.375,.125),(.875,.375),(.125,.625),(.625,.875))
+                self.width=lambda:width;self.height=lambda:height
+                self.isValid=lambda:True;self.bind=lambda:True
+                self.close=lambda:None
+        with patch.object(module,'ToolheadSampleTarget',Explicit), \
+                patch.object(module,'preserved_samples',side_effect=lambda *args:nullcontext()), \
+                patch.object(module,'sample_blit') as blit:
+            self.draw();ordinary=self.cache._fbo
+            self.assertNotIsInstance(ordinary,Explicit)
+            self.cache.draw(self.gl,self.camera,self.bounds,self.transform,'pose',self.render,requested_samples=4)
+            explicit=self.cache._fbo
+            self.assertIsInstance(explicit,Explicit)
+            blit.assert_called_with(self.gl,self.cache._resolved,explicit)
+            self.cache.draw(self.gl,self.camera,self.bounds,self.transform,'pose',self.render,requested_samples=4)
+            self.assertIs(self.cache._fbo,explicit);self.assertEqual(self.render.call_count,2)
+            explicit.positions=tuple(reversed(explicit.positions))
+            self.cache.draw(self.gl,self.camera,self.bounds,self.transform,'pose',self.render,requested_samples=4)
+            self.assertEqual(self.render.call_count,3)
+            self.draw();self.assertNotIsInstance(self.cache._fbo,Explicit)
+            self.assertEqual(self.render.call_count,4)
+        with self.assertRaises(ValueError):self.cache.draw(requested_samples=2)
+
+    def test_crop_resize_drops_obsolete_siblings_before_replacement_allocation(self):
+        self.draw()
+        self.cache._resolved = object()
+        self.bounds *= 2
+        def allocate(*args):
+            for name in ('_fbo', '_resolved', '_size', '_key'):
+                self.assertIsNone(getattr(self.cache, name), name)
+            return self.fbo
+        self.factory.side_effect = allocate
+        self.draw('new crop')
+        self.assertIs(self.cache._fbo, self.fbo)
+
+    def test_failed_sample_retirement_keeps_lease_and_never_allocates_replacement(self):
+        from mpf.toolhead import ToolheadFrameCache as module
+        class Sample:
+            def close(self): raise RuntimeError('retirement failed')
+        old = Sample()
+        self.cache._context = self.current_context
+        self.cache._fbo = old
+        self.cache._size = (1, 1, 4)
+        self.cache._resolved = object()
+        with patch.object(module, 'ToolheadSampleTarget', Sample):
+            with self.assertRaisesRegex(RuntimeError, 'retirement failed'): self.draw()
+        self.assertIs(self.cache._fbo, old)
+        self.assertIsNone(self.cache._resolved)
+        self.factory.assert_not_called()
+        self.render.assert_not_called()
+
+    def test_same_context_wrapper_retirement_invalidates_every_cached_graphics_owner(self):
+        self.draw();retired=self.cache._retirement
+        retired()
+        for name in ('_key','_size','_context','_fbo','_resolved','_blitter','_bind'):
+            self.assertIsNone(getattr(self.cache,name))
+        self.cache._bind=Mock();self.draw()
+        current=self.cache._fbo;key=self.cache._key
+        retired()  # Old-generation signal cannot clear its replacement.
+        self.assertIs(self.cache._fbo,current);self.assertEqual(self.cache._key,key)
+        self.assertEqual(self.render.call_count,2)
+
+    def test_sample_capability_refusal_composes_cached_ordinary_pixels_without_native_call(self):
+        from contextlib import contextmanager
+        from mpf.toolhead import ToolheadFrameCache as module
+        from mpf.toolhead.ToolheadGLState import SampleStateUnavailable
+        @contextmanager
+        def unavailable(*args):
+            raise SampleStateUnavailable('core4 unavailable')
+            yield
+        with patch.object(module,'preserved_samples',unavailable):
+            for _ in range(20):
+                status=self.cache.draw(self.gl,self.camera,self.bounds,self.transform,'pose',self.render,
+                    requested_samples=4)
+                self.assertIn('core4 unavailable',status)
+        self.render.assert_called_once()
+        self.assertEqual(self.blitter.blit.call_count,20)
+        @contextmanager
+        def broken_restore(*args):
+            try:yield
+            finally:raise RuntimeError('restore failed')
+        with patch.object(module,'preserved_samples',broken_restore), \
+                patch.object(self.cache,'_draw',return_value='native') as drawing:
+            with self.assertRaisesRegex(RuntimeError,'restore failed'):
+                self.cache.draw(self.gl,requested_samples=4)
+            drawing.assert_called_once()  # No ordinary retry after mutations.
+
+    def test_sample_target_refusal_does_not_reallocate_on_every_unrelated_redraw(self):
+        from contextlib import nullcontext
+        from mpf.toolhead import ToolheadFrameCache as module
+        class Refused:
+            attempts=0
+            def __init__(self,*args):
+                type(self).attempts+=1
+                raise module.SampleTargetUnavailable('D32F sample pattern unsupported')
+        def draw():
+            return self.cache.draw(self.gl,self.camera,self.bounds,self.transform,'pose',self.render,
+                requested_samples=4)
+        with patch.object(module,'ToolheadSampleTarget',Refused), \
+                patch.object(module,'preserved_samples',side_effect=lambda *args:nullcontext()):
+            self.render.side_effect=lambda *args:self.assertNotIn(0x8E51,[call.args[0] for call in self.gl.glDisable.call_args_list])
+            for _ in range(20):self.assertIn('sample pattern unsupported',draw())
+            self.assertEqual(Refused.attempts,1);self.render.assert_called_once()
+            self.factory.assert_called_once()
+            self.cache._retirement();self.cache._bind=Mock()
+            draw();self.assertEqual(Refused.attempts,2)
+            self.bounds*=2
+            draw();self.assertEqual(Refused.attempts,3)
+        class RestorationFault:
+            def __init__(self,*args):raise RuntimeError('Host graphics state could not be restored')
+        self.cache._retirement();self.cache._bind=Mock();self.render.reset_mock()
+        with patch.object(module,'ToolheadSampleTarget',RestorationFault), \
+                patch.object(module,'preserved_samples',side_effect=lambda *args:nullcontext()):
+            with self.assertRaisesRegex(RuntimeError,'could not be restored'):draw()
+        self.render.assert_not_called();self.assertIsNone(self.cache._sample_refusal)
+
+    def test_sample_graphics_budget_refuses_before_allocating_or_invoking_native(self):
+        from contextlib import nullcontext
+        from mpf.toolhead import ToolheadFrameCache as module
+        self.viewport=(0,0,2000,2000)
+        self.render.side_effect=lambda *args:self.assertNotIn(0x809E,[call.args[0] for call in self.gl.glDisable.call_args_list])
+        class Target:
+            attempts=0
+            def __init__(self,*args):
+                type(self).attempts+=1
+                raise AssertionError('Budget did not refuse before allocation')
+        with patch.object(module,'ToolheadSampleTarget',Target), \
+                patch.object(module,'preserved_samples',side_effect=lambda *args:nullcontext()):
+            status=self.cache.draw(self.gl,self.camera,None,self.transform,'pose',self.render,
+                requested_samples=4)
+        self.assertIn('graphics memory budget',status)
+        self.assertEqual(Target.attempts,0);self.render.assert_called_once()
+
+
+
+
+
+    def test_missing_map_and_offscreen_crop_never_report_ray_tracing(self):
+        result = self.cache.draw(self.gl, self.camera, self.bounds, self.transform, 'pose', self.render,
+                                )
+        self.assertEqual(result, 'Ordinary shading')
+        self.viewport = (0, 0, 0, 600)
+        self.assertIsNone(self.cache.draw(self.gl, self.camera, self.bounds, self.transform, 'pose', self.render))
 
     def test_final_image_uses_additive_equations_and_restores_host_even_on_failure(self):
         original = self.gl.glGetIntegerv.side_effect
@@ -81,6 +309,14 @@ class FrameCacheTests(unittest.TestCase):
         self.assertIs(args[2], self.camera)
         self.assertEqual(args[3], self.viewport)
         self.assertEqual(args[4], projected_bounds(self.bounds, self.matrix, self.matrix, self.matrix, 800, 600))
+        self.assertIs(args[5], self.render.call_args.args[0])
+
+
+    def test_full_view_seed_keeps_original_projection_object_and_dtype(self):
+        seed = Mock(return_value=True)
+        self.cache.draw(self.gl,self.camera,None,self.transform,'pose',self.render,depth_seed=seed)
+        self.assertIs(seed.call_args.args[5],self.camera)
+        self.assertIs(self.render.call_args.args[0],self.camera)
 
     def test_failed_depth_seed_clears_partial_depth_and_retries_next_composition(self):
         seed = Mock(side_effect=[False, RuntimeError("copy failed"), True, True])

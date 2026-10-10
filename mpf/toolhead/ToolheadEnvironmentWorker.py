@@ -14,6 +14,7 @@ from .ToolheadCaptureRecipe import CaptureScene
 from .ToolheadEnvironment import CubeStorage, ToolheadEnvironment
 from .ToolheadEnvironmentMailbox import EnvironmentMailbox
 from .ToolheadGLState import procedure
+from .ToolheadEnvironmentGeometry import GeometryUncertain
 
 
 class _Abandoned(RuntimeError):
@@ -27,6 +28,7 @@ class CaptureJob:
     frame: object
     ready_fence: int
     generation: int | None = None
+    key: object = None
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,24 @@ class CaptureResult:
     descriptor: object
     soft: object
     serial: int = 0
+    # Plain published source values travel with the completed pair. Their
+    # actual main-context wrappers remain in AsyncEnvironment._leases until
+    # BOTH producer and last-consumer fences have drained for this pair.
+    frame: object = None
+    input_fence: int = 0
+    key: object = None
+    geometry: object = None
+
+
+@dataclass
+class _SourceReservation:
+    source_bytes: int
+    geometry: object = None
+    capture_bytes: int = 0
+
+    @property
+    def retained_bytes(self):
+        return self.source_bytes+self.capture_bytes+(self.geometry.incremental_bytes if self.geometry is not None else 0)
 
 
 class WorkerStorage(CubeStorage):
@@ -63,14 +83,16 @@ class WorkerStorage(CubeStorage):
 class EnvironmentWorker(QThread):
     ready = pyqtSignal()
 
-    def __init__(self, context, surface, main_thread, constants, depth_format):
+    def __init__(self, context, surface, main_thread, constants, depth_format, *, query_factory=None):
         super().__init__()
         self.context, self.surface, self.main_thread = context, surface, main_thread
         self.constants, self.depth_format = constants, depth_format
         self.mailbox = EnvironmentMailbox()
         self._condition = Condition()
+        self._wake_revision = 0
         self._pending = None
         self._completed = deque()
+        self._released = deque()
         self.failure = ''
         self.timings = None
         self.stopping = False
@@ -78,11 +100,16 @@ class EnvironmentWorker(QThread):
         self.host_drained = Event()
         self.abandoned = Event()
         self.quarantine = None
+        # Disabled in Cura until hit-local radiance and scene ordering are
+        # qualified. Factory reserves future capture storage + old cohorts and
+        # returns one newly owned source cohort, never a reused front owner.
+        self.query_factory = query_factory
 
     def submit(self, job):
         with self._condition:
             if not self._accepting: return job
             previous, self._pending = self._pending, job
+            self._wake_revision += 1
             self._condition.notify()
             return previous
 
@@ -92,10 +119,18 @@ class EnvironmentWorker(QThread):
             self._completed.clear()
             return result
 
+    def sources_released(self, serial):
+        """Main has actually dropped this acknowledged publication's wrappers."""
+        with self._condition:
+            self._released.append(serial)
+            self._wake_revision += 1
+            self._condition.notify()
+
     def stop(self):
         with self._condition:
             self._accepting = False
             self.stopping = True
+            self._wake_revision += 1
             self._condition.notify()
         self.mailbox.close()
 
@@ -105,10 +140,13 @@ class EnvironmentWorker(QThread):
         self.stop()
 
     def _checkpoint(self):
-        if self.abandoned.is_set(): raise _Abandoned('Reflection context activation failed; resources quarantined')
+        if self.abandoned.is_set():
+            raise _Abandoned(self.failure or 'Reflection context activation failed; resources quarantined')
 
     def wake(self):
-        with self._condition: self._condition.notify()
+        with self._condition:
+            self._wake_revision += 1
+            self._condition.notify()
 
     def _acknowledge(self, serial, undeleted_fence=0):
         self._checkpoint()
@@ -119,7 +157,12 @@ class EnvironmentWorker(QThread):
         gl = scene = environment = None
         pending_gpu = deque()
         active = token = retiring = None
+        geometry = None
+        geometries = {}
+        source_owners = {}
+        scene_receipt = None
         input_fence_deleted = False
+        active_transferred = False
         try:
             if not self.context.makeCurrent(self.surface): raise RuntimeError('Reflection worker context unavailable')
             gl = RawBindings(self.context, self.constants)
@@ -151,44 +194,120 @@ class EnvironmentWorker(QThread):
                     time.sleep(.001)
                 self._checkpoint()
                 delete(ctypes.c_void_p(value))
+            def retire_pair(retirement):
+                nonlocal retiring
+                retired, payload, producer, consumer = retirement
+                retiring = retirement
+                try:
+                    drain(producer)
+                    retiring = retired, payload, None, consumer
+                    drain(consumer)
+                    retiring = retired, payload, None, None
+                    if payload is not None and payload.geometry is not None:
+                        payload.geometry.close()
+                        # Private handles are gone, but main source wrappers
+                        # can outlive the queued acknowledgement. Keep the
+                        # conservative receipt charged until main collection.
+                    self.mailbox.retired(retired)
+                    if payload is not None:
+                        # Publication transfers the source lease to this pair.
+                        # Capture end does not finish later consumer queries.
+                        self._acknowledge(payload.serial, payload.input_fence)
+                    retiring = None
+                except _Abandoned:
+                    raise
+                except Exception:
+                    # Never retry a driver deletion of uncertain outcome, or
+                    # replay an already-deleted producer after consumer fault.
+                    self.failure = 'Reflection pair retirement failed; resources quarantined'
+                    self.abandon()
+                    self.ready.emit()
+                    self._checkpoint()
             scene = CaptureScene(gl, self.context, lambda image: CaptureTexture(gl, self.context, image))
             environment = ToolheadEnvironment(storage_factory=lambda bindings, context:
                 WorkerStorage(bindings, context, self.depth_format, token.index))
             while True:
                 self._checkpoint()
+                with self._condition:
+                    observed_wake = self._wake_revision
+                    while self._released:
+                        released = source_owners.pop(self._released.popleft(), None)
+                        if released is not None and released.geometry is not None:
+                            geometries.pop(id(released.geometry), None)
                 retirement = self.mailbox.take_retirement()
                 if retirement is not None:
                     retiring = retirement
-                    retired, _payload, producer, consumer = retirement
-                    drain(producer); drain(consumer)
-                    self.mailbox.retired(retired)
-                    retiring = None
+                    retire_pair(retirement)
+                    retiring = retirement = None
                     continue
                 if self.stopping and self.mailbox.drained: break
                 with self._condition:
                     if self._pending is None:
-                        self._condition.wait(.01)
+                        # Notifications may arrive between retirement inspection
+                        # and acquiring this lock. Never sleep past such a wake.
+                        if observed_wake == self._wake_revision:
+                            self._condition.wait(.01 if self.stopping else None)
                         continue
                     if (self._pending.generation is not None
                             and self._pending.generation != self.mailbox.generation):
                         stale, self._pending = self._pending, None
                         self._completed.append((stale.serial, stale.ready_fence))
                         self.ready.emit()
+                        stale = None
                         continue
                     token = self.mailbox.reserve(self._pending.generation)
                     if token is None:
                         self._condition.wait(.01)
                         continue
                     active, self._pending = self._pending, None
+                    geometry = None
                     input_fence_deleted = False
+                    active_transferred = False
                 try:
                     if active.ready_fence:
                         wait(ctypes.c_void_p(active.ready_fence), 0, 0xffffffffffffffff)
+                    if self.query_factory is not None:
+                        # Include even clean-cancelled/None factory jobs until
+                        # main confirms release, not merely queued completion.
+                        reservation = _SourceReservation(active.frame.retained_source_bytes(),
+                            capture_bytes=getattr(active.frame, 'capture_storage_bytes', lambda: 0)())
+                        # Main acknowledgement releases a source lease, not
+                        # CaptureScene's private cached uploads/publications.
+                        # Keep their receipt until snapshot actually replaces
+                        # those caches, including a cancelled prior capture.
+                        previous_sources = tuple(source_owners.values())
+                        if scene_receipt is not None:
+                            previous_sources += (scene_receipt,)
+                        source_owners[active.serial] = reservation
+                        try:
+                            geometry = self.query_factory(gl, self.context, active, previous_sources,
+                                lambda token=token: self.stopping or not self.mailbox.building_current(token))
+                        except GeometryUncertain as error:
+                            geometry = error.owner
+                            self.failure = str(error)[:200]
+                            self.abandon()
+                            self._checkpoint()
+                        except Exception:
+                            # A cleanly cancelled unpublished allocation owns no
+                            # reader. Its source still transfers to abort/drain;
+                            # cancellation must not kill the producer for newer work.
+                            if self.stopping or not self.mailbox.building_current(token): continue
+                            raise
+                        if geometry is not None:
+                            if id(geometry) in geometries:
+                                self.failure = 'Reflection query factory reused a live cohort'
+                                self.abandon(); self._checkpoint()
+                            geometries[id(geometry)] = geometry
+                            reservation.geometry = geometry
+                    if active.ready_fence:
                         delete(ctypes.c_void_p(active.ready_fence))
                         input_fence_deleted = True
                     started, turns = time.perf_counter(), 0
                     if not self.mailbox.building_current(token): continue
                     snapshot = scene.snapshot(active.frame)
+                    if self.query_factory is not None:
+                        scene_receipt = _SourceReservation(reservation.source_bytes,
+                            capture_bytes=reservation.capture_bytes)
                     if environment._storage is not None: environment._storage.select(token.index)
                     environment._next = environment._retry = 0
                     previous_revision = environment.revision
@@ -203,13 +322,17 @@ class EnvironmentWorker(QThread):
                         if environment.revision != previous_revision: break
                     while pending_gpu:
                         drain(pending_gpu[0]); pending_gpu.popleft()
-                    # All geometry uses are complete before main releases its
-                    # VBO wrapper lease. Publication still carries its own fence.
+                    # Capture geometry uses have completed. The published pair
+                    # retains its source for possible later consumer queries.
                     if self.mailbox.building_current(token) and environment.revision != previous_revision:
                         result = CaptureResult(environment._storage.front, environment._storage.front_depth,
-                            environment.descriptor, active.soft, active.serial)
+                            environment.descriptor, active.soft, active.serial, active.frame,
+                            key=active.key, geometry=geometry)
                         producer = seal_gpu()
                         self.mailbox.complete(token, result, producer, gpu_complete=producer is None)
+                        active_transferred = True
+                        geometry = None
+                        result = None
                         token = None
                         self.timings = (active.serial, (time.perf_counter()-started)*1000, turns)
                         self.ready.emit()
@@ -219,10 +342,13 @@ class EnvironmentWorker(QThread):
                         drain(pending_gpu[0]); pending_gpu.popleft()
                     if token is not None:
                         last = seal_gpu()
-                        self.mailbox.abort(token, last, gpu_complete=last is None)
+                        self.mailbox.abort(token, last, gpu_complete=last is None,
+                            payload=CaptureResult(0, 0, None, active.soft, active.serial, active.frame,
+                                active.ready_fence if not input_fence_deleted else 0, active.key, geometry))
+                        active_transferred = True
+                        geometry = None
                         token = None
-                    self._acknowledge(active.serial, active.ready_fence if not input_fence_deleted else 0)
-                    active = None
+                    active = snapshot = None
             self._checkpoint()
             gl.glFinish()
         except Exception as error:
@@ -240,16 +366,24 @@ class EnvironmentWorker(QThread):
                 self._checkpoint()
                 if gl is not None:
                     try: gl.glFinish()
-                    except Exception: pass
+                    except Exception:
+                        self.failure = 'Reflection producer finish failed; resources quarantined'
+                        self.abandon()
+                        self.ready.emit()
+                        self._checkpoint()
                 self._checkpoint()
                 if token is not None:
-                    try: self.mailbox.abort(token, None, gpu_complete=True)
-                    except Exception: pass
+                    self.mailbox.abort(token, None, gpu_complete=True,
+                        payload=CaptureResult(0, 0, None, active.soft, active.serial, active.frame,
+                            active.ready_fence if not input_fence_deleted else 0, active.key, geometry))
+                    active_transferred = True
+                    geometry = None
+                    token = None
                 if retiring is not None:
-                    retired, _payload, producer, consumer = retiring
-                    drain(producer); drain(consumer)
-                    self.mailbox.retired(retired)
-                if active is not None: self._acknowledge(active.serial, active.ready_fence if not input_fence_deleted else 0)
+                    retire_pair(retiring)
+                    retiring = None
+                if active is not None and not active_transferred:
+                    self._acknowledge(active.serial, active.ready_fence if not input_fence_deleted else 0)
                 if pending is not None:
                     remaining_fence = pending.ready_fence
                     if gl is not None and pending.ready_fence:
@@ -268,9 +402,8 @@ class EnvironmentWorker(QThread):
                         with self._condition: self._condition.wait(.002)
                         continue
                     self._checkpoint()
-                    retired, _payload, producer, consumer = retirement
-                    drain(producer); drain(consumer)
-                    self.mailbox.retired(retired)
+                    retire_pair(retirement)
+                    retirement = None
                 if environment is not None:
                     try: environment.close()
                     except Exception: pass
@@ -278,6 +411,7 @@ class EnvironmentWorker(QThread):
                     try: scene.close()
                     except Exception: pass
             except _Abandoned:
-                self.quarantine = (scene, environment, active, token, retiring, pending, tuple(pending_gpu))
+                self.quarantine = (scene, environment, active, token, retiring, pending, tuple(pending_gpu),
+                    geometry, tuple(geometries.values()))
             self.context.doneCurrent()
             self.context.moveToThread(self.main_thread)

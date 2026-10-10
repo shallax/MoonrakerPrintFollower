@@ -86,6 +86,39 @@ class CaptureFrame:
     recipes: tuple
     texture: object
 
+    def retained_source_bytes(self):
+        """Published CPU data and borrowed native VBOs, including no-query jobs.
+
+        Prospective/private capture and query storage must be charged separately.
+        Duplicate publications are conservatively counted without packing.
+        """
+        paths = sum(mesh.retained_bytes()+lease.size for mesh, lease, *_ in self.paths)
+        plates = sum(mesh.retained_bytes() for _recipe, mesh, *_ in self.plates)
+        return paths+plates+(len(self.texture[2]) if self.texture is not None else 0)
+
+    def capture_storage_bytes(self):
+        """Private capture buffers, derived normals and peak upload copies.
+
+        Cube pairs/face have a separate fixed receipt. Keep this receipt with
+        retired source cohorts too: a later capture can replace cached uploads
+        while readers still retain their older CPU publication.
+        """
+        total = len(self.texture[2]) if self.texture is not None else 0
+        for _key, mesh, _model, _normal, _uniforms, settings in self.plates:
+            vertex = mesh.layout()[1]
+            index = mesh.indices.size*4 if mesh.indices is not None else 0
+            retained = vertex+index
+            temporary = 2*vertex+2*index  # tobytes parts + joined body/cast indices.
+            if self.lighting and self.light_effects[0] and settings:
+                count = mesh.getVertexCount()
+                receiver = count*24  # Original positions + private FLOAT32 normals.
+                retained += receiver+index+count*12
+                temporary = max(temporary, count*36, 2*receiver+2*index)
+            total += retained+temporary
+        for mesh, _lease, *_rest in self.paths:
+            total += (mesh.indices.size*4*3 if mesh.indices is not None else 0)
+        return total
+
 
 class CaptureFreezer:
     """Retain native wrappers on main; worker receives only immutable values."""
@@ -206,12 +239,14 @@ class CaptureScene:
             tops[id(geometry)] = top
         for key in set(self.paths)-live_paths: self.paths.pop(key).close()
         plate_ids = {entry[1].identity for entry in frame.plates}
-        self.receivers = {key: value for key, value in self.receivers.items() if key in plate_ids}
-        self.plates.retain(plate_ids | {-key for key in plate_ids})
+        receiver_ids = {mesh.identity for _key, mesh, _transform, _normal, _uniforms, settings in frame.plates
+            if frame.lighting and frame.light_effects[0] and settings}
+        self.receivers = {key: value for key, value in self.receivers.items() if key in receiver_ids}
+        self.plates.retain(plate_ids | {-key for key in receiver_ids})
         for cache in (self._mesh_bounds, self._path_bounds, self._path_edges):
             for mesh in set(cache)-used: cache.pop(mesh)
         snapshot = EnvironmentSnapshot(self, frame.origin, thaw_uniform(frame.light), plates, paths,
-            {name: thaw_uniform(value) for name, value in frame.uniforms}, False, plate_renderer=self.plates.draw)
+            {name: thaw_uniform(value) for name, value in frame.uniforms}, False, plate_renderer=self.plates.draw, projection=1)
         snapshot.lighting = {name: thaw_uniform(value) for name, value in frame.lighting}
         snapshot.light_effects, snapshot.path_top = frame.light_effects, tops
         return snapshot

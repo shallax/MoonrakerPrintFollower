@@ -31,7 +31,6 @@ from .ToolheadPolicy import (
     EXTRUDE_SPEED_DEFAULT,
     JOG_DISTANCE_DEFAULT,
     PAUSE_WAIT_TIMEOUT_S,
-    clamp_relative_move,
     make_center_op,
     make_z0_op,
     STATUS_NOT_READY,
@@ -250,25 +249,10 @@ class ToolheadController(QObject):
             return
         distance = self._clamp_jog(axis, float(selected) * direction)
         if distance == 0.0:
-            if axis == "z" and direction == -1 and self._last_clamp_reason == "limit":
-                # The clamp rejected the move (the live
-                # request): the jog status says so, and the console
-                # gets a local note — once per burst, so a flurry of
-                # taps cannot flood the feed.
-                minimum_z = self._data.snapshot.auxiliary["toolhead"]["axis_minimum"][2]
-                note = "Z nudge rejected — minimum Z travel limit" if float(minimum_z) > 0 else \
-                    "Z nudge rejected — the head would go below 0.00 Z"
-                self._set_status(note)
-                if not self._z_rejection_noted:
-                    self._z_rejection_noted = True
-                    self.rejectedNote.emit(note + ".")
-            else:
-                self._reject(f"{axis.upper()} nudge refused — " +
-                             ("already at the travel limit" if self._last_clamp_reason == "limit" else
-                              "physical position or travel limits are unavailable"))
+            self._reject(f"{axis.upper()} nudge refused — " +
+                         ("already at the travel limit" if self._last_clamp_reason == "limit" else
+                          "physical position or travel limits are unavailable"))
             return  # already at the limit: nothing to move
-        if axis == "z":
-            self._z_rejection_noted = False
         try:
             op = make_jog_op(axis, distance, self._absolute_coordinates)
         except ValueError:
@@ -347,7 +331,7 @@ class ToolheadController(QObject):
         return None
 
     def _clamp_jog(self, axis, distance):
-        """Keep relative jogs inside the toolhead's axis limits.
+        """Preflight relative jogs against the physical upper travel limit.
 
         The live position comes from the core motion report; the limits
         from the toolhead auxiliary object. Missing position or limits
@@ -373,20 +357,19 @@ class ToolheadController(QObject):
             maximum = toolhead.get("axis_maximum") or ()
             minimum = float(minimum[index]) if len(minimum) > index else None
             maximum = float(maximum[index]) if len(maximum) > index else None
-            if axis == "z" and minimum is not None and minimum < 0.0:
-                # The Z floor is ZERO, whatever the configured
-                # position_min says (the live ruling:
-                # "you know what clicking nudge would move to. Why
-                # are you allowing it?" — many printers configure a
-                # negative Z minimum for probe travel, but the jog
-                # pad must never send the head below 0.00).
-                minimum = 0.0
             if minimum is None or maximum is None or not all(math.isfinite(v) for v in (current, minimum, maximum)):
                 return 0.0
         except (TypeError, ValueError, IndexError):
             return 0.0
         self._last_clamp_reason = "limit"
-        return clamp_relative_move(distance, current, minimum, maximum)
+        # This projection is physical, while the inclusive zero boundary is
+        # calibrated G-code space. Only the fresh serialized dispatch query
+        # can check the latter without mistaking mesh/offsets for clearance.
+        if distance < 0 or axis == "z":
+            # Physical Z includes firmware compensation. Its upper limit also
+            # belongs to the fresh uncompensated planned-coordinate check.
+            return distance
+        return min(distance, max(0.0, maximum-current))
 
     def move_to(self, x, y, z):
         try:
@@ -620,7 +603,8 @@ class ToolheadController(QObject):
                 self._check_dispatch(self._pending[0], rule)
         if not self._pending:
             self._draining = False
-            self._set_status("")
+            # A synchronous fresh-query refusal owns its status. Successful
+            # dispatch already cleared it inside the callback.
 
     def _reject(self, message):
         self._set_status(message)
@@ -663,9 +647,6 @@ class ToolheadController(QObject):
         self._set_status("Checking safe toolhead travel…")
         self._query_deadline.start()
         objects = {name: None for name in ("toolhead", "gcode_move", "configfile", "print_stats")}
-        config = (self._data.snapshot.auxiliary.get("configfile") or {}).get("config") or {}
-        if "bed_mesh" in config or "bed_mesh" in getattr(self._data.snapshot, "objects", ()):
-            objects["bed_mesh"] = None
 
         def checked(payload, error):
             if token != self._query_token or not self._querying:
@@ -706,10 +687,18 @@ class ToolheadController(QObject):
                         and token == self._query_token and self._pending and self._pending[0] is op:
                     self._pending = self._pending[1:]
                     self._draining = True
+                    self._z_rejection_noted = False
                     self._set_status("")
             except (UnsafeMotion, TypeError, ValueError) as fault:
                 self._drop_queue()
-                self._reject(str(fault))
+                if op.kind == "jog" and op.axis == "z" and str(fault) == "Target would go below zero":
+                    note = "Z nudge rejected — the head would go below 0.00 Z"
+                    self._set_status(note)
+                    if not self._z_rejection_noted:
+                        self._z_rejection_noted = True
+                        self.rejectedNote.emit(note + ".")
+                else:
+                    self._reject(str(fault))
             finally:
                 if token == self._query_token:
                     self._querying = False

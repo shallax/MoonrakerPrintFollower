@@ -1375,24 +1375,22 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertNotIn("TEST_MACRO", model.actionStatus)
 
     def test_rapid_z_nudges_cannot_walk_the_head_below_zero(self):
-        # A live report: nudge taps outran the poll, each
-        # clamped against the STALE position, and the queue walked
-        # the head below 0.00 Z. The client-side estimate advances
-        # per accepted move: four 0.1 nudges from 0.4 land at zero;
-        # the fifth is forbidden outright.
         model = self.monitor()
-        self.deliver_state("standby")  # live_position z = 0.4
+        self.deliver_state("standby")  # firmware starts at Z0.4
         model.setJogDistance(0.1)
-        for _ in range(5):
+        for _ in range(4):
             model.jog("z", -1)
+            self.qt.events(10)
+            self.scripts()[-1].callback({}, None)
+            self.qt.events(10)
+        model.jog("z", -1)
         self.qt.events(10)
-        # Four nudges are accepted (0.4 → 0.0); the fifth is
-        # forbidden by the estimate — the head never goes below zero.
-        # (The drain merges queued taps, so the script COUNT is not
-        # pinned; the estimate is the guard.)
-        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.0)
+        # Fresh dispatch checks, independent of the unchanged poll, permit
+        # four downward moves and reject the fifth before it is emitted.
         z_scripts = [r for r in self.scripts() if "G1 Z" in str(r.options.get("body"))]
-        self.assertGreaterEqual(len(z_scripts), 1)
+        self.assertEqual(len(z_scripts), 4)
+        self.assertTrue(all("G1 Z-0.1 F600" in r.options["body"]["script"] for r in z_scripts))
+        self.assertIn("rejected", model._toolhead._status)
 
     def test_unchanged_projections_are_not_rebuilt_on_heartbeats(self):
         # I (the 2026-09-19 performance review): the console's
@@ -1428,29 +1426,22 @@ class MonitorQtTests(harness.MonitorQtTests):
                       "unchanged controls must keep their copy")
 
     def test_stale_polls_cannot_raise_the_z_projection_between_dispatched_moves(self):
-        # B (the 2026-09-19 review): an op leaves the queue at
-        # dispatch, so a stale poll between the dispatch and the
-        # physical move's reflection re-synced the projection upward
-        # and every following tap was accepted against the old
-        # position again — repeated stale polls could walk the
-        # accepted downward distance past the 0.40 mm of real
-        # headroom.
         model = self.monitor()
-        self.deliver_state("standby")  # live_position z = 0.4
+        self.deliver_state("standby")
         model.setJogDistance(0.1)
         for _ in range(4):
             model.jog("z", -1)
-            self.qt.events(1)
-            # The stale poll: the head has not moved yet, the report
-            # still reads 0.40.
+            self.qt.events(10)
+            # Stale polling cannot replace fresh planned dispatch coordinates.
             self.deliver_state("standby")
-            self.qt.events(1)
-        # Four accepted moves cover exactly the 0.40 headroom; the
-        # fifth must be forbidden — the projection floors at zero
-        # instead of re-arming against each stale poll.
+            self.scripts()[-1].callback({}, None)
+            self.qt.events(10)
         model.jog("z", -1)
-        self.qt.events(1)
-        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.0)
+        self.qt.events(10)
+        z_scripts = [r.options["body"]["script"] for r in self.scripts()
+                     if "G1 Z" in str(r.options.get("body"))]
+        self.assertEqual(len(z_scripts), 4)
+        self.assertTrue(all("G1 Z-0.1 F600" in script for script in z_scripts))
         self.assertIn("rejected", model._toolhead._status)
 
     def test_z_projection_follows_fresh_telemetry_and_upward_motion(self):

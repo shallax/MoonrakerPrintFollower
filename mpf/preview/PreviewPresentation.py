@@ -209,6 +209,7 @@ class PreviewPresentation(QObject):
         if self._tags_shell is not None:
             self._tags_shell.setProperty("toolheadStatus", self._toolhead_status)
 
+
     def _set_toolhead_visible(self, enabled):
         self.toolhead_visible = bool(enabled)
         if self._persistence is not None:
@@ -232,6 +233,8 @@ class PreviewPresentation(QObject):
     def _set_reflections_enabled(self, enabled):
         self.reflections_enabled = bool(enabled)
         self._set_scene_lighting("previewReflectionsEnabled", self.reflections_enabled)
+
+
 
     def _set_light_bed(self, enabled):
         self.light_bed = bool(enabled)

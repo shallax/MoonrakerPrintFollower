@@ -9,6 +9,7 @@ from PyQt6.QtGui import QGuiApplication, QOffscreenSurface, QOpenGLContext, QSur
 from PyQt6.QtOpenGL import QOpenGLVersionFunctionsFactory, QOpenGLVersionProfile, QOpenGLFramebufferObject, QOpenGLVertexArrayObject
 from mpf.toolhead.ToolheadEnvironment import CubeStorage, ToolheadEnvironment, ProbeDescriptor, SIZE
 from mpf.toolhead.ToolheadGLState import procedure, preserved_state, flush_texture_deletions
+from mpf.toolhead import ToolheadEnvironmentGeometry as query_geometry
 from types import SimpleNamespace
 
 
@@ -181,6 +182,34 @@ class EnvironmentGLTests(unittest.TestCase):
                                    ('scalar', (.75,)), ('pairs[1]', (3., 4.)), ('triples[1]', (4., 5., 6.))):
                 get(program.programId(), program.uniformLocation(name), actual)
                 self.assertEqual(tuple(actual)[:len(expected)], expected)
+            # Rebinding the private program does not erase GPU uniform values.
+            from unittest.mock import Mock
+            scalar_location = program.uniformLocation('scalar')
+            scalar_upload = Mock(wraps=program.functions['glUniform1f'])
+            program.functions['glUniform1f'] = scalar_upload
+            program.release(); program.bind()
+            program.setUniformValue(scalar_location, .75)
+            program.setUniformValue(scalar_location, .75)
+            # Earlier bulk array writes invalidated the cache once.
+            self.assertEqual(scalar_upload.call_count, 1)
+            program.setUniformValue(scalar_location, -.0)
+            program.setUniformValue(scalar_location, .0)
+            self.assertEqual(scalar_upload.call_count, 3)
+            vector = values['three']; vector.setX(9.)
+            program.setUniformValue(program.uniformLocation('three'), vector)
+            get(program.programId(), program.uniformLocation('three'), actual)
+            self.assertEqual(tuple(actual)[:3], (9., 5., 6.))
+            element = program.uniformLocation('floats[1]')
+            program.setUniformValue(element, .4)
+            program.setUniformValueArray(program.uniformLocation('floats'), [.2, .8])
+            program.setUniformValue(element, .4)
+            get(program.programId(), element, actual)
+            self.assertAlmostEqual(actual[0], .4)
+            program.setUniformValue(scalar_location, .75)
+            program.release(); program.link(); program.bind()
+            program.setUniformValue(program.uniformLocation('scalar'), .75)
+            get(program.programId(), program.uniformLocation('scalar'), actual)
+            self.assertEqual(actual[0], .75)
             with self.assertRaisesRegex(RuntimeError, 'Unqualified uniform'):
                 program.setUniformValue(-1, object())
             program.release()
@@ -260,6 +289,7 @@ class EnvironmentGLTests(unittest.TestCase):
         with patch.dict(sys.modules, {
             'mpf.toolhead.ToolheadCaptureGL': SimpleNamespace(RawBindings=object),
             'mpf.toolhead.ToolheadCaptureRecipe': SimpleNamespace(CaptureScene=object),
+            'mpf.toolhead.ToolheadEnvironmentGeometry': query_geometry,
         }):
             from mpf.toolhead.ToolheadEnvironmentWorker import WorkerStorage
         storage = WorkerStorage(self.gl, self.context, 0x81A6)

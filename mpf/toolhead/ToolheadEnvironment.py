@@ -28,8 +28,10 @@ class ProbeDescriptor:
     maximum: tuple
     near: float = .2
     far: float = 1000.
+    projection: int = 0  # 0: central perspective; 1: six exterior orthographic views.
 
     def __post_init__(self):
+        if self.projection not in (0,1): raise ValueError("Invalid environment projection")
         vectors = (self.origin, self.minimum, self.maximum)
         if any(len(vector) != 3 or not all(math.isfinite(value) for value in vector) for vector in vectors):
             raise ValueError("Invalid reflection probe bounds")
@@ -330,7 +332,7 @@ class ToolheadEnvironment:
         if self.available:
             descriptor = self.descriptor
             for name, value in (("u_probe", descriptor.origin), ("u_sceneMin", descriptor.minimum),
-                    ("u_sceneMax", descriptor.maximum), ("u_probeNear", descriptor.near), ("u_probeFar", descriptor.far)):
+                    ("u_sceneMax", descriptor.maximum), ("u_probeNear", descriptor.near), ("u_probeFar", -descriptor.far if getattr(descriptor,"projection",0)==1 else descriptor.far)):
                 shader.setUniformValue(name, list(value) if isinstance(value, tuple) else value)
 
     def close(self):

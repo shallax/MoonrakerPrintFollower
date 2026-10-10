@@ -123,6 +123,26 @@ class SimulationPassTests(unittest.TestCase):
         self.adapter.render()  # Synchronize original lower-shadow mode.
         self.adapter.render()
 
+    def test_sample_seed_certifies_empty_separately_from_unsupported_or_unrendered_paths(self):
+        self.children=[]
+        empty=self.adapter.get_sample_depth_revision(self.camera,(0,0,800,600))
+        self.assertEqual(empty[0],'empty')
+        self.assertEqual(self.adapter.get_sample_depth_revision(self.camera,(0,0,800,600)),empty)
+        self.children=[ToolHandle(self.data),SceneNode(None)]
+        self.assertEqual(self.adapter.get_sample_depth_revision(self.camera,(0,0,800,600)),empty)
+        self.children.append(self.child)
+        self.assertIsNone(self.adapter.get_sample_depth_revision(self.camera,(0,0,800,600)))
+        self.children=[];self.compatibility=True
+        self.assertIsNone(self.adapter.get_sample_depth_revision(self.camera,(0,0,800,600)))
+        self.compatibility=False;self.top_mesh=object()
+        self.assertIsNone(self.adapter.get_sample_depth_revision(self.camera,(0,0,800,600)))
+        self.top_mesh=None;self.jumps=object()
+        self.assertIsNone(self.adapter.get_sample_depth_revision(self.camera,(0,0,800,600)))
+        self.jumps=None;self.allowed=False
+        self.assertIsNone(self.adapter.get_sample_depth_revision(self.camera,(0,0,800,600)))
+        self.allowed=True;self.adapter._closed=True
+        self.assertIsNone(self.adapter.get_sample_depth_revision(self.camera,(0,0,800,600)))
+
     def test_empty_reflection_scene_waits_for_slice_preparation_and_layer_processing(self):
         backend = SimpleNamespace(_slicing=False, _process_layers_job=None)
         self.application.getBackend = lambda: backend
@@ -908,3 +928,127 @@ class SimulationPassTests(unittest.TestCase):
         for _ in range(3):self.assertFalse(self.adapter.try_copy_completed_depth(self.gl,object(),self.camera,[tuple(changed)],self.view))
         self.logger.log.assert_called_once_with('i','toolhead shared simulation depth rejected: %s','malformed geometry/view metadata')
         self.adapter._cache.try_copy_depth.assert_not_called()
+
+
+    def sampled_depth_fixture(self):
+        from contextlib import nullcontext
+        from mpf.toolhead.ToolheadSampleTarget import ToolheadSampleTarget
+        import mpf.toolhead.ToolheadGLState as state
+        self.depth_fixture()
+        self.adapter._depth_snapshot['filled'] = True
+        self.gl.glGetIntegerv.side_effect = lambda parameter: {
+            0x80A9:4, 0x8CA6:91, 0x0B40:(0x1B02,0x1B02)}[parameter]
+        self.gl.glGetFloatv.return_value = (.2,.8)
+        self.gl.glIsEnabled.side_effect = lambda flag:flag==0x864F
+        self.gl.glGetError.return_value = 0
+        class Target(ToolheadSampleTarget):
+            def __init__(inner): inner._context = self.context
+            def __del__(inner): pass
+            def isValid(inner): return True
+            def format(inner): return SimpleNamespace(samples=lambda:4)
+            def width(inner): return 64
+            def height(inner): return 96
+            def handle(inner): return 91
+        self.fbo.handle.return_value = 83
+        self.sampled_output = Target()
+        self.cropped_camera = object()
+        self.viewport, self.crop = (0,0,800,600), (128,160,64,96)
+        self.revision = self.adapter.get_visible_depth_revision(self.camera,self.viewport)
+        self.geometry.render.reset_mock()
+        for scope in (patch.object(state,'preserved_state',side_effect=lambda *args:nullcontext()),
+                      patch.object(state,'preserved_samples',side_effect=lambda *args:nullcontext())):
+            scope.start(); self.addCleanup(scope.stop)
+
+    def replay_depth(self):
+        return self.adapter.render_visible_depth(self.gl,self.sampled_output,self.camera,self.cropped_camera,
+                                                  self.viewport,self.crop,self.revision)
+
+    def test_sampled_depth_replays_original_lower_current_and_fraction_without_colour(self):
+        self.sampled_depth_fixture()
+        self.assertTrue(self.replay_depth())
+        self.assertEqual(self.geometry.render.call_args_list, [
+            call(self.shadow,self.cropped_camera,self.matrix,[(0,6)],self.gl),
+            call(self.normal,self.cropped_camera,self.matrix,[(6,10)],self.gl),
+            call(self.normal,self.cropped_camera,self.matrix,[(10,12)],self.gl)])
+        self.gl.glColorMask.assert_called_with(False,False,False,False)
+        self.gl.glDepthRange.assert_any_call(0.,1.); self.gl.glDepthRange.assert_called_with(.2,.8)
+        self.gl.glEnable.assert_called_with(0x864F)
+        self.normal.setUniformValue.assert_any_call('u_last_line_ratio',1.)
+        self.normal.setUniformValue.assert_called_with('u_last_line_ratio',.5)
+        self.instanced.render.reset_mock()
+        self.assertTrue(self.replay_depth())
+        self.instanced.render.assert_not_called()  # Replay always preserves original source geometry.
+        self.assertIs(self.adapter._fbo,self.fbo)
+
+    def test_sampled_replay_requires_authoritative_source_mode_format_and_ranges(self):
+        self.sampled_depth_fixture()
+        old = self.revision; self.revision = None
+        self.assertFalse(self.replay_depth()); self.revision = old
+        self.adapter._depth_snapshot['filled'] = None
+        self.assertFalse(self.replay_depth()); self.adapter._depth_snapshot['filled'] = True
+        self.adapter._depth_snapshot['shadow'] = None
+        self.assertFalse(self.replay_depth()); self.adapter._depth_snapshot['shadow'] = True
+        self.adapter._depth_snapshot['end'] = 8
+        self.assertFalse(self.replay_depth()); self.adapter._depth_snapshot['end'] = 10
+        self.sampled_output.format = lambda:SimpleNamespace(samples=lambda:0)
+        self.assertFalse(self.replay_depth()); self.sampled_output.format = lambda:SimpleNamespace(samples=lambda:4)
+        self.geometry.render.assert_not_called()
+        self.path = 2.75
+        self.assertFalse(self.replay_depth())
+
+    def test_sampled_replay_rejects_fragment_suppression_without_mutating_host_flags(self):
+        self.sampled_depth_fixture()
+        for flag in (0x8C89,0x0B90,0x0BF2,*range(0x3000,0x3008)):
+            self.gl.glIsEnabled.side_effect = lambda key,flag=flag:key==flag
+            self.assertFalse(self.replay_depth())
+        self.geometry.render.assert_not_called()
+
+    def test_cached_wire_or_discard_prefix_cannot_be_recategorized_as_filled(self):
+        polygon = [0x1B01,0x1B01]
+        discarded = False
+        self.gl.glGetIntegerv.side_effect = lambda key:{0x0B40:polygon,0x0B46:0x0901,0x0B45:0x0405}[key]
+        self.gl.glGetFloatv.return_value = (0.,1.)
+        self.gl.glIsEnabled.side_effect = lambda key:key==0x8C89 and discarded
+        self.adapter._shadow = True
+        self.adapter._draw(self.context,self.adapter._source())
+        first = self.adapter._cache.key
+        self.assertFalse(self.adapter._depth_snapshot['filled'])
+        previous = self.geometry.render.call_count
+        polygon[:] = [0x1B02,0x1B02]
+        self.adapter._draw(self.context,self.adapter._source())
+        self.assertNotEqual(first,self.adapter._cache.key)
+        self.assertGreater(self.geometry.render.call_count,previous)
+        self.assertTrue(self.adapter._depth_snapshot['filled'])
+        first = self.adapter._cache.key; discarded = True
+        self.adapter._draw(self.context,self.adapter._source())
+        self.assertNotEqual(first,self.adapter._cache.key)
+        self.assertFalse(self.adapter._depth_snapshot['filled'])
+
+    def test_live_metric_or_camera_light_change_cannot_reuse_old_sampled_depth(self):
+        self.sampled_depth_fixture()
+        self.view.getMinFeedrate.return_value = 99
+        self.assertFalse(self.replay_depth()); self.geometry.render.assert_not_called()
+        self.view.getMinFeedrate.return_value = 7
+        self.camera.getCameraLightPosition = lambda:'moved light'
+        self.assertFalse(self.replay_depth()); self.geometry.render.assert_not_called()
+
+    def test_partial_draw_or_restoration_fault_never_certifies_sampled_seed(self):
+        self.sampled_depth_fixture()
+        self.geometry.render.side_effect = [None,None,RuntimeError('partial draw')]
+        self.assertFalse(self.replay_depth())
+        self.normal.setUniformValue.assert_called_with('u_last_line_ratio',.5)
+        self.gl.glDepthRange.assert_called_with(.2,.8)
+        self.gl.glEnable.assert_called_with(0x864F)
+        self.geometry.render.side_effect = lambda *args:setattr(self,'path',2.75)
+        self.assertFalse(self.replay_depth())  # Revision checked again AFTER all draws.
+        self.path = 2.5; self.geometry.render.side_effect = None
+        self.gl.glGetError.return_value = 0x0502
+        self.assertFalse(self.replay_depth())
+
+    def test_partial_uniform_cleanup_attempts_all_values_after_independent_fault(self):
+        shader = Mock()
+        shader.setUniformValue.side_effect = [RuntimeError('first uniform'),None,None]
+        with self.assertRaisesRegex(RuntimeError,'partial path uniform'):
+            self.adapter._partial_uniforms(shader,([1,2,3],[4,5,6],.25))
+        self.assertEqual(shader.setUniformValue.call_count,3)
+        shader.setUniformValue.assert_called_with('u_last_line_ratio',.25)

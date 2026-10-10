@@ -123,6 +123,22 @@ class EnvironmentMailboxTests(unittest.TestCase):
         box.retired(token)
         self.assertTrue(box.drained)
 
+    def test_aborted_source_payload_stays_paired_until_verified_retirement(self):
+        box = EnvironmentMailbox()
+        token = box.reserve()
+        frame = object()
+        with self.assertRaisesRegex(RuntimeError, 'unverified'):
+            box.abort(token, None, payload=frame)
+        box.close()
+        box.abort(token, 'last-source-use', payload=frame)
+        self.assertIsNone(box.begin_poll())
+        self.assertIsNone(box.begin_read())
+        self.assertEqual(box.take_retirement(), (token, frame, 'last-source-use', None))
+        self.assertFalse(box.drained)
+        self.assertIsNone(box.reserve())
+        box.retired(token)
+        self.assertTrue(box.drained)
+
     def test_obsolete_complete_uses_reserved_generation_and_cannot_get_stuck_ready(self):
         box = EnvironmentMailbox()
         token = box.reserve()

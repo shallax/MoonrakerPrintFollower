@@ -51,6 +51,24 @@ def frozen_array(value):
     return array
 
 
+def retained_array_bytes(array):
+    """Charge the backing allocation kept alive by a published numeric view."""
+    owner = array
+    for _ in range(64):
+        if isinstance(owner, np.ndarray):
+            if owner.base is not None:
+                owner = owner.base
+                continue
+            return owner.nbytes
+        if isinstance(owner, memoryview):
+            owner = owner.obj
+            continue
+        try: return memoryview(owner).nbytes
+        except (TypeError, BufferError) as error:
+            raise RuntimeError('Uncertified retained array allocation') from error
+    raise RuntimeError('Retained array allocation chain exceeds its bound')
+
+
 @dataclass(frozen=True, eq=False)
 class CaptureMesh:
     """Published CPU arrays only; no native QObject/cache fields are retained."""
@@ -83,6 +101,12 @@ class CaptureMesh:
                 for name in mesh.attributeNames()))
 
     def getVertices(self): return self.vertices
+    def retained_bytes(self):
+        # A conservative charge: repeated/shared views may count twice. No
+        # source copy is made and this does not describe driver free pools.
+        arrays = (self.vertices, self.indices, self.normals, self.colours, self.uvs,
+            *(array for _name, _gl_name, _kind, array in self.attributes))
+        return sum(retained_array_bytes(array) for array in arrays if array is not None)
     def getIndices(self): return self.indices
     def getNormals(self): return self.normals
     def getUVCoordinates(self): return self.uvs

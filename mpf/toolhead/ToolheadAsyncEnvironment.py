@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+from contextlib import contextmanager
 from weakref import WeakSet
 from PyQt6.QtCore import QCoreApplication, QThread, QTimer, Qt, QRunnable
 from PyQt6.QtGui import QOpenGLContext, QOffscreenSurface
@@ -10,6 +11,7 @@ from .ToolheadEnvironment import ToolheadEnvironment, TEXTURE_UNIT, DEPTH_UNIT, 
 from .ToolheadEnvironmentWorker import EnvironmentWorker, CaptureJob
 from .ToolheadCaptureRecipe import CaptureFreezer
 from .ToolheadGLState import preserved_state, procedure
+from .ToolheadEnvironmentGeometry import GeometryUncertain
 
 _owners = set()  # Retain running threads through nonblocking retirement.
 _quarantined = set()  # Failed main activation cannot prove shared resources safe to free.
@@ -39,12 +41,13 @@ class _ConsumerBindings:
         self.owner, self.result = owner, result
         self.depth = _Depth(self)
         self._bindings, self._use = {}, None
+        self._queries = 0
 
     def bind(self, unit): self._bind(unit, self.result.colour)
     def bind_depth(self, unit): self._bind(unit, self.result.depth)
 
-    def _bind(self, unit, name):
-        owner, gl = self.owner, self.owner._gl
+    def _acquire(self):
+        owner = self.owner
         if owner._main_retired or owner._quarantine:
             raise RuntimeError('Reflection consumer context was retired')
         if self._use is None:
@@ -54,6 +57,36 @@ class _ConsumerBindings:
             owner._reads.add(self)
             if payload is not self.result:
                 self._finish(); raise RuntimeError('Reflection consumer descriptor changed')
+
+    @contextmanager
+    def query(self, selected_key, source_key):
+        """Join the map ticket; frozen capture AND source/model/prefix must match.
+
+        The runtime shader hook is unfinished. Future consumers take uniforms
+        from this payload's frame, never from a newer pending snapshot.
+        """
+        geometry = getattr(self.result, 'geometry', None)
+        if (geometry is None or selected_key is None or getattr(self.result, 'key', None) != selected_key
+                or geometry.key != source_key):
+            yield None
+            return
+        self._acquire()
+        self._queries += 1
+        try:
+            try:
+                with geometry.read(self.owner._gl, self.owner._main_context, geometry.epoch): yield geometry
+            except GeometryUncertain:
+                # Unverified state is not an optional miss. Retain the pair and
+                # every main wrapper, even when no later window frame occurs.
+                self.owner._abandon()
+                raise
+        finally:
+            self._queries -= 1
+            if not self._bindings and not self._queries: self._finish()
+
+    def _bind(self, unit, name):
+        owner, gl = self.owner, self.owner._gl
+        self._acquire()
         active = int(gl.glGetIntegerv(0x84E0))
         try:
             gl.glActiveTexture(0x84C0+unit)
@@ -77,10 +110,10 @@ class _ConsumerBindings:
                 try: gl.glBindTexture(0x8513, binding[0])
                 finally: owner._sampler(unit, binding[1])
             finally: gl.glActiveTexture(active)
-        if not self._bindings: self._finish()
+        if not self._bindings and not self._queries: self._finish()
 
     def _finish(self):
-        if self._use is None: return
+        if self._use is None or self._queries: return
         owner = self.owner
         if owner._main_retired or owner._quarantine: return
         fence = None
@@ -158,12 +191,15 @@ class AsyncEnvironment(ToolheadEnvironment):
         if not worker_context.create() or not QOpenGLContext.areSharing(context, worker_context):
             self._surface.destroy(); raise RuntimeError('Reflection context sharing unavailable')
         constants = {name: int(getattr(gl, name)) for name in dir(gl) if name.startswith('GL_')}
+        # Directional maps are sampled directly by the current raster pose.
         self._worker = EnvironmentWorker(worker_context, self._surface, QThread.currentThread(), constants, depth)
+        self._recovery_hold = None
         worker_context.moveToThread(self._worker)
         self._worker.ready.connect(self._arrived, Qt.ConnectionType.QueuedConnection)
         self._worker.finished.connect(self._finished, Qt.ConnectionType.QueuedConnection)
         self._freezer, self._leases = CaptureFreezer(), {}
         self._serial, self._submitted = 0, None
+        self._selected_key = None
         self._busy = self._closed = False
         self.requires_replacement = False
         self._disposed = False
@@ -188,16 +224,29 @@ class AsyncEnvironment(ToolheadEnvironment):
     def wake_delay(self):
         if self._closed:
             return max(.01, self._retry-self._clock()) if self.requires_replacement else None
-        if self._busy: return None
+        if self._busy or self._held_recovery(): return None
+        if self._unchanged_directional(): return None
         return max(.01, max(self._next, self._retry)-self._clock())
 
+    def _unchanged_directional(self):
+        return (self.available and getattr(self.descriptor, 'projection', 0) == 1
+                and self._selected_key == self._submitted
+                and self._selected_key == (self._hard, self._published))
+
     def _collect(self):
+        self._sync_worker_quarantine()
         if self._quarantine: return
         for serial, fence in self._worker.completed():
             self._leases.pop(serial, None)
+            self._worker.sources_released(serial)
             if fence: self._deletions.append(fence)
         if self._is_main_current():
             while self._deletions: self._delete(ctypes.c_void_p(self._deletions.pop()))
+
+    def _sync_worker_quarantine(self):
+        # Producer-local abandonment must reach the process-lifetime root even
+        # if its ready callback was never delivered before thread completion.
+        if not self._quarantine and self._worker.abandoned.is_set(): self._abandon()
 
     def _is_main_current(self):
         if self._main_retired or self._quarantine: return False
@@ -224,6 +273,11 @@ class AsyncEnvironment(ToolheadEnvironment):
     def _finish_main(self):
         if not self._is_main_current():
             raise RuntimeError('Reflection consumer finish requires its original context')
+        if any(binding._queries for binding in self._reads):
+            # Finish covers submitted commands, not a still-running lexical
+            # query scope which could submit another read after this callback.
+            # Teardown callers quarantine rather than release a live ticket.
+            raise RuntimeError('Reflection query scope is still active')
         self._main_finish()
         for binding in tuple(self._reads):
             previous = self._worker.mailbox.end_read(binding._use, None, gpu_complete=True)
@@ -234,7 +288,24 @@ class AsyncEnvironment(ToolheadEnvironment):
         self._worker.wake()
         self._collect()
 
+    def retain_recovery(self, bindings):
+        if self._closed or not self.recovery_ready or bindings is not self._storage:
+            raise RuntimeError('Current completed recovery source required')
+        if getattr(self,'_recovery_hold',None) is not None:
+            raise RuntimeError('Recovery source already retained')
+        token=object();self._recovery_hold=(token,bindings,self._selected_key)
+        return token
+
+    def release_recovery(self, token):
+        hold=getattr(self,'_recovery_hold',None)
+        if hold is not None and hold[0] is token:self._recovery_hold=None
+
+    def _held_recovery(self):
+        hold=getattr(self,'_recovery_hold',None)
+        return hold is not None and hold[1] is self._storage and hold[2]==self._selected_key and not self._closed
+
     def _adopt(self):
+        if self._held_recovery():return
         admission = self._worker.mailbox.begin_poll()
         if admission is None: return
         use, fence = admission
@@ -265,15 +336,20 @@ class AsyncEnvironment(ToolheadEnvironment):
 
     def step(self, gl, context, hard, soft, snapshot):
         if self._closed: return False
+        self._selected_key = hard, soft
+        if not self._held_recovery():self._recovery_hold=None
         self._collect()
         if self._deletions: self._schedule_cleanup()
         now = self._clock()
         if hard != self._hard:
             self._worker.mailbox.change_generation()
+            self._worker.wake()
             self._hard, self._submitted, self._busy = hard, None, False
             self._next = self._retry = self._changed_next = 0
         self._adopt()
+        if self._held_recovery():return self._busy
         key = hard, soft
+        if not self._busy and self._unchanged_directional(): return False
         if key == self._submitted and self._busy: return True
         if soft != self._published: self._next = min(self._next, self._changed_next)
         if now < max(self._next, self._retry): return self._busy
@@ -294,7 +370,7 @@ class AsyncEnvironment(ToolheadEnvironment):
         if not ready: raise RuntimeError('Reflection geometry readiness fence unavailable')
         gl.glFlush()
         self._serial += 1
-        job = CaptureJob(self._serial, soft, frame, int(ready), self._worker.mailbox.generation)
+        job = CaptureJob(self._serial, soft, frame, int(ready), self._worker.mailbox.generation, key)
         self._leases[job.serial] = wrappers
         previous = self._worker.submit(job)
         if previous is not None:
@@ -305,12 +381,38 @@ class AsyncEnvironment(ToolheadEnvironment):
         return True
 
     def apply(self, shader):
+        shader.setUniformValue('mpf_recoveryEnabled', 0)
         self._shaders.add(shader)
         super().apply(shader)
 
+    @property
+    def recovery_ready(self):
+        storage = self._storage
+        return (not self._closed and self.available and isinstance(storage, _ConsumerBindings)
+            and storage.result.key == self._selected_key and storage.result.geometry is not None)
+
+    @property
+    def recovery_identity(self):
+        if not self.recovery_ready: return None
+        return self._storage.result.serial, self._storage.result.geometry.key
+
+    @contextmanager
+    def query_bindings(self, shader):
+        shader.setUniformValue('mpf_recoveryEnabled', 0)
+        try:
+            if self.recovery_ready:
+                storage = self._storage
+                with storage.query(self._selected_key, storage.result.geometry.key) as geometry:
+                    if geometry is not None: geometry.apply(shader)
+                    yield geometry
+            else: yield None
+        finally: shader.setUniformValue('mpf_recoveryEnabled', 0)
+
     def defer(self):
         if self._closed: return
+        self._selected_key = None
         self._worker.mailbox.change_generation()
+        self._worker.wake()
         self._submitted, self._busy = None, False
         self._retry = self._clock()+.05
 
@@ -324,6 +426,7 @@ class AsyncEnvironment(ToolheadEnvironment):
     def close(self):
         if self._closed: return
         self._closed = True
+        self._recovery_hold = None
         self._retry_timer.stop()
         self.available, self._busy = False, False
         for shader in self._shaders:
@@ -336,9 +439,14 @@ class AsyncEnvironment(ToolheadEnvironment):
 
     def _finished(self):
         if self._disposed: return
+        self._sync_worker_quarantine()
         self._disposed = True
         if not self._quarantine:
             self._collect()
+            # Worker completion follows verified producer/consumer retirement.
+            # Drop retained CPU frames/cache owners only at that boundary;
+            # abandonment deliberately keeps the complete source cohort.
+            self._storage = self.descriptor = self._freezer = None
             if self._deletions: self._schedule_cleanup()
             self._surface.destroy()
             self._worker.context.deleteLater()
@@ -382,7 +490,7 @@ class AsyncEnvironment(ToolheadEnvironment):
 
     def _abandon(self):
         self._quarantine = True
-        self.failure = 'Reflection context activation failed; resources quarantined'
+        self.failure = (self._worker.failure or 'Reflection context activation failed; resources quarantined')[:200]
         self.requires_replacement = True
         _quarantined.add(self)
         self._worker.abandon()

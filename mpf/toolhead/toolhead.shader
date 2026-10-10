@@ -181,9 +181,92 @@ fragment =
         }
         return vec3(0.0);
     }
-    vec3 environmentReflection(vec3 direction, float roughness) {
+    vec3 directionalLookup(vec3 p,int face){
+     vec3 q=clamp((p-(u_sceneMin+u_sceneMax)*.5)/((u_sceneMax-u_sceneMin)*.5),vec3(-.999999),vec3(.999999));
+     if(face<2)q.x=face==0?1.:-1.;else if(face<4)q.y=face==2?1.:-1.;else q.z=face==4?1.:-1.;
+     return q;
+    }
+    float directionalResidual(vec3 p,int face){
+     vec3 q=(p-(u_sceneMin+u_sceneMax)*.5)/((u_sceneMax-u_sceneMin)*.5);
+     if(any(greaterThan(abs(q),vec3(1.00001))))return -100000.;
+     float depth=textureCube(u_sceneDepth,directionalLookup(p,face),0.).r;
+     if(!(depth>=0.&&depth<1.))return -100000.;
+     int axis=face/2;float forward=(face==0||face==2||face==4)?p[axis]-u_sceneMin[axis]+.01:u_sceneMax[axis]+.01-p[axis];
+     return forward-depth*(-u_probeFar-u_probeNear);
+    }
+    float directionalHit(vec3 origin,vec3 direction,out vec3 lookup){
+        vec3 safe=vec3(direction.x<0.?-1.:1.,direction.y<0.?-1.:1.,direction.z<0.?-1.:1.)*max(abs(direction),vec3(.000001));
+        vec3 a=(u_sceneMin-origin)/safe,b=(u_sceneMax-origin)/safe;
+        vec3 lo=min(a,b),hi=max(a,b);
+        float first=max(.01,max(max(lo.x,lo.y),lo.z)),last=min(min(hi.x,hi.y),hi.z);
+        if(!(last>first))return -1.;
+        vec3 span=u_sceneMax-u_sceneMin;
+        int primary=abs(direction.x)>=abs(direction.y)&&abs(direction.x)>=abs(direction.z)?0:abs(direction.y)>=abs(direction.z)?1:2;
+        float best=last;bool found=false;
+        // Both views of an axis share exactly the same projected texel walk.
+        // Inspect their depths together instead of traversing the grid twice.
+        for(int order=0;order<3;order++){
+            int axis=primary+order;if(axis>=3)axis-=3;
+            if(direction[axis]==0.)continue;
+            int face=axis*2;
+            int u=axis+1;if(u==3)u=0;int v=u+1;if(v==3)v=0;
+            vec2 gridOrigin=vec2((origin[u]-u_sceneMin[u])/span[u],(origin[v]-u_sceneMin[v])/span[v])*512.;
+            vec2 gridRay=vec2(direction[u]/span[u],direction[v]/span[v])*512.;
+            vec2 cell=clamp(floor(gridOrigin+gridRay*first),vec2(0.),vec2(511.));
+            vec2 increment=sign(gridRay);float entry=first;
+            // A projected line crosses at most 512+512 cells. Visit every cell.
+            for(int step=0;step<1026;step++){
+                if(any(lessThan(cell,vec2(0.)))||any(greaterThan(cell,vec2(511.)))||entry>best)break;
+                vec2 boundary=cell+max(increment,vec2(0.));
+                vec2 next=vec2(best);
+                if(gridRay.x!=0.)next.x=(boundary.x-gridOrigin.x)/gridRay.x;
+                if(gridRay.y!=0.)next.y=(boundary.y-gridOrigin.y)/gridRay.y;
+                float exitTime=min(best,min(next.x,next.y));
+                vec3 texel=vec3(0.);texel[axis]=1.;
+                texel[u]=(cell.x+.5)/256.-1.;texel[v]=(cell.y+.5)/256.-1.;
+                float front=textureCube(u_sceneDepth,texel,0.).r;
+                texel[axis]=-1.;
+                float back=textureCube(u_sceneDepth,texel,0.).r;
+                float frontPlane=u_sceneMin[axis]-.01+front*(-u_probeFar-u_probeNear);
+                float backPlane=u_sceneMax[axis]+.01-back*(-u_probeFar-u_probeNear);
+                float tf=(frontPlane-origin[axis])/direction[axis],tb=(backPlane-origin[axis])/direction[axis];
+                bool frontHit=front>=0.&&front<1.&&tf>=entry&&tf<=exitTime&&tf>=first&&tf<=best;
+                bool backHit=back>=0.&&back<1.&&tb>=entry&&tb<=exitTime&&tb>=first&&tb<=best;
+                if(frontHit||backHit){
+                    bool useFront=frontHit&&(!backHit||tf<tb||(tf==tb&&direction[axis]<0.));
+                    best=useFront?tf:tb;found=true;
+                    lookup=directionalLookup(origin+direction*best,face+(useFront?0:1));break;
+                }
+                if(exitTime>=best)break;
+                if(next.x<=next.y)cell.x+=increment.x;
+                if(next.y<=next.x)cell.y+=increment.y;
+                entry=max(entry,exitTime);
+            }
+        }
+        return found?best:-1.;
+    }
+    vec3 directionalSample(vec3 lookup,float roughness){
+        float level=roughness*9.;float edge=max(0.,1.-exp2(level)/512.);
+        int axis=abs(lookup.x)>=1.?0:abs(lookup.y)>=1.?1:2;
+        float side=lookup[axis];lookup=clamp(lookup,vec3(-edge),vec3(edge));lookup[axis]=side;
+        return textureCube(u_environment,lookup,level).rgb;
+    }
+    vec3 directionalReflection(vec3 direction,float roughness,out float confidence){
+        confidence=0.;
+        vec3 central;float hit=directionalHit(v_position,direction,central);
+        if(hit<0.)return vec3(0.);
+        confidence=1.;
+        // The complete central traversal establishes coverage. The captured
+        // colour mip chain supplies the roughness footprint without repeating
+        // six full depth searches for every shaded pixel.
+        return directionalSample(central,roughness);
+    }
+    vec3 environmentReflection(vec3 direction, float roughness, out float confidence) {
+        if(u_probeFar<0.)return directionalReflection(direction,roughness,confidence);
+        confidence = 0.0;
         direction = localReflectionDirection(direction);
-        if (dot(direction, direction) < 0.5) return vec3(0.08, 0.09, 0.11);
+        if (dot(direction, direction) < 0.5) return vec3(0.0);
+        confidence = 1.0;
         // One central depth traversal, then a bounded roughness cone.
         vec3 tangent = normalize(cross(direction, abs(direction.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
         vec3 bitangent = cross(direction, tangent);
@@ -330,9 +413,13 @@ fragment =
         if (u_environmentEnabled == 1) {
             float facing = max(dot(normal, eye), 0.0);
             vec3 fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - facing, 5.0);
-            vec3 reflected = environmentReflection(reflect(-eye, normal), roughness);
-            lit = lit * (vec3(1.0) - fresnel * (1.0 - roughness * 0.5))
-                + reflected * fresnel * (1.0 - roughness * 0.4);
+            float reflectionConfidence = 1.0;
+            vec3 reflected = environmentReflection(reflect(-eye, normal), roughness, reflectionConfidence);
+            // An unavailable probe surface is not a black reflecting object.
+            // Retain ordinary lighting unless captured depth certifies a hit.
+            if (reflectionConfidence > 0.5)
+                lit = lit * (vec3(1.0) - fresnel * (1.0 - roughness * 0.5))
+                    + reflected * fresnel * (1.0 - roughness * 0.4);
         }
         gl_FragColor = vec4(lit, v_color.a * u_opacity);
     }
@@ -521,9 +608,92 @@ fragment41core =
         }
         return vec3(0.0);
     }
-    vec3 environmentReflection(vec3 direction, float roughness) {
+    vec3 directionalLookup(vec3 p,int face){
+     vec3 q=clamp((p-(u_sceneMin+u_sceneMax)*.5)/((u_sceneMax-u_sceneMin)*.5),vec3(-.999999),vec3(.999999));
+     if(face<2)q.x=face==0?1.:-1.;else if(face<4)q.y=face==2?1.:-1.;else q.z=face==4?1.:-1.;
+     return q;
+    }
+    float directionalResidual(vec3 p,int face){
+     vec3 q=(p-(u_sceneMin+u_sceneMax)*.5)/((u_sceneMax-u_sceneMin)*.5);
+     if(any(greaterThan(abs(q),vec3(1.00001))))return -100000.;
+     float depth=textureLod(u_sceneDepth,directionalLookup(p,face),0.).r;
+     if(!(depth>=0.&&depth<1.))return -100000.;
+     int axis=face/2;float forward=(face==0||face==2||face==4)?p[axis]-u_sceneMin[axis]+.01:u_sceneMax[axis]+.01-p[axis];
+     return forward-depth*(-u_probeFar-u_probeNear);
+    }
+    float directionalHit(vec3 origin,vec3 direction,out vec3 lookup){
+        vec3 safe=vec3(direction.x<0.?-1.:1.,direction.y<0.?-1.:1.,direction.z<0.?-1.:1.)*max(abs(direction),vec3(.000001));
+        vec3 a=(u_sceneMin-origin)/safe,b=(u_sceneMax-origin)/safe;
+        vec3 lo=min(a,b),hi=max(a,b);
+        float first=max(.01,max(max(lo.x,lo.y),lo.z)),last=min(min(hi.x,hi.y),hi.z);
+        if(!(last>first))return -1.;
+        vec3 span=u_sceneMax-u_sceneMin;
+        int primary=abs(direction.x)>=abs(direction.y)&&abs(direction.x)>=abs(direction.z)?0:abs(direction.y)>=abs(direction.z)?1:2;
+        float best=last;bool found=false;
+        // Both views of an axis share exactly the same projected texel walk.
+        // Inspect their depths together instead of traversing the grid twice.
+        for(int order=0;order<3;order++){
+            int axis=primary+order;if(axis>=3)axis-=3;
+            if(direction[axis]==0.)continue;
+            int face=axis*2;
+            int u=axis+1;if(u==3)u=0;int v=u+1;if(v==3)v=0;
+            vec2 gridOrigin=vec2((origin[u]-u_sceneMin[u])/span[u],(origin[v]-u_sceneMin[v])/span[v])*512.;
+            vec2 gridRay=vec2(direction[u]/span[u],direction[v]/span[v])*512.;
+            vec2 cell=clamp(floor(gridOrigin+gridRay*first),vec2(0.),vec2(511.));
+            vec2 increment=sign(gridRay);float entry=first;
+            // A projected line crosses at most 512+512 cells. Visit every cell.
+            for(int step=0;step<1026;step++){
+                if(any(lessThan(cell,vec2(0.)))||any(greaterThan(cell,vec2(511.)))||entry>best)break;
+                vec2 boundary=cell+max(increment,vec2(0.));
+                vec2 next=vec2(best);
+                if(gridRay.x!=0.)next.x=(boundary.x-gridOrigin.x)/gridRay.x;
+                if(gridRay.y!=0.)next.y=(boundary.y-gridOrigin.y)/gridRay.y;
+                float exitTime=min(best,min(next.x,next.y));
+                vec3 texel=vec3(0.);texel[axis]=1.;
+                texel[u]=(cell.x+.5)/256.-1.;texel[v]=(cell.y+.5)/256.-1.;
+                float front=textureLod(u_sceneDepth,texel,0.).r;
+                texel[axis]=-1.;
+                float back=textureLod(u_sceneDepth,texel,0.).r;
+                float frontPlane=u_sceneMin[axis]-.01+front*(-u_probeFar-u_probeNear);
+                float backPlane=u_sceneMax[axis]+.01-back*(-u_probeFar-u_probeNear);
+                float tf=(frontPlane-origin[axis])/direction[axis],tb=(backPlane-origin[axis])/direction[axis];
+                bool frontHit=front>=0.&&front<1.&&tf>=entry&&tf<=exitTime&&tf>=first&&tf<=best;
+                bool backHit=back>=0.&&back<1.&&tb>=entry&&tb<=exitTime&&tb>=first&&tb<=best;
+                if(frontHit||backHit){
+                    bool useFront=frontHit&&(!backHit||tf<tb||(tf==tb&&direction[axis]<0.));
+                    best=useFront?tf:tb;found=true;
+                    lookup=directionalLookup(origin+direction*best,face+(useFront?0:1));break;
+                }
+                if(exitTime>=best)break;
+                if(next.x<=next.y)cell.x+=increment.x;
+                if(next.y<=next.x)cell.y+=increment.y;
+                entry=max(entry,exitTime);
+            }
+        }
+        return found?best:-1.;
+    }
+    vec3 directionalSample(vec3 lookup,float roughness){
+        float level=roughness*9.;float edge=max(0.,1.-exp2(level)/512.);
+        int axis=abs(lookup.x)>=1.?0:abs(lookup.y)>=1.?1:2;
+        float side=lookup[axis];lookup=clamp(lookup,vec3(-edge),vec3(edge));lookup[axis]=side;
+        return textureLod(u_environment,lookup,level).rgb;
+    }
+    vec3 directionalReflection(vec3 direction,float roughness,out float confidence){
+        confidence=0.;
+        vec3 central;float hit=directionalHit(v_position,direction,central);
+        if(hit<0.)return vec3(0.);
+        confidence=1.;
+        // The complete central traversal establishes coverage. The captured
+        // colour mip chain supplies the roughness footprint without repeating
+        // six full depth searches for every shaded pixel.
+        return directionalSample(central,roughness);
+    }
+    vec3 environmentReflection(vec3 direction, float roughness, out float confidence) {
+        if(u_probeFar<0.)return directionalReflection(direction,roughness,confidence);
+        confidence = 0.0;
         direction = localReflectionDirection(direction);
-        if (dot(direction, direction) < 0.5) return vec3(0.08, 0.09, 0.11);
+        if (dot(direction, direction) < 0.5) return vec3(0.0);
+        confidence = 1.0;
         // One central depth traversal, then a bounded roughness cone.
         vec3 tangent = normalize(cross(direction, abs(direction.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
         vec3 bitangent = cross(direction, tangent);
@@ -670,9 +840,13 @@ fragment41core =
         if (u_environmentEnabled == 1) {
             float facing = max(dot(normal, eye), 0.0);
             vec3 fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - facing, 5.0);
-            vec3 reflected = environmentReflection(reflect(-eye, normal), roughness);
-            lit = lit * (vec3(1.0) - fresnel * (1.0 - roughness * 0.5))
-                + reflected * fresnel * (1.0 - roughness * 0.4);
+            float reflectionConfidence = 1.0;
+            vec3 reflected = environmentReflection(reflect(-eye, normal), roughness, reflectionConfidence);
+            // An unavailable probe surface is not a black reflecting object.
+            // Retain ordinary lighting unless captured depth certifies a hit.
+            if (reflectionConfidence > 0.5)
+                lit = lit * (vec3(1.0) - fresnel * (1.0 - roughness * 0.5))
+                    + reflected * fresnel * (1.0 - roughness * 0.4);
         }
         frag_color = vec4(lit, v_color.a * u_opacity);
     }

@@ -72,13 +72,35 @@ def probe_camera(origin, face, light, near=.2, far=10000.):
         getCameraLightPosition=lambda: light)
 
 
+def directional_camera(descriptor, face, light):
+    """One exterior orthographic view, with the original cube face orientation.
+
+    Each face is a separate spatial depth image; its origin is outside the
+    scene on the opposite side of its forward axis. No receiver pose is used.
+    """
+    from UM.Math.Matrix import Matrix
+    low,high=np.asarray(descriptor.minimum),np.asarray(descriptor.maximum)
+    centre,extent=(low+high)*.5,(high-low)*.5
+    axis=face//2;direction=np.zeros(3);direction[axis]=1. if face%2==0 else -1.
+    origin=centre-direction*(extent[axis]+descriptor.near+.01)
+    camera=probe_camera(origin,face,light,descriptor.near,descriptor.far)
+    view=camera.getInverseWorldTransformation().getData()
+    width=np.dot(np.abs(view[0,:3]),extent);height=np.dot(np.abs(view[1,:3]),extent)
+    near,far=descriptor.near,descriptor.far
+    projection=Matrix(np.array(((1/width,0,0,0),(0,1/height,0,0),
+        (0,0,-2/(far-near),-(far+near)/(far-near)),(0,0,0,1))))
+    camera.getProjectionMatrix=lambda:projection
+    return camera
+
+
 class EnvironmentSnapshot:
     cpu_preparation = True  # prepare() never binds, creates or calls Qt/GL resources.
-    def __init__(self, owner, origin, light, plates, paths, uniforms, compatibility, *, plate_renderer=None):
+    def __init__(self, owner, origin, light, plates, paths, uniforms, compatibility, *, plate_renderer=None, projection=0):
         self.owner, self.origin, self.light = owner, tuple(origin), light
         self.plates, self.paths = plates, paths
         self.uniforms, self.compatibility = uniforms, compatibility
         self.descriptor = None
+        self.projection = projection
         self.lighting = {}
         self.light_effects = (False, False)
         self.path_top = {}
@@ -97,7 +119,7 @@ class EnvironmentSnapshot:
             bindings.glBlendEquation(bindings.GL_FUNC_ADD))) if transparent else (
             lambda bindings: (bindings.glColorMask(False, False, False, False), bindings.glDepthMask(True),
                 bindings.glDepthFunc(bindings.GL_LESS))) if phase == 'depth' else (
-            lambda bindings: self._light_state(bindings, shader))
+            lambda bindings: self._light_state(bindings, shader, camera=camera))
         batch = RenderBatch(shader, type=RenderBatch.RenderType.Transparent if transparent else RenderBatch.RenderType.Solid,
             backface_cull=phase == 'light', state_setup_callback=setup)
         batch.addItem(item['transformation'], mesh=item['mesh'], uniforms=item.get('uniforms') if phase != 'light' else None,
@@ -141,7 +163,8 @@ class EnvironmentSnapshot:
     def prepare(self):
         """Reduce immutable mesh bounds once, in bounded render-thread turns."""
         entries = [(item["mesh"], item["transformation"]) for _shader, item, _settings in self.plates]
-        entries += [(geometry.mesh, transform) for geometry, transform, *_rest in self.paths]
+        if not self.projection:
+            entries += [(geometry.mesh, transform) for geometry, transform, *_rest in self.paths]
         world = []
         cached_work = 0
         for mesh, transform in entries:
@@ -223,12 +246,14 @@ class EnvironmentSnapshot:
             low = np.minimum(low, np.min([box[0] for box in self.path_bounds.values()], axis=0))
             high = np.maximum(high, np.max([box[1] for box in self.path_bounds.values()], axis=0))
         reach = float(np.linalg.norm(np.maximum(abs(low - self.origin), abs(high - self.origin)))) + 1
-        self.descriptor = ProbeDescriptor(self.origin, tuple(low), tuple(high), far=max(2., reach))
+        self.descriptor = ProbeDescriptor(self.origin, tuple(low), tuple(high),
+            far=max(2., reach, float(np.max(high-low))+.22) if self.projection else max(2.,reach),
+            projection=self.projection)
 
     def visible_chunks(self, geometry, camera, first, last, *, lights=None):
         """Reject only whole padded chunks outside one homogeneous clip plane."""
-        clip = camera.getProjectionMatrix().getData() @ camera.getInverseWorldTransformation().getData()
-        camera_key = clip.dtype.str, clip.tobytes()
+        clip = None if self.projection else camera.getProjectionMatrix().getData() @ camera.getInverseWorldTransformation().getData()
+        camera_key = None if clip is None else (clip.dtype.str, clip.tobytes())
         rejected = 0
         for start in range(first, last, PATH_CHUNK):
             end = min(start + PATH_CHUNK, last)
@@ -240,7 +265,12 @@ class EnvironmentSnapshot:
                     visible = True; break  # Unprepared synthetic snapshots fail open.
                 key = camera_key, id(geometry), offset
                 cached = self._visibility.get(key)
-                if cached is None or cached[0] is not box:
+                if self.projection:
+                    # Exterior directional cameras enclose the complete prepared
+                    # scene bounds. Let raster clipping handle these ranges;
+                    # repeating per-box frustum tests cannot remove useful work.
+                    verdict = True
+                elif cached is None or cached[0] is not box:
                     low, high = box
                     corners = np.array([[x, y, z, 1.] for x in (low[0], high[0])
                                         for y in (low[1], high[1]) for z in (low[2], high[2])])
@@ -293,7 +323,8 @@ class EnvironmentSnapshot:
 
     def commands(self, face):
         descriptor = self.descriptor
-        camera = probe_camera(self.origin, face, self.light, descriptor.near, descriptor.far)
+        camera = (directional_camera(descriptor,face,self.light) if descriptor.projection else
+            probe_camera(self.origin, face, self.light, descriptor.near, descriptor.far))
         for shader, item, settings in self.plates:
             def plate(gl, shader=shader, item=item, settings=settings):
                 self._break_draw()
@@ -349,7 +380,7 @@ class EnvironmentSnapshot:
                 mesh = self.owner.light_receiver(item['mesh'])
                 def lit_plate(gl, mesh=mesh, item=item, shader=shader):
                     self._break_draw()
-                    self._light_state(gl, shader)
+                    self._light_state(gl, shader, camera=camera)
                     shader.setUniformValue('u_hasColour', 0)
                     self._render_plate(shader, dict(item, mesh=mesh), camera, gl, 'light')
                 yield lit_plate
@@ -365,7 +396,7 @@ class EnvironmentSnapshot:
                         # command. Reapply additive state even in a bound batch.
                         self._light_state(gl, shader, uniforms=False)
                         def setup():
-                            self._light_uniforms(shader)
+                            self._light_uniforms(shader,camera)
                             for name, value in self.uniforms.items(): shader.setUniformValue(name, value)
                             shader.setUniformValue('u_lightingFirstTopElement', self.path_top[id(geometry)])
                             shader.setUniformValue('u_lightingShadowElements', shadow)
@@ -376,13 +407,15 @@ class EnvironmentSnapshot:
                         self._path_draw(key, geometry, shader, camera, transform, start, end, gl, setup)
                     yield lit_path
 
-    def _light_uniforms(self, shader):
+    def _light_uniforms(self, shader, camera=None):
         for name, value in self.lighting.items(): shader.setUniformValue(name, value)
         shader.setUniformValue('u_depthOnly', 0)
-        shader.setUniformValue('u_orthographic', 0)  # Cube faces always use perspective rays.
+        shader.setUniformValue('u_orthographic', int(bool(self.projection)))
+        if self.projection and camera is not None:
+            shader.setUniformValue('u_viewDirection', list(map(float,camera.getInverseWorldTransformation().getData()[2,:3])))
 
-    def _light_state(self, gl, shader, *, uniforms=True):
-        if uniforms: self._light_uniforms(shader)
+    def _light_state(self, gl, shader, *, uniforms=True, camera=None):
+        if uniforms: self._light_uniforms(shader,camera)
         gl.glEnable(gl.GL_DEPTH_TEST)
         gl.glEnable(gl.GL_CULL_FACE)
         gl.glCullFace(gl.GL_BACK)
@@ -444,9 +477,9 @@ class ToolheadEnvironmentScene:
         return self._light_receivers[mesh]
 
     @staticmethod
-    def heightmap_meshes(root):
+    def heightmap_meshes(root, children=None):
         from ..bedmesh.BedMeshSceneNode import BedMeshSceneNode
-        return {child.getMeshData() for child in root.getAllChildren()
+        return {child.getMeshData() for child in (root.getAllChildren() if children is None else children)
                 if isinstance(child, BedMeshSceneNode) and child.isVisible() and child.getMeshData() is not None}
 
     def signature(self, renderer, view, root):
@@ -457,8 +490,13 @@ class ToolheadEnvironmentScene:
         live = tuple(renderer.getBatches())
         if live: self._batches = live
         uniforms = view_uniforms(view)
-        data = tuple((child.callDecoration("getLayerData"), np.asarray(child.getWorldTransformation().getData(), dtype=np.float64).tobytes(), child.isVisible())
-                     for child in root.getAllChildren() if child.callDecoration("getLayerData") is not None and not getattr(child, "isOutsideBuildArea", lambda: False)() and not child.callDecoration("isAssignedToDisabledExtruder"))
+        children = tuple(root.getAllChildren())
+        data = []
+        for child in children:
+            mesh = child.callDecoration("getLayerData")
+            if mesh is not None and not getattr(child, "isOutsideBuildArea", lambda: False)() and not child.callDecoration("isAssignedToDisabledExtruder"):
+                data.append((mesh, np.asarray(child.getWorldTransformation().getData(), dtype=np.float64).tobytes(), child.isVisible()))
+        data = tuple(data)
         from UM.Application import Application
         app = Application.getInstance()
         theme = app.getTheme()
@@ -476,11 +514,17 @@ class ToolheadEnvironmentScene:
             raise EnvironmentNotReady("Native slice replacement is still processing")
         if shadow is None and any(visible for _mesh, _transform, visible in data):
             raise EnvironmentNotReady("Native Preview path shadow state unavailable")
+        from .ToolheadCaptureValues import freeze_uniform
+        plate_publication=tuple((id(item['mesh']),freeze_uniform(item['transformation']),
+            freeze_uniform(item['normal_transformation']) if item.get('normal_transformation') is not None else None,
+            tuple((name,freeze_uniform(value)) for name,value in (item.get('uniforms') or {}).items()))
+            for batch in self._batches if batch.renderMode==4 for item in batch.items)
         hard = (root, view, self._scrub_epoch, bool(shadow), tuple((id(mesh), transform, visible) for mesh, transform, visible in data),
                 repr(uniforms), bool(view.getCompatibilityMode()), int(view.getMinimumLayer()), colours, texture,
                 tuple((id(item["mesh"]), item["transformation"].getData().tobytes())
                       for batch in self._batches for item in batch.items if batch.renderMode == 4),
-                frozenset(map(id, self.heightmap_meshes(root))))
+                frozenset(map(id, self.heightmap_meshes(root, children))),plate_publication,
+                bool(stack.getMetaDataEntry('has_textured_buildplate',False)) if stack is not None else False)
         return hard, data, uniforms, colours, texture
 
     def snapshot(self, node, renderer, camera, signature):
@@ -567,7 +611,7 @@ class ToolheadEnvironmentScene:
         point = node.render_position()
         origin = np.array((point.x, point.y, point.z)) + np.mean(node._model_bounds, axis=0)
         snapshot = EnvironmentSnapshot(self, origin, camera.getCameraLightPosition(), plates, paths,
-                                   uniforms, bool(view.getCompatibilityMode()))
+                                   uniforms, bool(view.getCompatibilityMode()), projection=1)
         if getattr(node, '_lighting_enabled', False) and getattr(node, '_attached_lights', ()):
             node.apply_attached_lights(SimpleNamespace(setUniformValue=lambda name, value: snapshot.lighting.__setitem__(name, deepcopy(value))))
             snapshot.light_effects = node.scene_lighting_effects()

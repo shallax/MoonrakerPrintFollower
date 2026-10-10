@@ -4,6 +4,13 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 5.3.0
 
+- Capture reflections from six exterior directional views to improve surface
+  coverage. Traverse every crossed depth texel, pair opposite views, and use
+  existing colour mipmaps for roughness without repeated depth searches.
+- Keep unchanged reflection captures asleep. Reuse path index uploads and
+  private shader uniforms, and avoid redundant scene scans and visibility work.
+- Simplify reflection controls to the existing Enable reflections checkbox.
+
 - Build reflection maps in an owned graphics worker where supported, reusing
   path vertex storage and retaining complete maps during replacement. Handle
   untextured platform meshes and empty G-code parsing snapshots correctly.
@@ -42,7 +49,7 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 - Reflect the bed and currently visible G-code in custom toolheads using a
   bounded, cached environment map. Complete maps replace each other atomically;
   legacy Preview mode retains ordinary shading. Reflections are approximate,
-  without ray tracing or glass refraction.
+  without glass refraction.
 - Animate selected whole-body fan rotors with confirmed centre/axis, direction,
   visual RPM and rotational blur. Optionally follow an actual printer fan using
   read-only telemetry: measured RPM takes precedence, including zero, otherwise
@@ -61,8 +68,9 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
   an exact distance from 0.01 to 300 mm. Custom values interpolate the handle
   between stops; values outside the slider range retain their exact value.
 - Share the Monitor's manual-motion queue and command lane. Jog and Move-to
-  fetch fresh firmware state before each dispatch, validate physical travel
-  and conservative bed-mesh bounds, and preserve coordinate mode/feedrate.
+  fetch fresh firmware state before each dispatch, accept G-code zero on each
+  commanded axis, reject targets below zero, and validate upper travel limits.
+  Firmware alone handles bed-mesh compensation; preserve coordinate mode/feedrate.
   Unsupported transforms, stale replies and missing position/limits refuse
   position moves with an explanation. Preview never pauses a print to jog.
 - Treat Z-offset nudges and reset as operator calibration controls in both

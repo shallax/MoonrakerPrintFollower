@@ -64,6 +64,23 @@ class GLStateTests(unittest.TestCase):
             with module.preserved_state(self.gl,NS(getProcAddress=lambda name:None)): self.fail('entered render')
         self.gl.glGetIntegerv.assert_not_called()
 
+    def test_opt_in_exact_context_rejects_foreign_entry_and_stops_restore_on_switch(self):
+        context = self.context(4); current = [None]
+        with patch('PyQt6.QtGui.QOpenGLContext.currentContext', side_effect=lambda: current[0]):
+            with self.assertRaisesRegex(RuntimeError, 'creating context'):
+                with module.preserved_state(self.gl, context, exact_context=True): self.fail('Foreign entry')
+            self.gl.glGetIntegerv.assert_not_called()
+            current[0] = context
+            with self.assertRaisesRegex(RuntimeError, 'creating context'):
+                with module.preserved_state(self.gl, context, exact_context=True): current[0] = None
+            self.procedures['glBindFramebuffer'].assert_not_called()
+            current[0] = context
+            def replace(*_args): current[0] = None; raise RuntimeError('Replacement during restore')
+            self.procedures['glBindFramebuffer'].side_effect = replace
+            with self.assertRaisesRegex(RuntimeError, 'creating context'):
+                with module.preserved_state(self.gl, context, exact_context=True): pass
+            self.procedures['glUseProgram'].assert_not_called()
+
     def test_retirement_disconnects_each_completed_callback_and_preserves_failed_delete(self):
         group=QObject();current=[None]
         context=NS(shareGroup=lambda:group)
@@ -132,3 +149,92 @@ class GLStateTests(unittest.TestCase):
         self.assertEqual(len(module._procedures),1)
         other.aboutToBeDestroyed.emit()
         self.assertEqual(len(module._procedures),0)
+
+
+    def sample_state(self):
+        self.gl.glGetError.return_value = 0
+        self.active = 0x84C5
+        self.bindings = {0: 71, 1: 72}
+        self.masks = [0x89abcdef, 0x76543210]
+        self.flags = {0x809D: True, 0x8E51: True, 0x80A0: False,
+                      0x809E: False, 0x809F: True, 0x8C36: True}
+        self.gl.glActiveTexture.side_effect = lambda value: setattr(self, 'active', value)
+        self.gl.glGetIntegerv.side_effect = lambda key: (2 if key == 0x8E59 else
+            self.active if key == 0x84E0 else self.bindings[self.active-0x84C0])
+        self.gl.glIsEnabled.side_effect = self.flags.__getitem__
+        self.gl.glEnable.side_effect = lambda key: self.flags.__setitem__(key, True)
+        self.gl.glDisable.side_effect = lambda key: self.flags.__setitem__(key, False)
+        self.gl.glBindTexture.side_effect = lambda kind, value: self.bindings.__setitem__(self.active-0x84C0, value)
+        def integer(key, index, pointer):
+            ctypes.cast(pointer, ctypes.POINTER(ctypes.c_int))[0] = self.masks[index]
+        def mask(index, value): self.masks[index] = value
+        self.procedures['glGetIntegeri_v'] = Mock(side_effect=integer)
+        self.procedures['glSampleMaski'] = Mock(side_effect=mask)
+
+    def test_sample_guard_restores_every_word_flag_binding_and_active_unit(self):
+        self.sample_state()
+        original_flags = self.flags.copy()
+        with module.preserved_samples(self.gl, self.context(4)) as mask:
+            mask(0, 1); mask(1, 0)
+            for key in self.flags: self.flags[key] = not self.flags[key]
+            self.gl.glActiveTexture(0x84C0); self.gl.glBindTexture(0x9100, 99)
+        self.assertEqual(self.masks, [0x89abcdef, 0x76543210])
+        self.assertEqual(self.flags, original_flags)
+        self.assertEqual(self.bindings, {0: 71, 1: 72}); self.assertEqual(self.active, 0x84C5)
+
+    def test_exact_sample_guard_stops_before_foreign_capture_or_restore_binding(self):
+        for phase in ('capture', 'restore'):
+            self.sample_state(); context=self.context(4); current=[context]; restoring=[False]
+            def select(value,phase=phase,current=current,restoring=restoring):
+                self.active=value
+                if (phase=='capture' and value==0x84C0) or restoring[0]: current[0]=None
+            self.gl.glActiveTexture.side_effect=select
+            self.gl.glBindTexture.reset_mock()
+            self.gl.glGetIntegerv.reset_mock()
+            with patch('PyQt6.QtGui.QOpenGLContext.currentContext',side_effect=lambda current=current:current[0]):
+                with self.assertRaisesRegex(RuntimeError,'creating context'):
+                    with module.preserved_samples(self.gl,context,exact_context=True): restoring[0]=True
+            self.gl.glBindTexture.assert_not_called()
+            if phase=='capture':
+                self.assertNotIn(0x9104,[call.args[0] for call in self.gl.glGetIntegerv.call_args_list])
+                self.assertEqual(self.gl.glActiveTexture.call_args_list[-1].args,(0x84C0,))
+
+    def test_sample_cleanup_fault_still_restores_other_words_flags_and_textures(self):
+        self.sample_state()
+        original = self.procedures['glSampleMaski'].side_effect
+        def fault(index, value):
+            if index == 0: raise RuntimeError('word fault')
+            original(index, value)
+        with self.assertRaisesRegex(RuntimeError, 'sample state could not be restored'):
+            with module.preserved_samples(self.gl, self.context(4)):
+                self.masks[:] = [1, 0]
+                self.procedures['glSampleMaski'].side_effect = fault
+                self.bindings[0] = 99
+        self.assertEqual(self.masks[1], 0x76543210)
+        self.assertEqual(self.bindings, {0: 71, 1: 72}); self.assertEqual(self.active, 0x84C5)
+        self.gl.glEnable.assert_any_call(0x8C36)
+        self.sample_state()
+        self.gl.glBindTexture.side_effect = RuntimeError('texture restore fault')
+        with self.assertRaisesRegex(RuntimeError, 'sample state could not be restored'):
+            with module.preserved_samples(self.gl, self.context(4)): self.masks[:] = [0, 0]
+        self.assertEqual(self.masks, [0x89abcdef, 0x76543210]); self.assertEqual(self.active, 0x84C5)
+
+    def test_sample_capture_rejects_legacy_invalid_storage_or_driver_error(self):
+        with self.assertRaisesRegex(RuntimeError, 'core4'):
+            with module.preserved_samples(self.gl, self.context(2)): self.fail('entered')
+        self.assertFalse(self.procedures)
+        with patch.object(module,'procedure',side_effect=RuntimeError('missing glSampleMaski')):
+            with self.assertRaises(module.SampleStateUnavailable):
+                with module.preserved_samples(self.gl,self.context(4)):self.fail('entered')
+        self.sample_state()
+        original = self.gl.glGetIntegerv.side_effect
+        for words in (0, 65):
+            self.gl.glGetIntegerv.side_effect = lambda key, words=words: words if key == 0x8E59 else original(key)
+            with self.assertRaisesRegex(RuntimeError, 'storage'):
+                with module.preserved_samples(self.gl, self.context(4)): self.fail('entered')
+        self.gl.glGetIntegerv.side_effect = original
+        self.gl.glGetError.return_value = 0x0502
+        with self.assertRaisesRegex(RuntimeError, 'capture failed'):
+            with module.preserved_samples(self.gl, self.context(4)): self.fail('entered')
+        self.assertEqual(self.active, 0x84C5)
+        self.assertEqual(self.masks, [0x89abcdef, 0x76543210])

@@ -4,7 +4,7 @@ import sys
 from types import SimpleNamespace as NS
 from unittest.mock import patch
 import numpy as np
-from mpf.toolhead.ToolheadCaptureValues import CaptureMesh, BufferLease, frozen_array
+from mpf.toolhead.ToolheadCaptureValues import CaptureMesh, BufferLease, frozen_array, retained_array_bytes
 
 
 class CaptureValueTests(unittest.TestCase):
@@ -37,6 +37,33 @@ class CaptureValueTests(unittest.TestCase):
         BufferLease(12, 384, mesh.layout()[0]).validate(mesh)
         with self.assertRaisesRegex(RuntimeError, 'incomplete'):
             BufferLease(12, 383, mesh.layout()[0]).validate(mesh)
+
+    def test_retained_source_receipt_includes_all_optional_channels_and_attributes(self):
+        arrays = [np.zeros((2, width), np.float32) for width in (3, 3, 4, 2, 1)]
+        indices = np.array([[0, 1]], np.uint32)
+        mesh = CaptureMesh(1, arrays[0], indices, arrays[1], arrays[2], arrays[3],
+            (('feed', 'a_feedrate', 'float', arrays[4]),))
+        self.assertEqual(mesh.retained_bytes(), sum(array.nbytes for array in arrays)+indices.nbytes)
+        self.assertTrue(all(array.flags.writeable for array in arrays))
+        self.assertIs(mesh.vertices, arrays[0])
+
+    def test_small_views_charge_entire_ndarray_or_memoryview_backing(self):
+        large = np.zeros((10000, 3), np.float32)
+        small = frozen_array(large[700:702])
+        mesh = CaptureMesh(1, small, None, None, None, None, ())
+        self.assertEqual(mesh.retained_bytes(), large.nbytes)
+        self.assertGreater(mesh.retained_bytes(), small.nbytes)
+        self.assertTrue(np.shares_memory(small, large))
+        storage = bytearray(400000)
+        slice_ = np.frombuffer(memoryview(storage)[20:44], dtype=np.float32)
+        self.assertEqual(retained_array_bytes(slice_), len(storage))
+        unreadable = np.lib.stride_tricks.as_strided(np.zeros(1), shape=(1,))
+        with self.assertRaisesRegex(RuntimeError, 'Uncertified'): retained_array_bytes(unreadable)
+        class Circular(np.ndarray):
+            @property
+            def base(self): return self
+        with self.assertRaisesRegex(RuntimeError, 'chain exceeds'):
+            retained_array_bytes(np.zeros(1).view(Circular))
 
     def test_malformed_populated_channel_remains_rejected_with_field_details(self):
         source = self.mesh()
