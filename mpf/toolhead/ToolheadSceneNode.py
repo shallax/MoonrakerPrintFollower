@@ -586,7 +586,13 @@ class ToolheadSceneNode(SceneNode):
             axis = convert @ row['axis']
             local = rotation(centre,axis,phase+row['direction']*blur*fraction)
             transform = Matrix(base @ local)
-            normal = Matrix(transform.getData()); normal.setRow(3,[0,0,0,1]); normal.setColumn(3,[0,0,0,1]); normal.invert(); normal.transpose()
+            # The display pose is translation-only and local is a rigid rotor
+            # rotation: its inverse transpose is the rotation itself. Avoid
+            # dispatching a general LAPACK solve for every shutter sample.
+            normal = Matrix(local if self._render_transform is not None else transform.getData())
+            normal.setRow(3,[0,0,0,1]); normal.setColumn(3,[0,0,0,1])
+            if self._render_transform is None:
+                normal.invert(); normal.transpose()
             solid, glass = self._rotor_meshes[row['body']]
             if solid is not None: opaque.append((solid, False, transform, normal))
             if glass is not None: transparent.append((glass, True, transform, normal))

@@ -193,7 +193,7 @@ correct package ownership.
 | `ToolheadCaptureRecipe.py` | Main-thread scene freezing and worker-local reconstruction | Mutable native scene objects crossing threads |
 | `ToolheadCaptureGL.py` | Context-local graphics entry points and shader programs | Native shared shader state |
 | `ToolheadCaptureBuffers.py` | Worker-owned buffers, textures and framebuffer resources | Host buffer ownership |
-| `ToolheadCaptureDraw.py` | Private draw adapters and retained borrowed-buffer reads | Main-thread resource mutation |
+| `ToolheadCaptureDraw.py` | Private draw adapters, retained borrowed-buffer reads and a bounded pure-value normal-matrix cache | Main-thread resource mutation |
 | `ToolheadShadowValues.py` | Frozen existing world-space light delivery, complete depth-cube storage admission and projected depth values | Allocating maps, publishing shadow availability or inventing direct lights |
 | `ToolheadSampleTarget.py` | Explicit owned four-sample RGBA8/Depth32F attachments, certified sample order and original per-sample depth readback; detached Qt texture and R32F staging also budgeted | Stock framebuffer access, depth resolves or synthesizing samples |
 | `ToolheadEnvironmentScene.py` | Owned shaders reading platform/grid/visible bed-height meshes and the visible public LayerData prefix | Native program mutation or recursive renderer calls |
@@ -1912,8 +1912,10 @@ the first missing native upload.
 
 An epoch/generation mailbox owns the two physical map pairs. Producer poll tickets
 and consumer read tickets prevent reuse during a pending fence poll or draw.
-Hard source changes reject obsolete pending jobs; soft changes retain only the
-latest pending request. Adoption preserves the complete colour/depth/descriptor
+Hard source changes reject obsolete pending jobs. Soft changes select the latest
+scene but defer freezing while a capture is busy. After adoption, already-due
+work freezes the current scene immediately, avoiding discarded snapshots and
+another changed-scene delay. Adoption preserves the complete colour/depth/descriptor
 pair and a monotonic facade revision, including synchronous fallback publication.
 Disable seals demand immediately; the worker drains producer and last-consumer
 fences without requiring another ordinary frame. Fence failures request an
@@ -2010,6 +2012,14 @@ Centre/axis/direction and visual RPM are saved per printer. Rotor triangles are
 packed separately once; only those meshes animate, while static head colour and
 depth remain cached. Up to three shutter poses each copy the same static depth;
 premultiplied samples are averaged before the existing whole-head opacity fade.
+The translation-only display pose uses each rigid rotor rotation directly for
+normal shading; arbitrary scene transforms retain the inverse transpose.
+An isolated test against Cura 5.13's bundled ARM64 OpenBLAS 0.3.23 development
+library reproduced the live profile's worker spinning: three 4x4 solves per
+frame at 30 Hz used 3.53 and 4.97 process-CPU seconds in two-second runs.
+Copying the rigid rotation used 0.004 and 0.008 CPU seconds in the paired runs.
+These measurements isolate the tiny solve and its ten-thread library overhead;
+they do not measure total Cura frame time or predict an application speedup.
 Opaque geometry writes depth first; translucent body groups composite back to
 front for each pose, preserving glass over rotating parts. Both accumulation and
 the final image choose additive blend equations independently of host state.

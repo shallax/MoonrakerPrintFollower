@@ -3,18 +3,27 @@ from __future__ import annotations
 
 import ctypes
 from contextlib import contextmanager
+from functools import lru_cache
 import numpy as np
 from .ToolheadCaptureBuffers import CaptureBuffer, CaptureVertexArray
 from .ToolheadPathGeometry import ToolheadPathGeometry
 from .ToolheadGLState import procedure
 
 
+@lru_cache(maxsize=32)
+def _normal_values(dtype, values):
+    # Pure matrix values only: never retain a scene, mesh or graphics context.
+    result = np.linalg.inv(np.frombuffer(values, dtype=np.dtype(dtype)).reshape(4, 4)).T
+    result.setflags(write=False)
+    return result
+
+
 def camera_bindings(shader, camera, transform, mesh, normal=None):
     from UM.Math.Matrix import Matrix
     if normal is None and mesh.hasNormals():
-        normal = Matrix(transform.getData())
-        normal.setRow(3, [0, 0, 0, 1]); normal.setColumn(3, [0, 0, 0, 1])
-        normal.invert(); normal.transpose()
+        linear = np.array(transform.getData(), dtype=np.float64, copy=True)
+        linear[3, :] = linear[:, 3] = [0, 0, 0, 1]
+        normal = Matrix(_normal_values(linear.dtype.str, linear.tobytes()))
     shader.updateBindings(model_matrix=transform, normal_matrix=normal,
         view_matrix=camera.getInverseWorldTransformation(), projection_matrix=camera.getProjectionMatrix(),
         view_position=camera.getWorldPosition(), light_0_position=camera.getCameraLightPosition())

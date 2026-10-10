@@ -1122,6 +1122,24 @@ class RotorDelta(unittest.TestCase):
         node._static_transparent.append(None)
         self.assertEqual([item[0] for item in node.rotor_draw_plan(self.camera,poses,0.)], ['far glass','near glass'])
 
+    def test_display_rotors_do_not_solve_matrices_and_scene_transform_still_does(self):
+        row = self.install()
+        row['axis'] = [1 / np.sqrt(3)] * 3
+        poses = self.node._rotor_motion.sample()
+        for fraction in (-.5, 0., .5):
+            with patch.object(RotorMatrix, 'invert', side_effect=AssertionError('general solve')):
+                plan = self.node.rotor_draw_plan(self.camera, poses, fraction)
+            model, normal = (matrix.getData() for matrix in plan[0][2:])
+            np.testing.assert_allclose(normal[:3, :3], np.linalg.inv(model[:3, :3]).T, atol=1e-14)
+            np.testing.assert_array_equal(normal[3], [0, 0, 0, 1])
+            np.testing.assert_array_equal(normal[:, 3], [0, 0, 0, 1])
+        self.node._render_transform = None
+        base = RotorMatrix(np.diag([2., 3., 4., 1.]))
+        self.node.getWorldTransformation = lambda: base
+        plan = self.node.rotor_draw_plan(self.camera, poses, 0.)
+        model, normal = (matrix.getData() for matrix in plan[0][2:])
+        np.testing.assert_allclose(normal[:3, :3], np.linalg.inv(model[:3, :3]).T)
+
     def test_shutter_failure_retry_deadline_does_not_extend_during_backoff(self):
         self.install()
         node = self.node

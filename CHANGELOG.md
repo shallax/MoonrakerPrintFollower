@@ -9,6 +9,10 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
   existing colour mipmaps for roughness without repeated depth searches.
 - Keep unchanged reflection captures asleep. Reuse path index uploads and
   private shader uniforms, and avoid redundant scene scans and visibility work.
+- Reuse capture normal matrices and avoid general matrix solves for animated
+  fan rotations, reducing repeated CPU work without changing material shading.
+- Defer new reflection snapshots while a capture is busy, then capture the
+  latest due scene instead of repeatedly preparing discarded intermediate poses.
 - Simplify reflection controls to the existing Enable reflections checkbox.
 
 - Build reflection maps in an owned graphics worker where supported, reusing

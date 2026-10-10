@@ -34,6 +34,8 @@ Unchanged maps sleep instead of rebuilding periodically. Layer progress and
 lighting changes refresh the map without
 recursively rendering Cura. Legacy compatibility mode keeps ordinary shading.
 Glass retains its imported alpha without refraction.
+Capture matrices are reused, and fan rotations avoid repeated general matrix
+solves to reduce CPU work.
 
 The model editor's **Fans** section lets you pick a whole rotor body, inspect or
 override its centre and axis, and use **Update preview** before confirming rotation.

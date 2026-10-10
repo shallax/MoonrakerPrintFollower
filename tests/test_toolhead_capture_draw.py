@@ -28,6 +28,7 @@ class Buffer:
 
 class CaptureDrawTests(unittest.TestCase):
     def setUp(self):
+        module._normal_values.cache_clear()
         self.gl, self.context, self.shader = Mock(), object(), Mock()
         self.camera = Mock()
         self.draws, self.binds = [], []
@@ -43,6 +44,29 @@ class CaptureDrawTests(unittest.TestCase):
                 patch.object(module, 'procedure', side_effect=procedure),
                 patch.dict(sys.modules, {'UM.Math.Matrix': NS(Matrix=Matrix)})):
             patcher.start(); self.addCleanup(patcher.stop)
+
+    def test_normal_cache_ignores_translation_and_keeps_scale_shear_and_mutation(self):
+        data = np.array([[2., .3, 0., 9.], [0., 3., .4, 7.], [.2, 0., 4., 5.], [0., 0., 0., 1.]])
+        transform = Matrix(data)
+        original = np.linalg.inv
+        reference = data.copy()
+        reference[3, :] = reference[:, 3] = [0, 0, 0, 1]
+        expected = original(reference).T
+        with patch.object(np.linalg, 'inv', wraps=original) as inverse:
+            for offset in range(6):
+                transform.data[:3, 3] += offset
+                module.camera_bindings(self.shader, self.camera, transform, self.mesh(normals=True))
+                normal = self.shader.updateBindings.call_args.kwargs['normal_matrix'].getData()
+                np.testing.assert_array_equal(normal, expected)
+                normal[:] = 0  # A consumer cannot mutate the cached result.
+            self.assertEqual(inverse.call_count, 1)
+            transform.data[0, 0] = 5
+            module.camera_bindings(self.shader, self.camera, transform, self.mesh(normals=True))
+            self.assertEqual(inverse.call_count, 2)
+        for index in range(40):
+            transform.data[0, 0] = index + 1
+            module.camera_bindings(self.shader, self.camera, transform, self.mesh(normals=True))
+        self.assertEqual(module._normal_values.cache_info().currsize, 32)
 
     @staticmethod
     def mesh(indices=True, normals=False):

@@ -513,6 +513,56 @@ class AsyncEnvironmentTests(unittest.TestCase):
         self.assertEqual(owner._deletions, [])
         self.assertEqual(owner._delete.call_args.args[0].value, 92)
 
+    def test_busy_capture_defers_freeze_and_adopts_before_freezing_latest_pose(self):
+        owner = self.owner
+        owner._hard = 'file'
+        owner._submitted = ('file', 'first')
+        owner._busy = True
+        snapshot = Mock(return_value='latest scene')
+        for pose in range(20):
+            self.assertTrue(owner.step(owner._gl, owner._main_context, 'file', pose, snapshot))
+        snapshot.assert_not_called()
+        owner._freezer.freeze.assert_not_called()
+        owner._fence.assert_not_called()
+        owner._worker.submit.assert_not_called()
+        def adopted():
+            owner._published, owner._busy = 'first', False
+            owner._next = owner._changed_next = 10.15
+        with patch.object(owner, '_adopt', side_effect=adopted):
+            self.assertTrue(owner.step(owner._gl, owner._main_context, 'file', 'latest', snapshot))
+        snapshot.assert_called_once()
+        owner._freezer.freeze.assert_called_once_with('latest scene', owner._main_context)
+        job = owner._worker.submit.call_args.args[0]
+        self.assertEqual(job.key, ('file', 'latest'))
+
+    def test_early_completion_preserves_changed_scene_deadline(self):
+        owner = self.owner
+        owner._hard, owner._busy = 'file', True
+        owner._submitted = ('file', 'first')
+        owner._next = owner._changed_next = 11.
+        def adopted():
+            owner._published, owner._busy = 'first', False
+            owner._next = owner._changed_next = 10.15
+        with patch.object(owner, '_adopt', side_effect=adopted):
+            self.assertFalse(owner.step(owner._gl, owner._main_context, 'file', 'latest', Mock()))
+        owner._freezer.freeze.assert_not_called()
+        self.assertEqual(owner._next, 10.15)
+
+    def test_pose_returning_to_inflight_capture_needs_no_successor(self):
+        owner = self.owner
+        owner._hard, owner._busy = 'file', True
+        owner._submitted = ('file', 'first')
+        snapshot = Mock()
+        owner.step(owner._gl, owner._main_context, 'file', 'changed', snapshot)
+        def adopted():
+            owner._published, owner._busy = 'first', False
+            owner.available = True
+            owner.descriptor = NS(projection=1)
+        with patch.object(owner, '_adopt', side_effect=adopted):
+            self.assertFalse(owner.step(owner._gl, owner._main_context, 'file', 'first', snapshot))
+        snapshot.assert_not_called()
+        self.assertIsNone(owner.wake_delay)
+
     def test_submit_replacement_retires_input_and_missing_ready_fence_rejects(self):
         owner = self.owner
         owner._worker.submit.return_value = NS(serial=9, ready_fence=81)
@@ -523,7 +573,7 @@ class AsyncEnvironmentTests(unittest.TestCase):
         owner._next = owner._retry = 0
         owner._fence.return_value = None
         with self.assertRaisesRegex(RuntimeError, 'readiness fence'):
-            owner.step(owner._gl, owner._main_context, 'file', 'new pose', lambda: 'scene')
+            owner.step(owner._gl, owner._main_context, 'new file', 'new pose', lambda: 'scene')
         self.assertEqual(owner._serial, 1)
 
     def test_sealed_submission_and_due_time_do_not_duplicate_work(self):

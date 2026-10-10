@@ -34,7 +34,7 @@ class MaterialRenderTests(unittest.TestCase):
         self.anchor.use()
         target.release()
 
-    def render(self, name, detail, *, alpha=.35, translation=0, orthographic=False, eye_offset=0, environment=False, local_finish=None, colour=None):
+    def render(self, name, detail, *, alpha=.35, translation=0, orthographic=False, eye_offset=0, environment=False, local_finish=None, colour=None, normal=None):
         metadata = {"materials": [dict(name=name, description="", source="step-material")],
                     "bodies": [dict(name="Part", source="unknown", centre=None, axis=None)]}
         mesh = mesh_from_arrays([[[-1, -1, 0], [1, -1, 0], [1, 1, 0]],
@@ -55,7 +55,7 @@ class MaterialRenderTests(unittest.TestCase):
         identity = np.eye(4, dtype=np.float32)
         model = identity.copy(); model[3, 0] = translation
         projection = identity.copy(); projection[3, 0] = -translation
-        values = dict(u_modelMatrix=model, u_normalMatrix=identity, u_viewMatrix=identity,
+        values = dict(u_modelMatrix=model, u_normalMatrix=identity if normal is None else normal, u_viewMatrix=identity,
                       u_projectionMatrix=projection, u_surfaceDetail=detail, u_opacity=1.,
                       u_lightingEnabled=1, u_depthOnly=0, u_attachedCount=0,
                       u_viewPosition=(translation+2+eye_offset, 2, 5),
@@ -84,6 +84,18 @@ class MaterialRenderTests(unittest.TestCase):
         uniforms(shader, values)
         vao.render()
         return np.frombuffer(target.read(components=4, dtype="f4"), dtype=np.float32).reshape(128, 128, 4).copy()
+
+    def test_rigid_rotor_normals_preserve_material_pixels_without_inverse(self):
+        from mpf.geometry.ToolheadRotors import rotation
+        for axis in ((0, 1, 0), np.array([1., 2., 3.]) / np.sqrt(14)):
+            for angle in (0., .4, 1.7):
+                rigid = rotation([2., 3., 4.], axis, angle)
+                rigid[:3, 3] = 0
+                solved = np.linalg.inv(rigid).T
+                for material in ('ABS', 'Aluminium'):
+                    expected = self.render(material, 1, normal=solved.T.astype(np.float32))
+                    actual = self.render(material, 1, normal=rigid.T.astype(np.float32))
+                    np.testing.assert_array_equal(actual, expected)
 
     def test_body_rgb_override_changes_actual_pixels_and_retains_alpha(self):
         original = self.render("ABS", 0)

@@ -345,11 +345,19 @@ class AsyncEnvironment(ToolheadEnvironment):
             self._worker.wake()
             self._hard, self._submitted, self._busy = hard, None, False
             self._next = self._retry = self._changed_next = 0
+        key = hard, soft
+        if soft != self._published: self._next = min(self._next, self._changed_next)
+        # Freeze only when a capture can actually start. Moving poses used to
+        # replace queued snapshots repeatedly, including their GL fences and
+        # borrowed-buffer checks. Completion already requests a fresh frame.
+        deferred_due = self._busy and key != self._submitted and now >= max(self._next, self._retry)
         self._adopt()
         if self._held_recovery():return self._busy
-        key = hard, soft
+        if self._busy: return True
+        # Work that became due during capture should use the latest scene now,
+        # rather than pay another changed-scene delay after publication.
+        if deferred_due and soft != self._published: self._next = min(self._next, now)
         if not self._busy and self._unchanged_directional(): return False
-        if key == self._submitted and self._busy: return True
         if soft != self._published: self._next = min(self._next, self._changed_next)
         if now < max(self._next, self._retry): return self._busy
         data = snapshot()

@@ -10,6 +10,21 @@ import numpy as np
 from mpf.toolhead import ToolheadSampleTarget as module
 
 
+class _Format:
+    """CPU value stand-in: these tests never create a Qt graphics context."""
+    def __init__(self, other=None):
+        self._samples = other.samples() if other else 0
+        self._attachment = other.attachment() if other else 0
+        self._internal = other.internalTextureFormat() if other else 0
+
+    def setSamples(self, value): self._samples = value
+    def samples(self): return self._samples
+    def setAttachment(self, value): self._attachment = value
+    def attachment(self): return self._attachment
+    def setInternalTextureFormat(self, value): self._internal = value
+    def internalTextureFormat(self): return self._internal
+
+
 class SampleTargetTests(unittest.TestCase):
     def setUp(self):
         self.context = Mock()
@@ -58,6 +73,7 @@ class SampleTargetTests(unittest.TestCase):
             return Mock()
         for scope in (patch('PyQt6.QtGui.QOpenGLContext.currentContext', return_value=self.context),
                       patch('PyQt6.QtOpenGL.QOpenGLFramebufferObject', self.factory),
+                      patch('PyQt6.QtOpenGL.QOpenGLFramebufferObjectFormat', _Format),
                       patch.object(module, 'preserved_state', side_effect=lambda *args: nullcontext()),
                       patch.object(module, 'preserved_samples', side_effect=lambda *args: nullcontext()),
                       patch.object(module, 'retire_textures'),
