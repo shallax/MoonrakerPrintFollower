@@ -4,9 +4,13 @@ from pathlib import Path
 import unittest
 import numpy as np
 from tools.capture_toolhead import create_context, uniforms
-import moderngl
+try:
+    import moderngl
+except ImportError:
+    moderngl = None
 
 
+@unittest.skipIf(moderngl is None, "The capture OpenGL runtime is required")
 class DirectionalEnvironmentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

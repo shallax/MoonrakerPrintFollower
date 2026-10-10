@@ -8,7 +8,6 @@ from unittest.mock import Mock, patch
 
 from mpf.toolhead.ToolheadEnvironment import ToolheadEnvironment
 from mpf.toolhead.ToolheadEnvironmentMailbox import EnvironmentMailbox
-from mpf.toolhead import ToolheadEnvironmentGeometry as query_geometry
 
 # Native GL/scene parity is qualified separately; these tests inject the
 # producer boundary to exercise failures that a healthy driver will not emit.
@@ -16,7 +15,6 @@ with patch.dict(sys.modules, {
     'mpf.toolhead.ToolheadEnvironmentWorker': NS(EnvironmentWorker=object, CaptureJob=lambda *args: NS(
         serial=args[0], soft=args[1], frame=args[2], ready_fence=args[3], generation=args[4], key=args[5])),
     'mpf.toolhead.ToolheadCaptureRecipe': NS(CaptureFreezer=object),
-    'mpf.toolhead.ToolheadEnvironmentGeometry': query_geometry,
 }):
     from mpf.toolhead import ToolheadAsyncEnvironment as module
 

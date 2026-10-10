@@ -96,12 +96,11 @@ additional preparation/target-binding caches were rejected without a reliable CP
 gain. Thin-surface coverage and original materials remain the acceptance criteria.
 Independent shadows remain a separate, unfinished feature.
 
-The first shadow foundation now centralizes delivered light values
-and owns atomic private depth-cube sets. Optional direct-only shader variants now
-pass private core rendering and legacy compiler checks, including true raster
-receiver reconstruction and explicit physical-precision admission. The scene
-coordinator, consumer map leases, actual caster submission and user-visible
-shadow controls remain unwired.
+Existing direct-light values remain centralized in `ToolheadShadowValues.py`.
+Unused shadow-map and geometry-query/receiver-layer prototypes are excluded from
+the release and preserved at commit `80c4b263`. Independent shadows remain
+unfinished and deferred; the normal directional renderer uses none of those
+prototype implementations.
 
 ### 5.3.0 — Toolhead controls in Preview (final planned 5.x feature release)
 

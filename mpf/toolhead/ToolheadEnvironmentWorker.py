@@ -13,8 +13,7 @@ from .ToolheadCaptureBuffers import CaptureFace, CaptureTexture
 from .ToolheadCaptureRecipe import CaptureScene
 from .ToolheadEnvironment import CubeStorage, ToolheadEnvironment
 from .ToolheadEnvironmentMailbox import EnvironmentMailbox
-from .ToolheadGLState import procedure
-from .ToolheadEnvironmentGeometry import GeometryUncertain
+from .ToolheadGLState import GeometryUncertain, procedure
 
 
 class _Abandoned(RuntimeError):

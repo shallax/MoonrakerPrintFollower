@@ -9,7 +9,6 @@ from PyQt6.QtGui import QGuiApplication, QOffscreenSurface, QOpenGLContext, QSur
 from PyQt6.QtOpenGL import QOpenGLVersionFunctionsFactory, QOpenGLVersionProfile, QOpenGLFramebufferObject, QOpenGLVertexArrayObject
 from mpf.toolhead.ToolheadEnvironment import CubeStorage, ToolheadEnvironment, ProbeDescriptor, SIZE
 from mpf.toolhead.ToolheadGLState import procedure, preserved_state, flush_texture_deletions
-from mpf.toolhead import ToolheadEnvironmentGeometry as query_geometry
 from types import SimpleNamespace
 
 
@@ -289,7 +288,6 @@ class EnvironmentGLTests(unittest.TestCase):
         with patch.dict(sys.modules, {
             'mpf.toolhead.ToolheadCaptureGL': SimpleNamespace(RawBindings=object),
             'mpf.toolhead.ToolheadCaptureRecipe': SimpleNamespace(CaptureScene=object),
-            'mpf.toolhead.ToolheadEnvironmentGeometry': query_geometry,
         }):
             from mpf.toolhead.ToolheadEnvironmentWorker import WorkerStorage
         storage = WorkerStorage(self.gl, self.context, 0x81A6)

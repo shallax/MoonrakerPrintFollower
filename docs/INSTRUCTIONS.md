@@ -31,9 +31,9 @@ path. The ray-tracing backend, binaries and renderer-selection controls have
 been removed. Old saved ray/fallback preferences are ignored; Enable reflections
 now directly controls the environment map.
 
-The earlier split receiver/query implementation remains experimental and is
-not wired into the default environment path. Never run the old combined
-geometry-query/CAD-PBR variant: it caused a Metal GPU hang on the imported head.
+The unused split receiver/query and shadow-map prototypes are excluded from the
+release. Their source is preserved at commit `80c4b263`; the old combined
+geometry-query/CAD-PBR variant caused a Metal GPU hang and must not be rerun.
 A private 512-pixel actual-head benchmark of the directional path measured
 18–27 ms after removing six redundant roughness searches (previously
 112–167 ms). Pairing opposite views into three shared texel walks then reduced

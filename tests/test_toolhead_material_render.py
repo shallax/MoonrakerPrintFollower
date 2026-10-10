@@ -288,7 +288,9 @@ class MaterialRenderTests(unittest.TestCase):
         jump = self.depth_direction((3,0,0),(0,0,1),reflection=green,jump=True)
         np.testing.assert_array_equal(missing, [0,0,0,0])
         np.testing.assert_array_equal(jump, [0,0,0,0])
-        np.testing.assert_allclose(restored, [*green,1], atol=1e-7, rtol=0)
+        # Cube filtering may round by two float32 epsilons across drivers.
+        np.testing.assert_allclose(restored[:3], green, atol=2*np.finfo(np.float32).eps, rtol=0)
+        self.assertEqual(restored[3], 1)
         np.testing.assert_array_equal(black, [0,0,0,1])
 
     def test_depth_parallax_hits_the_actual_plane_from_an_offset_surface(self):

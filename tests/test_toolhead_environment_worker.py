@@ -4,12 +4,10 @@ import unittest
 import weakref
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
-from mpf.toolhead import ToolheadEnvironmentGeometry as query_geometry
 
 with patch.dict(sys.modules, {
     'mpf.toolhead.ToolheadCaptureGL': NS(RawBindings=object),
     'mpf.toolhead.ToolheadCaptureRecipe': NS(CaptureScene=object),
-    'mpf.toolhead.ToolheadEnvironmentGeometry': query_geometry,
 }):
     from mpf.toolhead import ToolheadEnvironmentWorker as module
 

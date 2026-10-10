@@ -11,6 +11,13 @@ _procedures = WeakKeyDictionary()
 _procedure_lock = threading.RLock()
 
 
+class GeometryUncertain(RuntimeError):
+    """Factory/read failure retains its cohort and the coordinator's VBO lease."""
+    def __init__(self, owner, reason):
+        super().__init__(reason)
+        self.owner = owner
+
+
 class SampleStateUnavailable(RuntimeError):
     """Optional sample controls refused before any graphics mutation."""
 
@@ -195,40 +202,6 @@ def preserved_samples(gl, context, *, texture_units=(0,1), exact_context=False):
             current()
         if failure is not None:
             raise RuntimeError("Native sample state could not be restored") from failure
-
-
-def sample_depth_certificate(gl, context, width, height, *, expected_name=None):
-    """Certify the bound draw target's original four-sample floating depth."""
-    from PyQt6.QtGui import QOpenGLContext
-    def current():
-        if QOpenGLContext.currentContext() is not context:
-            raise RuntimeError('Sample depth lost its creating context')
-    def checked():
-        current()
-        if gl.glGetError(): raise RuntimeError('Sample depth graphics receipt is uncertain')
-        current()
-    current()
-    if int(gl.glGetIntegerv(0x80A9))!=4:
-        raise RuntimeError('Original sample depth requires a four-sample draw target')
-    checked()
-    attachment=procedure(context,'glGetFramebufferAttachmentParameteriv',None,
-        ctypes.c_uint,ctypes.c_uint,ctypes.c_uint,ctypes.POINTER(ctypes.c_int))
-    fields=[]
-    for parameter in (0x8CD0,0x8CD1,0x8216,0x8211):
-        current(); value=ctypes.c_int(); attachment(0x8CA9,0x8D00,parameter,ctypes.byref(value)); checked()
-        fields.append(value.value)
-    kind,name,bits,component=fields
-    if (kind!=0x1702 or name<=0 or bits!=32 or component!=0x1406
-            or (expected_name is not None and name!=expected_name)):
-        raise RuntimeError('Original sample visibility requires its D32F depth texture')
-    query=procedure(context,'glGetTexLevelParameteriv',None,ctypes.c_uint,ctypes.c_int,
-        ctypes.c_uint,ctypes.POINTER(ctypes.c_int))
-    with preserved_samples(gl,context,texture_units=(0,),exact_context=True):
-        gl.glActiveTexture(0x84C0); checked(); gl.glBindTexture(0x9100,name); checked()
-        for parameter,expected in ((0x1003,0x8CAC),(0x1000,width),(0x1001,height),(0x9106,4),(0x9107,1)):
-            value=ctypes.c_int(); query(0x9100,0,parameter,ctypes.byref(value)); checked()
-            if value.value!=expected: raise RuntimeError('Original sample depth storage differs from its certificate')
-    checked(); return name
 
 
 _retired_textures = {}

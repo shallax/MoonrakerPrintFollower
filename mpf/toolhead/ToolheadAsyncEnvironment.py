@@ -10,8 +10,7 @@ from PyQt6 import sip
 from .ToolheadEnvironment import ToolheadEnvironment, TEXTURE_UNIT, DEPTH_UNIT, CHANGED_INTERVAL, PERIODIC_INTERVAL
 from .ToolheadEnvironmentWorker import EnvironmentWorker, CaptureJob
 from .ToolheadCaptureRecipe import CaptureFreezer
-from .ToolheadGLState import preserved_state, procedure
-from .ToolheadEnvironmentGeometry import GeometryUncertain
+from .ToolheadGLState import GeometryUncertain, preserved_state, procedure
 
 _owners = set()  # Retain running threads through nonblocking retirement.
 _quarantined = set()  # Failed main activation cannot prove shared resources safe to free.
