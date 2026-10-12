@@ -1107,6 +1107,33 @@ class PrintCoordinator(QObject):
         self._index.set_manual_split(self._plate_split)
         self.refresh()
 
+    def selected_recovery_boundary(self):
+        """Inspect the detached follower's selected point for this print.
+
+        This is an exact file-location query, not permission to seek or resume.
+        The downloaded source, current job and index must still agree; the
+        eventual recovery preflight will have additional printer-state gates.
+        """
+        snapshot = self._snapshot
+        view = self._index.view
+        path = self._files.path
+        if (not snapshot.active or view is None or path is None
+                or self._plate_anchor is None or self._plate_split is None
+                or snapshot.job_key is None or view.job_key != snapshot.job_key
+                or self._files.job_key != snapshot.job_key):
+            return None
+        try:
+            actual_size = os.path.getsize(path)
+        except OSError:
+            return None
+        expected_size = snapshot.observation.file_size if snapshot.observation is not None else 0
+        identity = self._files.identity
+        if (expected_size <= 0 or actual_size != expected_size
+                or identity is None or not identity.matches_job(snapshot.job_key[0], expected_size)
+                or (identity.size > 0 and identity.size != actual_size)):
+            return None
+        return view.recovery_boundary(self._plate_anchor, self._plate_split)
+
     def toggle_attachment(self):
         # A manual toggle is a deliberate choice: it cancels any pending
         # watchdog re-attach. Without a toolpath the attach direction is

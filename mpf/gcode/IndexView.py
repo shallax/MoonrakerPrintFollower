@@ -14,6 +14,22 @@ from .MotionIndex import LayerMotionIndex
 
 
 @dataclass(frozen=True)
+class RecoveryBoundary:
+    """A scrubbed motion boundary, for inspection only.
+
+    ``next_motion_offset`` names the original command that follows the
+    selected completed-motion count. It is not an executable resume offset:
+    intervening modal commands and printer state still need reconstruction.
+    """
+    selected_layer: int
+    completed_motions: int
+    next_layer: int
+    next_motion: int
+    next_motion_offset: int
+    position: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
 class IndexView:
     """Read-only query capability, never mutable arrays or worker state."""
     job_key: tuple
@@ -30,6 +46,61 @@ class IndexView:
     def compact(self): return self._index.compact
     @property
     def pause_layers(self): return tuple(self._index.pauses)
+
+    def recovery_boundary(self, layer, completed_motions):
+        """Map an integer scrub split to the next original motion.
+
+        A compact or evicted layer has a motion count but no exact offsets;
+        returning a byte-range estimate here would be unsafe. A selection at
+        the end of a layer advances to the first motion of the next indexed
+        layer, skipping empty layers. None means the exact mapping is not
+        currently available or no motion follows the selection.
+        """
+        index = self._index
+        if isinstance(layer, bool) or not isinstance(layer, int) or not 0 <= layer < len(index.ranges):
+            return None
+        total = index.motion_count(layer)
+        if completed_motions == -1 and not isinstance(completed_motions, bool):
+            completed_motions = total  # the follower's full-layer sentinel
+        if isinstance(completed_motions, bool) or not isinstance(completed_motions, int) \
+                or not 0 <= completed_motions <= total:
+            return None
+        with index.cache_lock:
+            # The start position of a selected boundary needs the complete
+            # preceding motion array, even if the next command is in a
+            # different layer. A retained count alone cannot supply it.
+            if not self._exact_layer(layer):
+                return None
+            position = (index.layer_start_positions[layer] if completed_motions == 0 else
+                        (index.motion_x[layer][completed_motions - 1],
+                         index.motion_y[layer][completed_motions - 1],
+                         index.motion_z[layer][completed_motions - 1]))
+            for next_layer in range(layer, len(index.ranges)):
+                next_motion = completed_motions if next_layer == layer else 0
+                if not self._exact_layer(next_layer):
+                    return None
+                offsets = index.motion_offsets[next_layer]
+                if next_motion < len(offsets):
+                    offset = int(offsets[next_motion])
+                    start, end = index.ranges[next_layer]
+                    if start <= offset < end:
+                        return RecoveryBoundary(layer, completed_motions, next_layer,
+                                                next_motion, offset, tuple(position))
+                    return None
+            return None
+
+    def _exact_layer(self, layer):
+        index = self._index
+        return (layer < len(index.motion_offsets)
+                and layer < len(index.layer_start_positions)
+                and layer < len(index.motion_x)
+                and layer < len(index.motion_y)
+                and layer < len(index.motion_z)
+                and len(index.motion_offsets[layer]) == index.motion_count(layer)
+                and len(index.motion_x[layer]) == index.motion_count(layer)
+                and len(index.motion_y[layer]) == index.motion_count(layer)
+                and len(index.motion_z[layer]) == index.motion_count(layer)
+                and (not index.compact or layer in index.hydrated_layers))
 
     def physical_file_offset(self, progress):
         """Map the accepted nozzle motion boundary to an indexed file offset."""

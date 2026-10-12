@@ -285,6 +285,17 @@ recovery. Ordinary Resume continues to mean returning from the existing pause;
 resuming from an earlier selection is a separate operation. The existing
 physical tracker is the foundation, not a second tracking implementation.
 
+The first implementation step is a read-only boundary query for the expanded
+follower's detached layer and motion split. It maps the number of completed
+motions to the next original motion command's byte offset and the selected
+endpoint. A full-layer selection may cross empty layers. Compact or evicted
+motion arrays, a fractional selection, a missing next move, and mismatched
+print/download identities return no exact boundary. The coordinator also
+requires a downloaded source whose size matches the active print. This result
+is evidence for a recovery plan, not an executable seek: commands between
+motions, printer state, file integrity at handover and physical move completion
+still need separate checks. No recovery command is issued by this step.
+
 Questions to resolve during 6.0.0 design and feasibility work:
 
 - **Event accuracy:** a sensor event marks when that sensor reported run-out,

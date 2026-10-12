@@ -4,6 +4,37 @@ from unittest.mock import Mock
 from tests import control_owner_support as harness
 
 class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
+    def test_recovery_selection_requires_the_current_job_and_downloaded_source(self):
+        from mpf.application.PrintCoordinator import PrintCoordinator
+        from mpf.gcode.GCodeIndex import build_index_from_file
+        from mpf.gcode.IndexView import IndexView
+        from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
+        from mpf.printing.PrintState import PrintSnapshot
+        from mpf.printing.RemoteJobService import PrintObservation
+
+        data = b";LAYER:0\nG1 X1 Y1 E0.1\nG1 X2 Y1 E0.2\n"
+        with harness.tempfile.TemporaryDirectory() as directory:
+            path = harness.os.path.join(directory, "cube.gcode")
+            with open(path, "wb") as handle:
+                handle.write(data)
+            key = ("cube.gcode", len(data), 1)
+            view = IndexView(key, build_index_from_file(path))
+            files = harness.SimpleNamespace(path=path, job_key=key,
+                identity=RemoteFileIdentity("cube.gcode", len(data)))
+            selection = harness.SimpleNamespace(
+                _snapshot=PrintSnapshot(job_key=key,
+                    observation=PrintObservation("paused", "cube.gcode", len(data), 20, 30)),
+                _index=harness.SimpleNamespace(view=view), _files=files,
+                _plate_anchor=0, _plate_split=1)
+            boundary = PrintCoordinator.selected_recovery_boundary(selection)
+            self.assertEqual(boundary.next_motion_offset, data.index(b"G1 X2"))
+            files.job_key = ("other.gcode", len(data), 1)
+            self.assertIsNone(PrintCoordinator.selected_recovery_boundary(selection))
+            files.job_key = key
+            with open(path, "ab") as handle:
+                handle.write(b";changed\n")
+            self.assertIsNone(PrintCoordinator.selected_recovery_boundary(selection))
+
     def _banner_parts(self):
         from dataclasses import replace
         from mpf.printing.PrintState import MotionProgress
