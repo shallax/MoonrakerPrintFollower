@@ -1,15 +1,18 @@
 # Optional runtime mirror
 
-The hosting migration remains follow-up work after the 5.3.0 Toolhead changes.
-Downloads still use their existing upstream URLs; no runtime mirror release
-has been published and no binary/model payloads are included in this branch.
+The `v5.3.0` release hosts every optional download selected by the plugin.
+The tag workflow stages the pinned bytes, uploads them to a draft release and
+checks GitHub's stored size and digest before publication. The public release
+requires the corresponding-source and notices companion plus a full direct-URL
+download check. Binary/model payloads stay outside the plugin package and Git
+history.
 
 ## Inventory
 
-The current pinned matrices contain 47 binary/model assets, about 1.96 GiB
-in total before source archives and notices. The STEP loader uses only Python
-3.12 wheels, so 20 CAD wheels in the manifest cannot currently be selected.
-The active mirror set is 27 assets (889,966,348 bytes, about 849 MiB).
+The current pinned matrices contain 27 selectable assets (889,966,348 bytes,
+about 849 MiB) before source archives and notices. The earlier CAD manifest
+also carried 20 wheels for Python ABIs the STEP helper never selects; those
+entries have been removed.
 An individual installation only downloads its selected platform's optional
 assets.
 
@@ -17,7 +20,7 @@ assets.
 | --- | ---: | ---: | ---: |
 | Obico ONNX model | 1 | 192.9 | 192.9 |
 | ONNX Runtime 1.23.2 | 15 | 235.8 | 18.3 |
-| CAD reader and proxy 7.9.3.1.1 | 26 | 1453.5 | 64.5 |
+| CAD reader and proxy 7.9.3.1.1 | 6 | 291.1 | 64.3 |
 | Standalone CPython 3.12.15 helper | 5 | 129.0 | 32.7 |
 
 Pins live in `mpf/detection/DetectionAssets.py`,
@@ -26,37 +29,37 @@ Pins live in `mpf/detection/DetectionAssets.py`,
 The initial staging audit on 7 October 2026 downloaded all 47 distributions
 and verified their existing size/SHA-256 pins (2,108,829,477 bytes total).
 The CAD reader wheels declare Apache-2.0 in metadata but contain no licence or
-notice files. Their release therefore needs an assembled notices/source
-companion. ONNX Runtime includes its licence and ThirdPartyNotices; the Python
-helpers retain Python/pip notices, which do not alone describe every linked
-native dependency. Staging is complete; redistribution companions and the
-production URL/cache migration remain to be completed.
+notice files. Their release needs an assembled notices/source companion. ONNX
+Runtime includes its licence and ThirdPartyNotices; the Python helpers retain
+Python/pip notices, which do not alone describe every linked native dependency.
 
 The active set's staging is reproducible with `python3 tools/stage_runtime_mirror.py
 /path/outside/checkout`. The tool reads the committed pins, checks the PyPI
 index against all 15 ONNX Runtime wheel hashes, downloads the original 27
 payloads, verifies every byte and writes `manifest.json`. `--verify-only`
-rechecks an existing staging directory. It does not publish a release or
-change the plugin's download URLs.
+rechecks an existing staging directory without contacting upstream hosts.
+For later releases, `--source-release v5.3.0` copies and verifies the exact
+bytes from this plugin's release rather than fetching them from upstream.
 
 On 12 October 2026 the full 47-pin matrix was reverified; the publication set
 was narrowed to the 27 selectable assets. Source
 archives for Obico (release commit `6f938964`), ONNX Runtime v1.23.2, OCP
 7.9.3.1.1, OCCT V7_9_3, ocp-build-system v7.9.3.1.1 and
 python-build-standalone 20261003 were retrieved for the companion audit.
-This is not yet a complete corresponding-source bundle: the CAD wheels contain
-bundled native libraries without their licence files or exact source/build
-records, and the Windows archives contain Microsoft C++ runtime DLLs whose
-redistribution terms need to be resolved. Do not publish these binaries from
-this repository or change production URLs until the companion is complete.
+These archives do not yet form a complete corresponding-source bundle: the CAD
+wheels contain bundled native libraries without their licence files or exact
+source/build records, and the Windows archives contain Microsoft C++ runtime
+DLLs whose redistribution rights need to be established. Do not make the draft
+release public until these issues are resolved and the companion is attached.
 
 ## Hosting and migration
 
-Use versioned public Release assets in `shallax/MoonrakerPrintFollower`, with a
-runtime tag distinct from the plugin's `v*` tags. The existing plugin release
-workflow triggers on `v*`; a runtime release must not invoke it or replace the
-latest plugin release. Keep payloads outside Git history and retain the exact
-upstream bytes, filenames, sizes and SHA-256 pins.
+Use assets attached to the public `v5.3.0` plugin release in
+`shallax/MoonrakerPrintFollower`. The plugin constructs direct URLs from its
+packaged version; no GitHub API or PyPI index request occurs at install time.
+Keep payloads outside Git history and retain the exact upstream bytes,
+filenames, sizes and SHA-256 pins. Each later plugin release that retains these
+optional features must attach the same pinned assets to its own version tag.
 
 [GitHub's Release limits](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
 allow 1,000 assets per release, each under 2 GiB, with no stated total-release
@@ -65,18 +68,20 @@ Use public download URLs without API discovery or an account requirement.
 Workflow artifacts expire and require repository access; they are unsuitable
 as the persistent runtime download endpoint.
 
-Before changing production URLs, publish and download-verify the mirror,
-including its notices and source assets. ONNX Runtime can resolve its pinned
-wheel directly rather than making a separate PyPI index request. Preserve
-HTTPS-only redirects, cancellation, archive checks and exact content checks.
-The detection cache version need not change. The CAD cache currently hashes
-the entire asset record, including its URL: adapt its identity or explicitly
-adopt the verified old cache so changing the host does not force a redownload.
+Before publishing the draft release, attach the source/notices companion and
+run `python tools/verify_runtime_release.py v5.3.0 --require-companion`.
+After publication, run the same command with `--public-downloads` to GET and
+hash every direct URL, including encoded `+` in Python helper names. The plugin
+resolves each pinned ONNX wheel directly, without a PyPI index request.
+HTTPS-only redirects,
+cancellation, archive checks and exact content checks remain. The detection
+cache version is unchanged. The CAD cache hashes the recorded source URL for
+identity only, preserving existing verified installations without a redownload;
+network downloads use the release URL.
 
 Users retain optional, platform-specific downloads and local caching. This
-removes reliance on several upstream hosts; it does not establish that GitHub
-downloads are faster in every region. Measure redirects, cancellation and
-installation on each supported platform before calling the migration done.
+removes reliance on several upstream hosts. Measure redirects, cancellation and
+installation on each supported platform during release validation.
 
 ## Redistribution bundle
 

@@ -116,6 +116,7 @@ correct package ownership.
 | `MotionRanges.py` | Validation of the numerical motion ranges stored in G-code indexes and prepared data | Palette selection, rendering or Cura |
 | `MigrationPresentation.py` | Shared migration-result text consumed by settings and Monitor | Either screen's model or runtime |
 | `PluginPaths.py` | Installed-plugin-root-relative filenames for explicit QML and shader resources | Application state or resource-loading lifecycle |
+| `RuntimeMirror.py` | Direct optional-download URLs tied to the packaged plugin version and GitHub release tag | Network transfers, payload pins or cache identity |
 | `PrinterBinding.py` | Per-printer configuration, migration triggers, active-machine transitions | Preview, files, uploads |
 | `PrinterConfig.py` | Per-machine settings schema and coercion (the records, the bounds, the normalisers) | Networking, Qt or the settings file (the persistence facade owns the files) |
 | `PluginPersistence.py` | The two plugin-owned stores: the settings document and the per-machine state shards, the typed key-scoped operations and the in-memory document — one instance per file per process, constructed at the composition root and handed down | Schema, coercion or networking |
@@ -442,8 +443,8 @@ opened (2026-09-10); `test_network_replies_connect_into_bound_handlers_not_bare_
 pins the pattern.
 
 `CadRuntime.py` has a separate, narrowly scoped HTTPS downloader for optional
-pinned PyPI CAD wheels and Astral's CPython 3.12.15 standalone helper release
-20261003. The five supported platform pairs are macOS ARM64/x86-64, Linux glibc
+pinned CAD wheels and CPython 3.12.15 helper archives on the matching plugin
+GitHub release. The five supported platform pairs are macOS ARM64/x86-64, Linux glibc
 ARM64/x86-64, and Windows x86-64. OCP always uses its cp312 ABI, independently
 of Cura's Python version. The downloader carries no printer credentials,
 rejects insecure redirects and verifies byte counts and SHA-256 before bounded
@@ -455,7 +456,9 @@ excluded from MPF release archives. Component licences, selected compatible
 licence options and upstream source references are grouped in
 `docs/THIRDPARTYSOFTWARE.md`, including Obico and the helper interpreter. Both
 package formats include that document at the installed plugin root. Repackaging
-the downloaded binaries would require meeting their additional redistribution obligations.
+the downloaded binaries requires a corresponding-source and notices companion
+on the release. The source URL in each CAD pin preserves the previous cache
+identity; network requests always use `RuntimeMirror.py` and the current tag.
 
 ## 5. Physical state and Preview
 

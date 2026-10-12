@@ -17,6 +17,7 @@ from urllib.request import Request
 import zipfile
 
 from mpf.toolhead import CadRuntime
+from mpf.resources.RuntimeMirror import asset_url
 
 
 def wheel_bytes(entries):
@@ -86,6 +87,14 @@ class ToolheadCadRuntimeTests(unittest.TestCase):
             return CadRuntime.install_runtime(str(self.root / "cache"),
                                               cancelled or threading.Event(), lambda _text: None)
 
+    def test_every_selectable_cad_and_helper_pin_uses_this_release(self):
+        for filename, expected_count in (("cad-runtime.json", 6),
+                                         ("helper-runtime.json", 5)):
+            pins = json.loads(Path(CadRuntime.__file__).with_name(filename).read_text())
+            self.assertEqual(len(pins), expected_count)
+            for name, pin in pins.items():
+                self.assertEqual(pin["url"], asset_url(name))
+
     def test_five_platforms_always_select_the_independent_cp312_helper(self):
         platforms = (("Darwin", "arm64", "aarch64-apple-darwin"),
                      ("Darwin", "x86_64", "x86_64-apple-darwin"),
@@ -104,12 +113,27 @@ class ToolheadCadRuntimeTests(unittest.TestCase):
                 self.assertEqual(len(assets), 3)
                 self.assertIn("-cp312-cp312-", assets[0][0])
                 self.assertTrue(assets[1][0].endswith("-py3-none-any.whl"))
+                suffix = ".tar" if system == "Windows" else ".tar.gz"
                 self.assertEqual(assets[2][0], "cpython-3.12.15+20261003-" + triple
-                                 + "-install_only_stripped.tar.gz")
+                                 + "-install_only_stripped" + suffix)
                 for _name, pin in assets:
-                    self.assertTrue(pin["url"].startswith("https://"))
+                    self.assertEqual(pin["url"], asset_url(_name))
+                    self.assertTrue(pin["source_url"].startswith("https://"))
                     self.assertGreater(pin["size"], 0)
                     self.assertRegex(pin["sha256"], r"^[0-9a-f]{64}$")
+
+    def test_existing_verified_cache_keeps_its_pre_mirror_directory(self):
+        with patch.object(CadRuntime.platform, "system", return_value="Darwin"), \
+                patch.object(CadRuntime.platform, "machine", return_value="arm64"), \
+                patch.object(CadRuntime.platform, "mac_ver", return_value=("13.0", "", "")):
+            assets = CadRuntime.runtime_assets()
+        previous = {
+            name: {"url": pin["source_url"], "size": pin["size"], "sha256": pin["sha256"]}
+            for name, pin in assets
+        }
+        digest = hashlib.sha256(json.dumps(previous, sort_keys=True).encode()).hexdigest()[:16]
+        self.assertEqual(CadRuntime.runtime_directory("cache", assets),
+                         os.path.join("cache", CadRuntime.VERSION + "-" + digest))
 
     def test_unsupported_hosts_do_not_offer_unmatched_native_binaries(self):
         cases = (("Windows", "arm64", ("glibc", "2.31"), "13.0"),
@@ -135,6 +159,16 @@ class ToolheadCadRuntimeTests(unittest.TestCase):
         for name, payload in self.payloads.items():
             self.assertEqual((target / ".archives" / name).read_bytes(), payload)
         self.assertEqual(CadRuntime.verify_runtime(str(target), self.assets), str(target))
+
+    def test_install_requests_current_release_even_with_legacy_pin_urls(self):
+        requested = []
+
+        def open_download(url, **_options):
+            requested.append(url)
+            return io.BytesIO(self.payloads[url.rsplit("/", 1)[1]])
+
+        self.install(response=open_download)
+        self.assertEqual(requested, [asset_url(name) for name, _pin in self.assets])
 
     def test_valid_cache_needs_no_network_request(self):
         target = self.install()

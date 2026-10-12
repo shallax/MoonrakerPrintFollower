@@ -4,10 +4,12 @@ Moonraker Print Follower is licensed **GPL-3.0-only**. Dependencies retain their
 own licences; this document does not relicense them.
 
 The optional STEP reader, Python helper, Obico model and ONNX Runtime are
-downloaded directly from upstream after the user enables the relevant feature.
-Their binaries and model weights are not included in the plugin package. The
-installers preserve notices supplied in the downloaded archives. This index
-links the upstream licence texts instead of duplicating those distributions.
+downloaded from assets on the matching plugin GitHub release after the user
+enables the relevant feature. Their binaries and model weights are not included
+in the plugin package. The installers preserve notices supplied in the
+downloaded archives. The release also needs a corresponding-source and notices
+companion before it can be published; see `RUNTIME_MIRROR.md`. This index
+links upstream licence texts without relicensing those distributions.
 The plugin's complete GPLv3 text is supplied in the package's `LICENSE` file.
 
 ## Optional downloads
@@ -60,7 +62,7 @@ and in the downloaded distributions where supplied.
 | pip's certifi / Mozilla CA certificate bundle | [MPL-2.0](https://www.mozilla.org/en-US/MPL/2.0/); [component notice](https://github.com/pypa/pip/blob/26.2.1/src/pip/_vendor/certifi/LICENSE) |
 | pip's distlib | [Python licence and incorporated notices](https://github.com/pypa/pip/blob/26.2.1/src/pip/_vendor/distlib/LICENSE.txt) |
 | pip's resolvelib | [ISC](https://github.com/pypa/pip/blob/26.2.1/src/pip/_vendor/resolvelib/LICENSE) |
-| Microsoft C++ / OpenMP runtime components (Windows) | [Microsoft runtime terms](https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/); obtained with the upstream runtime, not redistributed in the plugin |
+| Microsoft C++ / OpenMP runtime components (Windows) | [Microsoft runtime terms](https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/); included in the upstream Windows archives, with separate redistribution rights to resolve before mirroring |
 
 Dependency versions and source archives for the Python helper are recorded in
 its [pinned build recipe](https://github.com/astral-sh/python-build-standalone/blob/20261003/pythonbuild/downloads.json).
@@ -101,8 +103,8 @@ Mozilla's [MPL/GPL compatibility provisions](https://www.mozilla.org/en-US/MPL/2
 cover the helper's MPL-2.0 certificate data without changing its own licence.
 
 GPL and AGPL grant redistribution rights to the works they cover; no separate
-permission is needed when their conditions are met. This index currently
-describes direct upstream downloads. Mirroring binaries or weights requires
+permission is needed when their conditions are met. Mirroring binaries or
+weights requires
 preserving the applicable full notices and licence copies and providing the
 required corresponding source. An index of upstream links alone is not a
 complete redistribution bundle. Components under other licences retain those

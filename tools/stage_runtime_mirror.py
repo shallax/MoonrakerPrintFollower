@@ -19,8 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from mpf.detection.DetectionAssets import (  # noqa: E402
-    MODEL_SHA256, MODEL_SIZE, MODEL_URL, RUNTIME_VERSION, _WHEELS,
+    MODEL_SHA256, MODEL_SIZE, RUNTIME_VERSION, _WHEELS,
 )
+
+MODEL_SOURCE_URL = "https://www.obico.io/static_pub/ml-models/model-weights-5a6b1be1fa.onnx"
 
 
 class HTTPSOnly(HTTPRedirectHandler):
@@ -39,8 +41,8 @@ def _open(url):
     )
 
 
-def inventory():
-    assets = [dict(name="model-weights-5a6b1be1fa.onnx", url=MODEL_URL,
+def inventory(source_release=None, offline=False):
+    assets = [dict(name="model-weights-5a6b1be1fa.onnx", url=MODEL_SOURCE_URL,
                    size=MODEL_SIZE, sha256=MODEL_SHA256)]
     for filename in ("cad-runtime.json", "helper-runtime.json"):
         pins = json.loads((ROOT / "mpf" / "toolhead" / filename).read_text())
@@ -51,19 +53,34 @@ def inventory():
             if filename == "cad-runtime.json" and "proxy" not in name \
                     and "-cp312-cp312-" not in name:
                 continue
-            assets.append(dict(name=name, **pin))
-    with _open(f"https://pypi.org/pypi/onnxruntime/{RUNTIME_VERSION}/json") as response:
-        if urlsplit(response.geturl()).hostname != "pypi.org":
-            raise ValueError("Unexpected ONNX Runtime index host")
-        index = json.load(response)
-    indexed = {item["filename"]: item for item in index["urls"]}
+            assets.append(dict(name=name, url=pin.get("source_url", pin["url"]),
+                               size=pin["size"], sha256=pin["sha256"],
+                               source_size=pin.get("source_size"),
+                               source_sha256=pin.get("source_sha256"),
+                               derivation=pin.get("derivation")))
+    indexed = {}
+    if not source_release and not offline:
+        with _open(f"https://pypi.org/pypi/onnxruntime/{RUNTIME_VERSION}/json") as response:
+            if urlsplit(response.geturl()).hostname != "pypi.org":
+                raise ValueError("Unexpected ONNX Runtime index host")
+            index = json.load(response)
+        indexed = {item["filename"]: item for item in index["urls"]}
     for (abi, platform), (sha256, size) in _WHEELS.items():
         name = f"onnxruntime-{RUNTIME_VERSION}-cp{abi}-cp{abi}-{platform}.whl"
-        item = indexed[name]
-        if (item["size"] != size or item["digests"]["sha256"] != sha256
-                or urlsplit(item["url"]).hostname != "files.pythonhosted.org"):
-            raise ValueError(f"Upstream index no longer matches the pin for {name}")
-        assets.append(dict(name=name, url=item["url"], size=size, sha256=sha256))
+        if indexed:
+            item = indexed[name]
+            if (item["size"] != size or item["digests"]["sha256"] != sha256
+                    or urlsplit(item["url"]).hostname != "files.pythonhosted.org"):
+                raise ValueError(f"Upstream index no longer matches the pin for {name}")
+            source_url = item["url"]
+        else:
+            source_url = ""
+        assets.append(dict(name=name, url=source_url, size=size, sha256=sha256))
+    if source_release:
+        from mpf.resources.RuntimeMirror import release_asset_url
+        for asset in assets:
+            asset["url"] = release_asset_url(source_release, asset["name"])
+            asset["derivation"] = None
     names = [asset["name"] for asset in assets]
     if len(assets) != 27 or len(set(names)) != len(names):
         raise ValueError("Unexpected optional runtime inventory")
@@ -80,38 +97,58 @@ def verify(path, asset):
         return digest.hexdigest() == asset["sha256"]
 
 
+def _download(url, path, name, size_pin, digest_pin):
+    digest, size = hashlib.sha256(), 0
+    with _open(url) as source, path.open("xb") as target:
+        while block := source.read(1024 * 1024):
+            size += len(block)
+            if size > size_pin:
+                raise ValueError(f"Source exceeded pinned size: {name}")
+            target.write(block)
+            digest.update(block)
+    if size != size_pin or digest.hexdigest() != digest_pin:
+        raise ValueError(f"Source failed pinned integrity check: {name}")
+
+
 def stage(directory, asset):
     path = directory / asset["name"]
     if verify(path, asset):
         return
     temporary = directory / (asset["name"] + ".part")
+    original = directory / (asset["name"] + ".source.part")
     temporary.unlink(missing_ok=True)
+    original.unlink(missing_ok=True)
     try:
-        digest, size = hashlib.sha256(), 0
-        with _open(asset["url"]) as source, temporary.open("xb") as target:
-            while block := source.read(1024 * 1024):
-                size += len(block)
-                if size > asset["size"]:
-                    raise ValueError(f"Source exceeded pinned size: {asset['name']}")
-                target.write(block)
-                digest.update(block)
-        if size != asset["size"] or digest.hexdigest() != asset["sha256"]:
-            raise ValueError(f"Source failed pinned integrity check: {asset['name']}")
+        if asset.get("derivation") == "strip-windows-redist-v1":
+            from tools.windows_runtime_without_redist import strip_cad_wheel, strip_python_helper
+            _download(asset["url"], original, asset["name"],
+                      asset["source_size"], asset["source_sha256"])
+            if asset["name"].endswith(".whl"):
+                strip_cad_wheel(original, temporary)
+            else:
+                strip_python_helper(original, temporary)
+            if not verify(temporary, asset):
+                raise ValueError(f"Derived archive failed pin: {asset['name']}")
+        else:
+            _download(asset["url"], temporary, asset["name"],
+                      asset["size"], asset["sha256"])
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
+        original.unlink(missing_ok=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path, help="staging directory outside the repository")
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--source-release", help="copy exact bytes from an earlier MPF release")
     args = parser.parse_args()
     directory = args.directory.resolve()
     if directory == ROOT or ROOT in directory.parents:
         parser.error("stage outside the repository so binaries cannot enter Git history")
     directory.mkdir(parents=True, exist_ok=True)
-    assets = inventory()
+    assets = inventory(args.source_release, offline=args.verify_only)
     if not args.verify_only:
         with ThreadPoolExecutor(max_workers=6) as pool:
             jobs = {pool.submit(stage, directory, asset): asset["name"] for asset in assets}
@@ -121,7 +158,8 @@ def main():
     failed = [asset["name"] for asset in assets if not verify(directory / asset["name"], asset)]
     if failed:
         raise ValueError("Unverified assets: " + ", ".join(failed))
-    (directory / "manifest.json").write_text(json.dumps(assets, indent=2) + "\n")
+    if not args.verify_only:
+        (directory / "manifest.json").write_text(json.dumps(assets, indent=2) + "\n")
     print(f"Verified {len(assets)} assets, {sum(a['size'] for a in assets):,} bytes")
 
 

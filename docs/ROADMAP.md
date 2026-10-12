@@ -222,18 +222,17 @@ clocks include the additional-calendar-day suffix already used by Print job
 Finish, and the webcam zoom scale uses a stable width measured for `800%` while
 the FPS face retains room for its longer readout.
 
-### Deferred follow-up — optional runtime hosting
+### Optional runtime hosting
 
-The author also requested resilient hosting for optional detection and STEP
-downloads. The pinned payload inventory and staging audit are complete, but
-source/notices companions, publication and production URL/cache migration
-remain unfinished; 5.3.0 continues to use upstream hosts. Details are in
-[RUNTIME_MIRROR.md](RUNTIME_MIRROR.md). Inventory the exact pinned distributions and their notices/source
-obligations, then mirror unchanged bytes as versioned public GitHub Release
-assets in this repository. Preserve optional downloads, hashes and installed
-cache identities; no binary payloads enter Git history. The migration must not
-point at unpublished assets or require users to download existing runtimes
-again solely because their host changed.
+The optional detection and STEP installers now resolve their 27 selectable
+assets from the matching plugin GitHub Release and preserve verified installed
+cache identities. The release workflow stages exact pinned bytes, uploads to a
+draft and verifies GitHub's asset digests. Public release still requires the
+redistribution companion and direct-download verification described in
+[RUNTIME_MIRROR.md](RUNTIME_MIRROR.md).
+Publish unchanged bytes with corresponding source and notices on the current
+plugin release, then download-verify every public asset before shipping. No
+binary payloads enter Git history.
 
 ### Remaining 5.x work — shared tracking already implemented
 

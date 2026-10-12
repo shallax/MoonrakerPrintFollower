@@ -78,7 +78,7 @@ jobs:
     secrets: inherit
 
   publish:
-    name: Publish release
+    name: Prepare release assets
     needs: ci
     runs-on: ubuntu-26.04
     steps:
@@ -90,6 +90,20 @@ jobs:
         with:
           name: package-artifacts
           path: dist/
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Stage pinned optional runtime assets
+        run: |
+          if [[ "$GITHUB_REF_NAME" == "v5.3.0" ]]; then
+            python tools/stage_runtime_mirror.py "$RUNNER_TEMP/runtime-assets"
+          else
+            python tools/stage_runtime_mirror.py "$RUNNER_TEMP/runtime-assets" --source-release v5.3.0
+          fi
+          python tools/stage_runtime_mirror.py "$RUNNER_TEMP/runtime-assets" --verify-only
 
       - name: Extract release notes from changelog
         run: |
@@ -107,7 +121,7 @@ jobs:
           print(section)
           PY
 
-      - name: Create or update GitHub release
+      - name: Create or update draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -115,9 +129,20 @@ jobs:
           CURA="dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
           SOURCE="dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$CURA" "$SOURCE" --clobber
+            DRAFT="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)"
+            if [[ "$DRAFT" != "true" ]]; then
+              echo "::error::Refusing to replace assets on a published release"
+              exit 1
+            fi
+            gh release upload "$GITHUB_REF_NAME" "$CURA" "$SOURCE" "$RUNNER_TEMP/runtime-assets/"* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$CURA" "$SOURCE" \
+            gh release create "$GITHUB_REF_NAME" "$CURA" "$SOURCE" "$RUNNER_TEMP/runtime-assets/"* \
+              --draft --verify-tag \
               --title "Moonraker Print Follower $GITHUB_REF_NAME" \
               --notes-file /tmp/release-notes.md
           fi
+
+      - name: Verify uploaded runtime asset digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/verify_runtime_release.py "$GITHUB_REF_NAME"

@@ -7,11 +7,12 @@ import os
 import platform
 import sys
 
-MODEL_URL = "https://www.obico.io/static_pub/ml-models/model-weights-5a6b1be1fa.onnx"
+from ..resources.RuntimeMirror import asset_url
+
+MODEL_URL = asset_url("model-weights-5a6b1be1fa.onnx")
 MODEL_SHA256 = "0a6ebd8e30dbf6a450c50f9c0a5406f04ba7eb1c99fd5996e888c78bb383b9aa"
 MODEL_SIZE = 202_223_918
 RUNTIME_VERSION = "1.23.2"
-RUNTIME_INDEX_URL = f"https://pypi.org/pypi/onnxruntime/{RUNTIME_VERSION}/json"
 ASSET_VERSION = "obico-onnx-v1"
 
 # PyPI's published SHA-256 and byte length, pinned for the three Cura Python
