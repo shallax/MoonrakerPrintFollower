@@ -95,6 +95,19 @@ class ToolheadCadRuntimeTests(unittest.TestCase):
             for name, pin in pins.items():
                 self.assertEqual(pin["url"], asset_url(name))
 
+    def test_windows_requires_system_runtime_before_any_asset_download(self):
+        system32 = self.root / "System32"
+        system32.mkdir()
+        for name in CadRuntime.WINDOWS_RUNTIME_DLLS[:-1]:
+            (system32 / name).write_bytes(b"installed")
+        with patch.object(CadRuntime.platform, "system", return_value="Windows"), \
+                patch.dict(os.environ, {"SystemRoot": str(self.root)}):
+            self.assertEqual(CadRuntime.missing_windows_runtime(), ("vcomp140.dll",))
+            with self.assertRaisesRegex(ValueError, "Microsoft Visual C\\+\\+ x64"):
+                self.install()
+            (system32 / "vcomp140.dll").write_bytes(b"installed")
+            self.assertEqual(CadRuntime.missing_windows_runtime(), ())
+
     def test_five_platforms_always_select_the_independent_cp312_helper(self):
         platforms = (("Darwin", "arm64", "aarch64-apple-darwin"),
                      ("Darwin", "x86_64", "x86_64-apple-darwin"),
@@ -169,6 +182,60 @@ class ToolheadCadRuntimeTests(unittest.TestCase):
 
         self.install(response=open_download)
         self.assertEqual(requested, [asset_url(name) for name, _pin in self.assets])
+
+    def test_release_failure_uses_only_the_pinned_original_source(self):
+        for name, pin in self.assets:
+            pin["source_url"] = "https://upstream.example/" + name
+        requested = []
+
+        def open_download(url, **_options):
+            requested.append(url)
+            name = url.rsplit("/", 1)[1]
+            if url == asset_url("reader.whl"):
+                raise OSError("release unavailable")
+            return io.BytesIO(self.payloads[name])
+
+        self.install(response=open_download)
+        self.assertEqual(requested[:3], [asset_url("reader.whl"),
+                                         "https://upstream.example/reader.whl",
+                                         asset_url("proxy.whl")])
+
+    def test_release_and_original_failure_leave_no_cad_cache(self):
+        self.assets[0][1]["source_url"] = "https://upstream.example/reader.whl"
+
+        def open_download(_url, **_options):
+            raise OSError("offline")
+
+        with self.assertRaisesRegex(ValueError, "GitHub and its original source"):
+            self.install(response=open_download)
+        self.assertEqual(list((self.root / "cache").iterdir()), [])
+
+    def test_windows_source_fallback_derives_and_verifies_dll_free_bytes(self):
+        source, derived = b"original-with-dll", b"derived-without-dll"
+        pin = {"size": len(derived), "sha256": hashlib.sha256(derived).hexdigest(),
+               "source_url": "https://upstream.example/reader.whl",
+               "source_size": len(source), "source_sha256": hashlib.sha256(source).hexdigest(),
+               "derivation": "strip-windows-redist-v1"}
+        path = self.root / "reader.whl"
+        requested = []
+
+        def open_download(url, **_options):
+            requested.append(url)
+            if url == asset_url("reader.whl"):
+                raise OSError("release unavailable")
+            return io.BytesIO(source)
+
+        def transform(original, output):
+            self.assertEqual(original.read_bytes(), source)
+            output.write_bytes(derived)
+
+        with patch.object(CadRuntime, "strip_cad_wheel", side_effect=transform):
+            CadRuntime._download_asset(SimpleNamespace(open=open_download),
+                                       "reader.whl", pin, path, threading.Event(),
+                                       lambda _message: None)
+        self.assertEqual(path.read_bytes(), derived)
+        self.assertFalse((self.root / "reader.whl.source").exists())
+        self.assertEqual(requested, [asset_url("reader.whl"), pin["source_url"]])
 
     def test_valid_cache_needs_no_network_request(self):
         target = self.install()

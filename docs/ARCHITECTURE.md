@@ -452,7 +452,10 @@ extraction. Cached runtime verification derives expected file hashes from
 retained archives whose complete hashes match committed pins; a writable
 installation marker never establishes trust. It does not create a second
 Moonraker status feed. Downloads require explicit first-use consent and are
-excluded from MPF release archives. Component licences, selected compatible
+excluded from the `.curapackage` file but attached to its matching GitHub release.
+Windows archives omit bundled Microsoft runtime DLLs; STEP import checks the
+system copy and offers the official x64 installer when it is missing.
+Component licences, selected compatible
 licence options and upstream source references are grouped in
 `docs/THIRDPARTYSOFTWARE.md`, including Obico and the helper interpreter. Both
 package formats include that document at the installed plugin root. Repackaging
@@ -1315,6 +1318,17 @@ camera the pixels are baked at; `drawLayer` repeats the bed transform inline
 because a call per vertex over hundreds of thousands of points was the
 follower's dominant cost. The face keeps the camera STATE, the gestures that
 write it, the canvases and the decision of which picture to draw.
+The webcam accepts left and middle drag for pan; its right drag still changes
+FPS. The Print Follower accepts left, middle and right drag for the same pan
+path. A rapid five-left, five-middle, five-right click sequence on its full
+face starts a presentation-only penguin overlay. Its strokes are generated
+from the capture penguin G-code in extrusion order and painted with fixed
+black, white and yellow tool colours, independent of the current line mode.
+The overlay masks the live face, then fades away without changing its print,
+layer, colour scheme or camera state.
+The Diagnostics CAD-clear action removes only the STEP reader/helper runtime
+root after any active import has finished. Saved toolhead meshes live in a
+separate store and remain available.
 
 `PlateToolheadDot.qml`, `PlateExtruderMarkers.qml` and `PlateZoomScope.qml` are
 the face's visual leaves. Each takes what it draws as declared inputs. The

@@ -15,8 +15,17 @@ import zipfile
 from pathlib import Path
 
 from ..resources.RuntimeMirror import asset_url
+from .WindowsRuntimeWithoutRedist import strip_cad_wheel, strip_python_helper
 
 VERSION = "7.9.3.1.1"
+WINDOWS_RUNTIME_DLLS = ("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "vcomp140.dll")
+
+
+def missing_windows_runtime():
+    """Check the system copy used by both Cura and the isolated STEP helper."""
+    if platform.system() != "Windows": return ()
+    system32 = Path(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+    return tuple(name for name in WINDOWS_RUNTIME_DLLS if not (system32 / name).is_file())
 
 
 class HttpsOnly(urllib.request.HTTPRedirectHandler):
@@ -177,7 +186,67 @@ def _digest_file(handle):
     return digest.hexdigest()
 
 
+def _fetch_pinned(opener, url, path, size_pin, digest_pin, cancelled, progress, label):
+    if not url.startswith("https://"):
+        raise ValueError("CAD runtime downloads require HTTPS")
+    digest, size, last_progress = hashlib.sha256(), 0, ""
+    with opener.open(url, timeout=15) as response, open(path, "wb") as output:
+        while True:
+            if cancelled.is_set(): raise ValueError("Model import cancelled")
+            chunk = response.read(128 * 1024)
+            if not chunk: break
+            size += len(chunk)
+            if size > size_pin: raise ValueError("CAD runtime download exceeded its pinned size")
+            digest.update(chunk)
+            output.write(chunk)
+            message = f"{label}: {size // 1048576} / {size_pin // 1048576} MiB"
+            if message != last_progress:
+                progress(message)
+                last_progress = message
+    if size != size_pin or digest.hexdigest() != digest_pin:
+        raise ValueError("CAD runtime integrity check failed")
+
+
+def _download_asset(opener, name, pin, path, cancelled, progress):
+    kind = "STEP helper" if name.endswith((".tar.gz", ".tar")) else "CAD reader"
+    try:
+        _fetch_pinned(opener, asset_url(name), path, pin["size"], pin["sha256"],
+                      cancelled, progress, "Downloading " + kind + " from GitHub")
+        return
+    except (OSError, ValueError) as primary:
+        if cancelled.is_set() or "source_url" not in pin:
+            raise
+        Path(path).unlink(missing_ok=True)
+        source = Path(str(path) + ".source")
+        try:
+            progress("GitHub download failed; trying the original " + kind + " source")
+            if pin.get("derivation") == "strip-windows-redist-v1":
+                _fetch_pinned(opener, pin["source_url"], source,
+                              pin["source_size"], pin["source_sha256"],
+                              cancelled, progress, "Downloading original " + kind)
+                if name.endswith(".whl"):
+                    strip_cad_wheel(source, Path(path))
+                else:
+                    strip_python_helper(source, Path(path))
+                with open(path, "rb") as output:
+                    if os.fstat(output.fileno()).st_size != pin["size"] or _digest_file(output) != pin["sha256"]:
+                        raise ValueError("Derived CAD runtime integrity check failed")
+            else:
+                _fetch_pinned(opener, pin["source_url"], path,
+                              pin["size"], pin["sha256"], cancelled, progress,
+                              "Downloading original " + kind)
+        except Exception as secondary:
+            Path(path).unlink(missing_ok=True)
+            if cancelled.is_set():
+                raise ValueError("Model import cancelled") from secondary
+            raise ValueError(f"CAD runtime failed from GitHub and its original source: {primary}; {secondary}") from secondary
+        finally:
+            source.unlink(missing_ok=True)
+
+
 def install_runtime(root, cancelled, progress):
+    if missing_windows_runtime():
+        raise ValueError("STEP import needs the Microsoft Visual C++ x64 runtime. Install it from Microsoft, then retry.")
     assets = runtime_assets()
     os.makedirs(root, mode=0o700, exist_ok=True)
     target = runtime_directory(root, assets)
@@ -193,24 +262,7 @@ def install_runtime(root, cancelled, progress):
             urllib.request.HTTPSHandler(context=_trusted_context()), HttpsOnly())
         for name, pin in assets:
             path = os.path.join(stage, name)
-            digest, size = hashlib.sha256(), 0
-            last_progress = ""
-            with opener.open(asset_url(name), timeout=15) as response, open(path, "wb") as output:
-                while True:
-                    if cancelled.is_set(): raise ValueError("Model import cancelled")
-                    chunk = response.read(128 * 1024)
-                    if not chunk: break
-                    size += len(chunk)
-                    if size > pin["size"]: raise ValueError("CAD runtime download exceeded its pinned size")
-                    digest.update(chunk)
-                    output.write(chunk)
-                    message = "Downloading STEP helper" if name.endswith((".tar.gz", ".tar")) else "Downloading CAD reader"
-                    message += f": {size // 1048576} / {pin['size'] // 1048576} MiB"
-                    if message != last_progress:
-                        progress(message)
-                        last_progress = message
-            if size != pin["size"] or digest.hexdigest() != pin["sha256"]:
-                raise ValueError("CAD runtime integrity check failed")
+            _download_asset(opener, name, pin, path, cancelled, progress)
             if name.endswith(".whl"): extract_wheel(path, stage)
             else: extract_helper(path, stage)
             archive_dir = os.path.join(stage, ".archives")

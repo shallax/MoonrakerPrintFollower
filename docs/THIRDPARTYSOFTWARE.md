@@ -6,7 +6,8 @@ own licences; this document does not relicense them.
 The optional STEP reader, Python helper, Obico model and ONNX Runtime are
 downloaded from assets on the matching plugin GitHub release after the user
 enables the relevant feature. Their binaries and model weights are not included
-in the plugin package. The installers preserve notices supplied in the
+in the plugin package. If a release download fails, the plugin retries the
+original pinned source. The installers preserve notices supplied in the
 downloaded archives. The release also needs a corresponding-source and notices
 companion before it can be published; see `RUNTIME_MIRROR.md`. This index
 links upstream licence texts without relicensing those distributions.
@@ -62,7 +63,7 @@ and in the downloaded distributions where supplied.
 | pip's certifi / Mozilla CA certificate bundle | [MPL-2.0](https://www.mozilla.org/en-US/MPL/2.0/); [component notice](https://github.com/pypa/pip/blob/26.2.1/src/pip/_vendor/certifi/LICENSE) |
 | pip's distlib | [Python licence and incorporated notices](https://github.com/pypa/pip/blob/26.2.1/src/pip/_vendor/distlib/LICENSE.txt) |
 | pip's resolvelib | [ISC](https://github.com/pypa/pip/blob/26.2.1/src/pip/_vendor/resolvelib/LICENSE) |
-| Microsoft C++ / OpenMP runtime components (Windows) | [Microsoft runtime terms](https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/); included in the upstream Windows archives, with separate redistribution rights to resolve before mirroring |
+| Microsoft C++ / OpenMP runtime components (Windows) | [Official x64 installer](https://aka.ms/vc14/vc_redist.x64.exe); the plugin checks the system runtime and directs users to Microsoft when needed. Microsoft DLLs are removed from the mirrored Windows archives. |
 
 Dependency versions and source archives for the Python helper are recorded in
 its [pinned build recipe](https://github.com/astral-sh/python-build-standalone/blob/20261003/pythonbuild/downloads.json).

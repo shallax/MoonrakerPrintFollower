@@ -72,15 +72,22 @@ Column {
         color: UM.Theme.getColor("text")
         visible: text.length > 0
     }
-    Row {
+    Flow {
+        width: parent.width
         visible: root.model && (root.model.busy || root.model.needsDownload)
-        height: visible ? Math.max(downloadButton.implicitHeight, cancelImportButton.implicitHeight) : 0
+        height: visible ? implicitHeight : 0
         spacing: UM.Theme.getSize("thin_margin").width
         Cura.SecondaryButton {
             id: downloadButton
             text: "Download reader & import"
             visible: root.model && root.model.needsDownload
             onClicked: root.model.downloadAndImport()
+        }
+        Cura.SecondaryButton {
+            objectName: "toolheadGetMicrosoftRuntime"
+            text: "Get Microsoft runtime"
+            visible: root.model && root.model.needsMicrosoftRuntime
+            onClicked: Qt.openUrlExternally("https://aka.ms/vc14/vc_redist.x64.exe")
         }
         Cura.SecondaryButton {
             id: cancelImportButton

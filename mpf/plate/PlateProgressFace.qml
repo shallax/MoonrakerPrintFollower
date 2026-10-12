@@ -6,6 +6,7 @@ import Cura 1.1 as Cura
 import "PlateExactComposition.js" as ExactComposition
 import "PlatePainter.js" as Painter
 import "PlateViewPolicy.js" as ViewPolicy
+import "PenguinToolpaths.js" as Penguin
 import "../resources/theme"
 
 // The plate map's progress face (4.6.0): the OctoApp-style
@@ -17,6 +18,36 @@ Item {
     id: root
     objectName: "moonrakerPlateProgressFace"
     clip: true
+
+    property int _penguinClickCount: 0
+    property real _penguinLastClickMs: 0
+    property real _penguinPressMs: 0
+    property bool _penguinActive: false
+    property real _penguinProgress: 0
+
+    function _recordPenguinClick(button) {
+        if (root.compact || root._penguinActive)
+            return;
+        var now = Date.now();
+        if (root._penguinClickCount > 0 && now - root._penguinLastClickMs > 450)
+            root._penguinClickCount = 0;
+        var expected = root._penguinClickCount < 5 ? Qt.LeftButton : root._penguinClickCount < 10 ? Qt.MiddleButton : Qt.RightButton;
+        if (button === expected) {
+            root._penguinClickCount++;
+        } else {
+            root._penguinClickCount = button === Qt.LeftButton ? 1 : 0;
+        }
+        root._penguinLastClickMs = now;
+        if (root._penguinClickCount === 15) {
+            root._penguinClickCount = 0;
+            root._penguinActive = true;
+            penguinCanvas.drawn = 0;
+            root._penguinProgress = 0;
+            penguinCanvas.requestPaint();
+            penguinFadeIn.start();
+            penguinDrawDelay.start();
+        }
+    }
 
     // Deferred work belongs to this Loader instance. Qt.callLater retains
     // method references after the QML context has been destroyed on close.
@@ -2523,14 +2554,14 @@ Item {
     }
 
     // The zoom/pan gestures (the live request): the wheel zooms about
-    // the cursor, a drag pans, a double click resets to the full bed.
+    // the cursor, a left/middle/right drag pans, and a left double click resets to the full bed.
     MouseArea {
         id: viewGesture
         anchors.fill: parent
         // The mini is a read-only thumbnail: no zoom, no pan (the
         // live request — its click opens the pop-over instead).
         enabled: !root.compact
-        acceptedButtons: Qt.LeftButton
+        acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
         cursorShape: root.viewScale > 1.0 ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.ArrowCursor
         onWheel: function (wheel) {
             if (mapping._plot == null) {
@@ -2596,6 +2627,7 @@ Item {
             zoomAnimator.restart();
         }
         onPressed: function (mouse) {
+            root._penguinPressMs = Date.now();
             // The press records the grab point only: the warm raster
             // waits for a movement that actually pans (the review's
             // ruling — a click at any zoom never flips the scene).
@@ -2670,9 +2702,20 @@ Item {
             root._dragX = mouse.x;
             root._dragY = mouse.y;
         }
-        onReleased: root._finishGesture()
-        onCanceled: root._finishGesture()
-        onDoubleClicked: {
+        onReleased: function (mouse) {
+            root._finishGesture();
+            if (Date.now() - root._penguinPressMs <= 350 && Math.abs(mouse.x - root._pressX) <= 4 && Math.abs(mouse.y - root._pressY) <= 4)
+                root._recordPenguinClick(mouse.button);
+            else
+                root._penguinClickCount = 0;
+        }
+        onCanceled: {
+            root._finishGesture();
+            root._penguinClickCount = 0;
+        }
+        onDoubleClicked: function (mouse) {
+            if (mouse.button !== Qt.LeftButton)
+                return;
             // At the 100% fit there is nothing to reset (the live
             // ruling: click/down/drag stay inert at full zoom).
             if (root.viewScale <= 1.0) {
@@ -2690,6 +2733,91 @@ Item {
             root.displayPanY = 0.0;
             zoomAnimator.stop();
         }
+    }
+
+    Item {
+        id: penguinOverlay
+        anchors.fill: parent
+        z: 100
+        opacity: 0
+        visible: root._penguinActive || opacity > 0
+
+        Rectangle {
+            anchors.fill: parent
+            color: MoonrakerTheme.penguinBackdrop
+        }
+        Canvas {
+            id: penguinCanvas
+            anchors.fill: parent
+            property real progress: root._penguinProgress
+            property int drawn: 0
+            onProgressChanged: requestPaint()
+            onWidthChanged: {
+                drawn = 0;
+                requestPaint();
+            }
+            onHeightChanged: {
+                drawn = 0;
+                requestPaint();
+            }
+            onPaint: {
+                var context = getContext("2d");
+                var count = Math.floor(Penguin.strokes.length * progress);
+                if (drawn === 0 || drawn > count)
+                    context.clearRect(0, 0, width, height);
+                var side = Math.min(width, height);
+                var left = (width - side) / 2;
+                var top = (height - side) / 2;
+                context.lineWidth = Math.max(1.2, side / 250 * 0.8);
+                context.lineCap = "round";
+                var colours = [MoonrakerTheme.penguinBlack, MoonrakerTheme.penguinWhite, MoonrakerTheme.penguinYellow];
+                for (var index = drawn; index < count; index++) {
+                    var stroke = Penguin.strokes[index];
+                    context.strokeStyle = colours[stroke[4]];
+                    context.beginPath();
+                    context.moveTo(left + stroke[0] * side / 250, top + (250 - stroke[1]) * side / 250);
+                    context.lineTo(left + stroke[2] * side / 250, top + (250 - stroke[3]) * side / 250);
+                    context.stroke();
+                }
+                drawn = count;
+            }
+        }
+    }
+    NumberAnimation {
+        id: penguinFadeIn
+        target: penguinOverlay
+        property: "opacity"
+        from: 0
+        to: 1
+        duration: 250
+    }
+    Timer {
+        id: penguinDrawDelay
+        interval: 250
+        onTriggered: penguinDraw.start()
+    }
+    NumberAnimation {
+        id: penguinDraw
+        target: root
+        property: "_penguinProgress"
+        from: 0
+        to: 1
+        duration: 1800
+        onFinished: penguinHold.start()
+    }
+    Timer {
+        id: penguinHold
+        interval: 3000
+        onTriggered: penguinFadeOut.start()
+    }
+    NumberAnimation {
+        id: penguinFadeOut
+        target: penguinOverlay
+        property: "opacity"
+        from: 1
+        to: 0
+        duration: 350
+        onFinished: root._penguinActive = false
     }
 
     PlateZoomScope {

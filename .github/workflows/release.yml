@@ -98,10 +98,10 @@ jobs:
 
       - name: Stage pinned optional runtime assets
         run: |
-          if [[ "$GITHUB_REF_NAME" == "v5.3.0" ]]; then
+          if [[ "$GITHUB_REF_NAME" == "v5.4.0" ]]; then
             python tools/stage_runtime_mirror.py "$RUNNER_TEMP/runtime-assets"
           else
-            python tools/stage_runtime_mirror.py "$RUNNER_TEMP/runtime-assets" --source-release v5.3.0
+            python tools/stage_runtime_mirror.py "$RUNNER_TEMP/runtime-assets" --source-release v5.4.0
           fi
           python tools/stage_runtime_mirror.py "$RUNNER_TEMP/runtime-assets" --verify-only
 

@@ -277,7 +277,7 @@ Item {
         return marks;
     }
     // ── the camera view's zoom and pan (the live request) ───────────
-    // The wheel zooms the picture about the pointer and a left drag pans
+    // The wheel zooms the picture about the pointer and a left or middle drag pans
     // it; the FPS throttle keeps the wheel only while Shift is held and
     // the vertical drag on the right button, so the plain gestures are
     // the ones a picture is expected to answer. The view rides a
@@ -732,8 +732,8 @@ Item {
             objectName: "cameraGestureArea"
             anchors.fill: parent
             enabled: root.cameraControlLive
-            acceptedButtons: Qt.LeftButton | Qt.RightButton
-            cursorShape: detectionOverlay.editing ? (_dragButton === Qt.RightButton && pressed ? Qt.ClosedHandCursor : Qt.CrossCursor) : _dragButton === Qt.RightButton && pressed ? Qt.SizeVerCursor : root.cameraZoom > 1.0 ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.ArrowCursor
+            acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+            cursorShape: detectionOverlay.editing ? ((_dragButton === Qt.RightButton || _dragButton === Qt.MiddleButton) && pressed ? Qt.ClosedHandCursor : Qt.CrossCursor) : _dragButton === Qt.RightButton && pressed ? Qt.SizeVerCursor : root.cameraZoom > 1.0 ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.ArrowCursor
             property real _lastX: 0
             property real _lastY: 0
             // The button the live drag belongs to: a move event
@@ -785,7 +785,7 @@ Item {
             }
             onPositionChanged: function (mouse) {
                 if (detectionOverlay.editing) {
-                    if (pressed && _dragButton === Qt.RightButton) {
+                    if (pressed && (_dragButton === Qt.RightButton || _dragButton === Qt.MiddleButton)) {
                         root.panCamera(mouse.x - _lastX, mouse.y - _lastY);
                         _lastX = mouse.x;
                         _lastY = mouse.y;

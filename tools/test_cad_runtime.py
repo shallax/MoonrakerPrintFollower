@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import numpy as np
-from mpf.toolhead.CadRuntime import install_runtime
+from mpf.toolhead.CadRuntime import install_runtime, runtime_assets
 from mpf.toolhead.ToolheadImport import read_step
 
 
@@ -95,9 +95,26 @@ def main():
                         help="measure the real isolated STEP helper and require at least 95%% coverage")
     parser.add_argument("--coverage-output", type=Path,
                         help="helper coverage data file (default: runtime-root/step-worker.coverage)")
+    parser.add_argument("--stage-assets", action="store_true",
+                        help="stage this platform's pinned release bytes from upstream before the release exists")
     args = parser.parse_args()
+    if args.stage_assets:
+        from unittest.mock import patch
+        from tools.stage_runtime_mirror import stage
+        asset_dir = args.runtime_root.parent / "release-assets"
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        for name, pin in runtime_assets():
+            stage(asset_dir, dict(name=name, url=pin.get("source_url", pin["url"]),
+                                  size=pin["size"], sha256=pin["sha256"],
+                                  source_size=pin.get("source_size"),
+                                  source_sha256=pin.get("source_sha256"),
+                                  derivation=pin.get("derivation")))
+        with patch("mpf.toolhead.CadRuntime.asset_url",
+                   lambda name: (asset_dir / name).as_uri()):
+            runtime = install_runtime(str(args.runtime_root), threading.Event(), print)
+    else:
+        runtime = install_runtime(str(args.runtime_root), threading.Event(), print)
     cancelled = threading.Event()
-    runtime = install_runtime(str(args.runtime_root), cancelled, print)
     fixture = ROOT / "tests" / "fixtures" / "toolhead"
     mm = read_step(str(fixture / "assembly.step"), runtime, cancelled)
     inch = read_step(str(fixture / "assembly-inch.step"), runtime, cancelled)

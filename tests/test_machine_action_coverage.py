@@ -898,6 +898,23 @@ class MachineActionCase(unittest.TestCase):
                          "Cache cleared. Restart Cura to also drop the session's downloaded file.")
         self.assertEqual(statuses, [action.cacheStatus])
 
+    def test_clear_cad_downloads_reports_removal_and_busy_refusal(self):
+        follower = self._follower()
+        clearer = Mock(return_value=True)
+        follower.toolhead_models = SimpleNamespace(clear_runtime_downloads=clearer,
+                                                   reset=Mock())
+        action = self._action(follower)
+        statuses = []
+        action.cadResetStatusChanged.connect(lambda: statuses.append(action.cadResetStatus))
+        action.clearCadDownloads()
+        clearer.assert_called_once_with()
+        self.assertIn("next STEP import", action.cadResetStatus)
+        clearer.side_effect = ValueError("Wait for the STEP import to finish")
+        action.clearCadDownloads()
+        self.assertIn("Wait for the STEP import", action.cadResetStatus)
+        self.assertEqual(statuses, ["CAD downloads removed. The next STEP import will download them again.",
+                                    action.cadResetStatus])
+
     def test_a_failing_cache_clear_is_reported_not_raised(self):
         action = self._action()
 

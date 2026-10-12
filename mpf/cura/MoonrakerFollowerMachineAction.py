@@ -41,6 +41,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
     cacheStatusChanged = pyqtSignal()
     onboardingResetStatusChanged = pyqtSignal()
     detectionResetStatusChanged = pyqtSignal()
+    cadResetStatusChanged = pyqtSignal()
     detectionEvidenceStatusChanged = pyqtSignal()
     migrationChanged = pyqtSignal()
     detectionChanged = pyqtSignal()
@@ -69,6 +70,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
         self._cache_status = ""
         self._onboarding_reset_status = ""
         self._detection_reset_status = ""
+        self._cad_reset_status = ""
         self._detection_evidence_status = ""
         self._detection_reset_pending = False
         if self._detection is not None:
@@ -533,6 +535,26 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtProperty(str, notify=cacheStatusChanged)
     def cacheStatus(self) -> str:
         return self._cache_status
+
+    @pyqtProperty(str, notify=cadResetStatusChanged)
+    def cadResetStatus(self) -> str:
+        return self._cad_reset_status
+
+    @pyqtSlot()
+    def clearCadDownloads(self) -> None:
+        """Clear optional STEP runtime files without removing saved models."""
+        if self._toolhead_models is None:
+            status = "CAD runtime is unavailable."
+        else:
+            try:
+                removed = self._toolhead_models.clear_runtime_downloads()
+            except (OSError, ValueError) as error:
+                status = f"Could not clear CAD downloads: {error}"
+            else:
+                status = ("CAD downloads removed. The next STEP import will download them again."
+                          if removed else "No CAD downloads were cached.")
+        self._cad_reset_status = status
+        self.cadResetStatusChanged.emit()
 
     @staticmethod
     def _url_is_usable(value: str) -> bool:

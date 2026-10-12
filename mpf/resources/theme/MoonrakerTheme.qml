@@ -98,4 +98,10 @@ QtObject {
     // The travel ink (the live ruling): purple — the grey family
     // belongs to the grid and the pending base now.
     readonly property color plateTravel: "#b085e8"
+    // The hidden print-follower drawing retains the G-code tool colours
+    // in every Preview line mode and against every host palette.
+    readonly property color penguinBackdrop: "#89939e"
+    readonly property color penguinBlack: "#20252b"
+    readonly property color penguinWhite: "#f4f4f4"
+    readonly property color penguinYellow: "#e9ad20"
 }

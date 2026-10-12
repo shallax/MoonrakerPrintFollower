@@ -941,6 +941,10 @@ heavier opt-in sampled once a minute, and the camera kill-switch stops
 the stream for isolation tests. Used for leak hunts and field reports;
 not needed in ordinary operation.
 
+**Remove local CAD downloads** in Diagnostics clears the cached STEP reader
+and isolated Python helper after any active import has finished. Saved toolhead
+models remain available. The next STEP import downloads the runtime again.
+
 ## Release gates
 
 Local checks (the hook runs lint/static checks, not the full suite):
@@ -958,7 +962,7 @@ gate and the native CAD conversion matrix to succeed before publication; a
 skipped required check fails the release. The CAD matrix runs on tags even
 though lint is intentionally skipped.
 The tag workflow prepares a draft GitHub release after those gates. It stages
-and hashes all optional runtime assets, copies them from `v5.3.0` for later
+and hashes all optional runtime assets, copies them from `v5.4.0` for later
 versions, uploads the plugin and runtime files, and compares GitHub's stored
 digests to the pins. Attach the corresponding-source and notices companion,
 then run `python tools/verify_runtime_release.py vX.Y.Z --require-companion`

@@ -827,4 +827,4 @@ jobs:
       - name: Install geometry and host coverage dependencies
         run: python -m pip install numpy coverage==7.16.2
       - name: Verify pinned CAD runtime, coloured STEP fixtures and isolated worker coverage
-        run: python tools/test_cad_runtime.py --runtime-root "${{ runner.temp }}/mpf/cad-smoke" --coverage-worker
+        run: python tools/test_cad_runtime.py --runtime-root "${{ runner.temp }}/mpf/cad-smoke" --coverage-worker --stage-assets

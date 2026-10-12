@@ -12,6 +12,13 @@ Release notes are maintained in
 
 ## Current release and next plans — update (12 October 2026)
 
+The `release/v5.4.0` branch starts from the merged 5.3.0 release at
+`77c815fd790d0051abe1bb640846ca7dbfab71eb`. Its scope is to mirror every
+optional runtime download on the matching GitHub release, preserve verified
+caches, remove bundled Microsoft DLLs from Windows assets, and complete the
+source/notice companion needed for publication. The 5.3.0 record below is
+historical.
+
 The `release/v5.3.0` branch starts from the 5.2.0 merge at
 `5683a1f081dfd79f56e417c5c4b2192abaffcbcc`. The author approved the design and
 installed control snapshots, then authorized release documentation, version
