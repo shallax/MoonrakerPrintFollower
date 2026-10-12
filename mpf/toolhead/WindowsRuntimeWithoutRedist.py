@@ -61,6 +61,9 @@ def strip_cad_wheel(source: Path, destination: Path):
         writer.writerows(rows)
         writer.writerow((record_name, "", ""))
         member = zipfile.ZipInfo(record_name, date_time=original.getinfo(record_name).date_time)
+        # ZipInfo defaults create_system from the host OS. Pin this generated
+        # member so Windows and Unix produce identical release bytes.
+        member.create_system = 3
         member.compress_type = zipfile.ZIP_STORED
         output.writestr(member, record.getvalue().encode("utf-8"))
     if removed != {"msvcp140", "vcomp140"} or repaired < 2:
