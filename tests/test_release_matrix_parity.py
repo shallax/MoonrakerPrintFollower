@@ -124,6 +124,26 @@ def local_units():
 
 
 class ReleaseMatrixParityTests(unittest.TestCase):
+    def test_canonical_screenshots_are_available_after_success_or_comparison_failure(self):
+        job = WORKFLOW.split('  screenshot-sync:\n', 1)[1].split('\n  analyze:', 1)[0]
+        self.assertIn('DOCKER_DEFAULT_PLATFORM=linux/amd64 tools/docker_dev.sh sh tools/run_captures.sh dist/screenshots', job)
+        upload = job.split('- name: Preserve canonical screenshots and comparison evidence', 1)[1]
+        self.assertIn('if: always()', upload)
+        self.assertIn('uses: actions/upload-artifact@v7', upload)
+        self.assertIn('name: screenshot-comparison', upload)
+        self.assertIn('dist/screenshots/*.png', upload)
+
+    def test_shared_linux_qt_install_includes_native_pinned_capture_runtime(self):
+        import ast
+        native = ast.parse((ROOT / 'tools' / 'native' / 'dev.py').read_text(encoding='utf-8'))
+        pins = next(ast.literal_eval(node.value) for node in native.body
+                    if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == 'PYPI_PINS' for target in node.targets))
+        install = WORKFLOW.split('- &install_qt_runtime', 1)[1].split('\n      - ', 1)[0]
+        for package in ('moderngl', 'glcontext'):
+            pin = next(value for value in pins if value.startswith(package+'=='))
+            self.assertIn(pin, install)
+
     def test_the_workflow_matrix_matches_the_units_declaration(self):
         names = workflow_matrix_names()
         declared = set(workflow_units())

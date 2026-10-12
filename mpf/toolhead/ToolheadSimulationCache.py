@@ -146,13 +146,16 @@ class ToolheadSimulationCache:
         finally:
             gl.glBindRenderbuffer(0x8D41, previous)
 
-    def try_copy_depth(self, gl, output, expected_key, completed):
+    def try_copy_depth(self, gl, output, expected_key, completed, *, source_region=None):
         """Copy completed depth only after exact source and storage agreement.
 
         This narrow capability accepts only the caller's explicitly owned,
         currently bound destination. Unsupported storage returns False before
         any pixel copy. Command failures raise, so the caller clears/rebuilds
         its image instead of trusting a possibly incomplete destination.
+        ``source_region`` is an integer rectangle in the full source image.
+        Its destination uses the original full viewport dimensions translated
+        by the negative rectangle origin, without changing the projection.
         """
         from PyQt6.QtGui import QOpenGLContext
         context = QOpenGLContext.currentContext()
@@ -162,14 +165,22 @@ class ToolheadSimulationCache:
         target = int(output.handle())
         viewport = tuple(map(int, gl.glGetIntegerv(0x0BA2)))
         width, height = self._size
+        region = (0, 0, width, height) if source_region is None else source_region
+        if (not isinstance(region, (tuple, list)) or len(region) != 4
+                or any(type(value) is not int for value in region)):
+            return False
+        rx, ry, rw, rh = region
+        if rx < 0 or ry < 0 or rw <= 0 or rh <= 0 or rx+rw > width or ry+rh > height:
+            return False
         if (target <= 0 or int(gl.glGetIntegerv(0x8CA6)) != target
-                or viewport != (0, 0, width, height)
-                or (output.size().width(), output.size().height()) != self._size
+                or viewport != (-rx, -ry, width, height)
+                or (output.size().width(), output.size().height()) != (rw, rh)
                 or output.format().samples() or int(gl.glGetIntegerv(0x80A9))):
             return False
         queries = self._depth_functions(context)
         if queries is None: return False
         read_target = int(gl.glGetIntegerv(0x8CAA))
+        scissor = bool(gl.glIsEnabled(0x0C11))
         try:
             error = int(gl.glGetError())
             if error: raise RuntimeError("Shared simulation depth found existing GL error: 0x%04x" % error)
@@ -183,7 +194,7 @@ class ToolheadSimulationCache:
             self._bind(0x8CA8, self._fbo.handle())
             self._bind(0x8CA9, target)
             gl.glDisable(0x0C11)
-            self._blit(0, 0, width, height, 0, 0, width, height, gl.GL_DEPTH_BUFFER_BIT, 0x2600)
+            self._blit(rx, ry, rx+rw, ry+rh, 0, 0, rw, rh, gl.GL_DEPTH_BUFFER_BIT, 0x2600)
             error = int(gl.glGetError())
             if error: raise RuntimeError("Shared simulation depth copy failed: 0x%04x" % error)
             return True
@@ -192,4 +203,5 @@ class ToolheadSimulationCache:
                 try: self._bind(0x8CA8, read_target)
                 finally: self._bind(0x8CA9, target)
             finally:
-                gl.glViewport(*viewport)
+                try: gl.glViewport(*viewport)
+                finally: (gl.glEnable if scissor else gl.glDisable)(0x0C11)

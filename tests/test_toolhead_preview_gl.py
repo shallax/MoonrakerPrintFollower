@@ -141,6 +141,8 @@ class PreviewGLContracts(unittest.TestCase):
     def test_core_shader_initialization_and_physical_viewport(self):
         self.renderer.render()
         self.assert_finished()
+        self.assertEqual(self.uniforms()["u_orthographic"], 1)
+        self.assertEqual(self.uniforms()["u_viewDirection"], (0., 0., 1.))
         profile = self.functions.call_args.args[0]
         profile.setVersion.assert_called_once_with(4, 1)
         profile.setProfile.assert_called_once_with(1)
@@ -150,6 +152,12 @@ class PreviewGLContracts(unittest.TestCase):
         self.buffer.setUsagePattern.assert_called_once_with(1)
         self.assertEqual(self.fbos[0].size(), Size(480, 400))
         self.gl.glViewport.assert_has_calls([call(0, 0, 480, 400), call(8, 12, 480, 400)])
+
+    def test_rotated_preview_supplies_its_orthographic_world_back_axis(self):
+        self.renderer._camera = (np.zeros(3), np.array(((0, 0, 1), (0, -1, 0), (1, 0, 0))), 40.)
+        self.renderer.render()
+        self.assertEqual(self.uniforms()['u_viewDirection'], (1., 0., 0.))
+        self.assertEqual(self.uniforms()['u_orthographic'], 1)
 
     def test_compatibility_shader_and_ext_framebuffer_entry_point(self):
         self.context.format.return_value.profile.return_value = 0
@@ -197,17 +205,17 @@ class PreviewGLContracts(unittest.TestCase):
             [1/3, 0, 0, -7/30, 0, -.4, 0, .87, 0, 0, -1/6, .5, 0, 0, 0, 1])
         self.assertTrue(all('u_light'+str(index) in values and 'u_direction'+str(index) in values for index in range(4)))
 
-    def test_draws_depth_then_premultiplied_colour_and_restores_qt_state(self):
+    def test_draws_opaque_before_premultiplied_transparency_and_restores_qt_state(self):
         self.renderer.render()
         self.assert_finished()
         self.program.setAttributeBuffer.assert_has_calls([
-            call('a_vertex', 0x1406, 0, 3, 44), call('a_normal', 0x1406, 12, 3, 44),
-            call('a_color', 0x1406, 24, 4, 44), call('a_surface', 0x1406, 40, 1, 44)])
-        self.program.setUniformValue.assert_has_calls([call('u_depthOnly', 1), call('u_depthOnly', 0)])
-        self.gl.glDrawArrays.assert_has_calls([call(4, 0, 6), call(4, 0, 6)])
+            call('a_vertex', 0x1406, 0, 3, 72), call('a_normal', 0x1406, 12, 3, 72),
+            call('a_color', 0x1406, 24, 4, 72), call('a_surface', 0x1406, 40, 1, 72), call('a_material', 0x1406, 44, 4, 72), call('a_body', 0x1406, 60, 1, 72), call('a_finish', 0x1406, 64, 2, 72)])
+        self.program.setUniformValue.assert_any_call('u_depthOnly', 0)
+        self.gl.glDrawArrays.assert_called_once_with(4, 0, 6)
         self.assertTrue(all(type(entry.args[2]) is int for entry in self.gl.glDrawArrays.call_args_list))
         self.gl.glBlendFuncSeparate.assert_called_once_with(0x0302, 0x0303, 1, 0x0303)
-        self.gl.glDepthFunc.assert_has_calls([call(0x0201), call(0x0203), call(0x0201)])
+        self.gl.glDepthFunc.assert_has_calls([call(0x0201), call(0x0201)])
         self.gl.glColorMask.assert_called_with(True, True, True, True)
         self.gl.glDepthMask.assert_called_with(True)
         self.gl.glDisable.assert_has_calls([call(0x0B71), call(0x0BE2)])
@@ -354,7 +362,7 @@ class PreviewGLContracts(unittest.TestCase):
         self.assertIn('texture copy failed', self.failure.call_args.args[0])
 
     def test_gl_state_cleanup_failure_does_not_skip_remaining_cleanup(self):
-        self.gl.glColorMask.side_effect = [None, None, None, RuntimeError('mask reset failed')]
+        self.gl.glColorMask.side_effect = [None, RuntimeError('mask reset failed')]
         self.renderer.render()
         self.assert_finished(failed=True)
         self.gl.glDepthMask.assert_called_with(True)

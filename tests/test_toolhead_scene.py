@@ -1,14 +1,17 @@
+from mpf.toolhead.ToolheadEnvironment import EnvironmentNotReady
 """Cura mesh and renderer API contracts; these doubles do not certify GPU pixels."""
 import importlib.util
 import pathlib
 import sys
 import unittest
+from contextlib import contextmanager, nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import numpy as np
 
 from mpf.geometry.ToolheadGeometry import mesh_from_arrays
+from mpf.toolhead.ToolheadFrameCache import retained_graphics, projected_bounds
 
 
 class SceneNode:
@@ -41,6 +44,141 @@ class SceneNode:
 
 
 class ToolheadSceneTests(unittest.TestCase):
+    def test_common_receiver_values_are_scoped_to_exact_camera_and_draw(self):
+        other = object()
+        values = [{'frame': 1}, {'camera': 2}, {'frame': 3}, {'outside': 4}]
+        with patch.object(self.node, 'receiver_uniforms', side_effect=values) as build:
+            with self.node._receiver_uniform_scope():
+                first = self.node._draw_receiver_uniforms(self.camera)
+                self.assertIs(self.node._draw_receiver_uniforms(self.camera), first)
+                self.assertEqual(self.node._draw_receiver_uniforms(other), values[1])
+                self.assertIs(self.node._draw_receiver_uniforms(self.camera), first)
+            with self.node._receiver_uniform_scope():
+                self.assertEqual(self.node._draw_receiver_uniforms(self.camera), values[2])
+            self.assertEqual(self.node._draw_receiver_uniforms(self.camera), values[3])
+        self.assertEqual(build.call_count, 4)
+        self.assertIsNone(self.node._receiver_frame_uniforms)
+
+    def test_receiver_scope_restores_parent_after_failure(self):
+        with self.node._receiver_uniform_scope():
+            parent = self.node._receiver_frame_uniforms
+            with self.assertRaisesRegex(RuntimeError, 'draw failed'):
+                with self.node._receiver_uniform_scope():
+                    raise RuntimeError('draw failed')
+            self.assertIs(self.node._receiver_frame_uniforms, parent)
+        self.assertIsNone(self.node._receiver_frame_uniforms)
+
+    def test_completed_query_geometry_never_selects_failed_combined_pbr_shader(self):
+        self.node._environment=Mock(recovery_ready=True)
+        factory=Mock(side_effect=AssertionError('Unsafe combined query shader selected'))
+        with patch.dict(sys.modules,{'mpf.toolhead.ToolheadEnvironmentRecovery':SimpleNamespace(create_recovery_shader=factory)}):
+            self.node._draw_mesh(self.camera,object(),None,None,None)
+        factory.assert_not_called()
+        self.node._environment.query_bindings.assert_not_called()
+        self.assertIs(self.batches[-1].shader,self.shader)
+        self.shader.setUniformValue.assert_any_call('u_opacity',1.)
+
+    def test_frozen_receiver_draw_never_reads_newer_node_uniforms_or_map(self):
+        newer=self.node._environment=Mock()
+        values=SimpleNamespace(camera=self.camera,apply=Mock())
+        pinned=Mock()
+        with patch.object(self.node,'receiver_uniforms',side_effect=AssertionError('Newer node inputs used')):
+            self.node._draw_mesh(self.camera,object(),None,None,None,
+                receiver_values=values,receiver_map=pinned)
+        values.apply.assert_called_once_with(self.shader)
+        pinned.apply.assert_called_once_with(self.shader)
+        pinned.release_bindings.assert_called_once_with()
+        newer.apply.assert_not_called();newer.release_bindings.assert_not_called()
+        with self.assertRaisesRegex(ValueError,'captured camera'):
+            self.node._draw_mesh(object(),object(),None,None,None,receiver_values=values)
+        with self.assertRaisesRegex(ValueError,'frozen receiver values'):
+            self.node._draw_mesh(self.camera,object(),None,None,None,receiver_map=pinned)
+
+    def test_ordinary_crop_retires_incompatible_shutter_and_foreground_before_admission(self):
+        from mpf.toolhead.ToolheadRotorRender import ToolheadRotorRender
+        from mpf.toolhead.ToolheadTransparency import ToolheadTransparency
+        rotor = ToolheadRotorRender()
+        rotor._size = (1600, 1200, 4)
+        rotor._work = rotor._resolve = rotor._result = object()
+        foreground = ToolheadTransparency()
+        foreground._size = (1600, 1200)
+        foreground._front = foreground._merged = object()
+        self.node._rotor_render = rotor
+        self.node._occlusion = SimpleNamespace(_transparency=foreground)
+        self.assertGreater(self.node._ordinary_retained_graphics(800,600,0),0)
+        self.node._retire_ordinary_graphics(800,600,0)
+        self.assertIsNone(rotor._size)
+        self.assertIsNone(foreground._size)
+        self.assertEqual(self.node._ordinary_retained_graphics(800,600,0),0)
+
+    def test_matching_ordinary_siblings_remain_cached_and_failed_sample_close_keeps_lease(self):
+        from mpf.toolhead.ToolheadRotorRender import ToolheadRotorRender
+        from mpf.toolhead.ToolheadTransparency import ToolheadTransparency
+        rotor = ToolheadRotorRender()
+        rotor._size = (800,600,0); rotor._work = object()
+        foreground = ToolheadTransparency()
+        foreground._size = (800,600); foreground._front = object()
+        self.node._rotor_render = rotor
+        self.node._occlusion = SimpleNamespace(_transparency=foreground)
+        self.node._retire_ordinary_graphics(800,600,0)
+        self.assertIsNotNone(rotor._work); self.assertIsNotNone(foreground._front)
+        leased = Mock(close=Mock(side_effect=RuntimeError('unknown sample retirement')))
+        foreground._sample_front = leased
+        with self.assertRaisesRegex(RuntimeError,'unknown sample retirement'):
+            self.node._retire_ordinary_graphics(800,600,0)
+        self.assertIs(foreground._sample_front, leased)
+
+
+
+    def test_composite_without_camera_clears_previous_ray_display(self):
+        self.node.set_model(self.mesh(), (0, 0, 0))
+        self.node.setVisible(True)
+        self.node.getSceneCamera = lambda: None
+        self.node._displayed_backend = 'Environment map'
+        self.module.ToolheadCompositePass(self.original, self.renderer, self.node).render()
+        self.assertEqual(self.node.reflection_status(), 'Waiting for a toolhead frame')
+
+    def test_reflection_display_status_tracks_completed_composition_and_fallback(self):
+        self.node.set_model(self.mesh(), (0, 0, 0))
+        self.node.setVisible(True)
+        self.node._frame_cache = SimpleNamespace(draw=Mock(return_value='Environment map'))
+        self.node.draw(self.camera)
+        self.assertEqual(self.node.reflection_status(), 'Displaying: Environment map')
+        self.node._frame_cache.draw.return_value = 'Environment map'
+        self.node.draw(self.camera)
+        self.assertEqual(self.node.reflection_status(), 'Displaying: Environment map')
+        self.node._frame_cache.draw.return_value = None
+        self.node.draw(self.camera)
+        self.assertIn('Waiting for a toolhead frame', self.node.reflection_status())
+        self.node._frame_cache.draw.side_effect = RuntimeError('blit failed')
+        with self.assertRaisesRegex(RuntimeError, 'blit failed'): self.node.draw(self.camera)
+        self.assertNotIn('Displaying:', self.node.reflection_status())
+        self.node._displayed_backend = 'Environment map'
+        self.node.set_opacity(0)
+        self.assertEqual(self.node.reflection_status(), 'Toolhead is not visible')
+        self.node.set_opacity(1)
+        self.node._reflections_enabled = False
+        self.assertEqual(self.node.reflection_status(), 'Reflections: off')
+        self.node._native_model = True
+        self.assertIn('Default toolhead', self.node.reflection_status())
+
+    def test_disabling_lighting_retires_receiver_storage_and_reenable_starts_fresh(self):
+        import gc, weakref
+        class Receiver: pass
+        owner=Receiver();reference=weakref.ref(owner)
+        self.node._scene_lighting=owner
+        self.node._lighting_failure='old optional capture error'
+        del owner
+        self.node.set_lighting_enabled(False)
+        gc.collect()
+        self.assertIsNone(reference())
+        self.assertIsNone(self.node._scene_lighting)
+        self.assertEqual(self.node._lighting_failure,'')
+        self.node.set_lighting_enabled(False)
+        self.node.set_lighting_enabled(True)
+        self.assertTrue(self.node._lighting_enabled)
+        self.assertIsNone(self.node._scene_lighting)
+
     def setUp(self):
         self.shader = Mock()
         self.opaque_factory = Mock(return_value=self.shader)
@@ -56,18 +194,21 @@ class ToolheadSceneTests(unittest.TestCase):
         batch.RenderType = SimpleNamespace(Solid=1, Transparent=2)
         batch.RenderMode = SimpleNamespace(Triangles=1)
         batch.BlendMode = SimpleNamespace(Normal=1)
-        self.camera = object()
+        identity = SimpleNamespace(getData=lambda: np.eye(4))
+        self.camera = SimpleNamespace(getProjectionMatrix=lambda: identity,
+            getInverseWorldTransformation=lambda: identity, getCameraLightPosition=lambda: [0., 10., 0.])
         scene = SimpleNamespace(getActiveCamera=lambda: self.camera)
         application = SimpleNamespace(getController=lambda: SimpleNamespace(getScene=lambda: scene),
             getTheme=lambda: SimpleNamespace(getColor=lambda name: SimpleNamespace(getRgb=lambda: (200, 210, 220, 255))))
         self.context = object()
         surfaces = {
-            "mpf.toolhead.ToolheadOpaqueShader": SimpleNamespace(create_opaque_shader=self.opaque_factory),
+            "mpf.toolhead.ToolheadOpaqueShader": SimpleNamespace(create_opaque_shader=self.opaque_factory, create_toolhead_shader=self.opengl.createShaderProgram),
             "PyQt6.QtGui": SimpleNamespace(QOpenGLContext=SimpleNamespace(currentContext=lambda: self.context)),
             "UM.Logger": SimpleNamespace(Logger=Mock()),
-            "mpf.toolhead.ToolheadFrameCache": SimpleNamespace(ToolheadFrameCache=lambda **kwargs:
+            "mpf.toolhead.ToolheadFrameCache": SimpleNamespace(retained_graphics=retained_graphics, projected_bounds=projected_bounds, ToolheadFrameCache=lambda **kwargs:
                 SimpleNamespace(draw=lambda gl, camera, bounds, transform, state, render, **kwargs: render(camera))),
             "UM.Mesh.MeshData": SimpleNamespace(MeshData=lambda **values: SimpleNamespace(**values)),
+            "UM.Math.Vector": SimpleNamespace(Vector=type("Vector", (), {})),
             "UM.Math.Color": SimpleNamespace(Color=lambda *values: values),
             "UM.Math.Matrix": SimpleNamespace(Matrix=lambda values: SimpleNamespace(getData=lambda: values)),
             "UM.Resources": SimpleNamespace(Resources=self.resources),
@@ -83,6 +224,7 @@ class ToolheadSceneTests(unittest.TestCase):
         context.start()
         self.addCleanup(context.stop)
         spec.loader.exec_module(module)
+        self.module = module
         self.node = module.ToolheadSceneNode()
         self.node._frame_cache = SimpleNamespace(draw=lambda gl, camera, bounds, transform, state, render, **kwargs: render(camera))
         self.original = Mock()
@@ -111,6 +253,188 @@ class ToolheadSceneTests(unittest.TestCase):
         self.render_frame()
         self.renderer.queueNode.assert_not_called()
         self.opengl.createShaderProgram.assert_not_called()
+
+    def test_hidden_source_bodies_do_not_use_translucent_rotor_budget(self):
+        from mpf.geometry.ToolheadGeometry import mesh_metadata
+        mesh=self.mesh();metadata=mesh_metadata(mesh)
+        metadata['bodies']=[dict(name='Body',source='unknown',centre=None,axis=None) for _ in range(66)]
+        mesh=mesh_from_arrays(np.repeat(mesh.triangles[:1],66,axis=0),[(1,0,0,0)]*66,body_ids=np.arange(66),metadata=metadata)
+        self.node.set_model(mesh,(0,0,0))
+        self.assertEqual(self.node._transparent_body_count,0)
+
+    def test_invisible_rotor_body_and_faces_stop_motion_without_hiding_static_head(self):
+        from mpf.geometry.ToolheadGeometry import mesh_metadata
+        mesh=self.mesh((1,1));metadata=mesh_metadata(mesh)
+        metadata['bodies']=[dict(name='Body',source='unknown',centre=None,axis=None)]*2
+        mesh=mesh_from_arrays(mesh.triangles,mesh.colours,[0,1],body_ids=[0,1],metadata=metadata)
+        node=self.node
+        node.set_model(mesh,(0,0,0));node.setVisible(True)
+        rotor=dict(body=0,centre=[0,0,0],axis=[0,0,1],rpm=3000,direction=1)
+        node.set_rotors([rotor],{})
+        self.assertTrue(node.rotors_moving())
+        for bodies,faces in (({'0':0},{}),({}, {'0':0})):
+            node.set_opacity_overrides(bodies,faces)
+            self.assertFalse(node.rotors_moving())
+            self.assertTrue(node.visible_for_render())
+            self.assertIsNotNone(node.getMeshData())
+            node.set_opacity_overrides({},{})
+            self.assertTrue(node.rotors_moving())
+
+    def test_body_and_face_colour_rebuilds_preserve_alpha_and_rotor_ranges(self):
+        node = self.node
+        node.set_colour_overrides({'0': '#ff0000'}, {})  # No imported mesh yet.
+        mesh = self.mesh((.3, 1))
+        node.set_model(mesh, (0, 0, 0))
+        node.setVisible(True)
+        before = mesh.colours.copy()
+        node.set_colour_overrides({'0': '#00ff00'}, {'0': '#ff0000', '1': 'imported'})
+        np.testing.assert_array_equal(node._body_colours, {'0': '#00ff00'})
+        self.assertEqual(node._face_colours, {'0': '#ff0000', '1': 'imported'})
+        self.assertEqual(node._transparent_body_count, 1)
+        np.testing.assert_array_equal(mesh.colours, before)
+        packed = node._translucent_mesh.colors
+        self.assertTrue(np.any(np.all(packed[:, :3] == [1, 0, 0], axis=1)))
+        node.set_colour_overrides({'0': '#00ff00'}, {'0': '#ff0000', '1': 'imported'})
+        node.set_colour_overrides({}, {})
+        self.assertEqual((node._body_colours, node._face_colours), ({}, {}))
+
+    def test_retired_environment_textures_are_removed_from_cached_shader(self):
+        from mpf.toolhead.ToolheadEnvironment import TEXTURE_UNIT,DEPTH_UNIT
+        textures={}
+        def register(unit,value):
+            if value is None: textures.pop(unit,None)
+            else: textures[unit]=value
+        self.shader.setTexture.side_effect=register
+        for alphas in ((1,),(.4,)):
+            node=self.node
+            node.set_model(self.mesh(alphas),(0,0,0))
+            storage=object();environment=Mock()
+            environment.apply.side_effect=lambda shader,storage=storage: [shader.setTexture(unit,storage) for unit in (TEXTURE_UNIT,DEPTH_UNIT)]
+            node._environment=environment
+            node._draw(self.camera)
+            self.assertEqual(textures,{TEXTURE_UNIT:storage,DEPTH_UNIT:storage})
+            node.set_scene(object(),object())
+            environment.close.assert_called_once()
+            node.set_lighting_enabled(False)
+            node._draw(self.camera)
+            self.assertEqual(textures,{})
+        self.shader.setTexture.reset_mock()
+        self.shader.setTexture.side_effect=lambda unit,value: (_ for _ in ()).throw(RuntimeError('registration failed')) if unit==TEXTURE_UNIT else None
+        with self.assertRaisesRegex(RuntimeError,'registration failed'): node._draw(self.camera)
+        self.shader.setTexture.assert_any_call(DEPTH_UNIT,None)
+
+    def test_temporal_frame_commits_only_after_successful_visible_composition(self):
+        node=self.node;node.set_model(self.mesh((1,)),(0,0,0))
+        owner=SimpleNamespace(available=True,revision=7,recovery_identity=None,
+            transition_identity=(6,0.),descriptor=None,read_scope=nullcontext,
+            begin_frame=Mock(return_value=(6,0.)),commit_frame=Mock())
+        node._environment=owner;node._frame_cache=Mock()
+        node._frame_cache.draw.side_effect=RuntimeError('draw failed')
+        with self.assertRaisesRegex(RuntimeError,'draw failed'):node.draw(self.camera)
+        owner.commit_frame.assert_not_called()
+        node._frame_cache.draw.side_effect=None;node._frame_cache.draw.return_value=None
+        node.draw(self.camera);owner.commit_frame.assert_not_called()
+        node._frame_cache.draw.return_value='Environment map'
+        node.draw(self.camera);owner.commit_frame.assert_called_once_with((6,0.))
+
+    def test_temporal_endpoint_and_steady_map_share_head_cache_state(self):
+        node=self.node;node.set_model(self.mesh((1,)),(0,0,0))
+        owner=SimpleNamespace(available=True,revision=7,recovery_identity=None,
+            transition_identity=(6,1.),transition_cache_identity=None,
+            descriptor=None,read_scope=nullcontext,
+            begin_frame=Mock(return_value=(6,1.)),commit_frame=Mock())
+        node._environment=owner;node._frame_cache=Mock(return_value='Environment map')
+        node.draw(self.camera);endpoint=node._frame_cache.draw.call_args.args[4]
+        owner.commit_frame.assert_called_once_with((6,1.))
+        owner.transition_identity=None;owner.begin_frame.return_value=None
+        node.draw(self.camera);steady=node._frame_cache.draw.call_args.args[4]
+        self.assertEqual(endpoint,steady)
+
+    def test_temporal_weight_invalidates_cached_head_without_changing_map_revision(self):
+        node=self.node
+        node.set_model(self.mesh((1,)),(0,0,0))
+        owner=SimpleNamespace(available=True,revision=7,recovery_identity=None,
+            transition_identity=(6,0.),descriptor=None,read_scope=nullcontext)
+        node._environment=owner;node._frame_cache=Mock()
+        node.draw(self.camera);before=node._frame_cache.draw.call_args.args[4]
+        owner.transition_identity=(6,.5)
+        node.draw(self.camera);after=node._frame_cache.draw.call_args.args[4]
+        self.assertNotEqual(before,after)
+        self.assertEqual(owner.revision,7)
+
+    def test_reflection_disable_retires_maps_and_invalidates_frame_without_mesh_rebuild(self):
+        from mpf.toolhead.ToolheadEnvironment import TEXTURE_UNIT, DEPTH_UNIT
+        for alphas in ((1,), (.4,)):
+            node = self.node
+            node.set_reflections_enabled(True)
+            node.set_model(self.mesh(alphas), (0, 0, 0))
+            opaque, translucent = node.getMeshData(), node._translucent_mesh
+            textures = {}
+            self.shader.setTexture.side_effect = lambda unit, value, textures=textures: textures.pop(unit, None) if value is None else textures.update({unit: value})
+            storage = object()
+            owner = Mock(available=True, revision=7, read_scope=nullcontext)
+            owner.apply.side_effect = lambda shader, storage=storage: [shader.setTexture(unit, storage) for unit in (TEXTURE_UNIT, DEPTH_UNIT)]
+            node._environment = owner
+            cache = Mock()
+            cache.draw.side_effect = lambda gl, camera, bounds, transform, state, render, **kw: render(camera)
+            node._frame_cache = cache
+            node.draw(self.camera)
+            state = cache.draw.call_args.args[4]
+            self.assertEqual(textures, {TEXTURE_UNIT: storage, DEPTH_UNIT: storage})
+            node.set_reflections_enabled(False)
+            node.set_reflections_enabled(False)
+            owner.close.assert_called_once()
+            self.assertIsNone(node._environment)
+            self.assertIsNone(node._environment_scene)
+            node.draw(self.camera)
+            self.assertNotEqual(cache.draw.call_args.args[4], state)
+            self.assertEqual(textures, {})
+            self.shader.setUniformValue.assert_any_call("u_environmentEnabled", 0)
+            self.assertTrue(node._lighting_enabled)
+            self.assertIs(node.getMeshData(), opaque)
+            self.assertIs(node._translucent_mesh, translucent)
+
+    def test_recovery_admission_changes_crop_key_without_changing_front_map(self):
+        node = self.node
+        node.set_model(self.mesh((1,)), (0, 0, 0))
+        owner = SimpleNamespace(available=True, revision=7, recovery_identity=None, descriptor=None, read_scope=nullcontext)
+        node._environment = owner
+        node._frame_cache = cache = Mock()
+        node.draw(self.camera)
+        fallback = cache.draw.call_args.args[4]
+        owner.recovery_identity = (31, ('captured', 'model', 'prefix'))
+        node.draw(self.camera)
+        recovered = cache.draw.call_args.args[4]
+        self.assertNotEqual(recovered, fallback)
+        owner.recovery_identity = None
+        node.draw(self.camera)
+        self.assertEqual(cache.draw.call_args.args[4], fallback)
+        owner.recovery_identity = (32, ('other', 'model', 'prefix'))
+        node.draw(self.camera)
+        self.assertNotEqual(cache.draw.call_args.args[4], recovered)
+        self.assertEqual((owner.available, owner.revision), (True, 7))
+
+    def test_reflection_read_scope_encloses_static_rotor_and_composition_and_unwinds_failure(self):
+        events = []
+        @contextmanager
+        def scope():
+            events.append('enter')
+            try: yield
+            finally: events.append('exit')
+        self.node.set_model(self.mesh((1,)), (0, 0, 0))
+        self.node._environment = SimpleNamespace(available=True, revision=7, descriptor=None,
+            recovery_identity=None, read_scope=scope)
+        def frame(*args, **kwargs):
+            self.assertEqual(events, ['enter'])
+            events.extend(('static', 'rotors', 'composition'))
+            return 'Environment map'
+        self.node._frame_cache = SimpleNamespace(draw=Mock(side_effect=frame))
+        self.node.draw(self.camera)
+        self.assertEqual(events, ['enter', 'static', 'rotors', 'composition', 'exit'])
+        events.clear()
+        self.node._frame_cache.draw.side_effect = RuntimeError('composition failed')
+        with self.assertRaisesRegex(RuntimeError, 'composition failed'): self.node.draw(self.camera)
+        self.assertEqual(events, ['enter', 'exit'])
 
     def test_native_mesh_is_not_transformed_or_lit_and_uses_stock_colour_shader(self):
         mesh = SimpleNamespace(vertices=np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]]))
@@ -199,9 +523,79 @@ class ToolheadSceneTests(unittest.TestCase):
         self.node.prepare_occlusion(self.renderer, self.camera, self.gl)
         self.assertIsNone(self.node._depth_seed)
         self.assertEqual(self.node.render_failure(), "")
+        old = self.node._occlusion
         self.node.set_native_model(object())
         self.node.prepare_occlusion(self.renderer, self.camera, self.gl)
-        self.node._occlusion.prepare.assert_called_once()
+        old.prepare.assert_called_once()
+        self.assertIsNone(self.node._occlusion)
+
+    def test_four_sample_seed_requires_original_depth_certificate_before_and_after_bed(self):
+        from contextlib import nullcontext
+        from mpf.toolhead import ToolheadOcclusion as module
+        helper = module.ToolheadOcclusion()
+        revision = ('paths', 'fraction-.5')
+        provider = SimpleNamespace(get_visible_depth_revision=lambda *args: 'single',
+            get_sample_depth_revision=Mock(return_value=revision),
+            render_visible_depth=Mock(return_value=True), copy_visible_depth=Mock())
+        renderer = SimpleNamespace(getBatches=lambda: [], getRenderPass=lambda name: provider)
+        self.gl.glGetIntegerv.side_effect = lambda name: (0,0,800,600) if name==0x0BA2 else 0
+        class Target:
+            _context = object()
+        target, cropped = Target(), object()
+        helper._draw_bed = Mock()
+        args = self.gl,target,self.camera,(0,0,800,600),(128,160,64,96),cropped
+        with patch.object(module,'ToolheadSampleTarget',Target), \
+                patch.object(module,'preserved_samples',side_effect=lambda *args:nullcontext()):
+            key, seed = helper.prepare(renderer,self.camera,self.gl)
+            self.assertEqual(key[3],revision)
+            self.assertTrue(seed(*args))
+            provider.render_visible_depth.assert_called_once_with(self.gl,target,self.camera,cropped,args[3],args[4],'fraction-.5')
+            provider.copy_visible_depth.assert_not_called()
+            helper._draw_bed.assert_called_once_with(self.gl,self.camera,args[3],args[4],[],cropped)
+            self.assertFalse(seed(*args[:-1]))  # No independently recomputed crop camera.
+            provider.get_sample_depth_revision.return_value = ('paths','fraction-.75')
+            self.assertFalse(seed(*args))
+            self.assertEqual(provider.render_visible_depth.call_count,1)
+            provider.get_sample_depth_revision.return_value = revision
+            provider.render_visible_depth.return_value = False
+            self.assertFalse(seed(*args));self.assertEqual(helper._draw_bed.call_count,1)
+            provider.render_visible_depth.return_value = True
+            provider.get_sample_depth_revision.side_effect = [revision,('paths','new')]
+            self.assertFalse(seed(*args))  # Source changed while bed was drawn.
+            provider.get_sample_depth_revision.side_effect = None
+            for receipt, expected in ((('empty',42),True),(('unsupported',),False),(None,False)):
+                provider.get_sample_depth_revision.return_value = receipt
+                _, seed = helper.prepare(renderer,self.camera,self.gl)
+                provider.render_visible_depth.reset_mock()
+                self.assertEqual(seed(*args),expected)
+                provider.render_visible_depth.assert_not_called()
+            del provider.get_sample_depth_revision
+            _, seed = helper.prepare(renderer,self.camera,self.gl)
+            self.assertFalse(seed(*args))
+
+    def test_solid_depth_uses_delivered_crop_camera_without_recomputing_projection(self):
+        from mpf.toolhead.ToolheadOcclusion import ToolheadOcclusion
+        helper = ToolheadOcclusion()
+        mesh = Mock(); mesh.getVertices.return_value = np.zeros((3,3))
+        transform = SimpleNamespace(getData=lambda:np.eye(4))
+        batch = SimpleNamespace(renderMode=1,renderType=1,items=[dict(mesh=mesh,transformation=transform)])
+        renderer = SimpleNamespace(getBatches=lambda:[batch],getRenderPass=lambda name:None)
+        self.gl.glGetIntegerv.side_effect = lambda key:(0,0,800,600) if key==0x0BA2 else 0
+        original = Mock(); original.getProjectionMatrix.side_effect = AssertionError('projection recomputed')
+        _,seed = helper.prepare(renderer,original,self.gl)
+        cropped = object()
+        self.assertTrue(seed(self.gl,object(),original,(0,0,800,600),(128,160,64,96),cropped))
+        self.batches[0].render.assert_called_once_with(cropped)
+        original.getProjectionMatrix.assert_not_called()
+
+    def test_standalone_full_view_solid_depth_retains_original_camera(self):
+        from mpf.toolhead.ToolheadOcclusion import ToolheadOcclusion
+        helper = ToolheadOcclusion()
+        mesh = Mock(); mesh.getVertices.return_value = np.zeros((3,3))
+        transform = SimpleNamespace(getData=lambda:np.eye(4))
+        item = dict(mesh=mesh,transformation=transform)
+        helper._draw_bed(self.gl,self.camera,(0,0,800,600),(0,0,800,600),[item])
+        self.batches[0].render.assert_called_once_with(self.camera)
 
     def test_transparent_bed_and_frame_blend_without_becoming_solid_occluders(self):
         from mpf.toolhead.ToolheadOcclusion import ToolheadOcclusion
@@ -262,6 +656,81 @@ class ToolheadSceneTests(unittest.TestCase):
         np.testing.assert_array_equal(mesh.colors, [(0, 0, 0, 1)] * 3)
         np.testing.assert_array_equal(model.triangles[0, 0], (1, 2, 3))
 
+    def test_projection_mode_switch_sets_world_view_ray_from_active_camera(self):
+        self.node.set_model(self.mesh(), (0, 0, 0))
+        self.node.setVisible(True)
+        view = np.eye(4)
+        view[:3, :3] = ((0, 0, -1), (0, 1, 0), (1, 0, 0))
+        self.camera.getInverseWorldTransformation = lambda: SimpleNamespace(getData=lambda: view)
+        for orthographic in (1, 0, 1):
+            projection = np.eye(4)
+            if not orthographic: projection[3] = [0, 0, -1, 0]
+            self.camera.getProjectionMatrix = lambda projection=projection: SimpleNamespace(getData=lambda: projection)
+            self.render_frame()
+            self.shader.setUniformValue.assert_any_call("u_orthographic", orthographic)
+            self.shader.setUniformValue.assert_any_call("u_viewDirection", [1., 0., 0.])
+
+    def test_full_hierarchy_publication_selects_and_withdraws_cached_variants(self):
+        full_opaque,full_mixed=Mock(),Mock()
+        factory=Mock(side_effect=lambda *,opaque: full_opaque if opaque else full_mixed)
+        sys.modules["mpf.toolhead.ToolheadOpaqueShader"].create_hierarchy_shader=factory
+        self.node.prepare_render_context()
+        environment=SimpleNamespace(_storage=SimpleNamespace(front_full_hierarchy=0),
+            available=True,apply=Mock(),release_bindings=Mock())
+        self.node._environment=environment
+        def draw(glass=None):
+            self.batches.clear()
+            self.node._draw_mesh(self.camera,object(),glass,"transform",None)
+            return [batch.shader for batch in self.batches]
+        self.assertEqual(draw(),[self.shader])
+        factory.assert_not_called()
+        environment._storage.front_full_hierarchy=42
+        self.assertEqual(draw(),[full_opaque])
+        factory.assert_called_once_with(opaque=True)
+        self.assertEqual(draw(object()),[full_mixed]*3)
+        self.assertEqual(factory.call_count,2)
+        self.assertEqual(factory.call_args.kwargs,{"opaque":False})
+        # Availability may withdraw while the old handle remains registered.
+        environment.available=False
+        self.assertEqual(draw(),[self.shader])
+        self.assertEqual(draw(object()),[self.shader]*3)
+        environment.available=True;environment._storage.front_full_hierarchy=0
+        self.assertEqual(draw(),[self.shader])
+        environment._storage.front_full_hierarchy=84
+        self.assertEqual(draw(),[full_opaque])
+        self.assertEqual(draw(object()),[full_mixed]*3)
+        self.assertEqual(factory.call_count,2)  # re-publication reuses programs, not textures
+        environment.apply.assert_any_call(full_opaque)
+        environment.apply.assert_any_call(full_mixed)
+        full_opaque.release.assert_called()
+        full_mixed.release.assert_called()
+
+    def test_full_hierarchy_context_change_discards_both_specializations(self):
+        created=[]
+        def specialize(*,opaque):
+            shader=Mock();created.append((opaque,shader));return shader
+        factory=Mock(side_effect=specialize)
+        sys.modules["mpf.toolhead.ToolheadOpaqueShader"].create_hierarchy_shader=factory
+        self.node.prepare_render_context()
+        environment=SimpleNamespace(_storage=SimpleNamespace(front_full_hierarchy=42),
+            available=True,apply=Mock(),release_bindings=Mock(),close=Mock())
+        self.node._environment=environment
+        for glass in (None,object()):self.node._draw_mesh(self.camera,object(),glass,"transform",None)
+        self.assertEqual(len(created),2)
+        old_context=self.context;self.context=object()
+        self.node.prepare_render_context()
+        environment.close.assert_called_once_with()
+        self.assertIsNone(self.node._hierarchy_shader_cache)
+        self.assertIsNone(self.node._full_opaque_shader_cache)
+        self.assertIsNone(self.node._environment)
+        self.node._environment=environment
+        for glass in (None,object()):self.node._draw_mesh(self.camera,object(),glass,"transform",None)
+        self.assertEqual([opaque for opaque,shader in created],[True,False,True,False])
+        self.assertIs(self.node._full_opaque_shader_cache[0],self.context)
+        self.assertIs(self.node._hierarchy_shader_cache[0],self.context)
+        self.assertIsNot(self.context,old_context)
+        self.assertIsNot(created[0][1],created[2][1])
+
     def test_opaque_faces_use_depth_writing_batch_and_black_shader_fallback(self):
         self.node.set_model(self.mesh(), (0, 0, 0))
         self.node.setVisible(True)
@@ -298,6 +767,61 @@ class ToolheadSceneTests(unittest.TestCase):
         self.assertEqual(len(self.batches), 1)
         self.assertEqual(self.batches[0].options["type"], 2)
         self.assertTrue(self.batches[0].options["backface_cull"])
+
+    def test_translucent_depth_is_written_after_colour_and_only_for_native_overlay(self):
+        node=self.node
+        node.set_model(self.mesh((.4,)),(0,0,0))
+        node._depth_seed=object()
+        node._draw(self.camera)
+        self.assertEqual([batch.options['type'] for batch in self.batches],[2,1])
+        depth=self.batches[-1]
+        depth.addItem.assert_called_once_with('toolhead transform',mesh=node._translucent_mesh)
+        depth.options['state_setup_callback'](self.gl)
+        self.gl.glColorMask.assert_called_with(False,False,False,False)
+        self.gl.glDepthMask.assert_called_with(True)
+        self.gl.glDepthFunc.assert_called_with(self.gl.GL_LESS)
+        self.shader.setUniformValue.assert_any_call('u_depthOnly',1)
+        self.assertEqual(self.shader.setUniformValue.call_args.args,('u_depthOnly',0))
+        node._depth_seed=None
+        self.batches.clear()
+        node._draw(self.camera)
+        self.assertEqual([batch.options['type'] for batch in self.batches],[2])
+
+    def test_depth_after_shader_switch_does_not_rebind_retired_reflection_map(self):
+        self.node._shader = self.shader
+        registrations = {unit: object() for unit in (3, 4, 5, 6, 7)}
+        self.shader.setTexture.side_effect = lambda unit, texture: registrations.__setitem__(unit, texture)
+        def depth_batch(shader, **options):
+            def render(camera):
+                self.assertEqual(registrations, {unit: None for unit in (3, 4, 5, 6, 7)})
+            return Mock(render=render)
+        with patch.object(self.module, 'RenderBatch', Mock(side_effect=depth_batch,
+                RenderType=SimpleNamespace(Solid=1))):
+            self.node._write_translucent_depth(self.camera, [('glass', 'transform', None)])
+
+    def test_translucent_depth_failure_restores_colour_and_owned_bindings(self):
+        node=self.node
+        node._shader=self.shader
+        environment=Mock();node._environment=environment
+        surfaces=[('glass','transform','normal')]
+        def broken_batch(shader,**options):
+            options['state_setup_callback'](self.gl)
+            return Mock(render=Mock(side_effect=RuntimeError('depth fault')))
+        with patch.object(self.module,'RenderBatch',Mock(side_effect=broken_batch,RenderType=SimpleNamespace(Solid=1))):
+            with self.assertRaisesRegex(RuntimeError,'depth fault'):
+                node._write_translucent_depth(self.camera,surfaces)
+        self.gl.glColorMask.assert_called_with(True,True,True,True)
+        self.shader.release.assert_called_once()
+        environment.release_bindings.assert_called_once()
+        self.shader.setUniformValue.assert_called_with('u_depthOnly',0)
+        self.shader.reset_mock();environment.reset_mock()
+        self.shader.setUniformValue.side_effect=lambda name,value: (_ for _ in ()).throw(RuntimeError('reset fault')) if value==0 else None
+        with self.assertRaisesRegex(RuntimeError,'reset fault'):
+            node._write_translucent_depth(self.camera,surfaces)
+        self.shader.release.assert_called_once()
+        self.gl.glColorMask.assert_called_with(True,True,True,True)
+        environment.release_bindings.assert_called_once()
+        node._write_translucent_depth(self.camera,[])
 
     def test_model_replacement_retires_translucent_buffers_and_hiding_stops_rendering(self):
         self.node.set_model(self.mesh((.4,)), (0, 0, 0))
@@ -412,6 +936,57 @@ class ToolheadSceneTests(unittest.TestCase):
         self.node.render(self.renderer)
         self.assertIsNone(self.node._composite_pass)
 
+    def test_owned_shader_releases_when_batch_draw_raises(self):
+        self.node.set_model(self.mesh(), (0, 0, 0))
+        self.node.prepare_render_context()
+        batch = Mock()
+        batch.render.side_effect = RuntimeError('injected batch failure')
+        factory = Mock(return_value=batch)
+        factory.RenderType = SimpleNamespace(Solid=1, Transparent=2)
+        with patch.object(self.module, 'RenderBatch', factory):
+            with self.assertRaisesRegex(RuntimeError, 'injected batch failure'):
+                self.node._draw_mesh(self.camera, self.node.getMeshData(), None, None, None)
+        self.shader.release.assert_called_once()
+
+    def test_layer_lookup_joins_original_prepass_opaque_and_glass_draw_order(self):
+        from contextlib import contextmanager
+        opaque, glass = object(), object()
+        sequence = []; admitted = [False]
+        @contextmanager
+        def read():
+            admitted[0] = True; sequence.append('read')
+            try: yield
+            finally: admitted[0] = False; sequence.append('release')
+        def apply(shader, mesh):
+            self.assertTrue(admitted[0]); self.assertIs(shader, self.shader)
+            sequence.append(mesh)
+        def batch(shader, **options):
+            result = Mock()
+            def render(camera):
+                options['state_setup_callback'](self.gl)
+                if 'state_teardown_callback' in options: options['state_teardown_callback'](self.gl)
+            result.render.side_effect = render; return result
+        batch.RenderType = SimpleNamespace(Solid=1, Transparent=2)
+        layer = SimpleNamespace(shader=Mock(return_value=self.shader),read=read,apply=apply,
+            planes=lambda:(0,),select_plane=lambda plane:None)
+        self.node._environment = Mock(recovery_ready=True)
+        with patch.object(self.module, 'RenderBatch', batch):
+            self.node._draw_mesh(self.camera, opaque, glass, None, None, layer_draw=layer)
+        self.assertEqual(sequence, ['read', opaque, opaque, glass, 'release'])
+        layer.shader.assert_called_once_with(False)
+        self.node._environment.query_bindings.assert_not_called()
+        self.shader.release.assert_called_once()
+        self.gl.glBlendFuncSeparate.assert_called_with(self.gl.GL_SRC_ALPHA,
+            self.gl.GL_ONE_MINUS_SRC_ALPHA, self.gl.GL_ONE, self.gl.GL_ONE_MINUS_SRC_ALPHA)
+        sequence.clear(); self.shader.release.reset_mock()
+        layer.planes=lambda:range(4)
+        layer.select_plane=lambda plane:sequence.append(('plane',plane))
+        with patch.object(self.module,'RenderBatch',batch):
+            self.node._draw_mesh(self.camera,opaque,glass,None,None,layer_draw=layer)
+        self.assertEqual(sequence,['read',opaque,*[value for plane in range(4)
+            for value in (('plane',plane),opaque,glass)],'release'])
+        self.shader.release.assert_called_once()
+
     def test_draw_failure_restores_gl_state(self):
         self.node.set_model(self.mesh(), (0, 0, 0))
         self.node.setVisible(True)
@@ -459,6 +1034,75 @@ class ToolheadSceneTests(unittest.TestCase):
         self.context = None
         self.render_frame()
         self.assertIn("context unavailable", self.node.render_failure())
+
+    def test_parsed_local_lights_reuse_configuration_but_keep_pose_tip_opacity_live(self):
+        self.node.set_model(self.mesh(), (1,2,3))
+        self.node.set_attached_lights([dict(position=[2,3,4],direction=[0,0,-1],colour='#ffaa80',brightness=2)])
+        with patch.object(self.module,'light_values',wraps=self.module.light_values) as parse:
+            values = self.node.attached_light_uniforms()
+            before = tuple(values['u_attachedPosition[0]'])
+            bounds = self.node.scene_light_bounds()
+            np.testing.assert_allclose(self.node.scene_light_directions()[0], values['u_attachedDirection[0]'])
+            rows = self.node._parsed_local_lights()
+            values['u_attachedPosition[0]'][0] = 999
+            values['u_attachedPaint[0]'][0] = 999
+            bounds[0][0][0] = 999
+            self.node._render_position = SimpleNamespace(x=12,y=24,z=36)
+            self.node._tip += [1,1,1]
+            self.node.set_opacity(.25)
+            after = self.node.attached_light_uniforms()
+            np.testing.assert_allclose(after['u_attachedPosition[0]'],np.asarray(before)+[1,3,7])
+            np.testing.assert_allclose(self.node.scene_light_bounds()[0][0],after['u_attachedPosition[0]'])
+            self.assertEqual(after['u_lightOpacity'],.25)
+            self.assertEqual(after['u_attachedPaint[0]'],[1,170/255,128/255,1])
+            self.assertIs(self.node._parsed_local_lights(),rows)
+            self.assertEqual(parse.call_count,1)
+
+    def test_parsed_light_cache_detects_nested_edits_reordering_and_removal(self):
+        self.node.set_model(self.mesh(), (0,0,0))
+        mutations = [lambda rows: rows[0]['position'].__setitem__(0,7),
+            lambda rows: rows[0]['direction'].__setitem__(0,.5),
+            lambda rows: rows[0].__setitem__('colour','#112233'),
+            lambda rows: rows[0].__setitem__('brightness',.5),
+            lambda rows: rows[0].__setitem__('range',45),
+            lambda rows: rows[0].__setitem__('surface',7),
+            lambda rows: rows[0].__setitem__('paint',False),
+            lambda rows: rows.reverse(),lambda rows: rows.pop()]
+        for mutate in mutations:
+            self.node.set_attached_lights([dict(position=[1,2,3],direction=[0,0,-1],colour='#ff0000'),
+                dict(position=[4,5,6],direction=[0,1,0],colour='#0000ff')])
+            original = self.node.attached_light_uniforms()
+            cached = self.node._parsed_local_lights()
+            mutate(self.node._attached_lights)
+            self.assertIsNot(self.node._parsed_local_lights(),cached)
+            self.assertNotEqual(self.node.attached_light_uniforms(),original)
+        self.node.set_attached_lights([])
+        self.assertEqual(self.node._parsed_local_lights(),())
+        self.assertEqual(self.node.attached_light_uniforms(),{'u_lightOpacity':1.,'u_attachedCount':0})
+
+    def test_frozen_receiver_lights_do_not_follow_later_cached_configuration(self):
+        from mpf.toolhead.ToolheadCaptureValues import freeze_uniform
+        self.node.set_model(self.mesh(),(0,0,0))
+        self.node.set_attached_lights([dict(position=[1,2,3],direction=[0,0,-1],colour='#ff0000')])
+        before = self.node.receiver_uniforms(self.camera)
+        frozen = {name:freeze_uniform(value) for name,value in before.items()}
+        colour = frozen['u_attachedColour[0]']
+        position = frozen['u_attachedPosition[0]']
+        self.node._attached_lights[0]['colour'] = '#00ff00'
+        self.node._render_position = SimpleNamespace(x=30,y=40,z=50)
+        after = self.node.receiver_uniforms(self.camera)
+        self.assertNotEqual(freeze_uniform(after['u_attachedColour[0]']),colour)
+        self.assertNotEqual(freeze_uniform(after['u_attachedPosition[0]']),position)
+        self.assertEqual(freeze_uniform(before['u_attachedColour[0]']),colour)
+        self.assertEqual(freeze_uniform(before['u_attachedPosition[0]']),position)
+
+    def test_cached_black_lights_remain_uniform_inputs_without_bounds(self):
+        self.node.set_model(self.mesh(),(0,0,0))
+        self.node.set_attached_lights([dict(position=[1,2,3],direction=[0,0,-1],colour='#000000')])
+        self.assertEqual(self.node.scene_light_bounds(),[])
+        values=self.node.attached_light_uniforms()
+        self.assertEqual(values['u_attachedCount'],1)
+        self.assertEqual(values['u_attachedColour[0]'],[0.,0.,0.])
 
     def test_private_pose_keeps_scene_transform_unchanged_and_lights_follow_nozzle(self):
         class Matrix:
@@ -595,3 +1239,374 @@ class ToolheadSceneTests(unittest.TestCase):
         self.shader.setUniformValue.assert_any_call("u_light3", [0, 350, 110])
         self.shader.setUniformValue.assert_any_call("u_direction0", [1, -1, 0])
         self.shader.setUniformValue.assert_any_call("u_direction3", [0, -1, -1])
+
+
+class RotorMatrix:
+
+    def __init__(self, data=None):
+        self.data = np.eye(4) if data is None else np.array(data, dtype=float, copy=True)
+
+    def getData(self):
+        return self.data
+
+    def setRow(self, index, value):
+        self.data[index, :] = value
+
+    def setColumn(self, index, value):
+        self.data[:, index] = value
+
+    def invert(self):
+        self.data = np.linalg.inv(self.data)
+
+    def transpose(self):
+        self.data = self.data.T
+
+class RotorDelta(unittest.TestCase):
+    setUp = ToolheadSceneTests.setUp
+    mesh = ToolheadSceneTests.mesh
+
+    def install(self):
+        node = self.node
+        node._tip = np.zeros(3)
+        node._render_normal = RotorMatrix()
+        node._render_transform = RotorMatrix()
+        node._render_transform.data[:3, 3] = [10, 20, 30]
+        node._rotor_meshes = {0: ('moving opaque', 'moving glass')}
+        node._static_transparent = ['far glass', 'near glass']
+        node._mesh_centres = {id('moving glass'): np.array([0, 0, 0]), id('far glass'): np.array([0, 0, -20]), id('near glass'): np.array([0, 0, 20])}
+        row = dict(body=0, centre=[1, 2, 3], axis=[0, 0, 1], direction=1, fan='', rpm=3000, blur=True)
+        node._rotor_motion = SimpleNamespace(rows=[row], readings={}, phases={0: np.pi/2},
+            sample=lambda: [(row, np.pi / 2, 0.4, 'manual')])
+        node._frame_cache = SimpleNamespace(_key='cached static')
+        node._rotor_retry = 0.0
+        node._depth_seed = object()
+        node._occlusion = SimpleNamespace(overlay=Mock())
+        self.calls = []
+        node._draw_mesh = lambda camera, opaque, glass, transform, normal: self.calls.append((opaque, glass, transform.getData().copy()))
+        def depth(camera, surfaces):
+            self.assertEqual(len(self.calls)%4,0, 'all translucent colours must finish before any translucent depth')
+            self.assertEqual([item[0] for item in surfaces],['far glass','moving glass','near glass'])
+            self.assertEqual(node._occlusion.overlay.call_count,node._write_translucent_depth.call_count-1)
+        node._write_translucent_depth=Mock(side_effect=depth)
+        identity = SimpleNamespace(getData=lambda: np.eye(4))
+        self.camera = SimpleNamespace(getWorldPosition=lambda: SimpleNamespace(x=0, y=0, z=100),
+            getProjectionMatrix=lambda: identity, getInverseWorldTransformation=lambda: identity)
+        self.work = object()
+        self.static = Mock()
+        self.patcher = patch.dict(sys.modules, {'UM.Math.Matrix': SimpleNamespace(Matrix=RotorMatrix)})
+        self.patcher.start()
+        self.addCleanup(self.patcher.stop)
+        return row
+
+    def test_shutter_region_is_projected_swept_bounds_and_background_excludes_phase(self):
+        row = self.install(); node = self.node
+        node._rotor_bounds = (np.array([-.2,-.2,-.2]),np.array([.2,.2,.2]))
+        node._render_transform.data[:] = np.eye(4)
+        calls = []
+        def combine(*args, **kwargs):
+            calls.append(kwargs)
+            return self.work
+        node._rotor_render = SimpleNamespace(combine=combine)
+        node._animate_rotors(self.gl,self.static,self.camera,(256,256,0))
+        node._rotor_motion.sample = lambda: [(row,2.4,.7,'manual')]
+        node._animate_rotors(self.gl,self.static,self.camera,(256,256,0))
+        self.assertEqual(calls[0]['region'],(96,96,64,64))
+        self.assertEqual(calls[0]['background_key'],calls[1]['background_key'])
+        self.assertNotEqual(calls[0]['cache_key'],calls[1]['cache_key'])
+        node._frame_cache._key = 'changed depth/reflection/camera'
+        node._animate_rotors(self.gl,self.static,self.camera,(256,256,0))
+        self.assertNotEqual(calls[1]['background_key'],calls[2]['background_key'])
+        node._animate_rotors(self.gl,self.static,self.camera,(256,256,4))
+        self.assertIsNone(calls[-1]['region'])
+        node._rotor_bounds = None
+        node._animate_rotors(self.gl,self.static,self.camera,(256,256,0))
+        self.assertIsNone(calls[-1]['region'])
+
+    def test_pose_conversion_glass_back_to_front_and_native_overlay_once(self):
+        self.install()
+        node = self.node
+
+        def combine(gl, static, camera, size, render, blurred, cache_key=None, **kwargs):
+            self.assertTrue(blurred)
+            render(camera, 0.0)
+            return 'completed shutter'
+        node._rotor_render = SimpleNamespace(_work=self.work, combine=Mock(side_effect=combine))
+        self.assertEqual(node._animate_rotors(self.gl, self.static, self.camera, (32, 32, 0)), 'completed shutter')
+        self.assertEqual([(opaque, glass) for opaque, glass, _ in self.calls], [('moving opaque', None), (None, 'far glass'), (None, 'moving glass'), (None, 'near glass')])
+        matrix = self.calls[0][2]
+        centre = np.array([1, 3, -2, 1.0])
+        np.testing.assert_allclose(matrix @ centre, [11, 23, 28, 1])
+        np.testing.assert_allclose(matrix @ (centre + [1, 0, 0, 0]), [11, 23, 27, 1], atol=1e-08)
+        node._occlusion.overlay.assert_called_once_with(self.gl, self.work, self.camera)
+        node._write_translucent_depth.assert_called_once()
+
+    def test_orthographic_transparency_sorts_view_depth_not_lateral_distance(self):
+        self.install()
+        self.node._mesh_centres[id('near glass')] = np.array([1000, 0, 20])
+        def combine(gl, static, camera, size, render, blurred, cache_key=None, **kwargs):
+            render(camera, 0.)
+            return static
+        self.node._rotor_render = SimpleNamespace(_work=self.work, combine=combine)
+        self.node._animate_rotors(self.gl, self.static, self.camera, (32, 32, 0))
+        self.assertEqual([glass for _opaque, glass, _transform in self.calls if glass], ['far glass', 'moving glass', 'near glass'])
+
+    def test_shared_plan_freezes_pivots_normal_matrices_and_hard_speed_identity(self):
+        row = self.install()
+        node = self.node
+        poses = node._rotor_motion.sample()
+        original = node.rotor_identity()
+        node._rotor_motion.phases[0] += .2
+        self.assertEqual(node.rotor_identity(), original, 'advancing time cannot cancel an admitted group')
+        row['rpm'] = 0
+        stopped = node.rotor_identity()
+        self.assertNotEqual(stopped, original)
+        node._rotor_motion.phases[0] += .2
+        self.assertNotEqual(node.rotor_identity(), stopped)
+        for fraction in (-.5, 0., .5):
+            plan = node.rotor_draw_plan(self.camera, poses, fraction)
+            self.assertEqual([(mesh,glass) for mesh,glass,*_ in plan],
+                [('moving opaque',False),('far glass',True),('moving glass',True),('near glass',True)])
+            model, normal = (matrix.getData() for matrix in plan[0][2:])
+            centre = np.array([1, 3, -2, 1.])
+            np.testing.assert_allclose(model @ centre, [11,23,28,1])
+            np.testing.assert_allclose(normal[:3,:3], np.linalg.inv(model[:3,:3]).T)
+        node._rotor_meshes[0] = (None,None)
+        node._static_transparent.append(None)
+        self.assertEqual([item[0] for item in node.rotor_draw_plan(self.camera,poses,0.)], ['far glass','near glass'])
+
+    def test_display_rotors_do_not_solve_matrices_and_scene_transform_still_does(self):
+        row = self.install()
+        row['axis'] = [1 / np.sqrt(3)] * 3
+        poses = self.node._rotor_motion.sample()
+        for fraction in (-.5, 0., .5):
+            with patch.object(RotorMatrix, 'invert', side_effect=AssertionError('general solve')):
+                plan = self.node.rotor_draw_plan(self.camera, poses, fraction)
+            model, normal = (matrix.getData() for matrix in plan[0][2:])
+            np.testing.assert_allclose(normal[:3, :3], np.linalg.inv(model[:3, :3]).T, atol=1e-14)
+            np.testing.assert_array_equal(normal[3], [0, 0, 0, 1])
+            np.testing.assert_array_equal(normal[:, 3], [0, 0, 0, 1])
+        self.node._render_transform = None
+        base = RotorMatrix(np.diag([2., 3., 4., 1.]))
+        self.node.getWorldTransformation = lambda: base
+        plan = self.node.rotor_draw_plan(self.camera, poses, 0.)
+        model, normal = (matrix.getData() for matrix in plan[0][2:])
+        np.testing.assert_allclose(normal[:3, :3], np.linalg.inv(model[:3, :3]).T)
+
+    def test_shutter_failure_retry_deadline_does_not_extend_during_backoff(self):
+        self.install()
+        node = self.node
+        now = [10.0]
+        failed = Mock(side_effect=RuntimeError('allocation fault'))
+        node._rotor_render = SimpleNamespace(combine=failed)
+        with patch('time.monotonic', side_effect=lambda: now[0]):
+            for instant in (10.0, 11.0, 14.0):
+                now[0] = instant
+                self.assertIs(node._animate_rotors(self.gl, self.static, self.camera, (32, 32, 0)), self.static)
+                self.assertEqual(node._rotor_retry, 15.0)
+            self.assertEqual(failed.call_count, 1)
+            self.assertIsNone(node._frame_cache._key)
+            now[0] = 15.0
+            node._animate_rotors(self.gl, self.static, self.camera, (32, 32, 0))
+            self.assertEqual(failed.call_count, 2)
+            self.assertEqual(node._rotor_retry, 20.0)
+        self.assertEqual(self.static.bind.call_count, 4)
+
+    def test_sharp_fallback_keeps_static_cache_and_uses_its_own_foreground_target(self):
+        self.install()
+        node = self.node
+        failed_work, sharp_work = object(), object()
+        helper = SimpleNamespace(_work=failed_work)
+        def combine(*args, **kwargs):
+            args[4](self.camera, 0.)
+            raise RuntimeError('shutter failed after drawing')
+        def sharp(gl, static, camera, size, render, *, cache_key=None):
+            helper._work = sharp_work
+            render(camera, 0.)
+            return sharp_work
+        helper.combine = combine; helper.sharp = sharp
+        node._rotor_render = helper
+        self.assertIs(node._animate_rotors(self.gl, self.static, self.camera, (32, 32, 0)), sharp_work)
+        self.assertEqual(node._frame_cache._key, 'cached static')
+        self.static.bind.assert_not_called()
+        self.assertEqual(node._occlusion.overlay.call_args_list,
+            [unittest.mock.call(self.gl, failed_work, self.camera), unittest.mock.call(self.gl, sharp_work, self.camera)])
+
+    def test_static_cache_excludes_glass_while_each_rotor_pose_owns_it(self):
+        self.install()
+        node = self.node
+        node._translucent_mesh = 'static glass'
+        node.setMeshData('static opaque')
+        node._draw(self.camera)
+        self.assertEqual([(a, b) for a, b, _ in self.calls], [('static opaque', None)])
+        node._frame_cache = Mock()
+        node._model_bounds = ((0, 0, 0), (1, 1, 1))
+        node.draw(self.camera)
+        kwargs = node._frame_cache.draw.call_args.kwargs
+        self.assertIsNone(kwargs['post_render'])
+        self.assertEqual(kwargs['animate'], node._animate_rotors)
+
+    def test_native_model_retires_environment_rotor_targets_and_cad_partitions(self):
+        node = self.node
+        node.set_model(self.mesh((1, 0.4)), (0, 0, 0))
+        old_environment = Mock()
+        node._environment = old_environment
+        node._environment_scene = object()
+        node._rotor_render = object()
+        node._static_transparent = [object()]
+        node._mesh_centres = {123: np.ones(3)}
+        node._occlusion = node._depth_seed = node._depth_revision = node._opaque_shader_cache = object()
+        node.set_native_model(object())
+        old_environment.close.assert_called_once()
+        self.assertIsNone(node._environment)
+        self.assertIsNone(node._environment_scene)
+        self.assertIsNone(node._rotor_render)
+        self.assertEqual(node._static_transparent, [])
+        self.assertEqual(node._mesh_centres, {})
+        self.assertIsNone(node._occlusion)
+        self.assertIsNone(node._depth_seed)
+        self.assertIsNone(node._depth_revision)
+        self.assertIsNone(node._opaque_shader_cache)
+
+    def test_readings_update_preserves_mesh_partitions_and_phase_owner(self):
+        node = self.node
+        node.set_model(self.mesh(), (0, 0, 0))
+        node._build_meshes = Mock()
+        row = dict(body=0, centre=[0, 0, 0], axis=[0, 0, 1], rpm=3000, direction=1, fan='fan', blur=True)
+        readings = {'fan': {'available': True, 'rpm': 1200}}
+        node.set_rotors([row], readings)
+        motion = node._rotor_motion
+        readings2 = {'fan': {'available': True, 'rpm': 2400}}
+        node.set_rotors([row], readings2)
+        node._build_meshes.assert_called_once()
+        self.assertIs(node._rotor_motion, motion)
+        self.assertIs(motion.readings, readings2)
+
+
+class OptionalRenderTests(unittest.TestCase):
+    setUp=ToolheadSceneTests.setUp
+    mesh=ToolheadSceneTests.mesh
+
+    def test_reflection_disable_fences_published_and_partial_owners_and_reenable_is_fresh(self):
+        for available in (True, False):
+            node = self.node
+            node.set_reflections_enabled(True)
+            node.setVisible(True)
+            old = Mock(ready=True, available=available, wake_delay=5., requires_replacement=False)
+            fresh = Mock(ready=True, wake_delay=0., requires_replacement=False)
+            scene = Mock()
+            scene.signature.return_value = ('file',)
+            window = Mock()
+            app = Mock(getMainWindow=lambda window=window: window)
+            app.callLater.side_effect = lambda callback: callback()
+            factory = Mock(return_value=fresh)
+            modules = {'UM.Application': SimpleNamespace(Application=SimpleNamespace(getInstance=lambda app=app: app)),
+                'mpf.toolhead.ToolheadEnvironment': SimpleNamespace(ToolheadEnvironment=factory, EnvironmentNotReady=EnvironmentNotReady),
+                'mpf.toolhead.ToolheadAsyncEnvironment': SimpleNamespace(create_environment=factory),
+                'mpf.toolhead.ToolheadEnvironmentScene': SimpleNamespace(ToolheadEnvironmentScene=Mock(return_value=scene))}
+            timers = []
+            with patch.dict(sys.modules, modules), patch('PyQt6.QtCore.QTimer.singleShot', side_effect=lambda delay, callback, timers=timers: timers.append(callback)):
+                node._environment = old
+                node._environment_scene = object()
+                node._view = Mock()
+                node._view.getCurrentLayer.return_value = 2
+                node._view.getCurrentPath.return_value = 3.
+                node._root = object()
+                node._schedule_environment()
+                node.set_reflections_enabled(False)
+                timers[0]()
+                window.update.assert_not_called()
+                old.close.assert_called_once()
+                node.prepare_environment(self.renderer, self.camera, self.gl)
+                factory.assert_not_called()
+                node.set_reflections_enabled(True)
+                node.prepare_environment(self.renderer, self.camera, self.gl)
+                factory.assert_called_once()
+                self.assertIs(node._environment, fresh)
+                fresh.step.assert_called_once()
+                window.update.assert_called_once()
+                node.set_reflections_enabled(False)
+
+    def test_environment_wakes_belong_to_their_owner_and_stale_timer_cannot_suppress_new_capture(self):
+        node=self.node; node.setVisible(True)
+        old,new=Mock(wake_delay=5.),Mock(wake_delay=0.)
+        window=Mock(); app=Mock(getMainWindow=lambda:window)
+        app.callLater.side_effect=lambda callback:callback()
+        timers=[]
+        with patch.dict(sys.modules,{'UM.Application':SimpleNamespace(Application=SimpleNamespace(getInstance=lambda:app))}), \
+                patch('PyQt6.QtCore.QTimer.singleShot',side_effect=lambda delay,callback:timers.append(callback)):
+            node._environment=old;node._schedule_environment()
+            first=node._environment_wake
+            node._environment=new;node._schedule_environment()
+            window.update.assert_called_once()
+            self.assertIsNone(node._environment_wake)
+            self.assertIsNot(first,node._environment_wake)
+            timers[0]()
+            window.update.assert_called_once()
+            self.assertIsNone(node._environment_wake)
+
+    def test_active_replacement_supersedes_same_owner_idle_wake_and_fences_old_callback(self):
+        node = self.node; node.setVisible(True)
+        owner = Mock(wake_delay=1.)
+        window = Mock(); app = Mock(getMainWindow=lambda: window)
+        callbacks, timers = [], []
+        app.callLater.side_effect = callbacks.append
+        with patch.dict(sys.modules, {'UM.Application': SimpleNamespace(Application=SimpleNamespace(getInstance=lambda: app))}), \
+                patch('PyQt6.QtCore.QTimer.singleShot', side_effect=lambda delay, callback: timers.append(callback)), \
+                patch.object(self.module.time, 'monotonic', return_value=100.):
+            node._environment = owner; node._schedule_environment()
+            callbacks.pop(0)()
+            node._schedule_environment()
+            self.assertEqual(callbacks, [])
+            owner.wake_delay = 0.
+            node._schedule_environment()
+            callbacks.pop(0)()
+            window.update.assert_called_once()
+            timers[0]()
+            window.update.assert_called_once()
+            self.assertIsNone(node._environment_wake)
+
+    def test_environment_schedule_is_bounded_fenced_by_visibility_and_optional_failure(self):
+        owner, scene=Mock(ready=True, wake_delay=0., requires_replacement=False),Mock()
+        scene.signature.return_value=('file',);scene.snapshot.return_value='frozen scene'
+        owner.step.side_effect=lambda gl,context,hard,soft,snapshot: bool(snapshot())
+        window=Mock();app=Mock(getMainWindow=lambda:window)
+        app.callLater.side_effect=lambda callback:callback()
+        modules={'mpf.toolhead.ToolheadEnvironment':SimpleNamespace(ToolheadEnvironment=Mock(return_value=owner), EnvironmentNotReady=EnvironmentNotReady),
+            'mpf.toolhead.ToolheadAsyncEnvironment':SimpleNamespace(create_environment=Mock(return_value=owner)),
+            'mpf.toolhead.ToolheadEnvironmentScene':SimpleNamespace(ToolheadEnvironmentScene=Mock(return_value=scene)),
+            'UM.Application':SimpleNamespace(Application=SimpleNamespace(getInstance=lambda:app))}
+        with patch.dict(sys.modules,modules):
+            node=self.node;node.setVisible(True);node._view=Mock();node._root=object()
+            node._view.getCurrentLayer.return_value=2;node._view.getCurrentPath.return_value=3.
+            node.prepare_environment(self.renderer,self.camera,self.gl)
+            owner.fail.assert_not_called()
+            scene.snapshot.assert_called_once();window.update.assert_called_once()
+            node.setVisible(False);node.prepare_environment(self.renderer,self.camera,self.gl)
+            window.update.assert_called_once()
+            owner.ready=False;node.prepare_environment(self.renderer,self.camera,self.gl)
+            self.assertEqual(owner.step.call_count,2)
+            owner.ready=True;scene.signature.side_effect=RuntimeError('legacy mode')
+            node.prepare_environment(self.renderer,self.camera,self.gl)
+            self.assertEqual(str(owner.fail.call_args.args[0]),'legacy mode')
+            self.assertEqual(node.render_failure(),'')
+            scene.signature.side_effect=EnvironmentNotReady('slicing')
+            node.prepare_environment(self.renderer,self.camera,self.gl)
+            owner.defer.assert_called_once()
+            self.assertEqual(owner.fail.call_count,1)
+
+    def test_real_rotor_partition_is_retained_across_readings_and_crop_covers_all_angles(self):
+        node=self.node;node.set_model(self.mesh((1.,.35)),(0,0,0));node.set_surface_detail(.7)
+        row=dict(body=0,centre=[0,0,0],axis=[0,0,1],rpm=3000,direction=1,blur=True,fan='fan')
+        node.set_rotors([row],{'fan':dict(available=True,rpm=100)})
+        opaque,glass=node._rotor_meshes[0]
+        self.assertIsNotNone(opaque);self.assertIsNotNone(glass);self.assertIsNone(node.getMeshData())
+        from mpf.geometry.ToolheadRotors import rotation
+        low,high=node._rotor_bounds
+        points=node._source_model.triangles.reshape(-1,3)[:,[0,2,1]]*[1,1,-1]
+        for angle in np.linspace(0,2*np.pi,129):
+            moved=np.column_stack((points,np.ones(len(points)))) @ rotation([0,0,0],[0,1,0],angle).T
+            self.assertTrue(np.all(moved[:,:3]>=low));self.assertTrue(np.all(moved[:,:3]<=high))
+        self.assertLess(high[1]-low[1], .001)
+        node.set_rotors([row],{'fan':dict(available=True,rpm=200)})
+        self.assertIs(node._rotor_meshes[0][0],opaque)
+        node.set_rotors([],{});self.assertIsNotNone(node.getMeshData());self.assertEqual(node._rotor_meshes,{})

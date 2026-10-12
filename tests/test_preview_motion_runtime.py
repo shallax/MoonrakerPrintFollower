@@ -177,6 +177,44 @@ class PreviewMotionTests(harness.PreviewMotionTests):
         self.assertEqual(0.5, self.motion._displayed)
         self.assertFalse(self.motion._timer.isActive(), "the glide is finished")
 
+    def test_observation_bursts_do_not_restart_an_active_timer(self):
+        from unittest.mock import patch
+        self.motion.write(1, 0.1)
+        self.clock.advance(1.0)
+        self.motion.write(1, 0.2)
+        started = self.motion._last
+        with patch.object(self.motion._timer, "start", wraps=self.motion._timer.start) as start:
+            for fraction in (0.21, 0.22, 0.23, 0.24):
+                self.clock.advance(0.01)
+                self.motion.write(1, fraction)
+            start.assert_not_called()
+        self.assertEqual(started, self.motion._last)
+        self.motion._tick()
+        self.assertGreater(self.motion._displayed, 0.1)
+        self.assertLessEqual(self.motion._displayed, 0.24)
+
+    def test_a_delayed_tick_accounts_for_all_elapsed_time(self):
+        self.motion.write(1, 0.1)
+        self.clock.advance(1.0)
+        self.motion.write(1, 0.8)
+        self.motion._velocity = 0.1
+        self.clock.advance(1.0)
+        self.motion._tick()
+        # v*dt + gap*0.8*dt, with the full second rather than a 250ms cap.
+        self.assertAlmostEqual(0.1 + 0.1 + 0.7 * 0.8, self.motion._displayed)
+        self.clock.advance(30.0)
+        self.motion._tick()
+        self.assertEqual(0.8, self.motion._displayed)
+        self.assertFalse(self.motion._timer.isActive())
+
+    def test_idle_restart_does_not_charge_the_paused_interval(self):
+        self.motion.write(1, 0.1)
+        self.clock.advance(100.0)
+        self.motion.write(1, 0.2)
+        self.assertEqual(self.clock.now, self.motion._last)
+        self.motion._tick()
+        self.assertEqual(0.1, self.motion._displayed)
+
     def test_close_stops_the_timer(self):
         self.motion.write(1, 0.2)
         self.clock.advance(1.0)

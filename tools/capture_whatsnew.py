@@ -36,7 +36,7 @@ TARGET_WIDTH, TARGET_HEIGHT = 900, 700
 class WhatsNewModelStub(QObject):
     """Stand-in for the monitor model's what's-new surface. The content
     is the REAL curated list — the capture documents what the user
-    sees on a fresh 4.1.0 launch."""
+    sees when opening the current release notes."""
 
     def __init__(self, parent=None):
         super().__init__(parent)

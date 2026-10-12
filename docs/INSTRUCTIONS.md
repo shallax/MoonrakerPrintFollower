@@ -22,6 +22,37 @@ files; the real-QML engine gate checks local types and singleton imports.
 
 ## Development environment
 
+The live environment map uses six perspective colour faces captured from the
+housing centre, excluding the head. Each face retains local depth testing but
+exports only colour. All faces and roughness mipmaps complete before publication;
+unchanged scenes sleep until their key changes. The material shader keeps one
+cube lookup outside a short transition between complete maps, with a sharper
+artist roughness mip curve and optional detected-flat-bed reprojection, avoiding
+exported depth and search-hierarchy work. This is a
+single-probe approximation, with incomplete visibility behind captured surfaces
+and approximate parallax. Original CAD shading, opacity and depth remain in the
+raster path. Full immutable path indices may be shared through the existing
+fenced worker input leases. Lighting outputs use integer viewport offsets to
+crop storage without changing the original camera projection; moving output
+crops do not retain a growing motion trail. Enable reflections directly controls the map; removed renderer and
+fallback preferences are ignored.
+
+Apple's software OpenGL renderer can drop textured draws under a small scissor.
+Context-qualified fallbacks render ordinary foreground fully and clip the final
+fragment, shade window-coordinate lighting within a smaller viewport, and compose
+the exact texture intersection. Accelerated rendering retains its existing path.
+Software fixture proofs separate native varying precision from exact pixel mapping;
+they retain strict coverage, category, alpha, depth and composed-image assertions.
+
+The unused split receiver/query and shadow-map prototypes are excluded from the
+release. Their source is preserved at commit `80c4b263`; the old combined
+geometry-query/CAD-PBR variant caused a Metal GPU hang and must not be rerun.
+Directional depth-search helpers and hierarchy storage remain explicit reference
+fixtures. Their GPU tests prove boundary and nearest-hit behavior independently
+of the production central colour lookup. Standalone GPU measurements must be
+reported separately from live Cura responsiveness; a locked desktop prevents
+live visual or frame-rate validation.
+
 The Makefile is the entry point on every host. Linux defaults to the
 pinned Docker image; macOS and Windows default to native host tools.
 On macOS and Windows, run `make dev_install` once. Linux builds its
@@ -54,6 +85,12 @@ are visible; a Python 3.14 patch release difference is acceptable.
   missing, obtain it from the distro's binary packages and add its
   directory to `LD_LIBRARY_PATH`, and run the suite with
   `QT_QPA_PLATFORM=offscreen`.
+  The Linux compatibility CI jobs run under Xvfb with Mesa software OpenGL,
+  including the coverage workers. `MPF_REQUIRE_OFFSCREEN_GL=1` makes an
+  unavailable context fail the environment/rotor tests instead of skipping
+  their GPU assertions. The material shader tests share the showcase's
+  context setup, including the CPU renderer and retained Mesa DLL directory
+  on headless Windows.
 - Linters: `ruff` (`pip install ruff`, configuration in `ruff.toml` —
   correctness core only, not style) and `qmlformat` from
   `qt6-declarative-dev-tools`. QML files must stay qmlformat-canonical:
@@ -141,7 +178,17 @@ are visible; a Python 3.14 patch release difference is acceptable.
   the driver's evidence rectangles are desktop-relative. The macOS
   available-desktop fit moves the content below the menu/title bars,
   so assuming a window origin of (0, 0) misses controls and drag handles.
-- The toolhead showcase is part of the same capture commands, through
+- Preview Toolhead screenshots use synthetic data only.
+  `tools/capture_preview_toolhead.py` adds four real-QML Toolhead states:
+  ready, collapsed, printing with Z-offset available, and disconnected.
+  A normal refresh emits light and dark-suffixed images; `CAPTURE_THEME`
+  selects a single theme for the separate repeatability legs. Signals terminate in the local
+  presentation; no printer model, connection or command handler is created.
+  These scenes participate in the normal contrast and repeatability checks.
+  Their isolated software icon provider reproduces Uranium's alpha-mask tint,
+  so dark header/tab icons retain their production text colour. It is capture
+  tooling only and is never packaged into the plugin.
+- The 3-D toolhead showcase is part of the same capture commands, through
   `tools/capture_toolhead.py`. Its attributed model, cube, and exact saved light
   configuration live in `tests/fixtures/toolhead/showcase/`; generation never
   reads a developer's Cura settings. It compiles the production GLSL with
@@ -264,6 +311,23 @@ What differs on this leg, and why:
   pixels, each differing by no more than one 8-bit RGB level, with fully
   opaque alpha. This bounds native OpenGL rounding without accepting holes
   or geometry changes. Canonical Linux captures remain byte-exact.
+  Apple's software renderer uses four fixed floating-point spatial samples
+  with one CPU resolve and final byte conversion. Its bed lighting/grid use
+  the same physical plane reconstructed from pixel coordinates and the exact
+  uploaded camera matrix, avoiding drift in interpolated positions. This is
+  a capture-only adapter. Precise/invariant vertex transforms alone did not
+  prevent a software-raster shared-edge crack. Tube facets therefore supply
+  one enclosing support triangle without an internal raster seam, then use canonical double-precision
+  original edge equations with complementary edge ownership in the fragment
+  shader. Original barycentrics restore their attributes and depth; samples
+  outside the original triangle are discarded. This adapter requires the
+  fixed orthographic showcase camera. The large bed plane retains its original
+  vertex/raster coverage and depth with no geometry stage: CI lost a whole bed
+  triangle with heavily clipped enclosing support. Its physical lighting/grid
+  position still uses the fixed-plane uniforms. Both receiver programs receive
+  the same camera, lighting and viewport values for each scene.
+  Other drivers retain their shader source and native
+  four-sample MSAA. The pixel and alpha requirements above remain unchanged.
 - **`make ui_test MODE=suite` and `make ui_release_gate` use the native
   desktop harness.** They stage Cura, the plugin and the driver, then
   invoke `tests/harness/runner.py` using the harness environment (see

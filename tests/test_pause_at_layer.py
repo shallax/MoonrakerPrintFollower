@@ -266,6 +266,28 @@ class NextPausePolicyTests(unittest.TestCase):
         self.assertEqual(pipeline.anchor_eta(4, current=4, fraction=0.0), "")
         self.assertTrue(pipeline.anchor_eta(4, current=4, fraction=0.25).startswith("in"))
 
+    def test_follower_anchor_and_pause_deadlines_match_print_finish_day_suffix(self):
+        from datetime import datetime
+        from unittest.mock import patch
+        from mpf.monitor import MonitorFormatting
+        now = datetime(2026, 10, 7, 23, 30).astimezone()
+        for remaining, expected in ((600, '23:40'), (1800, '00:00 +1'),
+                                    (26 * 3600, 'Fri 01:30 +2')):
+            pipeline, _physical, _calls, _view = self._pipeline(manual={9}, remaining_value=remaining)
+            with self.subTest(remaining=remaining), \
+                    patch('mpf.application.NextPausePipeline.datetime') as follower_clock, \
+                    patch.object(MonitorFormatting, 'datetime') as monitor_clock:
+                follower_clock.now.return_value = now
+                monitor_clock.now.return_value = now
+                from types import SimpleNamespace
+                finish = MonitorFormatting.core_values(
+                    SimpleNamespace(core={'print_stats': {'state': 'printing'}}, auxiliary={}, objects=()),
+                    SimpleNamespace(layer=SimpleNamespace(index=4, total=10, thickness=None), layer_eta=remaining,
+                                    estimated_time=0, metadata_complete=True), True)['monitorFinish']
+                self.assertEqual(finish, expected)
+                self.assertEqual(pipeline.anchor_eta(9, current=4), 'in 4m · ≈' + finish)
+                self.assertEqual(pipeline.rebuild(current=4)[0]['eta'], 'in 4m · ≈' + finish)
+
     def test_the_bar_hides_without_an_eta(self):
         # No ETA, no bar (the live ruling): the fraction is None —
         # the model's -1.0 sentinel renders the fill absent.

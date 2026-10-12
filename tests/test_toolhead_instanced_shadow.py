@@ -428,4 +428,29 @@ class InstancedShadowTests(unittest.TestCase):
         self.create_vertex.assert_not_called()
 
 
-if __name__ == '__main__': unittest.main()
+
+    def test_owned_indices_migrate_to_borrowed_generation_without_destroying_owner(self):
+        self.assertTrue(self.render());old=self.helper._storage['lines']
+        Buffer=self.qt['PyQt6.QtOpenGL'].QOpenGLBuffer
+        shared=Buffer(Buffer.Type.IndexBuffer);shared.body=self.mesh.indices.tobytes()
+        # Binding an index buffer here would mutate the caller's VAO.
+        shared.bind=Mock(side_effect=AssertionError('borrow must not bind EBO'))
+        owner=SimpleNamespace(shared_index_buffer=Mock(return_value=(object(),shared,shared.id,1)))
+        def draw():return self.helper.render(self.mesh,FIXTURE,self.camera,'model',0,2,self.view,self.gl,index_owner=owner)
+        count=len(self.buffers)
+        self.assertTrue(draw());old.destroy.assert_called_once()
+        self.assertIs(self.helper._storage['lines'],shared)
+        self.assertEqual(len(self.buffers),count+1)  # Only tiny template allocated.
+        self.assert_restored();self.assertTrue(draw());self.assertEqual(len(self.buffers),count+1)
+        owner.shared_index_buffer.return_value=(owner,shared,shared.id,2)
+        self.assertTrue(draw());shared.destroy.assert_not_called();self.assert_restored()
+        self.helper.close();shared.destroy.assert_not_called()
+
+    def test_borrowed_draw_failure_never_destroys_shared_index_allocation(self):
+        Buffer=self.qt['PyQt6.QtOpenGL'].QOpenGLBuffer
+        shared=Buffer(Buffer.Type.IndexBuffer);shared.body=self.mesh.indices.tobytes()
+        owner=SimpleNamespace(shared_index_buffer=lambda *args:(shared,shared,shared.id,1))
+        self.procs[b'glDrawElementsInstanced']=Mock(side_effect=RuntimeError('driver failure'))
+        with self.assertRaisesRegex(RuntimeError,'Shadow instanced draw failed'):
+            self.helper.render(self.mesh,FIXTURE,self.camera,'model',0,2,self.view,self.gl,index_owner=owner)
+        shared.destroy.assert_not_called();self.assert_restored()

@@ -2,11 +2,223 @@
 from __future__ import annotations
 
 import ctypes
+from itertools import count
+from contextlib import contextmanager
+from weakref import WeakKeyDictionary, WeakValueDictionary, WeakSet
 import numpy as np
 
 
+_native_uploads = WeakKeyDictionary()
+_native_candidates = WeakKeyDictionary()
+_upload_owners = WeakSet()
+_native_logged = WeakSet()
+
+
+def _native_signature(mesh, retained=None):
+    """Cheap exact metadata for an adapter-qualified immutable source."""
+    count=mesh.getVertexCount();signature=[('source_type',type(mesh))];size=0
+    arrays=[('vertices',mesh.getVertices(),3),('normals',mesh.getNormals(),3),
+        ('colors',getattr(mesh,'_colors',None),4),('uvs',mesh.getUVCoordinates(),2)]
+    sizes={'float':1,'int':1,'vector2f':2,'vector4f':4}
+    for name in mesh.attributeNames():
+        if name=='prev_line_types': continue  # Native render replaces this equivalent array.
+        attribute=mesh.getAttribute(name);kind=attribute['opengl_type']
+        if kind not in sizes:return None
+        signature.append((name,kind,attribute['opengl_name']))
+        arrays.append((name,attribute['value'],sizes[kind]))
+    for name,array,components in arrays:
+        if array is None:signature.append((name,None));continue
+        if (not isinstance(array,np.ndarray) or array.dtype not in (np.dtype('float32'),np.dtype('int32'))
+                or not array.flags.c_contiguous or array.flags.writeable or array.size!=count*components):return None
+        if retained is not None:retained.append(array)
+        signature.append((name,id(array),array.shape,array.dtype.str));size+=array.nbytes
+    indices=mesh.getIndices()
+    if indices is None or indices.flags.writeable:return None
+    if retained is not None:retained.append(indices)
+    signature.append(('indices',id(indices),indices.shape,indices.dtype.str))
+    return tuple(signature),size+count*4
+
+
+def observe_native_upload(mesh, context, writer, *, source_type):
+    """Observe before the qualified native draw; never borrow an untracked upload."""
+    from UM.View.GL.OpenGL import OpenGL
+    from PyQt6.QtGui import QOpenGLContext
+    try:
+        if context is None or QOpenGLContext.currentContext() is not context:return None
+        if type(mesh) is not source_type or OpenGL.createVertexBuffer is not writer:return None
+        if getattr(OpenGL.getInstance().createVertexBuffer,'__func__',None) is not OpenGL.createVertexBuffer:return None
+        retained=[]
+        signature=_native_signature(mesh,retained)
+        if signature is None:return None
+        return getattr(mesh,OpenGL.VertexBufferProperty,None),signature,tuple(retained),OpenGL.createVertexBuffer
+    except (AttributeError,TypeError,ValueError,KeyError):return None
+
+
+def admit_native_upload(mesh, context, observation):
+    if observation is None:return False
+    from UM.View.GL.OpenGL import OpenGL
+    from PyQt6.QtOpenGL import QOpenGLBuffer
+    from PyQt6.QtGui import QOpenGLContext
+    if QOpenGLContext.currentContext() is not context:return False
+    previous,signature,retained,writer=observation
+    buffer=getattr(mesh,OpenGL.VertexBufferProperty,None)
+    if not isinstance(buffer,QOpenGLBuffer):return False
+    try:
+        if getattr(OpenGL.getInstance().createVertexBuffer,'__func__',None) is not writer:return False
+        if OpenGL.createVertexBuffer is not writer or _native_signature(mesh)!=signature:return False
+        attribute=mesh.getAttribute('prev_line_types');types=mesh.getAttribute('line_types')['value']
+        values=attribute['value']
+        if (attribute['opengl_type']!='float' or attribute['opengl_name']!='a_prev_line_type'
+                or not isinstance(values,np.ndarray) or values.dtype!=np.float32
+                or not values.flags.c_contiguous or values.shape!=types.shape
+                or values.size!=mesh.getVertexCount()):return False
+        if len(values) and values[0]!=8:return False
+        for start in range(1,len(values),65536):
+            end=min(len(values),start+65536)
+            if not np.array_equal(values[start:end],types[start-1:end-1]):return False
+        gl=OpenGL.getInstance().getBindingsObject()
+        old=int(gl.glGetIntegerv(0x8894))
+        try:
+            # Qt checks the ORIGINAL share group before binding, unlike raw GL names.
+            if not buffer.bind() or buffer.size()!=signature[1]:return False
+        finally:gl.glBindBuffer(0x8892,old)
+        if buffer is previous:
+            _native_candidates[mesh]=(context.shareGroup(),observation)
+            return False
+        frozen=values.view();frozen.flags.writeable=False
+        _native_candidates.pop(mesh,None)
+        _native_uploads[mesh]=(context.shareGroup(),buffer,signature,frozen,retained)
+        try:
+            from UM.Logger import Logger
+            if mesh not in _native_logged:
+                Logger.log('i','Toolhead native path VBO reuse admitted: %s vertices, %s bytes',mesh.getVertexCount(),signature[1])
+                _native_logged.add(mesh)
+        except Exception:pass
+        return True
+    except (AttributeError,TypeError,ValueError,KeyError,RuntimeError):return False
+
+
+def _native_upload(mesh,context):
+    try: proof=_native_uploads.get(mesh)
+    except TypeError:return None
+    if proof is None:return None
+    from UM.View.GL.OpenGL import OpenGL
+    try:
+        valid=(getattr(mesh,OpenGL.VertexBufferProperty,None) is proof[1]
+            and _native_signature(mesh)==proof[2])
+    except (AttributeError,TypeError,ValueError,KeyError):valid=False
+    if not valid:
+        _native_uploads.pop(mesh,None)
+        return None
+    return proof if proof[0] is context.shareGroup() else None
+
+
+def _first_native_upload(mesh,context):
+    """Replace the imminent private allocation with one certified native upload."""
+    try:candidate=_native_candidates.pop(mesh,None)
+    except TypeError:return None
+    if candidate is None:return None
+    from UM.View.GL.OpenGL import OpenGL
+    from PyQt6.QtGui import QOpenGLContext
+    group,observation=candidate
+    old_buffer,signature,retained,writer=observation
+    if context is not QOpenGLContext.currentContext() or group is not context.shareGroup():return None
+    uploader=OpenGL.getInstance().createVertexBuffer
+    if OpenGL.createVertexBuffer is not writer or getattr(uploader,'__func__',None) is not writer:return None
+    # Includes inactive geometry owners, freezer keys, and fence-retained worker
+    # leases: each retains its upload proxy, even after the weak shared cache changes.
+    if any(owner.source is mesh and owner._borrowed_native is None
+            and getattr(owner,OpenGL.VertexBufferProperty,None) is not None
+            for owner in _upload_owners):return None
+    gl=OpenGL.getInstance().getBindingsObject()
+    saved=int(gl.glGetIntegerv(0x8894));created=None;success=False;invoked=False
+    try:
+        if getattr(mesh,OpenGL.VertexBufferProperty,None) is not old_buffer:return None
+        if _native_signature(mesh)!=signature or not old_buffer.bind():return None
+        # Recheck previous-line values immediately before copying their bytes.
+        if admit_native_upload(mesh,context,observation):return None
+        refreshed=_native_candidates.pop(mesh,None)
+        if refreshed is None:return None
+        if gl.glGetError()!=0:return None
+        invoked=True
+        created=uploader(mesh,force_recreate=True)
+        errors=[gl.glGetError()]
+        for _ in range(15):
+            if errors[-1]==0:break
+            errors.append(gl.glGetError())
+        if any(errors) or created is old_buffer:return None
+        success=admit_native_upload(mesh,context,observation)
+        return _native_upload(mesh,context) if success else None
+    except (AttributeError,TypeError,ValueError,KeyError,RuntimeError):return None
+    finally:
+        _native_candidates.pop(mesh,None)
+        if invoked and not success:
+            setattr(mesh,OpenGL.VertexBufferProperty,old_buffer)
+            _native_uploads.pop(mesh,None)
+        gl.glBindBuffer(0x8892,saved)
+
+
+_index_allocations = WeakValueDictionary()
+_index_generations = count(1)
+
+
+class IndexAllocation:
+    """Main-thread ownership of one immutable source/share-group EBO."""
+    def __init__(self, source, indices, group, buffer, generation):
+        self.source, self.indices, self.group = source, indices, group
+        self.buffer, self.generation = buffer, generation
+        self.name, self.size = int(buffer.bufferId()), int(indices.nbytes)
+
+
+class UploadArray(np.ndarray):
+    # Bundled Uranium still calls this removed NumPy spelling.
+    def tostring(self): return self.tobytes()
+
+
+class PathVertexMesh:
+    """Private upload identity, optionally borrowing a certified native allocation."""
+    def __init__(self, mesh, *, native=None):
+        self.source = mesh
+        _upload_owners.add(self)
+        self._borrowed_native = None if native is None else native[1]
+        self._attributes = {name: dict(mesh.getAttribute(name)) for name in mesh.attributeNames()}
+        for attribute in self._attributes.values():
+            if "value" in attribute: attribute["value"] = np.asarray(attribute["value"]).view(UploadArray)
+        if "line_types" in self._attributes:
+            types = np.asarray(self._attributes["line_types"]["value"], dtype=np.float32)
+            previous = (np.empty_like(types) if native is None else native[3]).view(UploadArray)
+            if native is None and len(previous):
+                previous[0] = 8  # Public LayerPolygon.MoveUnretractedType.
+                previous[1:] = types[:-1]
+            previous.flags.writeable = False
+            self._attributes["prev_line_types"] = dict(value=previous, opengl_type="float", opengl_name="a_prev_line_type")
+        if native is not None:
+            from UM.View.GL.OpenGL import OpenGL
+            setattr(self,OpenGL.VertexBufferProperty,native[1])
+
+    # Explicit upload API: no delegated host cache properties or broken native
+    # getColors() getter. Geometry/bytes remain shared until the one GPU upload.
+    def getVertexCount(self): return self.source.getVertexCount()
+    def getVertices(self): return self.source.getVertices()
+    def getIndices(self): return self.source.getIndices()
+    def getNormals(self): return self.source.getNormals()
+    def getUVCoordinates(self): return self.source.getUVCoordinates()
+    def hasNormals(self): return self.source.hasNormals()
+    def hasColors(self): return self.source.hasColors()
+    def hasUVCoordinates(self): return self.source.hasUVCoordinates()
+    def getVerticesAsByteArray(self): return self.source.getVerticesAsByteArray()
+    def getNormalsAsByteArray(self): return self.source.getNormalsAsByteArray()
+    def getColorsAsByteArray(self): return self.source.getColorsAsByteArray()
+    def getUVCoordinatesAsByteArray(self): return self.source.getUVCoordinatesAsByteArray()
+    def attributeNames(self): return sorted(self._attributes)
+    def getAttribute(self, name): return self._attributes[name]
+
+
+_vertex_meshes = WeakValueDictionary()
+
+
 class ToolheadPathGeometry:
-    """Reuse Cura's public vertex buffer; own a stable index buffer and VAO.
+    """Share immutable native arrays; own vertex/index buffers and VAOs.
 
     RenderBatch's range path recreates/uploads the index buffer every draw.
     Our full immutable index buffer is uploaded once and ranges use offsets.
@@ -14,31 +226,49 @@ class ToolheadPathGeometry:
     """
     BLOCK = 1024  # Two index elements per line.
 
-    def __init__(self, mesh, indices=None):
+    def __init__(self, mesh, indices=None, *, build_bounds=True, index_chunk=None):
         self.mesh = mesh
-        self._indices = np.asarray(mesh.getIndices() if indices is None else indices, dtype=np.uint32).reshape(-1)
+        self._index_chunk = index_chunk
+        self._full_indices = indices is None
+        self._index_bytes = self._index_generation = 0
+        self._index_source = mesh.getIndices() if indices is None else indices
+        source_indices = np.asarray(self._index_source).reshape(-1)
+        self._index_allocation = None
+        # Native signed 32-bit indices already have the exact EBO bit layout.
+        # Viewing those bytes avoids a second whole-print CPU allocation.
+        self._indices = (source_indices if index_chunk else source_indices.view(np.uint32)
+            if source_indices.dtype == np.int32 else np.asarray(source_indices, dtype=np.uint32))
+        self._element_base = 0
         self._exterior = self._exterior_offsets = None
         self._index_buffer = self._draw_elements = None
         self._context = None
+        self._vertex_mesh = None
         self._vaos = {}
         self._normal_key = self._normal_matrix = None
         self._world_key = None
         self._world_bounds = None
+        # Most callers use retained deferred surfaces or native simulation,
+        # neither of which needs per-block forward-light bounds.
+        self._bounds = None if build_bounds else np.empty((0, 2, 3), dtype=np.float32)
+
+    def _ensure_bounds(self):
+        if self._bounds is not None: return
+        mesh = self.mesh
         vertices = mesh.getVertices()
-        self._bounds = []
+        bounds = []
         try: dimensions = mesh.getAttribute("line_dimensions")
         except KeyError: dimensions = None
         padding = max(0.1, float(np.max(dimensions["value"])) * 2) if dimensions is not None else 2.0
         for start in range(0, len(self._indices), self.BLOCK):
             points = vertices[self._indices[start:start + self.BLOCK]]
-            self._bounds.append((points.min(axis=0) - padding, points.max(axis=0) + padding))
-        self._bounds = np.asarray(self._bounds, dtype=np.float32).reshape(-1, 2, 3)
+            bounds.append((points.min(axis=0) - padding, points.max(axis=0) + padding))
+        self._bounds = np.asarray(bounds, dtype=np.float32).reshape(-1, 2, 3)
 
     def exterior_geometry(self):
         """Compact immutable EBO for Inset0 boundaries, including hole walls.
 
         Skip interior vertices before even running the vertex shader. The VBO
-        remains Cura's original, so category, end caps and dimensions agree.
+        retains Cura's immutable arrays, so category/end caps/dimensions agree.
         """
         if self._exterior is None:
             try: attribute = self.mesh.getAttribute("line_types")
@@ -57,7 +287,9 @@ class ToolheadPathGeometry:
 
     def ranges(self, transform, visible, lights):
         """Conservative cube/sphere overlap, in world space; never sample lines."""
-        if not len(self._bounds) or not lights: return []
+        if not lights: return []
+        self._ensure_bounds()
+        if not len(self._bounds): return []
         matrix = np.asarray(transform.getData())
         key = matrix.tobytes()
         if key != self._world_key:
@@ -92,6 +324,22 @@ class ToolheadPathGeometry:
 
     def render(self, shader, camera, transform, ranges, gl):
         if not ranges: return
+        ranges = self._validate_ranges(ranges)
+        with self.draw_session(shader, camera, transform, gl) as draw:
+            draw(ranges)
+
+    def _validate_ranges(self, ranges):
+        ranges = [(int(start), int(end)) for start, end in ranges]
+        if any(start < 0 or end < start or end > len(self._indices) or end-start > 0x7fffffff
+               for start, end in ranges):
+            raise RuntimeError("Lighting index range exceeds owned buffer")
+        if self._index_chunk and (len(ranges) != 1 or ranges[0][1]-ranges[0][0] > self._index_chunk):
+            raise RuntimeError("Reflection index chunk exceeds budget")
+        return ranges
+
+    @contextmanager
+    def draw_session(self, shader, camera, transform, gl):
+        """Keep frozen bindings only inside one bounded environment turn."""
         from PyQt6.QtOpenGL import QOpenGLBuffer, QOpenGLVertexArrayObject
         from PyQt6.QtGui import QOpenGLContext
         from UM.View.GL.OpenGL import OpenGL
@@ -106,20 +354,25 @@ class ToolheadPathGeometry:
                 # context's VAO or buffer names in its replacement context.
                 self._context = context
                 self._index_buffer = self._draw_elements = None
+                self._index_allocation = None
                 self._vaos.clear()
-            ranges = [(int(start), int(end)) for start, end in ranges]
-            if any(start < 0 or end < start or end > len(self._indices) or end-start > 0x7fffffff
-                   for start, end in ranges):
-                raise RuntimeError("Lighting index range exceeds owned buffer")
             if self._draw_elements is None:
                 address = context.getProcAddress(b"glDrawElements")
                 if not address: raise RuntimeError("Lighting index draw unavailable")
                 # PyQt's wrapper accepts client arrays, not EBO byte offsets.
                 self._draw_elements = ctypes.CFUNCTYPE(None, ctypes.c_uint, ctypes.c_int,
                     ctypes.c_uint, ctypes.c_void_p)(int(address))
-            vertex_buffer = OpenGL.getInstance().createVertexBuffer(self.mesh)
+            self.vertex_mesh(context)
+            vertex_buffer = OpenGL.getInstance().createVertexBuffer(self._vertex_mesh)
             if vertex_buffer is None or int(vertex_buffer.bufferId()) <= 0:
                 raise RuntimeError("Lighting vertex buffer unavailable")
+            allocation = self.shared_index_allocation(context)
+            if allocation is not None:
+                if self._index_buffer is not allocation.buffer: self._vaos.clear()
+                self._index_allocation = allocation
+                self._index_buffer = allocation.buffer
+                self._index_bytes = allocation.size
+                self._index_generation = allocation.generation
             vao_key = (shader, id(vertex_buffer), vertex_buffer.bufferId())
             cached = self._vaos.get(vao_key)
             vao = cached[0] if cached is not None else QOpenGLVertexArrayObject()
@@ -135,11 +388,6 @@ class ToolheadPathGeometry:
             if int(index_buffer.bufferId()) <= 0: raise RuntimeError("Lighting path index buffer unavailable")
             index_bound = True
             if not index_buffer.bind(): raise RuntimeError("Lighting path index buffer could not be bound")
-            if self._index_buffer is None:
-                body = self._indices.tobytes()
-                index_buffer.allocate(body, len(body))
-                if index_buffer.size() != len(body): raise RuntimeError("Lighting path index storage incomplete")
-                self._index_buffer = index_buffer
             shader_bound = True
             if shader.bind() is False: raise RuntimeError("Lighting path shader could not be bound")
             normal_key = transform.getData().tobytes()
@@ -152,18 +400,35 @@ class ToolheadPathGeometry:
                 self._normal_key, self._normal_matrix = normal_key, normal
             shader.updateBindings(model_matrix=transform, normal_matrix=self._normal_matrix,
                 view_matrix=camera.getInverseWorldTransformation(), projection_matrix=camera.getProjectionMatrix(),
-                view_position=camera.getWorldPosition())
+                view_position=camera.getWorldPosition(), light_0_position=camera.getCameraLightPosition())
             if cached is None:
                 required = self._configure_attributes(shader)
                 if vertex_buffer.size() < required: raise RuntimeError("Lighting vertex buffer storage incomplete")
                 # Retaining the wrapper also prevents buffer identity reuse
                 # while this VAO still references its vertex attributes.
                 self._vaos[vao_key] = (vao, vertex_buffer)
-            for start, end in ranges:
-                # LayerData counts are NumPy integers on the native host.
-                # ctypes requires Python integers for counts and EBO offsets.
-                shader.setUniformValue("u_drawElementStart", int(start))
-                self._draw_range(gl, start, end)
+            def draw(ranges):
+                ranges = self._validate_ranges(ranges)
+                if not ranges: return
+                if self._index_buffer is None or self._index_chunk:
+                    self._element_base = ranges[0][0] if self._index_chunk else 0
+                    elements = self._indices[ranges[0][0]:ranges[0][1]] if self._index_chunk else self._indices
+                    body = np.asarray(elements, dtype=np.uint32).tobytes()
+                    index_buffer.allocate(body, len(body))
+                    if index_buffer.size() != len(body): raise RuntimeError("Lighting path index storage incomplete")
+                    self._index_buffer = index_buffer
+                    self._index_bytes = len(body)
+                    self._index_generation += 1
+                    key = self._shared_index_key(context)
+                    if key is not None:
+                        allocation = IndexAllocation(self.mesh, self._index_source, context.shareGroup(),
+                            index_buffer, next(_index_generations))
+                        _index_allocations[key] = self._index_allocation = allocation
+                        self._index_generation = allocation.generation
+                for start, end in ranges:
+                    shader.setUniformValue("u_drawElementStart", start)
+                    self._draw_range(gl, start, end)
+            yield draw
         except Exception as error:
             failure = error
         finally:
@@ -180,19 +445,75 @@ class ToolheadPathGeometry:
             self._index_buffer = None
             raise RuntimeError("Lighting path draw failed: " + str(failure)) from failure
 
+    def _full_source_index_key(self, context):
+        if (not self._full_indices or not isinstance(self._index_source, np.ndarray)
+                or self._index_source.dtype not in (np.dtype('int32'), np.dtype('uint32'))
+                or not self._index_source.flags.c_contiguous or self._index_source.flags.writeable
+                or self.mesh.getIndices() is not self._index_source):
+            return None
+        return id(self.mesh), id(context.shareGroup()), id(self._index_source)
+
+    def _shared_index_key(self, context):
+        if self._index_chunk or self._element_base != 0: return None
+        return self._full_source_index_key(context)
+
+    def full_source_index_allocation(self, context):
+        """Read only the registered full source; never expose a chunk's own EBO."""
+        key = self._full_source_index_key(context)
+        allocation = _index_allocations.get(key) if key is not None else None
+        if (allocation is not None and allocation.source is self.mesh
+                and allocation.indices is self._index_source and allocation.group is context.shareGroup()
+                and allocation.name > 0 and allocation.generation > 0
+                and allocation.size == self._index_source.size*4
+                and int(allocation.buffer.bufferId()) == allocation.name):
+            return allocation
+        return None
+
+    def shared_index_allocation(self, context):
+        if self._index_chunk or self._element_base != 0: return None
+        return self.full_source_index_allocation(context)
+
+    def shared_index_buffer(self, context, upload):
+        """Borrow only this context's complete immutable native index allocation."""
+        buffer = self._index_buffer
+        if (context is not self._context or upload is not self._vertex_mesh
+                or not self._full_indices or self._index_chunk or self._element_base != 0
+                or self._indices.flags.writeable or buffer is None
+                or self._index_bytes != self._indices.nbytes or int(buffer.bufferId()) <= 0):
+            return None
+        return self, buffer, int(buffer.bufferId()), self._index_generation
+
+    def vertex_mesh(self, context):
+        # One upload shared by reflection/lighting/simulation owners in this
+        # share group. Weak values retire it with the last owner. Retaining the
+        # group wrapper prevents its identity being reused while names survive.
+        group = context.shareGroup()
+        key = id(self.mesh), id(group)
+        upload = _vertex_meshes.get(key)
+        native = _native_upload(self.mesh,context)
+        if native is None:native = _first_native_upload(self.mesh,context)
+        borrowed = None if native is None else native[1]
+        if upload is None or upload.source is not self.mesh or upload._borrowed_native is not borrowed:
+            upload = _vertex_meshes[key] = PathVertexMesh(self.mesh,native=native)
+            upload.group = group
+        if self._vertex_mesh is not upload:self._vaos.clear()
+        self._vertex_mesh = upload
+        return upload
+
     def _configure_attributes(self, shader):
         offset = 0
-        count = self.mesh.getVertexCount()
+        mesh = self._vertex_mesh
+        count = mesh.getVertexCount()
         for name, present, kind, size in (("a_vertex", True, "vector3f", 3),
-                ("a_normal", self.mesh.hasNormals(), "vector3f", 3),
-                ("a_color", self.mesh.hasColors(), "vector4f", 4),
-                ("a_uvs", self.mesh.hasUVCoordinates(), "vector2f", 2)):
+                ("a_normal", mesh.hasNormals(), "vector3f", 3),
+                ("a_color", mesh.hasColors(), "vector4f", 4),
+                ("a_uvs", mesh.hasUVCoordinates(), "vector2f", 2)):
             if present:
                 shader.enableAttribute(name, kind, offset)
                 offset += count * size * 4
         sizes = {"float": 1, "int": 1, "vector2f": 2, "vector3f": 3, "vector4f": 4}
-        for name in self.mesh.attributeNames():
-            attribute = self.mesh.getAttribute(name)
+        for name in mesh.attributeNames():
+            attribute = mesh.getAttribute(name)
             kind = attribute["opengl_type"]
             shader.enableAttribute(attribute["opengl_name"], kind, offset)
             offset += count * sizes[kind] * 4
@@ -200,4 +521,4 @@ class ToolheadPathGeometry:
 
     def _draw_range(self, gl, start, end):
         self._draw_elements(gl.GL_LINES, int(end) - int(start), gl.GL_UNSIGNED_INT,
-            ctypes.c_void_p(int(start) * 4))
+            ctypes.c_void_p((int(start)-self._element_base) * 4))

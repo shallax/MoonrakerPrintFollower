@@ -347,6 +347,8 @@ class ToolheadControllerTests(unittest.TestCase):
         self.data = Data()
         self.commands = Commands()
         self.commands.owner = self.data
+        from tests.manual_motion_support import attach
+        attach(self.data, self.commands)
         module = self.qt.load("ToolheadController")
         self.controller = module.ToolheadController(self.data, self.commands)
         self.addCleanup(self.controller.close)

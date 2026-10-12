@@ -18,6 +18,7 @@ exercised as well, so the guarded lines inside the modules still run.
 from __future__ import annotations
 
 import json
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -378,6 +379,31 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
 
         monitor.previewBlockChanged.emit({"remainder": 12})
         self.assertEqual(follower.blocks, [{"remainder": 12}])
+
+    def test_toolhead_readouts_revoke_old_machine_and_reject_a_late_callback(self):
+        app = self.qt.Application()
+        follower = self.follower(self.client(), self.printer_config())
+        follower.preview_toolhead = Mock()
+        plugin = self.plugin(app, follower)
+        plugin.start()
+        first = plugin._current.activePrinter
+        stale_callback = plugin._routed_toolhead
+        follower.preview_toolhead.publish.reset_mock()
+        first.monitorChanged.emit()
+        follower.preview_toolhead.publish.assert_called_once()
+        self.assertIsInstance(follower.preview_toolhead.publish.call_args.args[0], dict)
+        plugin._revoke_monitor_routing()
+        follower.preview_toolhead.reset.assert_called_once()
+        follower.preview_toolhead.publish.reset_mock()
+        first.monitorChanged.emit()
+        stale_callback()  # A queued delivery must also fail the ownership check.
+        follower.preview_toolhead.publish.assert_not_called()
+        plugin._grant_monitor_routing(first)
+        follower.preview_toolhead.publish.assert_called_once()
+        follower.preview_toolhead.publish.reset_mock()
+        plugin._grant_monitor_routing(first)
+        first.monitorChanged.emit()
+        follower.preview_toolhead.publish.assert_called_once()
 
     def test_the_pause_verdicts_are_wired_to_the_presentation(self):
         # The single authority (the debt pack's two-clock
@@ -888,7 +914,12 @@ class OutputDeviceAdapterTests(OutputDeviceTestCase):
         self.assertIsNone(device._dialog)
         self.assertTrue(device._upload.busy)  # the upload went ahead without the dialog
         reply.finished.emit()
-        self.qt.events(10)
+        # Cancellation posts its terminal delivery across event-loop turns.
+        # Wait for that observable state rather than assuming 10 ms is enough
+        # when the full suite is loading other isolated Qt processes.
+        deadline = time.monotonic() + 1.0
+        while device._upload.busy and time.monotonic() < deadline:
+            self.qt.events(5)
         self.assertFalse(device._upload.busy)
 
     def test_a_silent_configuration_uploads_without_a_dialog(self):

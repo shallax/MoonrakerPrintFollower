@@ -20,7 +20,7 @@ class ToolheadShaderTests(unittest.TestCase):
             with self.subTest(key=key):
                 discard = source.index("if (v_color.a <= 0.0) discard;")
                 depth = source.index("if (u_depthOnly == 1)")
-                lighting = source.index("vec3 normal = normalize(v_normal);")
+                lighting = source.index("vec3 normal = surfaceNormal();")
                 self.assertLess(discard, depth)
                 self.assertLess(depth, lighting)
                 self.assertIn("return;", source[depth:lighting])
@@ -52,15 +52,15 @@ class ToolheadShaderTests(unittest.TestCase):
         core = self.source["shaders"]["fragment41core"]
         self.assertTrue(core.lstrip().startswith("#version 410"))
         # Declarations differ between GLSL versions; all functions must agree.
-        legacy = legacy[legacy.index("float led("):]
-        core = core[core.index("float led("):].replace("frag_color", "gl_FragColor")
+        legacy = legacy[legacy.index("float grainHash("):]
+        core = core[core.index("float grainHash("):].replace("frag_color", "gl_FragColor")
         self.assertEqual(legacy, core)
 
     def test_master_disable_returns_painted_base_colour_before_all_lighting(self):
         self.assertEqual(self.source["defaults"]["u_lightingEnabled"], "1")
         for key, source in self.fragments():
             with self.subTest(key=key):
-                branch = source[source.index("if (u_lightingEnabled == 0)"):source.index("vec3 normal =")]
+                branch = source[source.index("if (u_lightingEnabled == 0)"):source.index("vec3 normal = surfaceNormal();")]
                 self.assertIn("colour = u_attachedPaint[i].rgb", branch)
                 self.assertIn("vec4(colour, v_color.a * u_opacity)", branch)
                 self.assertIn("return;", branch)
@@ -71,5 +71,5 @@ class ToolheadShaderTests(unittest.TestCase):
         for key, source in self.fragments():
             with self.subTest(key=key):
                 self.assertIn("vec4(lit, v_color.a * u_opacity)", source)
-                self.assertIn("pow(max(dot(normal, halfVector), 0.0), 24.0)", source)
+                self.assertIn("mix(24.0, mix(4.0, 128.0, pow(1.0 - roughness, 4.0)), known)", source)
                 self.assertIn("pow(max(dot(normal, halfLight), 0.0), 8.0)", source)

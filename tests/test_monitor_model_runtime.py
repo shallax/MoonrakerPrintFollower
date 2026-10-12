@@ -3,6 +3,40 @@ import time
 from tests import monitor_test_support as harness
 
 class MonitorQtTests(harness.MonitorQtTests):
+    def test_fan_only_zero_and_expiry_reach_presenter_when_job_is_stationary(self):
+        model=self.monitor()
+        self.deliver_state('complete')
+        self.qt.events()
+        for timer in model._data._timers.values(): timer.stop()
+        model._chart_timer.stop()
+        def settle():
+            self.qt.events(); model._publish(); self.qt.events()
+            model._publish(); self.qt.events()
+        presenter=self.follower._runtime.toolhead
+        model._data._merge_aux({'fan':{'rpm':1200.,'speed':1.}},full=True)
+        settle()
+        self.assertEqual(presenter._fan_readings['fan']['rpm'],1200.)
+        notices=[]
+        model.monitorChanged.connect(lambda:notices.append(True))
+        model._data._merge_aux({'fan':{'rpm':0.,'speed':1.}},full=True)
+        settle()
+        self.assertEqual(presenter._fan_readings['fan']['rpm'],0.)
+        self.assertTrue(notices)
+        model._data._merge_aux({'fan':{'rpm':900.,'speed':1.}},full=True)
+        settle()
+        notices.clear()
+        model._data._fans.rows['fan']['stamp']=time.monotonic()-11.
+        model._on_chart_tick()
+        settle()
+        self.assertFalse(presenter._fan_readings['fan']['available'])
+        self.assertTrue(notices)
+        self.follower.client.stop()
+        self.qt.events()
+        self.assertEqual(presenter._fan_readings,{})
+        model._data._merge_aux({'fan':{'rpm':2400.,'speed':1.}},full=True)
+        settle()
+        self.assertFalse(presenter._fan_readings.get('fan',{}).get('available',False))
+
     def test_position_mode_controls_monitor_smoothing_without_a_custom_model(self):
         model = self.monitor()
         self.deliver()
@@ -982,6 +1016,55 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertTrue(model.improvingEta,
                         "the hourglass must survive the improve's own publish")
 
+    def test_preview_offsets_remain_available_without_homing_or_position_telemetry(self):
+        model = self.monitor()
+        self.deliver_state("printing")
+        model._data._update(auxiliary={"toolhead": {"homed_axes": ""}})
+        model._publish()
+        readout = model.previewToolheadReadout.value()
+        self.assertTrue(readout["offsetAllowed"])
+        self.assertFalse(readout["jogAllowed"])
+        self.assertFalse(readout["moveToAllowed"])
+        with harness.patch.object(model._controls, "z_offset") as offset:
+            model.previewToolheadCommand("offset", (-.01,))
+            offset.assert_called_once_with(-.01)
+
+    def test_preview_intents_share_monitor_owners_and_print_state_gates(self):
+        model = self.monitor()
+        self.deliver_state("standby")
+        with harness.patch.object(model._toolhead, "jog") as jog, \
+                harness.patch.object(model._toolhead, "move_to") as move, \
+                harness.patch.object(model._toolhead, "home") as home, \
+                harness.patch.object(model._toolhead, "calibration") as calibration, \
+                harness.patch.object(model._toolhead, "motors_off") as motors, \
+                harness.patch.object(model._controls, "z_offset") as offset:
+            model.previewToolheadCommand("jog", ("x", -1, 75))
+            jog.assert_called_once_with("x", -1, 75)
+            model.previewToolheadCommand("move-to", ("", "100", ""))
+            move.assert_called_once_with("", "100", "")
+            for axis in ("", "x", "y", "z"):
+                model.previewToolheadCommand("home", (axis,))
+                home.assert_called_with(axis, idle_only=True)
+            for key in ("quad_gantry_level", "bed_mesh", "z_tilt", "screws_tilt_adjust"):
+                model.previewToolheadCommand("action", (key,))
+                calibration.assert_called_with(key)
+            model.previewToolheadCommand("action", ("motors",))
+            motors.assert_called_once_with()
+            self.deliver_state("printing")
+            model.previewToolheadCommand("offset", (-.005,))
+            offset.assert_called_once_with(-.005)
+            jog.reset_mock()
+            move.reset_mock()
+            home.reset_mock()
+            calibration.reset_mock()
+            motors.reset_mock()
+            for kind, args in (("jog", ("x", 1, 25)), ("move-to", ("100", "", "")),
+                               ("home", ("",)), ("action", ("motors",)), ("action", ("bed_mesh",))):
+                model.previewToolheadCommand(kind, args)
+            for command in (jog, move, home, calibration, motors):
+                command.assert_not_called()
+            self.assertEqual(self.scripts(), [])
+
     def test_toolhead_slots_send_exact_scripts(self):
         model = self.monitor()
         self.deliver_state("standby")
@@ -999,7 +1082,7 @@ class MonitorQtTests(harness.MonitorQtTests):
             scripts[-1].callback({}, None)
             self.qt.events(10)
             return scripts[-1].options["body"]
-        self.assertEqual(next_script(model.jog, "x", 1), {"script": "G91\nG1 X10 F3000\nG90"})
+        self.assertEqual(next_script(model.jog, "x", 1), {"script": 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X10 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'})
         # The Z jog from 0.4 by -10 crosses zero with no configured
         # minimum: forbidden outright (a live report —
         # the head must never microstep below 0.00 Z).
@@ -1019,7 +1102,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         model.setExtrudeDistance(10)
         model.setExtrudeSpeed(300)
         model.setJogDistance(42.5)
-        self.assertEqual(next_script(model.jog, "x", 1), {"script": "G91\nG1 X42.5 F3000\nG90"})
+        self.assertEqual(next_script(model.jog, "x", 1), {"script": 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X42.5 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'})
         model.setJogDistance(10)
 
     def test_negative_free_text_distances_are_rejected(self):
@@ -1037,7 +1120,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         model.jog("x", 1)
         self.qt.events(10)
         scripts = [r for r in self.transport.requests if r.path == "printer/gcode/script"]
-        self.assertEqual(scripts[0].options["body"], {"script": "G91\nG1 X10 F3000\nG90"})
+        self.assertEqual(scripts[0].options["body"], {"script": 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X10 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'})
 
     def test_toolhead_guard_releases_and_polls_do_not_rearm_it(self):
         # The guard drops the poll floor while moves run and for a short
@@ -1077,12 +1160,12 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.qt.events(10)
         scripts = [r for r in self.transport.requests if r.path == "printer/gcode/script"]
         self.assertEqual([s.options["body"]["script"] for s in scripts[-2:]],
-                         ["G91\nG1 X1 F3000\nG90", "G28"])
+                         ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0', "G28"])
         scripts[-1].callback({}, None)  # Home completes; now the Y jog runs
         self.qt.events(10)
         scripts = [r for r in self.transport.requests if r.path == "printer/gcode/script"]
         self.assertEqual(scripts[-1].options["body"],
-                         {"script": "G91\nG1 Y1 F3000\nG90"})
+                         {"script": 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 Y1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'})
 
     def test_endpoint_change_invalidates_subscribers_once(self):
         # PrinterBinding tears the poller down silently before the rebind;
@@ -1114,14 +1197,14 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.qt.events(20)
         scripts = self.scripts()
         self.assertEqual(len(scripts), 1)
-        self.assertEqual(scripts[0].options["body"], {"script": "G91\nG1 X1 F3000\nG90"})
+        self.assertEqual(scripts[0].options["body"], {"script": 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'})
         # Each queued move drains on its own completion cycle (the
         # no-coalescing ruling: the queue holds separate ops).
         scripts[0].callback({}, None)
         self.qt.events(20)
         scripts = self.scripts()
         self.assertEqual(len(scripts), 2)
-        self.assertEqual(scripts[1].options["body"], {"script": "G91\nG1 X1 F3000\nG90"})
+        self.assertEqual(scripts[1].options["body"], {"script": 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'})
         self.assertEqual(model.jogStatus, "")
 
     def test_pause_timeout_drops_queued_jogs(self):
@@ -1145,7 +1228,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.deliver_state("paused")
         scripts = self.scripts()
         self.assertEqual(len(scripts), 1)  # the first op drains
-        self.assertEqual(scripts[0].options["body"], {"script": "G91\nG1 X1 F3000\nG90"})
+        self.assertEqual(scripts[0].options["body"], {"script": 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'})
         # The print resumes before the first move completes: the remaining
         # move must be dropped, never force-executed mid-print.
         self.deliver_state("printing")
@@ -1292,24 +1375,22 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.assertNotIn("TEST_MACRO", model.actionStatus)
 
     def test_rapid_z_nudges_cannot_walk_the_head_below_zero(self):
-        # A live report: nudge taps outran the poll, each
-        # clamped against the STALE position, and the queue walked
-        # the head below 0.00 Z. The client-side estimate advances
-        # per accepted move: four 0.1 nudges from 0.4 land at zero;
-        # the fifth is forbidden outright.
         model = self.monitor()
-        self.deliver_state("standby")  # live_position z = 0.4
+        self.deliver_state("standby")  # firmware starts at Z0.4
         model.setJogDistance(0.1)
-        for _ in range(5):
+        for _ in range(4):
             model.jog("z", -1)
+            self.qt.events(10)
+            self.scripts()[-1].callback({}, None)
+            self.qt.events(10)
+        model.jog("z", -1)
         self.qt.events(10)
-        # Four nudges are accepted (0.4 → 0.0); the fifth is
-        # forbidden by the estimate — the head never goes below zero.
-        # (The drain merges queued taps, so the script COUNT is not
-        # pinned; the estimate is the guard.)
-        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.0)
+        # Fresh dispatch checks, independent of the unchanged poll, permit
+        # four downward moves and reject the fifth before it is emitted.
         z_scripts = [r for r in self.scripts() if "G1 Z" in str(r.options.get("body"))]
-        self.assertGreaterEqual(len(z_scripts), 1)
+        self.assertEqual(len(z_scripts), 4)
+        self.assertTrue(all("G1 Z-0.1 F600" in r.options["body"]["script"] for r in z_scripts))
+        self.assertIn("rejected", model._toolhead._status)
 
     def test_unchanged_projections_are_not_rebuilt_on_heartbeats(self):
         # I (the 2026-09-19 performance review): the console's
@@ -1345,29 +1426,22 @@ class MonitorQtTests(harness.MonitorQtTests):
                       "unchanged controls must keep their copy")
 
     def test_stale_polls_cannot_raise_the_z_projection_between_dispatched_moves(self):
-        # B (the 2026-09-19 review): an op leaves the queue at
-        # dispatch, so a stale poll between the dispatch and the
-        # physical move's reflection re-synced the projection upward
-        # and every following tap was accepted against the old
-        # position again — repeated stale polls could walk the
-        # accepted downward distance past the 0.40 mm of real
-        # headroom.
         model = self.monitor()
-        self.deliver_state("standby")  # live_position z = 0.4
+        self.deliver_state("standby")
         model.setJogDistance(0.1)
         for _ in range(4):
             model.jog("z", -1)
-            self.qt.events(1)
-            # The stale poll: the head has not moved yet, the report
-            # still reads 0.40.
+            self.qt.events(10)
+            # Stale polling cannot replace fresh planned dispatch coordinates.
             self.deliver_state("standby")
-            self.qt.events(1)
-        # Four accepted moves cover exactly the 0.40 headroom; the
-        # fifth must be forbidden — the projection floors at zero
-        # instead of re-arming against each stale poll.
+            self.scripts()[-1].callback({}, None)
+            self.qt.events(10)
         model.jog("z", -1)
-        self.qt.events(1)
-        self.assertAlmostEqual(model._toolhead._axis_estimate["z"], 0.0)
+        self.qt.events(10)
+        z_scripts = [r.options["body"]["script"] for r in self.scripts()
+                     if "G1 Z" in str(r.options.get("body"))]
+        self.assertEqual(len(z_scripts), 4)
+        self.assertTrue(all("G1 Z-0.1 F600" in script for script in z_scripts))
         self.assertIn("rejected", model._toolhead._status)
 
     def test_z_projection_follows_fresh_telemetry_and_upward_motion(self):
@@ -3472,6 +3546,14 @@ Item {
             "hoverClockProxy", "root.compact",
         ))
         allowed = {
+            # The new Preview dock collapses only on an explicit user request.
+            # Its focus outline adds chrome without hiding or moving controls.
+            "visible: root.collapsed",
+            "visible: !root.collapsed",
+            "visible: root.activeFocus",
+            # The entire Toolhead dock belongs to Preview's usable viewport;
+            # unavailable printer actions inside it disable without reflow.
+            "visible: previewActive && orientationControls !== null && viewport !== null && dockBottom - dockTop > 112 * screenScaleFactor + gap",
             # User-requested setup affordance replaces absent custom-model controls.
             "visible: root.customToolheadAvailable",
             "visible: !root.customToolheadAvailable",
@@ -3812,6 +3894,9 @@ Item {
             # Download actions retain a permanent row; only the optional
             # consent/cancel buttons change opacity through visibility.
             "visible: text.length > 0",  # Empty import status reserves no row.
+            "visible: section.currentIndex === 0",
+            "visible: section.currentIndex === 1",
+            "visible: section.currentIndex === 2",
             "visible: root.model && root.model.needsDownload",
             "visible: root.model && (root.model.busy || root.model.needsDownload)",
             "visible: root.printerModel != null && root.activeRows.length === 0",
@@ -4036,13 +4121,13 @@ Item {
         self.qt.events(20)
         scripts = self.scripts()
         self.assertEqual(len(scripts), 2)
-        self.assertEqual(scripts[1].options["body"], {"script": "G91\nG1 X1 F3000\nG90"})
+        self.assertEqual(scripts[1].options["body"], {"script": 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'})
         # Each queued move drains on its own completion cycle.
         scripts[1].callback({}, None)
         self.qt.events(20)
         scripts = self.scripts()
         self.assertEqual(len(scripts), 3)
-        self.assertEqual(scripts[2].options["body"], {"script": "G91\nG1 X1 F3000\nG90"})
+        self.assertEqual(scripts[2].options["body"], {"script": 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'})
 
     def test_monitor_device_is_registered_with_output_manager(self):
         # The Monitor stage shows Cura's "connect the printer" placeholder when

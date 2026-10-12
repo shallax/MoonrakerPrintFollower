@@ -10,29 +10,230 @@ Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
-## Next releases — planning update (6 October 2026)
+## Current release and next plans — update (12 October 2026)
 
-The following is roadmap scope only. It does not start implementation or add
-features to the `release/v5.2.0` branch.
+The `release/v5.3.0` branch starts from the 5.2.0 merge at
+`5683a1f081dfd79f56e417c5c4b2192abaffcbcc`. The author approved the design and
+installed control snapshots, then authorized release documentation, version
+5.3.0 and the branch push. The finalized controls/deadline baseline passed the
+full local gate and branch CI, then was retained as `baseline/v5.3.0` at
+`96a5e484c418dba8262115b0da8db92085ccaa1a`. The author waived an additional CI
+repeat and requested rendering work next. No PR, merge or release is authorized.
+The baseline tag is a rollback checkpoint and does not trigger publication.
+
+The authorized rendering extension adds cached reflections of the actual bed
+and visible G-code, annotation-based material roughness/metalness, preserved STEP
+transparency and subtle object-anchored plastic grain with one Surface detail
+strength slider. Unknown materials remain conservative nonmetals; RGB is not
+material evidence. Body occurrences support selected fan rotors with direction,
+axis/centre preview and overrides, bounded rotational blur and optional read-only
+fan telemetry binding. Valid measured RPM, including zero, takes precedence;
+otherwise normalized fan speed scales a configured visual full-speed RPM and is
+labelled estimated. Missing, stale or disconnected telemetry stops animation.
+Optional body/face painting adds independently adjustable roughness, reflectivity
+and opacity above per-type defaults. Imported metadata preclassifies surfaces;
+edit highlights are temporary, invisible bodies remain recoverable, and each
+property has its own reset. Reflection captures respect active orthographic and
+perspective cameras and retain native scene depth under attached illumination.
+The rendering extension passed the full local gate (5,510 tests, all lint checks,
+46 byte-identical capture pairs and verified packages) and 98% coverage with every
+module above 95%, then was pushed. Canonical Linux captures have been refreshed
+from that head, and whole branch CI passed. The live qualification follow-up
+corrects re-slice admission, bed-overlay translucency, bed-height capture and
+appearance-reset handles; reflection refresh retains the previous complete map
+and culls invisible chunks. Owned path vertex storage prevents late native
+attributes from corrupting slice markers. Irregular grain replaces periodic
+bumps, and active map changes supersede idle timers. The large-print audit adds
+exact camera caches, lazy forward bounds, idle/CPU-only graphics avoidance,
+weak native-procedure caching, conservative light-range filtering, snapshot
+visibility reuse and turn-scoped path bindings. Stopped fan images can be reused,
+disabled lighting retires its viewport caches, and native signed index storage
+can share unsigned upload bytes. Native million-line proofs retain exact paired
+maps. The first bundle passed 5,572 local tests and 98% coverage, but its branch
+CI failed the macOS capture comparison; its other active jobs passed and the
+dependent smoke set did not run. The capture-only bed-grid depth isolation
+candidate remains byte-identical in fresh Apple Software Renderer processes;
+strict branch CI must qualify it. Face-owned deferred paint timers also prevent
+callbacks after a Print Follower popover closes, with reopening and delivered
+ink covered by regression tests.
+
+The installed shared-context worker reduces the measured large-print warm map
+latency from 14–19 seconds to a median of 3.1 seconds across 18 captures, normally
+2.1–5.1 seconds. The first cold capture took 10.35 seconds. It borrows retained
+vertex storage and removes foreground scheduling from capture continuation.
+Native empty/loaded transitions preserve all six colour/depth faces exactly;
+bounded submissions, producer/consumer fences and retirement without subsequent
+GUI frames have separate native proofs. New-module coverage, the complete local
+gate and whole branch CI subsequently passed at the reflections checkpoint.
+Stock Cura's recurring
+removable-drive subprocess launches also cause observed allocator stalls; that
+is a separate upstream issue. Staged first uploads, worker bounds and complete
+mutable-input revision tracking remain separate candidates. Unculled shadow
+instancing and unconditional larger path draws were rejected after native
+parity or driver-memory failures. Fresh full local and branch CI gates for the
+current defect follow-up remain required.
+These effects issue no printer commands and
+never require per-face material setup.
+
+The unsigned annotated `5.3.0-reflections` checkpoint is complete at
+`ca402a7613d31ffd7da2f57ddb8202a85ea98430`, after whole branch CI including
+repeat-boot smoke succeeded. It has no `v` prefix and did not publish a release.
+The checkpoint's single-probe reflection
+map cannot reveal surfaces hidden from its capture point; opaque occlusion can
+therefore create dark gaps and incomplete reflected extrusion silhouettes.
+This limitation remains documented in the checkpoint.
+
+The final rendering implementation uses complete six-face central colour maps
+with local depth testing, capture antialiasing, sharper roughness mip selection,
+bounded flat-bed reprojection and transitions between completed maps. Enable
+reflections controls it directly. The live optimisation rounds share qualified
+native path vertex buffers, full immutable index allocations and fenced worker
+leases; they reuse bounded intermediate targets, cache delivered uniforms and
+retain full-resolution lighting attributes. Cropped lighting outputs preserve the
+original camera projection while moving with the illuminated region. Storage
+savings are conditional on scene coverage; benchmark timing is reported separately
+from live responsiveness.
+
+The author reported substantially improved responsiveness after the pushed
+`0701dcb1` baseline and requested one final round: finish index sharing and lighting
+storage work, reconcile documentation and package versions, and regenerate the
+canonical screenshots. All active release fields remain 5.3.0. Local validation,
+cross-platform CI repairs and canonical screenshot reconciliation are the final
+release-branch gates; no additional rendering feature work is planned in this
+round. No PR, merge, tag or publication has been authorized.
+The final platform checks reproduced Apple's software-renderer small-scissor
+coverage defect locally. Narrow context-qualified fallbacks preserve foreground
+and lighting pixels; EGL and Qt GLX fixtures run in separate test processes.
+
+Existing direct-light values remain centralized in `ToolheadShadowValues.py`.
+Unused shadow-map and geometry-query/receiver-layer prototypes are excluded from
+the release and preserved at commit `80c4b263`. Independent shadows remain
+unfinished and deferred. Directional depth-search helpers remain reference
+fixtures and are not used by the production central colour lookup.
 
 ### 5.3.0 — Toolhead controls in Preview (final planned 5.x feature release)
 
-Add a compass for nudging the physical toolhead while looking at the Preview:
-X− / X+, Y− / Y+, and Z− / Z+, with a selectable move distance. Reuse the
-Monitor's existing toolhead controller, command policy and printer-state gates;
-the two surfaces must operate the same printer state and command queue.
-True position provides the live visual feedback, including without a toolpath.
+The implementation adds a Mainsail-style Toolhead pane on the left of Cura's **Preview** workspace,
+at the top left, beneath its Preview stage menu. Reserve the lower-left object
+list, job summary and perspective buttons. It collapses horizontally to
+the left, leaving an accessible tab to reopen it. It does not appear in Prepare
+or replace the Monitor controls. Preview collapse is presentation state separate
+from the Monitor section's expansion state.
 
-Candidate controls alongside the compass are **Home all**, **Home X**,
-**Home Y**, **Home Z**, **QGL** (quad gantry levelling), and **Bed mesh**
-(calibration). Their exact layout and inclusion will be settled when designing
-5.3.0. Availability follows the printer's capabilities and existing action
-policy. Keep calibration actions distinct from the bed-mesh display controls
-already in View Options, and retain the Monitor controls.
+The accepted inventory is position readouts, absolute move-to fields, X− / X+,
+Y− / Y+, and Z− / Z+ jogging with selectable distances, Home all and individual
+axis homing, Z-offset adjustment, and capability-dependent Toolhead actions,
+including QGL and bed-mesh calibration in the actions menu. The author selected the
+compass layout. Z-offset adjustments use down/up arrows rather than minus/plus.
+Jog and Z-offset arrows have stalks, matching the Monitor controls.
+Omit Mainsail's speed-factor slider. Motor release and the printer's supported
+levelling/calibration actions belong in the action menu; map their precise
+inventory and availability before wiring. Keep calibration distinct from the
+bed-mesh display controls in View Options. Extrusion controls, arbitrary macros,
+temperatures and an extra webcam are outside this pane's scope.
 
-This carries the jog-dock portion of the historical Preview proposal forward
-from 5.2.0. Speed/extrusion factors, arbitrary macros, an extra webcam thumbnail
-and other older suggestions are not automatically added to this release.
+Mockups come first: inspect expanded/collapsed layouts and printing/disconnected
+states, then review real QML with static synthetic data before functional work.
+The author approved the real light/dark QML design on 7 October. The first
+functional snapshot attached a read-only pane using the selected Monitor
+model's existing physical readings and capability projection; all physical
+action signals remain unconnected. Its placement reserves Cura's actual
+perspective controls and job summary and follows viewport resizing. Author
+review of this snapshot preceded the shared motion guard and mutation wiring,
+which the author subsequently authorized.
+Never exercise printer controls in the author's live Cura session, through UI
+input or programmatic invocation. A multi-day print is running. Command tests
+use isolated fake transports with no printer connection; mockup-only snapshots
+have no command handlers attached. The prohibition on using live controls persists throughout
+development and validation.
+The author decides the layout. Use the Monitor's existing 0.1, 0.5, 1, 5, 10,
+25, 50, 100 and 125 mm jog presets and editable distance. The latest mockup
+uses an evenly spaced slider snapping to those presets, alongside one numeric
+field for an exact override; custom values are retained until a preset is chosen.
+Typed values position the handle by interpolation between neighbouring preset
+stops. Values outside the 0.1–125 mm slider scale clamp the handle to its endpoint
+while retaining the exact allowed distance in the box. The slider fills the
+pane width, with the numeric field above it, to keep all preset labels legible.
+The author accepted the current mockup layout, conditional on correct light
+and dark theme support. Verify both themes in the real QML snapshot, including
+expanded/collapsed, disabled and keyboard-focus states. The implemented
+controls use relative jogs and absolute G-code Move-to without a mode toggle;
+firmware coordinate mode and feedrate are preserved.
+Reuse the active Monitor model's existing
+toolhead controller, command policy and queue, with routing invalidated when the
+selected printer changes. Preserve each action's existing permissions; Z-offset
+adjustment and jogging must not acquire a single shared enablement gate.
+
+Position-move safety is a release requirement for both Monitor and Preview.
+Jog and absolute move-to controls validate fresh planned G-code endpoints.
+Zero is inclusive on each commanded axis, even when another untouched axis is
+already negative. Reject targets below zero and translate reported upper limits
+using the coordinate base. Firmware alone owns bed-mesh compensation; never
+infer a positive clearance floor or apply the mesh again. Revalidate after
+queued/in-flight commands using fresh, finite position and limits.
+
+Z-offset nudges and resets are a separate operator calibration action. The
+author's clarified policy excludes them from client geometry/bed-clearance
+checks: the client cannot know the toolhead's actual physical layout. Both
+directions remain usable during printing through the shared command lane, with
+standard connection/ownership/control-lock/input gates and immediate MOVE=1.
+Missing homing/position/mesh telemetry must not disable or reject the nudges.
+Firmware retains its own execution checks. Tests separate calibration availability
+from guarded position moves and cover shared-lane sequencing, ownership,
+non-finite inputs, coordinate changes and position-move travel limits.
+Unavailable Preview marker feedback remains separate from the movement guard.
+
+The implemented control surface distinguishes physical position readouts from
+absolute G-code targets, including offsets, bounds, untouched axes and
+mode preservation. True-position feedback uses fresh homed telemetry
+and remains available without a loaded toolpath where supported; unavailable
+marker feedback must not become a new jogging restriction or change the user's
+tracking preference. Verify the pane against the real Preview host geometry,
+including short windows and display scaling.
+
+Control wiring snapshot: the XYZ readouts are physical; Move to is explicitly
+labelled G-code/absolute, and blank axes remain unchanged. Jog/absolute scripts
+save and restore the actual firmware mode/feedrate without a return move. Both
+surfaces share one manual-motion queue. Jog and absolute position moves fetch
+one complete Klipper status query before dispatch. A timeout, changed
+session/command revision, missing homing/limits, non-finite telemetry,
+unsupported kinematics/transforms or overridden movement command refuses a
+position move. Z-offset nudges and resets are operator calibration controls,
+not absolute position targets. They bypass geometry, bed-clearance, homing and
+travel checks and do not fetch guard telemetry. Both directions and reset remain
+available during prints, subject to connection, ownership, control-lock,
+input-validation and command-lane checks. They use SET_GCODE_OFFSET MOVE=1;
+firmware remains responsible for executing the calibration command. The client
+cannot know the physical nozzle/bed layout and must not claim safe clearance for
+these adjustments. Firmware homing and calibration use their separate
+operation/state gates; the Preview exposes those only while idle.
+
+Klipper does not publish every runtime mesh offset/fade transform. Position
+travel uses the whole interpolated mesh's conservative extrema (including
+rounding uncertainty and zero), rather than inventing a local bed height.
+Some near-bed position moves may be refused where clearance cannot be proved.
+The checks govern our own requested position moves over fresh reported state;
+a client status query and later firmware script are not an atomic operation
+against unrelated external G-code. No live printer action is used to verify
+this snapshot: only isolated QML and synthetic transports.
+
+Two independent presentation fixes accompany this work: selected-layer ETA
+clocks include the additional-calendar-day suffix already used by Print job
+Finish, and the webcam zoom scale uses a stable width measured for `800%` while
+the FPS face retains room for its longer readout.
+
+### Deferred follow-up — optional runtime hosting
+
+The author also requested resilient hosting for optional detection and STEP
+downloads. The pinned payload inventory and staging audit are complete, but
+source/notices companions, publication and production URL/cache migration
+remain unfinished; 5.3.0 continues to use upstream hosts. Details are in
+[RUNTIME_MIRROR.md](RUNTIME_MIRROR.md). Inventory the exact pinned distributions and their notices/source
+obligations, then mirror unchanged bytes as versioned public GitHub Release
+assets in this repository. Preserve optional downloads, hashes and installed
+cache identities; no binary payloads enter Git history. The migration must not
+point at unpublished assets or require users to download existing runtimes
+again solely because their host changed.
 
 ### Remaining 5.x work — shared tracking already implemented
 
@@ -212,7 +413,7 @@ print supplies the needed markers and timing data. The Preview card can
 collapse to Attach/Detach and Load current print. The two panes share a bottom
 alignment and reserve space in Cura's action row.
 
-## 5.2.0 — Actual toolhead position and custom models (validated; release via PR)
+## 5.2.0 — Actual toolhead position and custom models (historical; released)
 
 The persistent **Enable lighting** master switch disables perimeter, attached and
 scene illumination together, retaining base colours and face paint. It disables
@@ -236,8 +437,10 @@ setup button opens the current printer's Following settings at the upload
 controls. Turning off **Show custom toolhead model** restores Cura's native
 nozzle and disables the custom controls, preserving the user's choices.
 
-The active branch is `release/v5.2.0`, created from `origin/main` at
-`5438a722e70d3e39d4e14df699092b3709751172`.
+The 5.2.0 branch was `release/v5.2.0`, created from `origin/main` at
+`5438a722e70d3e39d4e14df699092b3709751172`. PR 47 merged it at
+`5683a1f081dfd79f56e417c5c4b2192abaffcbcc`; the v5.2.0 release was published
+on 7 October 2026.
 
 The requested release scope is:
 
@@ -3025,3 +3228,33 @@ sets the chart's shipped resolution.
   timeout); on timeout the entry stays, restyled missed/failed,
   dismissible by click, and all entries clear at print end. NO automatic
   PAUSE retry — a retry could double a command that was merely slow.
+
+5.3.0 live qualification follow-up: fan-window fix, RGB picker, reflection toggle
+and clear-selection action passed whole CI at ea3aa7db. The subsequent re-slice,
+translucency, bed-height capture, faster continuous reflection refresh and reset
+slider fixes await fresh full local and exact-head CI qualification.
+
+
+Environment-map repair qualification: original-path hit-local recovery and
+completed-cohort ownership now have isolated proofs, including real opaque and
+glass head draws. The larger imported head exposed a Metal GPU command failure;
+that synchronous GLSL correction remains disabled. Visible environment-map gaps
+remain unresolved. Finish a safe, responsive repair in Cura before any further rendering
+tracing or progressive rendering work. Preserve the native geometry and current
+rendering quality; small fixtures do not establish readiness.
+
+The separated opaque receiver/query/lookup experiment now has a bounded actual
+CAD proof: repeatable corrections, disabled-lookup parity with ordinary shading,
+and exact recorded reflection inputs against the original PBR shader. The
+separate completion owner also passed a tiny native path/bed depth-seeded test:
+hidden receivers stayed invalid, and completed source-ticket queries produced
+repeatable lookup corrections with unchanged alpha. Full
+viewport safety, complete receiver layers, native AA/shutter semantics,
+live scene-depth integration and responsive Cura presentation remain unfinished.
+
+The latest isolated source-locality correction separates original lines before
+spatial sorting instead of grouping different cube walls into overlapping bounds.
+Complete hit payloads and seeded correction colours remain unchanged in the
+small fixture. This improves the prototype's query cost without changing native
+geometry or roughness samples; it remains unwired and requires full receiver,
+sample, pose and viewport qualification before a Cura snapshot.

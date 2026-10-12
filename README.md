@@ -8,8 +8,91 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 5.2.0
+- **Release:** 5.3.0
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 5.3.0
+
+Custom toolheads now retain STEP material names, transparency and separate body
+occurrences. Recognized material annotations or clear part names select appearance
+presets automatically. Unknown parts remain nonmetallic; colour alone does not
+identify a material. **Surface detail** adds subtle model-anchored plastic grain;
+set it to zero for smooth surfaces. Glass and metal receive no generated grain.
+These are visual presets, not measured physical finishes. Older cached models
+still load; reimport STEP to recover annotations absent from the old cache.
+
+The editor's **Appearance** section lets you select bodies and CAD faces together,
+assign material types, choose colours, and adjust roughness, reflectivity and opacity independently.
+Temporary colours identify material types while painting; leaving edit mode restores
+CAD colours with any explicit colour overrides. Automatic and Imported reset each property separately, and invisible
+parts remain selectable through the body list. See [appearance controls and defaults](docs/TOOLHEAD_MATERIALS.md).
+
+In normal Cura Preview, reflective parts show a cached approximation of the actual
+bed and visible G-code through six perspective views from the toolhead housing
+centre. Complete colour faces and roughness mipmaps are published together;
+short transitions soften replacement as the head moves. Capture antialiasing
+stabilizes thin paths, and detected flat beds use bounded reprojection between
+captures. A single capture point cannot reveal geometry hidden behind other
+surfaces, so visibility and parallax remain approximate. Unchanged maps sleep.
+Legacy compatibility mode keeps ordinary shading. Glass retains its imported
+alpha without refraction.
+
+Qualified native vertex buffers and immutable full print-path indices are shared
+by the main rendering passes and fenced reflection captures. Lighting retains
+full pixel density while cropping its surface and output targets when coverage
+permits; output crops keep the original camera projection. Intermediate targets
+have bounded caches, and inactive rendering storage is released. Capture matrices,
+material values and fan rotations avoid redundant CPU work. Memory savings depend
+on the model, view and illuminated coverage.
+
+The model editor's **Fans** section lets you pick a whole rotor body, inspect or
+override its centre and axis, and use **Update preview** before confirming rotation.
+Direction is viewed from the positive axis toward the centre. Choose visual RPM
+and optional blur, or bind an actual printer fan. Valid reported RPM takes precedence,
+including zero; otherwise the fan's power scales your full-speed visual RPM and is
+shown as estimated. Unavailable readings stop rotation. This binding only reads
+telemetry and never changes printer fans. The editor's slow preview is independent
+of printer speed. Settings apply through the existing Done/Save workflow.
+
+The new **Toolhead** pane puts printer controls at the top left of Cura
+**Preview**, below the stage menu. Collapse it to the left and reopen it with
+the right-pointing arrow. It leaves Cura's object list, job summary and
+perspective controls available and follows the light or dark theme.
+
+Use the compass to jog X/Y, the stalk arrows to jog Z, and the snapping
+distance slider for 0.1–125 mm presets. The numeric box accepts exact values
+from 0.01 to 300 mm and places the handle between neighbouring presets.
+Values above 125 mm keep their exact distance while the handle stays at the end.
+Position readouts are physical machine coordinates; **Move to** (**G-code · absolute**)
+uses absolute G-code coordinates. Leave an axis blank to keep it unchanged.
+Individual/all-axis homing and the actions menu expose the printer's supported
+levelling, bed-mesh calibration and motor-release operations while idle.
+
+Jog and Move-to require a non-printing state and fresh, usable firmware
+position, travel limits and coordinate-transform data. Both Preview and Monitor
+share a queue that checks every position move before sending it and restores
+the previous coordinate mode and feedrate. G-code zero is an inclusive lower
+bound on each commanded axis; negative targets are rejected. Firmware alone
+handles bed-mesh compensation. Upper travel limits still apply, and unsupported
+kinematics or transforms show a reason.
+These checks cannot make a firmware query and later command atomic against
+commands from another client, and do not replace firmware protections.
+
+**Z-offset** has its own down/up arrows and remains available during printing.
+Nudges and reset are operator calibration: the client cannot infer actual
+nozzle/bed clearance and does not apply geometry, homing or travel checks to
+them. They use the shared command lane with connection, ownership, control-lock
+and input checks. Firmware decides whether the immediate adjustment can execute.
+Switching printers or reconnecting discards unfinished edits and retires old
+control bindings.
+
+Toolhead, View Options and Print Follower now share boxed titles that highlight
+on hover or keyboard focus. Preview and Print Follower ETA clocks include `+1`, `+2`, etc.
+for additional days, matching Print job Finish. The webcam zoom control is
+narrower while still fitting `800%`.
+
+Optional runtime downloads still use upstream hosts. The inventory and remaining
+hosting work are recorded in [Runtime mirror](docs/RUNTIME_MIRROR.md).
 
 ## What changed in 5.2.0
 
@@ -25,6 +108,11 @@ the current printer's Following settings at the upload controls.
 **Enable lighting** switches all toolhead and scene lights off together, including
 the perimeter lights. It preserves the bed/model choices and disables their
 controls while off; the model remains visible in its base colours.
+**Enable reflections** independently switches bed/model reflections on or off.
+A complete colour environment map captures the surroundings from the toolhead
+centre and uses mipmaps for rough surfaces. Single-probe reflections approximate
+parallax and only include surfaces visible from that capture point.
+Both switches retain their saved Preview choices across restarts.
 Unavailable live positions show a reason; estimated positioning requires a toolpath.
 
 Choose a custom toolhead under **Configure Moonraker → Following → Toolhead
@@ -775,6 +863,10 @@ progress.
 
 The follower can also pause the print. Click the pane's plate to open the pop-over, slide its Layer slider to a layer, and the button at the foot of the schedule offers the end of that layer: one press schedules the pause, and the same button then removes it. The list beside the plate carries the whole schedule — each pause with its own ETA (`in 31m · ≈14:32`), a row's ✕ cancelling that one and **Clear** cancelling the rest — with a pause the printer has already taken dimmed to "passed" and one whose moment went by untaken left in the list as "pause not taken". Two kinds of row share the list. The pauses you schedule are fired by the plugin: it sends Klipper's `PAUSE` itself as the print crosses the layer, so the schedule lives with that print — it is dropped when the print ends, a new print starts with an empty list, and nothing survives a Cura restart. A pause the gcode already carries is listed as "baked" and is read-only — it belongs to the slicer, so the ✕ does nothing on it and the layer cannot be scheduled again from here.
 
+The detached follower's selected-layer ETA and scheduled pause clocks include
+`+1`, `+2`, etc. when their deadline falls on a later calendar day, using the
+same convention as Print job **Finish**.
+
 ### Power
 
 Moonraker power devices appear in Monitor and can be toggled directly. Devices configured in the Upload settings are preferred when that list is present; otherwise Moonraker's reported devices are shown. Devices that Moonraker marks as locked while printing cannot be toggled during an active print. Turning off an otherwise-toggleable device during a print requires confirmation.
@@ -819,6 +911,14 @@ Monitor always consumes the follower's shared core status stream rather than cre
 
 ## Preview controls
 
+**Toolhead** sits at the top left beneath the Preview stage menu. It offers
+physical position readouts, guarded jog and absolute Move-to controls, homing,
+Z-offset calibration and a supported-actions menu. Collapse it left to a nozzle
+tab; its expansion arrow points right. Jogging requires the print to be paused
+explicitly. Z-offset adjustments remain available during a print and are
+operator-controlled calibration. This pane uses the selected printer's existing
+Monitor controller and does not start another status connection.
+
 The follower controls live in their own Cura-styled action-panel card in Preview. The card contains:
 
 - Cura's native nozzle icon and a bold **Moonraker Print Follower** title
@@ -838,9 +938,24 @@ at the model upload controls.
 ## Screenshots
 
 The interface screenshots are captured deterministically from the plugin's real
-QML with the real cura-light theme (see `docs/INSTRUCTIONS.md`). The toolhead
+QML with the real Cura light/dark themes and synthetic printer data
+(see `docs/INSTRUCTIONS.md`). The toolhead
 showcase uses the production lighting shaders and fixed model, lighting and
 camera fixtures in the same screenshot generation and repeatability checks.
+
+![Preview Toolhead pane, ready](screenshots/15-preview-toolhead.png)
+![Preview Toolhead pane in the dark theme](screenshots/15-preview-toolhead-dark.png)
+
+The Preview Toolhead pane: physical XYZ, compass jogging, distance slider,
+absolute G-code targets and Z-offset calibration. The actions menu contains
+supported levelling and motor controls.
+
+![Preview Toolhead pane during printing](screenshots/17-preview-toolhead-printing.png)
+![Preview Toolhead pane disconnected](screenshots/18-preview-toolhead-disconnected.png)
+
+During printing, position moves and homing are disabled while Z-offset
+calibration remains available. A disconnected pane retains its layout with
+unavailable readouts and disabled controls.
 
 ![Stealthburner with amber nozzle lights and purple logo lights](screenshots/13-toolhead-lighting.png)
 

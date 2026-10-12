@@ -14,6 +14,8 @@ from PyQt6.QtQuick import QQuickFramebufferObject
 
 from ..resources.PluginPaths import plugin_path
 from ..geometry.ToolheadLighting import light_values
+from ..geometry.ToolheadMaterials import finish_uniforms
+from ..geometry.ToolheadRotors import rotation
 
 
 class ToolheadPreviewGL(QQuickFramebufferObject):
@@ -52,9 +54,17 @@ class PreviewRenderer(QQuickFramebufferObject.Renderer):
         self._packed = owner._packed
         self._camera = owner._camera
         self._pan = owner._pan
+        candidate = getattr(owner._model, "rotorCandidate", {})
+        self._preview_body = candidate.get("body", -1)
+        self._preview_enabled = bool(getattr(owner, "_slow_rotation", False) and candidate)
+        self._preview_rotation = rotation(candidate['centre'], candidate['axis'],
+            owner._preview_phase*candidate['direction']) if self._preview_enabled else None
         self._width, self._height = owner.width(), owner.height()
         self._window = item.window()
         self._report_failure = item.failed.emit
+        self._surface_detail = getattr(owner._model, "surfaceDetail", .35)
+        self._material_finishes = finish_uniforms(getattr(owner._model, "materialOverrides", {}))
+        self._material_edit = bool(getattr(owner, "_painting_material", False))
         self._lights = copy.deepcopy(owner._model.lights) if owner._model is not None and hasattr(owner._model, "lights") else []
 
     def _discard_resources(self):
@@ -155,9 +165,9 @@ class PreviewRenderer(QQuickFramebufferObject.Renderer):
                 self._uploaded = self._packed
             program = self._program
             if not program.bind(): raise RuntimeError("OpenGL preview shader could not bind")
-            for name, offset, count in (("a_vertex", 0, 3), ("a_normal", 12, 3), ("a_color", 24, 4), ("a_surface", 40, 1)):
+            for name, offset, count in (("a_vertex", 0, 3), ("a_normal", 12, 3), ("a_color", 24, 4), ("a_surface", 40, 1), ("a_material", 44, 4), ("a_body", 60, 1), ("a_finish", 64, 2)):
                 program.enableAttributeArray(name)
-                program.setAttributeBuffer(name, 0x1406, offset, count, 44)
+                program.setAttributeBuffer(name, 0x1406, offset, count, 72)
             centre, matrix, scale = self._camera
             radius = self._packed[2]
             # Match the logical-pixel camera/picker; physical FBO dimensions
@@ -173,6 +183,14 @@ class PreviewRenderer(QQuickFramebufferObject.Renderer):
             program.setUniformValue("u_projectionMatrix", projection)
             program.setUniformValue("u_opacity", 1.0)
             program.setUniformValue("u_lightingEnabled", 1)
+            program.setUniformValue("u_surfaceDetail", float(self._surface_detail))
+            for name, value in self._material_finishes.items():
+                program.setUniformValue(name, QVector4D(*value) if isinstance(value, list) else value)
+            program.setUniformValue("u_materialEditEnabled", int(self._material_edit))
+            program.setUniformValue("u_previewBody", float(self._preview_body))
+            program.setUniformValue("u_previewEnabled", int(self._preview_enabled))
+            program.setUniformValue("u_previewHighlight", int(self._preview_body >= 0 and not self._preview_enabled))
+            program.setUniformValue("u_previewRotation", QMatrix4x4(*self._preview_rotation.reshape(-1)) if self._preview_rotation is not None else identity)
             program.setUniformValue("u_attachedCount", len(self._lights))
             for index, light in enumerate(self._lights):
                 position, direction, colour, reach = light_values(light)
@@ -182,6 +200,8 @@ class PreviewRenderer(QQuickFramebufferObject.Renderer):
                 program.setUniformValue("u_attachedSurface["+str(index)+"]", float(light['surface']))
                 rgb = tuple(int(light['colour'][j:j+2], 16)/255 for j in (1, 3, 5))
                 program.setUniformValue("u_attachedPaint["+str(index)+"]", QVector4D(*rgb, float(light['paint'])))
+            program.setUniformValue("u_orthographic", 1)
+            program.setUniformValue("u_viewDirection", QVector3D(*depth))
             program.setUniformValue("u_viewPosition", QVector3D(*(centre+depth*radius*4)))
             for index, (position, direction) in enumerate((
                     (centre+(-radius, 0, radius), (1, 0, -1)),
@@ -193,19 +213,23 @@ class PreviewRenderer(QQuickFramebufferObject.Renderer):
             gl.glEnable(0x0B71)  # depth test
             gl.glDepthFunc(0x0201)  # LESS
             gl.glDisable(0x0BE2)  # blend
-            # Depth prepass makes translucent CAD faces independent of source
-            # triangle order. Compose the nearest surface with premultiplied
-            # framebuffer alpha, as Qt Quick expects for this texture.
-            gl.glColorMask(False, False, False, False)
-            program.setUniformValue("u_depthOnly", 1)
-            gl.glDrawArrays(0x0004, 0, int(self._packed[3]))
+            # Opaque bodies write depth first. Glass must never occupy a
+            # depth prepass that rejects the rotor inside its housing.
             program.setUniformValue("u_depthOnly", 0)
-            gl.glColorMask(True, True, True, True)
-            gl.glDepthFunc(0x0203)  # LEQUAL
+            opaque, transparent = self._packed[4] if len(self._packed) > 4 else (int(self._packed[3]), ())
+            if opaque: gl.glDrawArrays(0x0004, 0, opaque)
             gl.glDepthMask(False)
             gl.glEnable(0x0BE2)
+            gl.glBlendEquationSeparate(0x8006, 0x8006)
             gl.glBlendFuncSeparate(0x0302, 0x0303, 1, 0x0303)
-            gl.glDrawArrays(0x0004, 0, int(self._packed[3]))
+            def distance(row):
+                _start, _count, body, point = row
+                if self._preview_enabled and body == self._preview_body:
+                    point = (self._preview_rotation @ [*point, 1])[:3]
+                return float(point @ depth)
+            for start, count, _body, _point in sorted(transparent, key=distance):
+                gl.glDrawArrays(0x0004, start, count)
+
         except Exception as error:
             present = False
             self._fail(error)

@@ -55,6 +55,7 @@ class MonitorCommands(QObject):
         # cancelled and clears everything).
         self._lifecycle = 0
         self._dispatch_id = None
+        self._dispatch_revision = 0
         self._busy = False
         self._status = self._tracked = ""
         self._live = self._receipt = ""
@@ -86,6 +87,8 @@ class MonitorCommands(QObject):
 
     @property
     def busy(self): return self._busy
+    @property
+    def dispatch_revision(self): return self._dispatch_revision
     @property
     def status(self):
         # Receipt overlays lifecycle overlays durable: the in-flight
@@ -164,6 +167,7 @@ class MonitorCommands(QObject):
 
     def send(self, label, path, body=None, *, command_id=None):
         if self._busy or not self._data.active: return False
+        self._dispatch_revision += 1
         self._set_busy(True)
         # A new action supersedes any old completion banner: the receipt
         # must never resurface over the fresh lifecycle text or a newer

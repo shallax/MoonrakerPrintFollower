@@ -53,7 +53,7 @@ if mode == "diagnostic-exit":
     sys.stdout.write("x" * 70000); sys.stdout.flush(); sys.exit(0)
 if mode == "oversized":
     with open(output, "wb") as handle:
-        handle.seek(56000012); handle.write(b"x")
+        handle.seek(64000016 + 1048576); handle.write(b"x")
     time.sleep(30)
 if mode == "error":
     print("CAD conversion failed precisely", file=sys.stderr); sys.exit(2)
@@ -267,9 +267,9 @@ class ToolheadImportTests(unittest.TestCase):
                 self.assert_reaped()
 
     def test_child_output_is_validated_before_constructing_a_mesh(self):
-        cases = (("short-header", "truncated mesh"), ("wrong-magic", "invalid mesh"),
-                 ("zero-count", "invalid mesh"), ("excess-count", "invalid mesh"),
-                 ("short-body", "invalid mesh length"), ("long-body", "invalid mesh length"),
+        cases = (("short-header", "Truncated toolhead mesh"), ("wrong-magic", "Invalid toolhead mesh"),
+                 ("zero-count", "Invalid toolhead mesh"), ("excess-count", "Invalid toolhead mesh"),
+                 ("short-body", "Invalid toolhead mesh length"), ("long-body", "Invalid toolhead mesh length"),
                  ("nan", "out-of-range"))
         for mode, error in cases:
             with self.subTest(mode=mode):
@@ -290,7 +290,7 @@ class ToolheadImportTests(unittest.TestCase):
         repository = Path(__file__).resolve().parents[1]
         driver = self.root / "native-worker-check.py"
         driver.write_text('''
-import pathlib, runpy, struct, sys, tempfile
+import json, pathlib, runpy, struct, sys, tempfile
 repository, runtime, coverage_file = sys.argv[1:]
 repository = pathlib.Path(repository)
 if coverage_file:
@@ -308,7 +308,11 @@ with tempfile.TemporaryDirectory() as scratch:
         assert status.startswith("Writing display mesh") and "triangles" in status, status
         body = output.read_bytes()
         magic, count = struct.unpack_from("<8sI", body)
-        assert magic == b"MPFHEAD2" and count > 0 and len(body) == 12 + count * 56
+        assert magic == b"MPFHEAD3" and count > 0
+        metadata_size, = struct.unpack_from("<I", body, 12 + count * 64)
+        assert len(body) == 16 + count * 64 + metadata_size
+        metadata = json.loads(body[16 + count * 64:])
+        assert len(metadata["bodies"]) >= 3, metadata
         values = struct.unpack_from("<" + str(count * 13) + "f", body, 12)
         xyz, colours = values[:count * 9], values[count * 9:]
         bounds = tuple((min(xyz[i::3]), max(xyz[i::3])) for i in range(3))

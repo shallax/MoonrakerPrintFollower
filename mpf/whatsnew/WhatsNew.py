@@ -26,6 +26,26 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "5.3.0",
+        "headline": "Version 5.3.0 adds Preview toolhead controls, material finishes, reflections and animated fan bodies.",
+        "items": (
+            "STEP retains material annotations, transparency and separate body occurrences. Recognized material names choose visual finishes automatically; Surface detail adds subtle plastic grain, with zero restoring smooth surfaces.",
+            "Select bodies or CAD faces to assign material types and adjust roughness, reflectivity and opacity independently. Temporary paint colours identify types; separate resets restore imported appearance, and Cancel discards the draft.",
+            "Reflect the bed and visible G-code with six complete environment faces captured around the toolhead centre. Enable reflections switches the effect on or off; glass retains its transparency.",
+            "Reflections retain more detail and blend between completed captures as the toolhead moves. Thin printed paths have smoother capture edges, and detected flat beds track motion between captures.",
+            "Large previews share print-path graphics storage and reuse cached rendering work. Lighting retains full detail while reducing surface and output storage when illuminated coverage permits; inactive caches are released.",
+            "Smooth path preserves motion between telemetry updates and catches up after delayed frames without advancing beyond the latest observation.",
+            "Pick whole fan bodies, inspect and confirm their axis, and set visual speed, direction and blur. Optionally follow read-only printer fan telemetry: measured RPM wins, otherwise power scales your visual full-speed RPM and is labelled estimated. Missing readings stop rotation; no fan commands are sent.",
+            "Find Toolhead at the top left beneath the Preview stage menu. Collapse it left and reopen it with the right-pointing arrow; Cura's object list and perspective controls remain available.",
+            "Jog with the compass and Z arrows. Select a preset on the snapping distance slider or type an exact distance; the handle follows values between presets.",
+            "Read physical XYZ positions and move to absolute G-code coordinates. Leave target axes blank to keep them unchanged. Homing and supported levelling, bed-mesh and motor actions are available while idle.",
+            "Jog and Move-to share Monitor's queue and check fresh firmware position and upper travel limits before each move. G-code zero is allowed on each axis; moves below zero are rejected. Firmware handles bed compensation. Pause a print explicitly before jogging; unavailable checks show a reason.",
+            "Z-offset down/up nudges and reset remain available during printing. These are operator calibration controls without client bed-clearance or homing checks; firmware decides whether the adjustment can execute.",
+            "Toolhead, View Options and Print Follower have matching boxed titles with hover and keyboard-focus highlighting, in light and dark themes.",
+            "Selected-layer ETA clocks now show additional days, and the webcam zoom control is narrower while still fitting 800%.",
+        ),
+    },
+    {
         "version": "5.2.0",
         "headline": "Version 5.2.0 brings your toolhead into Cura Preview, with live positioning, custom models and coloured lighting.",
         "items": (

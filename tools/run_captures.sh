@@ -10,6 +10,7 @@ export QT_NO_CPU_FEATURE PYTHONFAULTHANDLER
 output="$1"
 python3 tools/capture_monitor.py "$output"
 python3 tools/capture_preview.py "$output"
+python3 tools/capture_preview_toolhead.py "$output"
 python3 tools/capture_settings.py "$output"
 python3 tools/capture_upload.py "$output"
 python3 tools/capture_whatsnew.py "$output"

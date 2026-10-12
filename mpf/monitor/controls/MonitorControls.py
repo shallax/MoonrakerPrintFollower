@@ -50,10 +50,11 @@ def _escape_exclude_name(name):
 class MonitorControls(QObject):
     changed = pyqtSignal()
 
-    def __init__(self, data, commands, tuning, bed_mesh, config, parent=None, *, job_identity=None):
+    def __init__(self, data, commands, tuning, bed_mesh, config, parent=None, *, job_identity=None, motion=None):
         super().__init__(parent)
         self._data, self._commands, self._tuning = data, commands, tuning
         self._mesh, self._config = bed_mesh, config
+        self._motion = motion
         # The print identity an object gesture binds to (the model's
         # print state); None when the host has none to offer.
         self._job_identity_source = job_identity
@@ -331,16 +332,10 @@ class MonitorControls(QObject):
         else: self._tuning.queue(key, percent, key, f"{'M220' if kind == 'speed' else 'M221'} S{percent}")
 
     def z_offset(self, amount=None):
-        if amount is not None and (abs(amount) < 0.0001 or abs(amount) > 5): return
-        # The explicit per-action row (4.2.0, N3): babystepping is
-        # allowed mid-print; the policy gate is the first Python
-        # guard this path has ever had (the QML's !actionBusy was
-        # the only click gate before).
-        if not self._allowed(can_z_offset): return
-        homed = str((self._data.snapshot.auxiliary.get("toolhead") or {}).get("homed_axes") or "")
-        script = "SET_GCODE_OFFSET " + (f"Z_ADJUST={amount:+g}" if amount is not None else "Z=0")
-        if set(homed.lower()) >= {"x", "y", "z"}: script += " MOVE=1"
-        self._commands.script("Z offset", script, rule=can_z_offset)
+        # Calibration nudges/resets share the command queue with Preview,
+        # but deliberately bypass the position-move geometry guard.
+        if self._motion is not None and self._allowed(can_z_offset):
+            self._motion.z_offset(amount)
 
     def z_offset_apply(self):
         if not self._allowed(can_z_offset) or not self._values.get("canApplyZOffset"):

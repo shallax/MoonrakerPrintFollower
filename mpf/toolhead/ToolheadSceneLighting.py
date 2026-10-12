@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+from copy import deepcopy
 import configparser
 import math
 from pathlib import Path
@@ -16,6 +17,22 @@ from UM.View.RenderBatch import RenderBatch
 from ..resources.PluginPaths import plugin_path
 from .ToolheadPathGeometry import ToolheadPathGeometry
 from .ToolheadDepthCache import ToolheadDepthCache
+from .ToolheadCamera import camera_view
+
+
+def composition_scissor(camera, lights, viewport, padding=0.0, *, directions=None):
+    """Return viewport-local coverage; unknown input keeps the full composition."""
+    from .ToolheadSurfaceCache import light_scissor
+    try:
+        lights = tuple(lights)
+        if not math.isfinite(padding) or padding < 0: return None
+        if any(not np.isfinite(position).all() or not math.isfinite(reach) or reach < 0
+               for position, reach in lights): return None
+        matrices = (camera.getInverseWorldTransformation().getData(), camera.getProjectionMatrix().getData())
+        if any(not np.isfinite(matrix).all() for matrix in matrices): return None
+        return light_scissor(camera, lights, viewport[2], viewport[3], padding, directions=directions) or (0,0,0,0)
+    except (TypeError, ValueError, AttributeError, OverflowError):
+        return None
 
 
 def layer_range(data, view):
@@ -154,17 +171,27 @@ class ToolheadSceneLighting:
         self._path_geometry = {}
         self._plate_meshes = {}
         self._normal_matrices = {}
+        self._triangle_batches = {}
+        self._triangle_used = set()
         self._surface_cache = self._surface_path_shader = self._surface_mesh_shader = None
         self._surface_failed = False
         self._surface_padding_key = None
         self._surface_padding = 0.0
+        self._output_region = self._output_region_key = None
 
     def _batch(self, shader, transform, mesh, bounds=None, lines=False):
         options = dict(type=RenderBatch.RenderType.Solid, backface_cull=True)
         if lines: options.update(mode=RenderBatch.RenderMode.Lines, range=bounds)
+        data = transform.getData()
+        key = data.tobytes()
+        triangle_key = None if lines or bounds is not None else (
+            id(shader), id(mesh), id(transform), data.shape, data.dtype.str, key)
+        if triangle_key is not None:
+            self._triangle_used.add(triangle_key)
+            previous = self._triangle_batches.get(triangle_key)
+            if previous is not None: return previous
         batch = RenderBatch(shader, **options)
         from UM.Math.Matrix import Matrix
-        key = transform.getData().tobytes()
         cached = self._normal_matrices.get(mesh)
         if cached is None or cached[0] != key:
             normal = Matrix(transform.getData())
@@ -174,6 +201,10 @@ class ToolheadSceneLighting:
             normal.transpose()
             cached = self._normal_matrices[mesh] = (key, normal)
         batch.addItem(transform, mesh=mesh, normal_transformation=cached[1])
+        # Retain only a bounded working set of immutable triangle descriptors.
+        # RenderBatch refreshes camera bindings on each render; it retains no VAO.
+        if triangle_key is not None and len(self._triangle_batches) < 256:
+            self._triangle_batches[triangle_key] = batch
         return batch
 
     def draw(self, node, renderer, camera, view, root):
@@ -181,7 +212,7 @@ class ToolheadSceneLighting:
             from UM.View.GL.OpenGL import OpenGL
             self._mesh_shader = OpenGL.getInstance().createShaderProgram(plugin_path("toolhead", "scene-lighting.shader"))
         if self._mesh_shader is None: return
-        node.apply_attached_lights(self._mesh_shader)
+        self._triangle_used.clear()
         light_bed, light_models = node.scene_lighting_effects()
         batches = []
         surface_batches = []
@@ -193,6 +224,7 @@ class ToolheadSceneLighting:
             self._path_geometry.clear()
             self._plate_meshes.clear()
             self._normal_matrices.clear()
+            self._triangle_batches.clear()
             self._scene_identity = scene_identity
         # QtRenderer.endRendering clears getBatches(). reRenderLast then runs
         # only composition, using the previous native textures. Keep the same
@@ -224,7 +256,6 @@ class ToolheadSceneLighting:
                     if light_bed: batches.append(receiver)
                 elif native.renderType == RenderBatch.RenderType.Solid:
                     native_depth.append(self._batch(self._mesh_shader, item["transformation"], mesh))
-        self._mesh_shader.setUniformValue("u_hasColour", 0)
         used_data = set()
         simulation = getattr(renderer, "getRenderPass", lambda _name: None)("simulationview")
         shadow_getter = getattr(simulation, "getCompletedLayerShadowMode", None)
@@ -232,23 +263,24 @@ class ToolheadSceneLighting:
         # No private native shader or transition state is inspected here.
         shadow = shadow_getter() if callable(shadow_getter) else False
         path_settings = [("lightingShadow", shadow)]
+        path_values = []
+        shader = None
         if view is not None:
             compatibility = bool(view.getCompatibilityMode())
             shader = self._path_shaders.get(compatibility)
             if shader is None:
                 shader = self._path_shaders[compatibility] = create_path_shader(compatibility)
-            node.apply_attached_lights(shader)
             for uniform, getter in (("u_show_travel_moves", "getShowTravelMoves"), ("u_show_helpers", "getShowHelpers"),
                     ("u_show_skin", "getShowSkin"), ("u_show_infill", "getShowInfill"), ("u_show_starts", "getShowStarts"),
                     ("u_layer_view_type", "getSimulationViewType"), ("u_extruder_opacity", "getExtruderOpacities")):
                 value = getattr(view, getter)()
-                shader.setUniformValue(uniform, value)
                 path_settings.append((uniform, repr(value)))
+                path_values.append((uniform, deepcopy(value)))
             for metric, getter in (("feedrate", "Feedrate"), ("thickness", "Thickness"), ("line_width", "LineWidth"), ("flow_rate", "FlowRate")):
                 for prefix in ("min", "max"):
                     value = getattr(view, "get" + prefix.title() + getter)()
-                    shader.setUniformValue("u_" + prefix + "_" + metric, value)
                     path_settings.append((prefix + metric, repr(value)))
+                    path_values.append(("u_" + prefix + "_" + metric, deepcopy(value)))
             for child in root.getAllChildren():
                 if not child.isVisible(): continue
                 data = child.callDecoration("getLayerData")
@@ -280,6 +312,7 @@ class ToolheadSceneLighting:
                     for mesh in (view.getCurrentLayerMesh(), view.getCurrentLayerJumps()):
                         if mesh is not None:
                             batches.append(self._batch(self._mesh_shader, child.getWorldTransformation(), mesh))
+        self._triangle_batches = {key: batch for key, batch in self._triangle_batches.items() if key in self._triangle_used}
         self._path_geometry = {data: geometry for data, geometry in self._path_geometry.items() if data in used_data}
         from UM.View.GL.OpenGL import OpenGL
         gl = OpenGL.getInstance().getBindingsObject()
@@ -288,19 +321,62 @@ class ToolheadSceneLighting:
         from .ToolheadFrameCache import ToolheadFrameCache
         if self._frame_cache is None: self._frame_cache = ToolheadFrameCache(depth_only=True)
         copy_completed_depth = getattr(simulation, "try_copy_completed_depth", None)
+        # Snapshot the same invocation's inputs; mutable host setting arrays
+        # must not drift between cache admission and uniform delivery.
+        light_values = node.attached_light_uniforms()
+        orthographic, direction = camera_view(camera)
+        camera_values = (("u_orthographic", int(orthographic)), ("u_viewDirection", direction.tolist()))
         state = (scene_identity, tuple(path_settings), node.scene_lighting_signature(),
             node.render_transformation().getData().tobytes(),
             tuple((id(item["mesh"]), item["transformation"].getData().tobytes())
                 for batch in native_depth + batches for item in batch.items),
             tuple((id(geometry), transform.getData().tobytes(), bounds, repr(uniforms), current_start)
                 for geometry, transform, bounds, _lit, uniforms, current_start in paths))
-        # Keep a fixed viewport for illumination: moving crop projections would
-        # invalidate the static depth every time the head moved. Colour is
-        # already additive/premultiplied, so its retained image adds once.
-        self._frame_cache.draw(gl, camera, None, Matrix(), state,
-            lambda cached_camera: self._draw_with_surfaces(gl, cached_camera, node, view, native_depth,
+        # Keep the original projection while moving a smaller output target.
+        # Integer viewport offsets leave retained surface geometry unchanged.
+        try:
+            padding_key = tuple((id(geometry), transform.getData().tobytes()) for geometry, transform, *_ in paths)
+            if padding_key != getattr(self, '_composition_padding_key', None):
+                padding = 0.0
+                for geometry, transform, *_ in paths:
+                    dimensions = geometry.mesh.getAttribute("line_dimensions")
+                    width = float(np.max(np.abs(dimensions["value"]))) if dimensions is not None else 1.0
+                    amount = 2.0 * width * float(np.linalg.norm(transform.getData()[:3,:3])) + .1
+                    if not math.isfinite(amount): raise ValueError('Unknown tube extent')
+                    padding = max(padding, amount)
+                self._composition_padding = padding
+                self._composition_padding_key = padding_key
+            direction_provider = getattr(node, 'scene_light_directions', None)
+            rectangle = composition_scissor(camera, node.scene_light_bounds(),
+                tuple(map(int, gl.glGetIntegerv(0x0BA2))), self._composition_padding,
+                directions=direction_provider() if callable(direction_provider) else None)
+        except (TypeError, ValueError, AttributeError):
+            rectangle = None
+        self._composition_rect = rectangle
+        # No illuminated pixels: keep existing allocations asleep. In
+        # particular, an empty ROI must not expand to a full-window target.
+        if rectangle is not None and (rectangle[2] <= 0 or rectangle[3] <= 0): return
+        from .ToolheadFrameCache import lighting_region
+        viewport = tuple(map(int, gl.glGetIntegerv(0x0BA2)))
+        output_key = (scene_identity, viewport[2:], camera.getInverseWorldTransformation().getData().tobytes(),
+            camera.getProjectionMatrix().getData().tobytes(),
+            tuple((id(geometry), current_start) for geometry, *_rest, current_start in paths))
+        previous = getattr(self, '_output_region', None) if output_key == getattr(self, '_output_region_key', None) else None
+        self._output_region = lighting_region(rectangle, *viewport[2:], previous)
+        self._output_region_key = output_key
+        def redraw(cached_camera):
+            for target in (self._mesh_shader, shader) if shader is not None else (self._mesh_shader,):
+                for name, value in light_values.items(): target.setUniformValue(name, value)
+                for name, value in camera_values: target.setUniformValue(name, value)
+            self._mesh_shader.setUniformValue("u_hasColour", 0)
+            if shader is not None:
+                for name, value in path_values: shader.setUniformValue(name, value)
+            self._draw_with_surfaces(gl, cached_camera, node, view, native_depth,
                 batches, surface_batches, paths, shader if paths else None, scene_identity, path_settings,
-                copy_completed_depth), additive=True)
+                copy_completed_depth)
+        self._frame_cache.draw(gl, camera, None, Matrix(), state,
+            redraw, additive=True, composition_rect=rectangle,
+            _crop=self._output_region, preserve_projection=True)
 
     def _draw_with_surfaces(self, gl, camera, node, view, native_depth, batches, surface_batches,
             paths, shader, scene_identity, path_settings, copy_completed_depth=None):
@@ -308,6 +384,10 @@ class ToolheadSceneLighting:
             try:
                 self._draw_deferred(gl, camera, node, view, native_depth, surface_batches, paths,
                     shader, scene_identity, path_settings, copy_completed_depth)
+                # Forward-only caches can survive a compatibility-mode visit.
+                # Drop them on the owning render context once deferred succeeds.
+                if self._depth_cache._fbo is not None: self._depth_cache = ToolheadDepthCache()
+                if self._prefix_depth_cache._fbo is not None: self._prefix_depth_cache = ToolheadDepthCache()
                 return
             except Exception as error:
                 import logging
@@ -426,7 +506,9 @@ class ToolheadSceneLighting:
             # Occlusion always includes interior paths and native solid meshes.
             seeded = self._surface_cache.try_seed_depth(
                 None if copy_completed_depth is None else
-                lambda target: copy_completed_depth(gl, target, camera, paths, view))
+                lambda target: copy_completed_depth(gl, target, camera, paths, view),
+                region_copy=None if copy_completed_depth is None else
+                lambda target, region: copy_completed_depth(gl, target, camera, paths, view, source_region=region))
             gl.glColorMask(False, False, False, False)
             mesh_pass(native_depth + surface_batches, 1, True)
             ranges = [(path[2][0], end) for path, end in zip(paths, completed, strict=True)]
@@ -439,12 +521,30 @@ class ToolheadSceneLighting:
             # Within a stable layer every appended path is a receiver.
             path_pass(ranges, False)
 
-        self._surface_cache.prepare(gl, key, completed, rebuild, append)
-        gl.glDepthMask(True)
-        gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
+        scissor = bool(gl.glIsEnabled(0x0C11)), tuple(map(int, gl.glGetIntegerv(0x0C10)))
+        rectangle = getattr(self, "_composition_rect", None)
+        def transient_region():
+            # This is the owned lighting target's viewport, not the host origin.
+            if rectangle is None:
+                gl.glDisable(0x0C11)
+                return True
+            x, y, width, height = tuple(map(int, gl.glGetIntegerv(0x0BA2)))
+            left, bottom, rw, rh = rectangle
+            right, top = min(width, left + rw), min(height, bottom + rh)
+            left, bottom = max(0, left), max(0, bottom)
+            if right <= left or top <= bottom: return False
+            gl.glEnable(0x0C11)
+            gl.glScissor(x + left, y + bottom, right - left, top - bottom)
+            return True
         try:
-            self._surface_cache.copy_depth(gl)
-            if paths:
+            # Retain full pixel density within a padded, stable light envelope.
+            gl.glDisable(0x0C11)
+            self._surface_cache.prepare(gl, key, completed, rebuild, append, rect=rectangle)
+            gl.glDisable(0x0C11)
+            gl.glDepthMask(True)
+            gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
+            self._surface_cache.copy_depth(gl, rect=rectangle)
+            if paths and transient_region():
                 gl.glEnable(gl.GL_DEPTH_TEST)
                 gl.glEnable(gl.GL_CULL_FACE)
                 gl.glDisable(gl.GL_BLEND)
@@ -466,7 +566,7 @@ class ToolheadSceneLighting:
                         2.0 * width * float(np.linalg.norm(transform.getData()[:3, :3])) + .1)
                 self._surface_padding_key = padding_key
             self._surface_cache.shade(gl, camera, node, padding=self._surface_padding)
-            if paths and node.scene_lighting_effects()[1]:
+            if paths and node.scene_lighting_effects()[1] and transient_region():
                 gl.glEnable(gl.GL_CULL_FACE)
                 gl.glDepthMask(False)
                 gl.glDepthFunc(gl.GL_LEQUAL)
@@ -477,11 +577,16 @@ class ToolheadSceneLighting:
                     for name, value in uniforms.items(): forward_shader.setUniformValue(name, value)
                     if bounds[1] > end: geometry.render(forward_shader, camera, transform, [(end, bounds[1])], gl)
         finally:
-            gl.glColorMask(True, True, True, True)
-            gl.glDepthFunc(gl.GL_LESS)
-            gl.glDepthMask(True)
-            gl.glDisable(gl.GL_BLEND)
-            gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
+            try:
+                gl.glDisable(0x0C11)
+                gl.glColorMask(True, True, True, True)
+                gl.glDepthFunc(gl.GL_LESS)
+                gl.glDepthMask(True)
+                gl.glDisable(gl.GL_BLEND)
+                gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
+            finally:
+                try: gl.glScissor(*scissor[1])
+                finally: (gl.glEnable if scissor[0] else gl.glDisable)(0x0C11)
 
     def _draw_lighting(self, gl, camera, native_depth, batches, paths, shader, scene_identity, path_settings):
         # Own depth, with native composition left intact underneath.

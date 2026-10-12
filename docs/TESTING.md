@@ -1,6 +1,135 @@
 # TESTING.md — the real-Cura UI test harness
 
-## 5.2.0 — current validation
+## 5.3.0 — current validation
+
+The final 12 October rendering round shares full immutable path indices across
+main passes and fenced worker captures, and moves cropped lighting outputs at
+full pixel density with the original projection. Live allocation receipts
+confirmed one shared full index buffer and a smaller output while following the
+large print; these are storage estimates, not FPS or driver-residency claims.
+The final measured `make all JOBS=2` passed 5,982 tests in 257 isolated processes,
+97.8% total statement
+coverage, every required file above 95%, nine lint steps, screenshot determinism
+and verified packages. CI run `38248913949` regenerated all 29 canonical Linux
+PNGs from commit `48fdc0f1`; its 25 capture scenes were byte-identical across
+two runs. Only the What's New image changed, and it was visually inspected
+before promotion. Cross-platform CI confirmation remains the final branch
+check. Both package manifests and the current What's New entry use 5.3.0.
+
+Cross-driver GL checks distinguish storage/coverage failures from numerical
+rounding. Depth, material category, alpha and pixels outside foreground clips
+remain exact. Arbitrary-gradient surface fixtures retain a declared empirical
+interpolation bound and a real-lighting output bound of one RGB8 step; a separate
+dyadic fixture checks exact coordinates. Exhaustive foreground-alpha pairs also
+compare float32 reference arithmetic and preserve exact alpha. These fixtures
+do not establish universal CAD silhouette equality. Required-GL runs fail when
+the context is unavailable; optional contexts report counted per-test skips.
+The exhaustive standalone blend fixture has its own test module/process so
+Mesa EGL and Qt GLX do not require a context handoff on the same test thread.
+Portable native-buffer transaction tests cover admission, replacement, rollback
+and retained generations without requiring installed Cura sources. The native
+adapter/GL fixtures remain separate integration evidence; their absence cannot
+leave those ownership rules below the per-file coverage gate.
+Apple Software Renderer reproductions exposed dropped draws under small scissors.
+Foreground fragment clipping, lighting viewport bounds and texture-intersection
+composition have exact image/depth proofs. Software-only pixel-derived fixtures
+test exact mapping independently of native varying interpolation; the original
+arbitrary-gradient fixture retains its empirical precision and final-lighting bounds.
+
+The `release/v5.3.0` branch adds Preview Toolhead controls, a shared physical
+position-move guard, boxed Preview headers, multi-day layer ETA clocks and a
+narrower webcam zoom face. Z-offset nudges/reset are operator calibration
+controls: they bypass client geometry/homing checks and remain available while
+printing. Jog and Move-to require fresh firmware inputs, allow G-code zero on each axis,
+reject negative targets and check upper travel limits. Firmware handles bed-mesh
+compensation.
+
+**Never operate printer controls in the developer's live Cura session.** The
+printer is running a multi-day print. This includes Z-offset, homing, jogging,
+calibration, pause/resume, motor controls and programmatic command invocation.
+Use invented telemetry, isolated real QML and fake transports with no printer
+connection. Installing a snapshot or restarting Cura is permitted; profiles
+and backups must remain untouched. The destructive native desktop harness
+must run only on a disposable CI host.
+
+Run `make all JOBS=2` before committing or pushing. Focused checks use isolated
+processes through the standard runner:
+
+```sh
+make test_files JOBS=2 FILES="tests.test_physical_motion tests.test_guarded_motion_dispatch tests.test_preview_toolhead_readout tests.test_preview_toolhead_host tests.test_preview_toolhead_qml tests.test_qt_toolhead_integration tests.test_monitor_model_runtime tests.test_monitor_controls tests.test_preview tests.test_qml_camera_controls tests.test_whatsnew tests.test_architecture"
+```
+
+The synthetic Toolhead captures cover ready, collapsed, printing and
+disconnected states in both themes. Printing disables position moves and
+homing while leaving Z-offset available. Captures use the real pane and theme
+assets without a printer model or command handler. `make verify_captures`
+includes these scenes in strict UI pixel comparisons; the narrow native-only
+rounding allowance applies solely to the two existing 3-D showcase images.
+Refresh committed screenshots with `make BACKEND=docker generate_screenshots`;
+only the pinned amd64 container defines their pixels.
+
+Regression checks cover queued-position freshness, G92/base-coordinate changes,
+inclusive G-code zero, negative targets, firmware compensation ownership,
+unknown transforms, missing limits, finite inputs,
+three-second query expiry and invalidated owner/revision/queue-head replies.
+Separate calibration tests prove both Z-offset directions/reset work without
+homing or geometric telemetry, remain serialized behind prior commands, and
+cannot escape connection/control-lock/ownership rules. Real-QML tests check
+host placement, stage visibility, light/dark contrast, slider interpolation,
+scrolling, collapse/focus and discarded drafts at printer switches.
+
+Read-only live Cura inspection confirmed the top-left placement, retained
+native controls, printing-state offset availability and cleared error text.
+No live printer command was used. Branch CI, native Windows/Linux checks and
+the disposable real-Cura release gate remain subsequent validation; local
+fixtures are not a substitute for those checks.
+
+On 7 October 2026, the final release-preparation native `make all JOBS=2` passed
+5,368 tests in 220 isolated processes, shader compilation, all nine lint
+checks, 29 screenshot scenes, 46 byte-identical light/dark capture pairs
+(zero native rounding exceptions), and exact package/source parity for
+both 5.3.0 archives. The final capture-tooling lint also passed.
+
+Canonical committed screenshots came from the pinned amd64 Linux container
+in branch CI run `37672052512`, at source commit
+`6b3d8e9727333e13fa4937674d0ee18dc9e58754`. All 29 promoted PNGs match the
+downloaded render bytes, and both light/dark repeatability pairs passed.
+The expanded pane appears in the README in both themes, alongside printing
+and disconnected states; collapsed captures remain validation fixtures.
+The developer's stopped Colima service was left untouched.
+
+The initial CI coverage gate identified two new modules just below the
+95% per-file floor. Additional invented-telemetry tests exercise missing
+configuration, malformed mesh, invalid axis mappings, mixed coordinate
+frames, center/Z-zero intent and malformed readout numbers. Focused isolated
+coverage now measures 100% of statements in both `PhysicalMotion.py` and
+`ToolheadReadout.py`; no product behavior changed for this coverage repair.
+
+Branch CI run `37675893151` passed the coverage and screenshot gates but
+its repeat-boot smoke correctly refused the simulator's jog: the fixture
+omitted travel limits, G-code position/origin and printer kinematics.
+The simulator now publishes a homed 250 mm Cartesian envelope with matching
+planned/G-code coordinates. A loopback HTTP query contract exercises the
+production guard against that reply, rejects out-of-travel and negative-Z
+targets, rejects missing limits and verifies scenario reset restores them.
+Product travel guards and smoke command-count assertions remain unchanged.
+
+The Monitor Print Follower's detached layer ETA and scheduled pause clocks now
+use the same deadline projection as Preview. Fixed local-time regression cases
+compare them directly with Print job Finish before midnight, across midnight
+(`+1`) and across two calendar dates (`+2`). An isolated real-QML test also
+verifies the multi-day text reaches the follower popover's ETA label and fits
+on one line without elision, including a days/hours/minutes duration. The field
+uses its natural text width within the row, with a bounded maximum and explicit
+no-wrap behavior.
+
+The finalized baseline's subsequent native `make all JOBS=2` passed 5,396
+tests in 220 isolated processes (including the enabled loopback simulator
+contracts), all nine lint checks, 29 screenshot scenes, 46 byte-identical
+light/dark capture pairs with zero rounding exceptions, and both exact
+source/package layout validators. No live printer commands were used.
+
+## 5.2.0 — historical validation
 
 Version 5.2.0 adds custom STL/STEP toolheads, True position/Smooth path modes, a
 GPU model editor with nozzle and light placement, and View Options controls

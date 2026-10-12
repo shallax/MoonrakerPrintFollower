@@ -3,6 +3,11 @@ Item {
     property var model: null
     property bool picking: false
     property bool addingLight: false
+    property bool addingRotor: false
+    property bool selectingOpacity: false
+    property bool paintingMaterial: false
+    property bool slowRotation: false
+    property bool animationAvailable: true
     function resetCamera() {}
     property int orbitCalls: 0
     property int panCalls: 0

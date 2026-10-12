@@ -222,6 +222,47 @@ class SimulationCacheTests(unittest.TestCase):
         self.gl.glViewport.assert_called_with(*self.viewport)
         self.assertEqual(self.cache._completed, 10)
 
+    def test_crop_depth_copy_uses_exact_integer_source_and_restores_scissor(self):
+        self.depth_ready()
+        self.viewport = (-20, -30, 800, 600)
+        self.output.size.return_value.width.return_value = 120
+        self.output.size.return_value.height.return_value = 90
+        self.gl.glIsEnabled.return_value = True
+        self.assertTrue(self.cache.try_copy_depth(self.gl, self.output, 'same', 10,
+            source_region=(20, 30, 120, 90)))
+        self.cache._blit.assert_called_once_with(20, 30, 140, 120, 0, 0, 120, 90, 256, 0x2600)
+        self.gl.glEnable.assert_called_with(0x0C11)
+        self.gl.glViewport.assert_called_with(*self.viewport)
+        self.assertEqual(self.cache._bind.call_args_list[-2].args, (0x8CA8, 29))
+        self.cache._bind.assert_called_with(0x8CA9, 3)
+
+    def test_crop_rejects_malformed_empty_outside_scaled_or_wrong_destination(self):
+        self.depth_ready()
+        regions = [(), 'bad', (False,0,800,600), (0.,0,800,600), (-1,0,800,600),
+            (0,0,0,600), (0,0,800,0), (0,0,801,600), (0,1,800,600), (20,30,120,90)]
+        for region in regions:
+            with self.subTest(region=region):
+                self.assertFalse(self.cache.try_copy_depth(self.gl, self.output, 'same', 10,
+                    source_region=region))
+        self.viewport = (-20,-30,800,600)
+        self.assertFalse(self.cache.try_copy_depth(self.gl, self.output, 'same', 10,
+            source_region=(20,30,120,90)))  # Destination remains full size.
+        self.cache._depth_functions.assert_not_called()
+        self.cache._blit.assert_not_called()
+
+    def test_crop_copy_failure_restores_disabled_scissor_and_bindings(self):
+        self.depth_ready()
+        self.viewport = (-20,-30,800,600)
+        self.output.size.return_value.width.return_value = 120
+        self.output.size.return_value.height.return_value = 90
+        self.gl.glIsEnabled.return_value = False
+        self.cache._blit.side_effect = RuntimeError('copy failed')
+        with self.assertRaisesRegex(RuntimeError, 'copy failed'):
+            self.cache.try_copy_depth(self.gl, self.output, 'same', 10, source_region=(20,30,120,90))
+        self.gl.glDisable.assert_called_with(0x0C11)
+        self.cache._bind.assert_called_with(0x8CA9, 3)
+        self.gl.glViewport.assert_called_with(*self.viewport)
+
     def test_stale_source_context_or_destination_returns_false_without_copy(self):
         cases = [lambda: self.current.configure_mock(return_value=None),
             lambda: self.current.configure_mock(return_value=Mock()),

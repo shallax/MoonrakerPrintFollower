@@ -1,14 +1,14 @@
 """The next-pause pipeline: the bar's anchor, the merged rows, the target."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from ..preview.PreviewFormatting import pause_eta, pause_items
+from ..preview.PreviewFormatting import layer_deadline_clock, pause_eta, pause_items
 
 
 def _clock(remaining):
     """The composed wall-clock ETA text for a remaining-seconds value."""
-    return (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime("%H:%M")
+    return layer_deadline_clock(remaining, datetime.now().astimezone())
 
 
 class NextPausePipeline:

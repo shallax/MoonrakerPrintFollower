@@ -26,7 +26,7 @@ def exercise():
     worker = runpy.run_path(worker_path)
     with tempfile.TemporaryDirectory() as scratch:
         output = str(pathlib.Path(scratch) / "model.mesh")
-        for name in ("assembly.step", "assembly-inch.step"):
+        for name in ("assembly.step", "assembly-inch.step", "appearance.step"):
             worker["convert"](str(fixture / name), runtime, output)
         invalid = pathlib.Path(scratch) / "invalid.step"
         invalid.write_text("not a STEP model")
@@ -101,6 +101,7 @@ def main():
     fixture = ROOT / "tests" / "fixtures" / "toolhead"
     mm = read_step(str(fixture / "assembly.step"), runtime, cancelled)
     inch = read_step(str(fixture / "assembly-inch.step"), runtime, cancelled)
+    appearance = read_step(str(fixture / "appearance.step"), runtime, cancelled)
     for name, mesh in (("millimetres", mm), ("inches", inch)):
         points = mesh.triangles.reshape(-1, 3)
         colours = np.unique(np.round(mesh.colours[:, :3], 5), axis=0)
@@ -115,6 +116,16 @@ def main():
     np.testing.assert_allclose(np.sort(np.unique(inch.colours, axis=0), axis=0),
                                np.sort(np.unique(mm.colours, axis=0), axis=0), atol=0.001)
     print("PASS: pinned CAD runtime, STEP millimetre/inch units, assembly transforms and source colours")
+    if len(appearance.bodies) != 5 or [value.name for value in appearance.bodies[2:]] != ["Fan rotor"] * 3:
+        raise AssertionError("Repeated rotor occurrence identities were not retained")
+    if {value.name for value in appearance.materials if value.source == "step-material"} != {"ABS", "Glass", "Aluminium"}:
+        raise AssertionError("Authored STEP materials were not retained")
+    for index, low, high in ((2, (-1, 9, 0), (1, 11, 1)), (3, (9, 19, 0), (11, 21, 1)), (4, (9, 19, 0), (11, 21, 1))):
+        body = appearance.triangles[appearance.body_ids == index]
+        np.testing.assert_allclose(body.min(axis=(0, 1)), low, atol=.01)
+        np.testing.assert_allclose(body.max(axis=(0, 1)), high, atol=.01)
+    np.testing.assert_allclose(appearance.colours[appearance.body_ids == 1, 3], .35)
+    print("PASS: authored material names, STEP transparency, nested rotations and distinct coincident rotor bodies")
     if args.coverage_worker:
         output = args.coverage_output or args.runtime_root / "step-worker.coverage"
         measure_worker_coverage(runtime, fixture, output)

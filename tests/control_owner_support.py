@@ -628,6 +628,8 @@ class ToolheadCoverageTests(unittest.TestCase):
         data = _ToolheadData()
         commands = _ToolheadCommands()
         data.set_state(state, **kwargs)
+        from tests.manual_motion_support import attach
+        attach(data, commands)
         controller = self.controller_class(data, commands)
         self.addCleanup(controller.close)
         return controller, data, commands

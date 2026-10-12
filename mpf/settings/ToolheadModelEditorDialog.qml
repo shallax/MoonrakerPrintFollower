@@ -56,7 +56,7 @@ UM.Dialog {
         RowLayout {
             Layout.fillWidth: true
             UM.Label {
-                text: "Done keeps these changes. Save in printer settings makes them permanent."
+                text: "Confirm rotation to keep fan changes. Done keeps confirmed settings. Save in printer settings makes them permanent."
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: UM.Theme.getColor("text_inactive")

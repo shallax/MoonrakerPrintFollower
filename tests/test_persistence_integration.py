@@ -777,9 +777,9 @@ class LateActivationTests(unittest.TestCase):
         with patch.object(MigrationNotice, "announce") as announce:
             owner = self.FollowerRuntime(app, None)
             self.assertEqual(announce.call_count, 0)  # nothing runs early
-            # The three boot-deferred owners: the preview hosts, the
-            # binding's readiness and the migration notice.
-            self.assertEqual(len(app.initializationFinished.handlers), 3)
+            # The four boot-deferred owners: the card hosts, the read-only
+            # Toolhead dock, binding readiness and the migration notice.
+            self.assertEqual(len(app.initializationFinished.handlers), 4)
             app.initializationFinished.emit()
             self.assertEqual(announce.call_count, 1)
         self.addCleanup(owner.close)

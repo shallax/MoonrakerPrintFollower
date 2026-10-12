@@ -228,6 +228,7 @@ class ResourceReferenceTests(unittest.TestCase):
         entrypoints = {(source.relative_to(PLUGINS.root).as_posix(), target.relative_to(PLUGINS.root).as_posix())
                        for source, _line, target in runtime_paths()}
         self.assertEqual(entrypoints, {
+            ("preview/PreviewToolheadPresentation.py", "preview/PreviewToolheadHost.qml"),
             ("cura/MoonrakerOutputDevice.py", "files/transfers/MoonrakerUploadDialog.qml"),
             ("cura/MoonrakerOutputDevicePlugin.py", "monitor/MoonrakerMonitorDashboard.qml"),
             ("cura/MoonrakerOutputDevicePlugin.py", "monitor/MoonrakerMonitorBedMesh.qml"),
@@ -240,10 +241,11 @@ class ResourceReferenceTests(unittest.TestCase):
             ("whatsnew/WhatsNewOverlay.py", "detection/DetectionOffer.qml"),
             ("toolhead/ToolheadPreviewGL.py", "toolhead/toolhead.shader"),
             ("toolhead/ToolheadOpaqueShader.py", "toolhead/toolhead.shader"),
-            ("toolhead/ToolheadSceneNode.py", "toolhead/toolhead.shader"),
             ("toolhead/ToolheadSceneLighting.py", "toolhead/scene-lighting.shader"),
             ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.vert.qsb"),
             ("plate/GpuStrokeMaterial.py", "resources/shaders/stroke.frag.qsb"),
+        ("toolhead/ToolheadEnvironmentScene.py", "toolhead/scene-lighting.shader"),
+            ("toolhead/ToolheadCaptureRecipe.py", "toolhead/scene-lighting.shader"),
         })
 
     def test_stale_upload_dialog_path_is_detected(self):

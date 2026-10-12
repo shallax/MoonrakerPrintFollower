@@ -186,7 +186,8 @@ def can_restart(obs: Observation) -> Verdict:
     blocked = _prelude(obs)
     if blocked: return Verdict("disabled", blocked)
     if _print_active(obs.state): return Verdict("disabled", R_PRINTING)
-    if not obs.state: return Verdict("disabled", R_UNKNOWN)
+    if obs.state not in {"standby", "printing", "paused", "complete", "cancelled", "error"}:
+        return Verdict("disabled", R_UNKNOWN)
     return Verdict("allowed", "")
 
 
@@ -267,7 +268,8 @@ def can_z_offset(obs: Observation) -> Verdict:
     blocked = _prelude(obs)
     if blocked: return Verdict("disabled", blocked)
     if obs.busy: return Verdict("disabled", R_BUSY)
-    if not obs.state: return Verdict("disabled", R_UNKNOWN)
+    if obs.state not in {"standby", "printing", "paused", "complete", "cancelled", "error"}:
+        return Verdict("disabled", R_UNKNOWN)
     return Verdict("allowed", "")
 
 

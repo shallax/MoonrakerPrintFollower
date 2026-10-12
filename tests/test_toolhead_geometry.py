@@ -27,28 +27,82 @@ def binary_stl(triangles, header=b"solid misleading binary header"):
 
 
 class ToolheadGeometryTests(unittest.TestCase):
+    def test_cad_face_smoothing_is_area_weighted_and_shared_by_packing(self):
+        angle = np.deg2rad(20)
+        mesh = mesh_from_arrays([
+            ((0, 0, 0), (1, 0, 0), (0, 0, 1)),
+            ((0, 0, 0), (0, 0, 1), (-2*np.cos(angle), 2*np.sin(angle), 0)),
+        ], surfaces=[7, 7])
+        expected = np.array([-2*np.sin(angle), -1-2*np.cos(angle), 0])
+        expected /= np.linalg.norm(expected)
+        normals = mesh.vertex_normals
+        np.testing.assert_allclose(normals[0, [0, 2]], [expected]*2, atol=1e-6)
+        np.testing.assert_array_equal(normals[0, [0, 2]], normals[1, [0, 1]])
+        np.testing.assert_array_equal(normals[0, 1], [0, -1, 0])
+        packed = np.frombuffer(preview_buffer(mesh)[0], np.float32).reshape(2, 3, 18)
+        np.testing.assert_array_equal(packed[:, :, 3:6], normals)
+        self.assertIs(normals, mesh.vertex_normals)
+        self.assertFalse(normals.flags.writeable)
+
+    def test_normal_budget_falls_back_before_welding_and_packing_accepts_broadcast(self):
+        mesh = mesh_from_arrays([((0, 0, 0), (1, 0, 0), (0, 0, 1))]*2)
+        with patch('mpf.geometry.ToolheadGeometry.NORMAL_WORK_BYTES', 512), patch('mpf.geometry.ToolheadGeometry.np.unique', side_effect=AssertionError('welding ran')):
+            normals = mesh.vertex_normals
+        self.assertEqual(normals.strides[1], 0)
+        self.assertFalse(normals.flags.writeable)
+        np.testing.assert_array_equal(normals, [[[0, -1, 0]]*3]*2)
+        packed = np.frombuffer(preview_buffer(mesh)[0], np.float32).reshape(2, 3, 18)
+        np.testing.assert_array_equal(packed[:, :, 3:6], normals)
+
+    def test_smoothing_never_crosses_face_body_or_material_boundaries(self):
+        angle = np.deg2rad(20)
+        triangles = [((0, 0, 0), (1, 0, 0), (0, 0, 1)),
+                     ((0, 0, 0), (0, 0, 1), (-np.cos(angle), np.sin(angle), 0))]
+        metadata = {"materials": [dict(name="A", description="", source="unknown"),
+                                  dict(name="B", description="", source="unknown")],
+                    "bodies": [dict(name="A", source="unknown", centre=None, axis=None),
+                               dict(name="B", source="unknown", centre=None, axis=None)]}
+        for fields in ({"surfaces": [7, 8]}, {"body_ids": [0, 1]}, {"material_ids": [0, 1]}):
+            with self.subTest(fields=fields):
+                values = dict(surfaces=[7, 7], metadata=metadata); values.update(fields)
+                mesh = mesh_from_arrays(triangles, **values)
+                np.testing.assert_array_equal(mesh.vertex_normals[0], [[0, -1, 0]]*3)
+                np.testing.assert_allclose(mesh.vertex_normals[1], [[-np.sin(angle), -np.cos(angle), 0]]*3, atol=1e-6)
+
+    def test_folded_faces_and_degenerate_triangles_retain_safe_local_normals(self):
+        mesh = mesh_from_arrays([
+            ((0, 0, 0), (1, 0, 0), (0, 0, 1)),
+            ((0, 0, 0), (0, 0, 1), (0, 1, 0)),
+            ((0, 0, 0), (0, 0, 0), (0, 0, 0)),
+        ], surfaces=[7, 7, 7])
+        np.testing.assert_array_equal(mesh.vertex_normals[0], [[0, -1, 0]]*3)
+        np.testing.assert_array_equal(mesh.vertex_normals[1], [[-1, 0, 0]]*3)
+        np.testing.assert_array_equal(mesh.vertex_normals[2], np.zeros((3, 3)))
+
     def test_preview_vertex_layout_preserves_colours_normals_and_surface_ids(self):
         mesh = mesh_from_arrays(
             [((0, 0, 0), (2, 0, 0), (0, 2, 0)),
              ((0, 0, 0), (0, 0, 2), (2, 0, 0))],
             [(0, .25, 1, .75), (.5, 0, .25, 1)], [0, MAX_TRIANGLES])
-        body, centre, radius, vertices = preview_buffer(mesh)
+        body, centre, radius, vertices, _layout = preview_buffer(mesh)
         self.assertEqual(vertices, 6)
-        self.assertEqual(len(body), vertices * 44)
-        packed = np.frombuffer(body, dtype=np.float32).reshape(2, 3, 11)
-        np.testing.assert_array_equal(packed[:, :, :3], mesh.triangles)
-        for index, normal in enumerate(((0, 0, 1), (0, 1, 0))):
+        self.assertEqual(len(body), vertices * 72)
+        packed = np.frombuffer(body, dtype=np.float32).reshape(2, 3, 18)
+        np.testing.assert_array_equal(packed[:, :, :3], mesh.triangles[[1,0]])
+        self.assertEqual(_layout[0], 3)
+        self.assertEqual(_layout[1][0][:3], (3,3,0))
+        for index, normal in enumerate(((0, 1, 0), (0, 0, 1))):
             np.testing.assert_array_equal(packed[index, :, 3:6], [normal] * 3)
-            np.testing.assert_array_equal(packed[index, :, 6:10], [mesh.colours[index]] * 3)
-            np.testing.assert_array_equal(packed[index, :, 10], [mesh.surfaces[index]] * 3)
+            np.testing.assert_array_equal(packed[index, :, 6:10], [mesh.colours[1-index]] * 3)
+            np.testing.assert_array_equal(packed[index, :, 10], [mesh.surfaces[1-index]] * 3)
         np.testing.assert_array_equal(centre, [1, 1, 1])
         self.assertAlmostEqual(radius, 3 ** .5)
 
     def test_preview_degenerate_faces_have_finite_zero_normals(self):
         mesh = mesh_from_arrays([((0, 0, 0), (0, 0, 0), (0, 0, 0)),
                                  ((0, 0, 0), (.1, 0, 0), (0, .1, 0))])
-        body, _, radius, _ = preview_buffer(mesh)
-        packed = np.frombuffer(body, dtype=np.float32).reshape(2, 3, 11)
+        body, _, radius, _, _layout = preview_buffer(mesh)
+        packed = np.frombuffer(body, dtype=np.float32).reshape(2, 3, 18)
         self.assertTrue(np.isfinite(packed).all())
         np.testing.assert_array_equal(packed[0, :, 3:6], np.zeros((3, 3)))
         self.assertEqual(radius, 1)

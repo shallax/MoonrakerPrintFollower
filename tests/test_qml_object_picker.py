@@ -57,13 +57,31 @@ class PlateCanvasHitTests(harness.PlateCanvasHitTests):
     def test_axis_arrows_follow_the_pickers_bed_corner(self):
         window, face, canvas = self._picker(self._polygon_bed())
         self.assertIsNone(canvas.findChild(harness.QQuickItem, "moonrakerPlateAxisArrows"))
-        bed = canvas.property("_plot").property("bed")
-        origin = canvas.mapToItem(window.contentItem(), harness.QPointF())
-        right = origin.x() + bed.property("offsetX").toNumber() + bed.property("plotWidth").toNumber()
-        top = origin.y() + bed.property("offsetY").toNumber()
-        width = bed.property("plotWidth").toNumber()
-        height = bed.property("plotHeight").toNumber()
-        image = window.grabWindow()
+        from theme_support import ThemeBackend
+        border = ThemeBackend(str(harness.ROOT / "tests/theme_assets/cura-light")).getColor("border").rgb()
+        previous, stable, captured_mapping = None, 0, None
+        def delivered(frame):
+            nonlocal previous, stable, captured_mapping
+            bed = canvas.property("_plot").property("bed")
+            origin = canvas.mapToItem(window.contentItem(), harness.QPointF())
+            geometry = (origin.x(), origin.y(), canvas.width(), canvas.height(),
+                        bed.property("offsetX").toNumber(), bed.property("offsetY").toNumber(),
+                        bed.property("plotWidth").toNumber(), bed.property("plotHeight").toNumber())
+            # These major-grid cores avoid every polygon edge in this fixture.
+            # A geometry-stable but held/resized raster misses their exact ink.
+            points = [self._scene(canvas, x, 125.) for x in (50.,100.,150.,200.)]
+            points += [self._scene(canvas, 150., y) for y in (50.,100.,150.,200.)]
+            good = all(frame.pixelColor(int(origin.x())+int(x), int(origin.y())+int(y)).rgb()==border
+                       for x,y in points)
+            crop = frame.copy(int(origin.x()),int(origin.y()),int(canvas.width()),int(canvas.height()))
+            stable = stable+1 if good and previous is not None and previous==(geometry,crop) else 0
+            previous = (geometry,crop) if good else None
+            captured_mapping = geometry
+            return good and stable>=2
+        image = self._wait_until(window, delivered, timeout=5.)
+        self.assertGreaterEqual(stable,2,"the picker did not deliver three identical frames at the final grid mapping")
+        x,y,_width,_height,offset_x,offset_y,width,height = captured_mapping
+        right,top = x+offset_x+width,y+offset_y
         def ink(image, colour, bounds):
             x0, y0, x1, y1 = (int(value) for value in bounds)
             result = set()

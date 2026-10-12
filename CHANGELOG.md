@@ -2,6 +2,146 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 5.3.0
+
+- Preserve foreground clipping and cropped lighting on Apple's software OpenGL
+  renderer with exact clipping fallbacks; accelerated rendering keeps its existing path.
+
+- Share immutable full print-path index storage across main rendering passes
+  and fenced reflection captures. Crop lighting output at full pixel density
+  while preserving the original camera projection.
+
+- Keep full-resolution lighting surface storage within a padded illuminated
+  region, reuse compatible cropped depth, and release inactive rendering caches.
+
+- Share qualified native print-path vertex buffers across simulation, lighting
+  and reflection captures, avoiding an extra whole-print upload. Reuse the
+  simulation index buffer for its instanced draw instead of duplicating it.
+- Transition between complete reflection captures while the toolhead moves.
+- Antialias reflection capture geometry before publishing complete maps,
+  reducing subpixel coverage changes in thin paths.
+- Preserve reflection detail with a sharper roughness mip curve. Reproject
+  detected flat-bed reflections as the head moves between captures, with
+  gradual fallback at bed edges and grazing angles.
+
+- Keep smooth tracking responsive when telemetry arrives between animation ticks,
+  and catch up to observed motion after delayed frames without advancing beyond it.
+
+- Reuse bounded intermediate shutter targets across matching crop sizes, and
+  shorten central reflection-map refresh delays while retaining capture backpressure.
+
+- Restrict scene-lighting composition and depth copies to the illuminated area,
+  and reuse common toolhead material and lighting values within each frame.
+
+- Reuse identical-sized toolhead render targets as the head moves, with a
+  bounded cache, including ordinary multisample draw/resolve pairs. Clear and
+  redraw reused targets with the current scene depth.
+- Sample complete central colour maps directly and omit unused depth exports
+  and search maps. Keep local depth testing, initialized backgrounds, and all
+  six faces plus roughness mipmaps complete before replacing reflections.
+- Reuse receiver geometry batches and parsed local light settings. Deliver
+  scene-lighting uniforms only when its cached image needs a redraw, and clip
+  transient path lighting to the illuminated region.
+- Fan animation reuses the completed image outside the rotating parts instead
+  of repeatedly shading stationary glass, including between blur samples.
+- Yield GPU time between changing reflection captures. Keep large-view fan
+  rotation from repeatedly rebuilding the cached static toolhead when blur
+  exceeds its memory budget.
+- Blend ordinary foreground transparency directly into the head, removing an
+  intermediate image and colour copy while preserving its coverage and depth.
+- Capture reflections from six perspective views surrounding the toolhead
+  centre, with complete background coverage and colour mipmaps for roughness.
+- Reuse bounded exact-format foreground targets across changing toolhead crops,
+  clearing colour and reseeding current depth on every draw.
+- Keep unchanged reflection captures asleep. Reuse per-snapshot path ranges, path index uploads and
+  private shader uniforms, and avoid redundant scene scans and visibility work.
+- Reuse capture normal matrices and avoid general matrix solves for animated
+  fan rotations, reducing repeated CPU work without changing material shading.
+- Defer new reflection snapshots while a capture is busy, then capture the
+  latest due scene instead of repeatedly preparing discarded intermediate poses.
+- Simplify reflection controls to the existing Enable reflections checkbox.
+
+- Build reflection maps in an owned graphics worker where supported, reusing
+  path vertex storage and retaining complete maps during replacement. Handle
+  untextured platform meshes and empty G-code parsing snapshots correctly.
+- Retire deferred Print Follower paint and presentation work with its closed
+  popover, preventing callbacks into a destroyed QML context.
+- Batch reflection path bindings and frozen uniforms within each render turn,
+  reuse conservative visibility checks, and skip additive draws beyond light
+  reach. Avoid graphics work during idle/CPU bounds turns and defer unused
+  forward-light bounds. Keep reflection geometry and pixel checks unchanged.
+- Release retained lighting surfaces when lighting is disabled. Reuse completed
+  stopped-fan images and exact camera calculations; avoid copying native signed
+  index storage solely to upload its identical unsigned bytes.
+- Replace repeated surface bumps with irregular plastic grain. Keep roughness
+  and visible grain independently adjustable, with material-specific defaults.
+- Isolate path vertex uploads from Cura's late attribute additions, preventing
+  false white start markers. Defer empty slice replacements and let active map
+  refreshes supersede idle timers while retaining the previous complete map.
+
+- Keep reflections visible while a replacement slice/layer map builds, and cull
+  out-of-view path chunks to reduce capture work. Include visible bed-height meshes.
+- Fix stationary re-slice reflection admission and toolhead translucency against
+  the bed. Automatic/Imported appearance resets also synchronize their sliders.
+
+- Added an RGB colour picker for selected toolhead bodies and faces, with independent transparency and imported-colour reset. Fixed enabling visual fan rotation on Cura’s Qt Quick window.
+- Add a saved **Enable reflections** checkbox beside **Enable lighting** in Preview View Options.
+- Put **Clear body / face selections** beside the toolhead selection summary; deselecting preserves appearance edits.
+
+- Preserve STEP material annotations, transparency and distinct body occurrences.
+  Authored material names or clear part names select conservative roughness and
+  metalness presets; unknown parts stay nonmetallic. Add one **Surface detail**
+  slider for subtle plastic grain, with zero restoring smooth surfaces.
+- Add body/face material painting and independent roughness, reflectivity and
+  opacity controls alongside per-type defaults. Temporary type colours, mixed
+  selection, invisible-body recovery and separate Automatic/Imported resets
+  retain the original CAD palette and the existing Done/Save/Cancel workflow.
+- Reflect the bed and currently visible G-code in custom toolheads using a
+  bounded, cached environment map. Complete maps replace each other atomically;
+  legacy Preview mode retains ordinary shading. Reflections are approximate,
+  without glass refraction.
+- Animate selected whole-body fan rotors with confirmed centre/axis, direction,
+  visual RPM and rotational blur. Optionally follow an actual printer fan using
+  read-only telemetry: measured RPM takes precedence, including zero, otherwise
+  power scales the configured visual full-speed RPM and is labelled estimated.
+  Missing or disconnected readings stop bound animation. No fan commands are sent.
+- Add a collapsible **Toolhead** pane at the top left of Cura Preview, beneath
+  the stage menu and clear of the object list, job summary and perspective
+  controls. Its nozzle icon and right-pointing expansion tab work in light
+  and dark themes. The pane is hidden in Prepare and Monitor.
+- Show physical XYZ position and Z-offset, with a compass jog pad, individual
+  and all-axis homing, absolute G-code Move-to fields and a capability-based
+  actions menu for levelling, bed-mesh calibration and motor release.
+  Empty Move-to axes retain their current coordinates. Calibration actions
+  remain separate from the bed-mesh display switches in View Options.
+- Select jog distances with a snapping slider from 0.1 to 125 mm, or enter
+  an exact distance from 0.01 to 300 mm. Custom values interpolate the handle
+  between stops; values outside the slider range retain their exact value.
+- Share the Monitor's manual-motion queue and command lane. Jog and Move-to
+  fetch fresh firmware state before each dispatch, accept G-code zero on each
+  commanded axis, reject targets below zero, and validate upper travel limits.
+  Firmware alone handles bed-mesh compensation; preserve coordinate mode/feedrate.
+  Unsupported transforms, stale replies and missing position/limits refuse
+  position moves with an explanation. Preview never pauses a print to jog.
+- Treat Z-offset nudges and reset as operator calibration controls in both
+  Preview and Monitor. Both directions remain available during printing,
+  without client geometry, bed-clearance or homing checks. Retain connection,
+  ownership, control-lock, numeric-input and command-lane checks; firmware
+  decides whether each immediate `SET_GCODE_OFFSET ... MOVE=1` can execute.
+- Invalidate queued intents, unfinished target/distance edits, menus and
+  motion-control focus when the selected printer or connection changes.
+  Retired owners cannot send commands to the replacement printer.
+- Give Toolhead, View Options and Print Follower matching boxed titles with
+  hover/focus highlighting. Use the Monitor's stalk arrows for Z-offset,
+  group units beside related values and preserve keyboard access when folded.
+- Include additional calendar days in Preview and Print Follower selected-layer
+  ETA clocks and scheduled pause deadlines, matching Print job Finish, and
+  narrow the webcam zoom face to fit `800%`.
+- Add synthetic light/dark Toolhead captures to the regular capture,
+  contrast and determinism checks. No live printer controls are used.
+- Document the optional runtime-mirror inventory and redistribution work.
+  Detection and CAD downloads retain their existing upstream URLs.
+
 ## 5.2.0
 
 - Rename Preview's Object banners card to **View Options** and add reported

@@ -18,6 +18,30 @@ Item {
     objectName: "moonrakerPlateProgressFace"
     clip: true
 
+    // Deferred work belongs to this Loader instance. Qt.callLater retains
+    // method references after the QML context has been destroyed on close.
+    // start() coalesces an already-running timer without postponing it.
+    Timer {
+        id: presentationWake
+        interval: 0
+        onTriggered: root._capturePresentedAssets()
+    }
+    Timer {
+        id: backgroundWake
+        interval: 0
+        onTriggered: root._wakeBackgroundPaint()
+    }
+    Timer {
+        id: progressWake
+        interval: 0
+        onTriggered: root._wakeProgressPaint()
+    }
+    Timer {
+        id: handoffWake
+        interval: 0
+        onTriggered: root._startHandoff()
+    }
+
     property var printerModel: null
     // Keep static geometry in its own binding; split notifications must
     // never fetch and convert the complete Python QVariant again.
@@ -858,7 +882,7 @@ Item {
         });
     }
     readonly property var _presentation: _presentationDecision()
-    on_PresentationChanged: Qt.callLater(root._capturePresentedAssets)
+    on_PresentationChanged: presentationWake.start()
 
     function _capturePresentedAssets() {
         var decision = _presentationDecision();
@@ -1044,7 +1068,7 @@ Item {
         if (draws || root._pendingStanding) {
             var key = _pendingKeyOf();
             root._backgroundTransaction = ExactComposition.enqueue(ExactComposition.newWorld(root._backgroundTransaction, root._progressWorldEpoch, key));
-            Qt.callLater(root._wakeBackgroundPaint);
+            backgroundWake.start();
             return;
         }
         // Nothing to draw and nothing standing: the picture-word is
@@ -1426,7 +1450,7 @@ Item {
             return;
         }
         if (ExactComposition.needsPaint(root._canvasTransaction))
-            Qt.callLater(root._wakeProgressPaint);
+            progressWake.start();
     }
 
     function _wakeProgressPaint() {
@@ -1509,7 +1533,7 @@ Item {
         _updateMotion(false);
         _adoptProgressWorld();
         if (root._handoffPending)
-            Qt.callLater(root._startHandoff);
+            handoffWake.start();
         if (root.progress == null || root.progress.layers == null) {
             _requestProgressPaint();
             root._lastSplit = -1;
@@ -1903,7 +1927,7 @@ Item {
         // progress canvas below clears itself while these show.
         Canvas {
             id: pendingCanvas
-            onAvailableChanged: Qt.callLater(root._wakeBackgroundPaint)
+            onAvailableChanged: backgroundWake.start()
             anchors.fill: parent
             renderTarget: Canvas.Image
             renderStrategy: Canvas.Threaded
@@ -1938,7 +1962,7 @@ Item {
                 if (result.accepted)
                     root._pendingStanding = result.receipt.ink;
                 if (ExactComposition.needsPaint(root._backgroundTransaction))
-                    Qt.callLater(root._wakeBackgroundPaint);
+                    backgroundWake.start();
             }
         }
 
@@ -1977,7 +2001,7 @@ Item {
                     source: source.toString(),
                     status: status
                 };
-                Qt.callLater(root._capturePresentedAssets);
+                presentationWake.start();
                 _requestProgressPaint();
             }
         }
@@ -2009,7 +2033,7 @@ Item {
                     source: source.toString(),
                     status: status
                 };
-                Qt.callLater(root._capturePresentedAssets);
+                presentationWake.start();
                 _requestProgressPaint();
             }
         }
@@ -2076,7 +2100,7 @@ Item {
                     source: source.toString(),
                     status: status
                 };
-                Qt.callLater(root._capturePresentedAssets);
+                presentationWake.start();
                 _requestProgressPaint();
             }
         }

@@ -18,6 +18,7 @@ Item {
     property bool tagsEnabled: false
     property bool hoverOnly: false
     property bool lightingEnabled: true
+    property bool reflectionsEnabled: true
     property bool lightBed: true
     property bool lightModels: true
     property bool bedMeshAvailable: false
@@ -55,6 +56,7 @@ Item {
     signal tagsEnabledRequested(bool enabled)
     signal hoverOnlyRequested(bool enabled)
     signal lightingEnabledRequested(bool enabled)
+    signal reflectionsEnabledRequested(bool enabled)
     signal lightBedRequested(bool enabled)
     signal lightModelsRequested(bool enabled)
     signal bedMeshVisibilityRequested(bool visible)
@@ -259,41 +261,18 @@ Item {
         border.width: UM.Theme.getSize("default_lining").width
         radius: UM.Theme.getSize("default_radius").width
 
-        Item {
+        PreviewPanelHeader {
             id: header
             objectName: "moonrakerPreviewObjectTagsHandle"
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: root.controlsExpanded ? dockTitle.implicitHeight + 2 * root.dockVerticalPadding : 34 * screenScaleFactor
-
-            Cura.IconWithText {
-                id: dockTitle
-                objectName: "moonrakerPreviewObjectTagsTitle"
-                anchors.left: parent.left
-                anchors.right: expandIcon.left
-                anchors.leftMargin: UM.Theme.getSize("default_margin").width
-                anchors.rightMargin: UM.Theme.getSize("default_margin").width
-                anchors.verticalCenter: parent.verticalCenter
-                text: "View Options"
-                source: UM.Theme.getIcon("Eye")
-                font: UM.Theme.getFont("medium_bold")
-            }
-            UM.ColorImage {
-                id: expandIcon
-                anchors.right: parent.right
-                anchors.rightMargin: UM.Theme.getSize("default_margin").width
-                anchors.verticalCenter: parent.verticalCenter
-                width: 22 * screenScaleFactor
-                height: width
-                source: UM.Theme.getIcon(root.controlsExpanded ? "ChevronSingleDown" : "ChevronSingleUp")
-                color: UM.Theme.getColor("text")
-            }
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.controlsExpanded = !root.controlsExpanded
-            }
+            text: "View Options"
+            titleObjectName: "moonrakerPreviewObjectTagsTitle"
+            iconName: "Eye"
+            indicatorName: root.controlsExpanded ? "ChevronSingleDown" : "ChevronSingleUp"
+            Accessible.name: (root.controlsExpanded ? "Collapse" : "Expand") + " View Options"
+            onClicked: root.controlsExpanded = !root.controlsExpanded
         }
 
         Column {
@@ -372,11 +351,21 @@ Item {
                     value: root.toolheadOpacity * 100
                     onValueTuning: value => root.toolheadOpacityRequested(value / 100)
                 }
-                ViewOptionsCheckBox {
-                    objectName: "moonrakerEnableLighting"
-                    text: "Enable lighting"
-                    checked: root.lightingEnabled
-                    onClicked: root.lightingEnabledRequested(checked)
+                Row {
+                    spacing: UM.Theme.getSize("default_margin").width / 2
+                    ViewOptionsCheckBox {
+                        objectName: "moonrakerEnableLighting"
+                        text: "Enable lighting"
+                        checked: root.lightingEnabled
+                        onClicked: root.lightingEnabledRequested(checked)
+                    }
+                    ViewOptionsCheckBox {
+                        objectName: "moonrakerEnableReflections"
+                        text: "Enable reflections"
+                        enabled: root.lightingEnabled
+                        checked: root.reflectionsEnabled
+                        onClicked: root.reflectionsEnabledRequested(checked)
+                    }
                 }
                 Row {
                     enabled: root.lightingEnabled

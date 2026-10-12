@@ -196,6 +196,13 @@ class BannerHostTests(harness.RealEngineTestCase):
         self.assertEqual(tooltip.property("text"),
                          "This Cura version does not provide camera projection to plugins.")
 
+
+    def test_obsolete_renderer_controls_and_status_are_absent(self):
+        host = self.mount("PreviewObjectTagsHost.qml")
+        for name in ("moonrakerEnvironmentReflections", "moonrakerRayTracedReflections",
+                     "moonrakerEnvironmentFallback", "moonrakerReflectionStatus"):
+            self.assertIsNone(host.findChild(harness.QObject, name))
+
     def test_lighting_checkbox_indicators_restore_identical_enabled_colours(self):
         from PyQt6.QtCore import QPoint
         from PyQt6.QtTest import QTest
@@ -207,31 +214,61 @@ class BannerHostTests(harness.RealEngineTestCase):
         host.setParentItem(window.contentItem())
         host.setProperty("dockVisible", True)
         host.setProperty("controlsExpanded", True)
+        host.setProperty("customToolheadAvailable", True)
         window.show()
         bed = self.find(host, "moonrakerLightBed")
         models = self.find(host, "moonrakerLightModels")
+        reflections = self.find(host, "moonrakerEnableReflections")
+        lighting = self.find(host, "moonrakerEnableLighting")
         self.pump(20)
+        left = lighting.mapToScene(harness.QPointF(0, 0))
+        right = reflections.mapToScene(harness.QPointF(reflections.width(), 0))
+        controls = self.find(host, "moonrakerPreviewObjectTagsControls")
+        edge = controls.mapToScene(harness.QPointF(controls.width(), 0))
+        self.assertAlmostEqual(left.y(), right.y())
+        self.assertLessEqual(right.x(), edge.x())
         def background(control):
             return control.property("indicator").property("color").name()
-        expected = background(bed)
+        from theme_support import ThemeBackend
+        theme = ThemeBackend(str(harness.ROOT / "tests/theme_assets/cura-light"))
+        expected = theme.getColor("checkbox").name()
+        disabled = theme.getColor("checkbox_disabled").name()
+        self.assertNotEqual(expected, disabled)
+        self._wait_until(window, lambda _: background(bed) == expected and background(models) == expected,
+                         timeout=3.0)
+        self.assertTrue(models.property("visible"))
+        self.assertEqual(background(models), expected)
+        self.assertEqual(background(bed), expected)
         position = models.mapToScene(harness.QPointF(models.width() / 2, models.height() / 2))
         for hovered in (True, False, True):
             QTest.mouseMove(window, QPoint(round(position.x()), round(position.y())) if hovered else QPoint(2, 2))
             host.setProperty("lightingEnabled", False)
-            self._pump_ms(100)
+            self._wait_until(window, lambda _: background(models) == disabled and background(bed) == disabled,
+                             timeout=3.0)
+            self.assertEqual(background(models), disabled)
+            self.assertEqual(background(bed), disabled)
+            self.assertFalse(reflections.property("enabled"))
+            self.assertTrue(reflections.property("checked"))
             host.setProperty("lightingEnabled", True)
             self._wait_until(window, lambda _: background(models) == expected and background(bed) == expected,
                              timeout=3.0)
             self.assertTrue(models.property("enabled"))
+            self.assertTrue(reflections.property("enabled"))
+            self.assertEqual(background(reflections), expected)
             self.assertEqual(background(models), expected)
             self.assertEqual(background(bed), expected)
         host.setProperty("toolheadVisible", False)
-        self._pump_ms(100)
-        self.assertEqual(background(models), background(bed))
-        self.assertNotEqual(background(models), expected)
+        # Wait for the actual animated disabled value on a delivered frame;
+        # a fixed wall-clock delay does not establish animation delivery.
+        self._wait_until(window, lambda _: background(models) == disabled and background(bed) == disabled,
+                         timeout=3.0)
+        self.assertFalse(models.property("enabled"))
+        self.assertEqual(background(models), disabled)
+        self.assertEqual(background(bed), disabled)
         host.setProperty("toolheadVisible", True)
         self._wait_until(window, lambda _: background(models) == expected, timeout=3.0)
         self.assertEqual(background(models), expected)
+
 
     def test_view_options_reservation_keeps_native_extension_chain_clear(self):
         from PyQt6.QtCore import QUrl
@@ -291,7 +328,7 @@ class BannerHostTests(harness.RealEngineTestCase):
         dock = self.find(host, "moonrakerPreviewObjectTagsDock")
         self.assertLessEqual(dock.x() + dock.width(), 1060 - 12)
         self.assertAlmostEqual(dock.y() + dock.height(), 620, delta=1)
-        self.assertAlmostEqual(dock.height(), 34, delta=1)
+        self.assertAlmostEqual(dock.height(), 40, delta=1)
         collapsed_bottom = dock.y() + dock.height()
         QTest.mouseClick(window, Qt.MouseButton.LeftButton,
                          pos=QPoint(round(dock.x() + dock.width() / 2), round(dock.y() + 17)))
@@ -302,8 +339,8 @@ class BannerHostTests(harness.RealEngineTestCase):
         title = self.find(host, "moonrakerPreviewObjectTagsTitle")
         controls = self.find(host, "moonrakerPreviewObjectTagsControls")
         padding = host.property("dockVerticalPadding")
-        self.assertAlmostEqual(title.mapToItem(dock, harness.QPointF(0, 0)).y(),
-                               padding, delta=1)
+        self.assertAlmostEqual(title.mapToItem(dock, harness.QPointF(0, title.height() / 2)).y(),
+                               20, delta=1)
         self.assertAlmostEqual(dock.height() - controls.mapToItem(
             dock, harness.QPointF(0, controls.implicitHeight())).y(), padding, delta=1)
 
@@ -415,6 +452,11 @@ class BannerHostTests(harness.RealEngineTestCase):
         self.assertGreater(label.property("implicitWidth"), viewport.width())
         travel = label.property("implicitWidth") - viewport.width()
         duration = max(1800, round(travel * 22))
+        clock = host.property("marqueeClock")
+        self._wait_until(window, lambda _: host.property("marqueeClock") > clock, timeout=3.0)
+        # The fixed-phase assertions own the clock after proving the timer advances.
+        timer = next(child for child in host.children() if child.property("interval") == 33)
+        timer.setProperty("running", False)
         host.setProperty("marqueeClock", 550 + duration / 2)
         self.pump(5)
         self.assertAlmostEqual(label.x(), -travel / 2, delta=2)

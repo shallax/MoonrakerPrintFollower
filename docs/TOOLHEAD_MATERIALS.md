@@ -1,0 +1,125 @@
+# Toolhead appearance presets
+
+STEP physical material names and descriptions supply the first classification.
+When those are absent, clear component-name tokens/suffixes can identify a
+polymer or metal. Recognized finish words in a body name can supplement a
+physical material with no recorded finish; physical finish annotations win.
+Only finish changes come from this supplement, never material identity. RGB alone never identifies a material. Missing/ambiguous
+evidence remains unidentified. Original CAD colour and alpha remain unchanged;
+recognizing glass or a polymer never invents transparency.
+
+The selectable profiles include smooth/glossy/matte/rough generic plastics,
+ABS, ASA, PETG, PLA, PC, nylon/PA, TPU, PP, PEEK, PEI, PTFE, POM, carbon-fibre
+composite and PC/PA/PETG/PLA-CF, plus glass, metal and unidentified material.
+Every profile has independent roughness and reflectivity settings. Automatic
+roughness retains the individual authored finish rather than flattening all
+materials of a profile to one value. Body and face assignments are optional,
+bounded, asset-specific overrides. Material-paint colours are temporary identification
+colours; leaving paint mode restores the CAD palette with any explicit colour overrides.
+
+## Evidence and numerical limits
+
+Preview's View Options places **Enable reflections** beside **Enable lighting**.
+Disabling reflections stops environment capture and releases its owned maps,
+while retaining the model's colours, finish settings and transparency. The choice
+is saved like the other global Preview display preferences. Lighting off disables
+the reflection checkbox and retains its checked choice for when lighting returns.
+
+Manufacturer descriptions support the direction of the defaults, not precise
+PBR roughness measurements:
+
+- [Prusa PETG](https://help.prusa3d.com/article/petg_2059) describes ordinary PETG as glossy.
+- [Polymaker ABS/ASA](https://wiki.polymaker.com/polymaker-products/polymaker-filaments/prime-materials/abs-and-asa) describes ASA's matte finish relative to ABS.
+- [Prusament PC-CF](https://prusament.com/materials/prusament-pc-blend-carbon-fiber/) and [its introduction](https://blog.prusa3d.com/prusament_pc_blend_carbon_fiber_mechanical_resistance_pccf_51028/) describe matte, carbon-filled PC.
+- [Polymaker printing speed](https://wiki.polymaker.com/the-basics/fun-3d-printing-facts/printing-fast-matte-surface-finish) explains why printing conditions can change gloss.
+- [Covestro Makrolon 3107](https://solutions.covestro.com/en/products/makrolon/makrolon-3107_000000000057534595) reports PC refractive index 1.586.
+
+Roughness and grain strengths are adjustable **visual estimates**, not material
+certification. Polymer formulations, processing, coatings and surface finishing
+change appearance. Explicit matte/glossy/polished finish evidence takes precedence
+over the polymer's default; smooth controls grain separately. Conflicting
+polymer identities remain unknown. CF/GF fillers are resolved before glass;
+filled polymers remain nonmetallic. Printed chopped-fibre composites receive
+fine filtered grain, not an invented woven-cloth texture.
+
+Roughness spreads highlights and blurs reflections through microscopic surface
+texture. Surface detail adds visible, irregular object-anchored grain to plastic
+normals. Presets coordinate both properties, but their independent adjustments
+allow smooth matte surfaces or textured surfaces with sheen. Increasing detail
+changes the grain strength rather than adding a repeating pattern; unresolved
+fine and fibre grain fades with its own screen footprint.
+
+Reflectivity means normal-incidence reflection F0, independent of roughness.
+PC's approximate default uses ((1.586 - 1)/(1.586 + 1))² = 0.05135.
+Other profile F0 values are conservative rendering approximations, not claimed
+measurements of the STEP part. Metal uses the CAD colour for tinted reflection;
+its reflectivity adjustment scales that colour. The retained STEP opacity is
+independent of both controls. See [Khronos BRDF](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#appendix-b-brdf-implementation).
+
+## Safe demonstration captures
+
+The development demonstration imports the pinned screenshot assembly through the
+production STEP reader. Its annotations identify ABS, steel, aluminium, brass
+and nylon. Fixed synthetic Voron contours and bed geometry exercise the production
+head and scene-lighting shaders under reproducible cameras and lights. This is a
+material and lighting demonstration, with no live Cura profile, printer
+connection or machine command.
+
+Live Cura reflections use six 512px perspective colour faces captured from the
+housing centre, with local depth testing. Complete faces and roughness mipmaps
+are published together, and transitions soften replacement while moving. Detected
+flat beds use bounded reprojection between captures. The capture point cannot see
+surfaces hidden behind other geometry, so visibility and parallax are approximate;
+finite sampling can still miss very thin features. The previous complete map
+remains visible during re-slicing or capture preparation.
+
+## Display memory and large prints
+
+Disabling **Enable reflections** retires the plugin's fixed-size reflection
+maps. Disabling **Enable lighting** retires its retained viewport-sized lighting
+surfaces. Selecting the default toolhead retires custom-head rendering owners.
+The loaded G-code and Cura's own Preview data remain; shared buffers can also
+remain while another rendering owner needs them. Graphics drivers and CPU
+allocators may retain freed storage, so the process memory figure is not an
+immediate allocation receipt.
+
+Large-print capture reuses visibility tests and batches frozen path state within
+bounded turns, without lowering map resolution or simplifying visible paths.
+Supported graphics contexts build replacement maps in a dedicated shared-context
+worker, keeping the previous complete map visible until all six new faces finish.
+The worker reuses existing path vertex storage and qualified immutable full
+index allocations through fenced input leases, and bounds outstanding GPU work.
+Lighting output crops preserve the original camera projection and pixel density;
+storage savings depend on illuminated coverage.
+Preparation and an initial vertex upload still depend on print size. Isolated
+pixel parity and submission measurements are not promises of live frame rate
+or capture latency on a particular loaded print.
+
+An explicitly exaggerated demonstration uses ABS roughness 0.06/F0 0.75,
+metal roughness 0.05/F0 scale 1, and nylon roughness 0.08/F0 0.5. These are
+**demonstration overrides**, not realistic filament defaults and not saved to
+any user's configuration. Normal profiles stay unchanged.
+
+## Editing selected parts
+
+Bodies and CAD faces share an additive selection. Assign a material type or
+adjust colour, roughness, reflectivity and opacity independently; each readout reports
+automatic, body, face or mixed provenance. Face overrides take precedence over
+body overrides, which take precedence over the imported material/profile.
+**Clear body / face selections**, beside the selection summary, deselects both
+without changing any appearance edits.
+Automatic finish resets only that selected property, including bypassing a body
+override on a selected face. Restore imported transparency restores its original
+STEP alpha independently of material and finish. Resetting a property also moves
+its slider to the resolved automatic/imported value and cancels pending nudges. Whole-body changes clear the
+same property's descendant face overrides before applying explicitly selected
+faces. Each sparse body/face map permits at most 2,048 entries; an oversized edit
+is refused atomically.
+
+Invisible geometry remains selectable through the body-name list or faint edit
+ghosts. Cyan selection and material-type highlights are temporary and exclusive;
+normal rendering uses the imported CAD colours plus any explicit colour overrides.
+Choose colour opens an RGB picker for the selected parts; transparency stays
+independent. Restore imported colour restores each original face colour, even
+when its body has a colour override. Cancelling the picker changes nothing. Done keeps the printer-settings
+draft; Save persists it, while Cancel restores all appearance properties.
