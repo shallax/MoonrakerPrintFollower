@@ -957,6 +957,14 @@ intentionally skipped lint job, then requires the package, scan and full Cura
 gate and the native CAD conversion matrix to succeed before publication; a
 skipped required check fails the release. The CAD matrix runs on tags even
 though lint is intentionally skipped.
+The tag workflow prepares a draft GitHub release after those gates. It stages
+and hashes all optional runtime assets, copies them from `v5.3.0` for later
+versions, uploads the plugin and runtime files, and compares GitHub's stored
+digests to the pins. Attach the corresponding-source and notices companion,
+then run `python tools/verify_runtime_release.py vX.Y.Z --require-companion`
+before making the draft public. After publication, run it again with
+`--require-companion --public-downloads` to hash the direct URLs used by the
+plugin. Never publish a release whose companion or selected assets are missing.
 Before tagging, run the smoke checks the harness cannot
 cover (the full matrix from the panel round, restored after a
 transcription drift):

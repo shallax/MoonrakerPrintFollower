@@ -1,4 +1,4 @@
-"""Pinned optional CAD reader, downloaded from upstream without pip."""
+"""Pinned optional CAD reader, downloaded from this plugin's release."""
 from __future__ import annotations
 
 import hashlib
@@ -13,6 +13,8 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
+
+from ..resources.RuntimeMirror import asset_url
 
 VERSION = "7.9.3.1.1"
 
@@ -61,7 +63,8 @@ def runtime_assets():
     proxy = f"cadquery_ocp_proxy-{VERSION}-py3-none-any.whl"
     if name not in pins: raise ValueError(f"No verified CAD reader for {abi} on {system} {machine}")
     helper_pins = json.loads(Path(__file__).with_name("helper-runtime.json").read_text())
-    helper = f"cpython-3.12.15+20261003-{triple}-install_only_stripped.tar.gz"
+    helper_suffix = ".tar" if system == "Windows" else ".tar.gz"
+    helper = f"cpython-3.12.15+20261003-{triple}-install_only_stripped{helper_suffix}"
     if helper not in helper_pins: raise ValueError("No verified STEP helper for this platform")
     return [(name, pins[name]), (proxy, pins[proxy]), (helper, helper_pins[helper])]
 
@@ -69,7 +72,14 @@ def runtime_assets():
 def runtime_directory(root, assets=None):
     assets = assets or runtime_assets()
     # Architecture identity prevents ARM/Rosetta caches from colliding.
-    identity = hashlib.sha256(json.dumps(dict(assets), sort_keys=True).encode()).hexdigest()[:16]
+    # The old cache key included upstream URLs. Keep that key for verified
+    # installations when the bytes and hashes stay unchanged after mirroring.
+    identity_assets = {
+        name: {"url": pin.get("source_url", pin["url"]), "size": pin["size"],
+               "sha256": pin["sha256"]}
+        for name, pin in assets
+    }
+    identity = hashlib.sha256(json.dumps(identity_assets, sort_keys=True).encode()).hexdigest()[:16]
     return os.path.join(root, VERSION + "-" + identity)
 
 
@@ -119,7 +129,7 @@ def _tar_members(archive):
 
 
 def extract_helper(path, destination):
-    with tarfile.open(path, "r:gz") as archive:
+    with tarfile.open(path, "r:*") as archive:
         members = list(_tar_members(archive))  # validate before writing
         for member in members:
             target = Path(destination, member.name)
@@ -145,7 +155,7 @@ def verify_runtime(target, assets):
                     if member.is_dir(): continue
                     with archive.open(member) as handle: files[member.filename] = _digest_file(handle)
         else:
-            with tarfile.open(path, "r:gz") as archive:
+            with tarfile.open(path, "r:*") as archive:
                 for member in _tar_members(archive):
                     with archive.extractfile(member) as handle: files[member.name] = _digest_file(handle)
     actual, total = {}, 0
@@ -185,7 +195,7 @@ def install_runtime(root, cancelled, progress):
             path = os.path.join(stage, name)
             digest, size = hashlib.sha256(), 0
             last_progress = ""
-            with opener.open(pin["url"], timeout=15) as response, open(path, "wb") as output:
+            with opener.open(asset_url(name), timeout=15) as response, open(path, "wb") as output:
                 while True:
                     if cancelled.is_set(): raise ValueError("Model import cancelled")
                     chunk = response.read(128 * 1024)
@@ -194,7 +204,7 @@ def install_runtime(root, cancelled, progress):
                     if size > pin["size"]: raise ValueError("CAD runtime download exceeded its pinned size")
                     digest.update(chunk)
                     output.write(chunk)
-                    message = "Downloading STEP helper" if name.endswith(".tar.gz") else "Downloading CAD reader"
+                    message = "Downloading STEP helper" if name.endswith((".tar.gz", ".tar")) else "Downloading CAD reader"
                     message += f": {size // 1048576} / {pin['size'] // 1048576} MiB"
                     if message != last_progress:
                         progress(message)

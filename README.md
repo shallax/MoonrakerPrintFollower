@@ -91,8 +91,9 @@ on hover or keyboard focus. Preview and Print Follower ETA clocks include `+1`, 
 for additional days, matching Print job Finish. The webcam zoom control is
 narrower while still fitting `800%`.
 
-Optional runtime downloads still use upstream hosts. The inventory and remaining
-hosting work are recorded in [Runtime mirror](docs/RUNTIME_MIRROR.md).
+Optional detection and STEP runtime downloads use assets on the matching
+Moonraker Print Follower GitHub release. The inventory and release procedure
+are recorded in [Runtime mirror](docs/RUNTIME_MIRROR.md).
 
 ## What changed in 5.2.0
 

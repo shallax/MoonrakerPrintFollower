@@ -4,6 +4,11 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 5.3.0
 
+- Download optional Obico detection, ONNX Runtime and STEP/CAD assets from
+  this plugin version's GitHub release after consent, with existing byte pins
+  and verified caches preserved. The release carries the selectable assets;
+  later releases copy and verify them from this release.
+
 - Preserve foreground clipping and cropped lighting on Apple's software OpenGL
   renderer with exact clipping fallbacks; accelerated rendering keeps its existing path.
 

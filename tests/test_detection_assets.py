@@ -3,10 +3,8 @@
 import ctypes
 import hashlib
 import io
-import json
 import os
 from pathlib import Path
-import sys
 import tempfile
 import threading
 from types import SimpleNamespace
@@ -16,6 +14,7 @@ from urllib.request import Request
 import zipfile
 
 from mpf.detection import AssetInstaller, DetectionAssets
+from mpf.resources.RuntimeMirror import RELEASE_BASE, asset_url
 
 
 class Response(io.BytesIO):
@@ -37,20 +36,14 @@ class CancelAfter:
 
 
 class DetectionAssetsTests(unittest.TestCase):
-    def test_network_requests_use_curas_bundled_certificate_authority(self):
+    def test_model_and_inference_wheel_use_this_plugin_releases_assets(self):
         wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 100)
-        url = "https://files.pythonhosted.org/packages/onnxruntime-test.whl"
-        payload = json.dumps({"urls": [{"filename": wheel.filename,
-                                        "digests": {"sha256": wheel.sha256},
-                                        "size": wheel.size, "url": url}]}).encode()
-        with patch.dict(sys.modules, {"certifi": SimpleNamespace(where=lambda: "/cura/certifi/cacert.pem")}), \
-                patch.object(AssetInstaller.ssl, "create_default_context",
-                             return_value=sentinel.trusted_context) as context, \
-                patch.object(AssetInstaller, "_open_index",
-                             return_value=Response(payload, DetectionAssets.RUNTIME_INDEX_URL)) as open_url:
-            self.assertEqual(AssetInstaller.wheel_url(wheel), url)
-        context.assert_called_once_with(cafile="/cura/certifi/cacert.pem")
-        self.assertIs(open_url.call_args.kwargs["context"], sentinel.trusted_context)
+        self.assertTrue(RELEASE_BASE.endswith("/releases/download/v5.3.0/"))
+        self.assertEqual(DetectionAssets.MODEL_URL,
+                         RELEASE_BASE + "model-weights-5a6b1be1fa.onnx")
+        self.assertEqual(AssetInstaller.wheel_url(wheel), asset_url(wheel.filename))
+        with self.assertRaisesRegex(ValueError, "asset name"):
+            asset_url("../untrusted.whl")
 
     def test_supported_host_without_numpy_is_ineligible_before_offer(self):
         python = SimpleNamespace(platform="darwin",
@@ -179,6 +172,9 @@ class DetectionAssetsTests(unittest.TestCase):
             self.assertEqual(len(digest), 64)
             self.assertGreater(size, 10 * 1024 ** 2)
             self.assertIn(platform.split("_")[0], ("macosx", "manylinux", "win"))
+            name = f"onnxruntime-{DetectionAssets.RUNTIME_VERSION}-cp{abi}-cp{abi}-{platform}.whl"
+            wheel = DetectionAssets.RuntimeWheel(name, digest, size)
+            self.assertEqual(AssetInstaller.wheel_url(wheel), asset_url(name))
 
     def test_host_selection_matches_pinned_runtime_on_macos_linux_and_windows(self):
         hosts = (
@@ -267,19 +263,13 @@ class DetectionAssetsTests(unittest.TestCase):
                                             threading.Event(), lambda *_: None)
             self.assertFalse(os.path.exists(target))
 
-    def test_untrusted_runtime_index_is_rejected_before_download(self):
+    def test_wheel_url_checks_cancellation_without_index_request(self):
         wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 100)
-        url = "https://files.pythonhosted.org/packages/onnxruntime-test.whl"
-        payload = json.dumps({"urls": [{"filename": wheel.filename,
-                                        "digests": {"sha256": wheel.sha256},
-                                        "size": wheel.size, "url": url}]}).encode()
-        with patch.object(AssetInstaller, "_open_index",
-                          return_value=Response(payload, DetectionAssets.RUNTIME_INDEX_URL)):
-            self.assertEqual(AssetInstaller.wheel_url(wheel), url)
-        with patch.object(AssetInstaller, "_open_index",
-                          return_value=Response(payload, "https://attacker.example/index")):
-            with self.assertRaisesRegex(ValueError, "index host"):
-                AssetInstaller.wheel_url(wheel)
+        cancelled = threading.Event()
+        cancelled.set()
+        with self.assertRaises(AssetInstaller.DownloadCancelled):
+            AssetInstaller.wheel_url(wheel, cancelled)
+        self.assertEqual(AssetInstaller.wheel_url(wheel), asset_url(wheel.filename))
 
     def test_runtime_extraction_rejects_traversal_and_keeps_destination_absent(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -365,81 +355,9 @@ class DetectionAssetsTests(unittest.TestCase):
         self.assertEqual((request.full_url, timeout),
                          ("https://files.pythonhosted.org/packages/onnxruntime-test.whl", 3))
 
-    def test_wheel_url_reports_cancellation_before_and_after_the_index_read(self):
-        wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 100)
-        payload = json.dumps({"urls": [{"filename": wheel.filename,
-                                        "digests": {"sha256": wheel.sha256}, "size": wheel.size,
-                                        "url": "https://files.pythonhosted.org/packages/onnxruntime-test.whl"}]}).encode()
-        cancelled = threading.Event()
-        cancelled.set()
-        with patch.object(AssetInstaller, "_open_index",
-                          side_effect=AssertionError("index fetched while cancelled")):
-            with self.assertRaises(AssetInstaller.DownloadCancelled):
-                AssetInstaller.wheel_url(wheel, cancelled)
-        with patch.object(AssetInstaller, "_open_index",
-                          return_value=Response(payload, DetectionAssets.RUNTIME_INDEX_URL)):
-            with self.assertRaises(AssetInstaller.DownloadCancelled):
-                AssetInstaller.wheel_url(wheel, CancelAfter(2))
 
-    def test_index_transport_failures_are_failures_unless_the_setup_was_cancelled(self):
-        wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 100)
-        cancel = threading.Event()
-        with patch.object(AssetInstaller, "_open_index", side_effect=TimeoutError("index timed out")):
-            with self.assertRaises(TimeoutError):
-                AssetInstaller.wheel_url(wheel, cancel)
 
-        def cancel_while_reading(*_args, **_kwargs):
-            cancel.set()
-            raise TimeoutError("index timed out")
 
-        with patch.object(AssetInstaller, "_open_index", side_effect=cancel_while_reading):
-            with self.assertRaises(AssetInstaller.DownloadCancelled) as raised:
-                AssetInstaller.wheel_url(wheel, cancel)
-        self.assertIsInstance(raised.exception.__cause__, TimeoutError)
-
-    def test_wheel_url_refuses_an_oversized_index_and_unpinned_release_names(self):
-        wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 100)
-        release = {"filename": wheel.filename, "digests": {"sha256": wheel.sha256},
-                   "size": wheel.size,
-                   "url": "https://files.pythonhosted.org/packages/onnxruntime-test.whl"}
-        cases = (("empty", [], "not available"),
-                 ("duplicate", [release, release], "not available"),
-                 ("renamed", [{**release, "filename": "onnxruntime-another.whl"}], "not available"))
-        for label, urls, message in cases:
-            payload = json.dumps({"urls": urls}).encode()
-            with self.subTest(case=label), \
-                    patch.object(AssetInstaller, "_open_index",
-                                 return_value=Response(payload, DetectionAssets.RUNTIME_INDEX_URL)):
-                with self.assertRaisesRegex(ValueError, message):
-                    AssetInstaller.wheel_url(wheel)
-        payload = json.dumps({"urls": [release]}).encode()
-        with patch.object(AssetInstaller, "_open_index",
-                          return_value=Response(payload, "http://pypi.org/pypi/onnxruntime/1.23.2/json")):
-            with self.assertRaisesRegex(ValueError, "index host"):
-                AssetInstaller.wheel_url(wheel)
-        with patch.object(AssetInstaller, "_open_index",
-                          return_value=Response(b"x" * (1024 * 1024 + 1),
-                                                DetectionAssets.RUNTIME_INDEX_URL)):
-            with self.assertRaisesRegex(ValueError, "size limit"):
-                AssetInstaller.wheel_url(wheel)
-
-    def test_wheel_url_refuses_a_release_that_drifted_from_its_pin(self):
-        wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 100)
-        pinned = "https://files.pythonhosted.org/packages/onnxruntime-test.whl"
-        release = {"filename": wheel.filename, "digests": {"sha256": wheel.sha256},
-                   "size": wheel.size, "url": pinned}
-        drifts = (("digest", {**release, "digests": {"sha256": "b" * 64}}),
-                  ("size", {**release, "size": wheel.size + 1}),
-                  ("no url", {**release, "url": ""}),
-                  ("plain http", {**release, "url": pinned.replace("https://", "http://")}),
-                  ("foreign host", {**release, "url": "https://attacker.example/onnxruntime-test.whl"}))
-        for label, drifted in drifts:
-            payload = json.dumps({"urls": [drifted]}).encode()
-            with self.subTest(drift=label), \
-                    patch.object(AssetInstaller, "_open_index",
-                                 return_value=Response(payload, DetectionAssets.RUNTIME_INDEX_URL)):
-                with self.assertRaisesRegex(ValueError, "no longer matches"):
-                    AssetInstaller.wheel_url(wheel)
 
     def test_download_requires_https_and_never_reuses_a_corrupt_file(self):
         data = b"pinned camera model"
@@ -674,10 +592,7 @@ class DetectionAssetsTests(unittest.TestCase):
         wheel = DetectionAssets.RuntimeWheel(
             "onnxruntime-1.23.2-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
             hashlib.sha256(wheel_bytes).hexdigest(), len(wheel_bytes))
-        index_url = "https://files.pythonhosted.org/packages/" + wheel.filename
-        index = json.dumps({"urls": [{"filename": wheel.filename,
-                                      "digests": {"sha256": wheel.sha256}, "size": wheel.size,
-                                      "url": index_url}]}).encode()
+        release_url = asset_url(wheel.filename)
         downloads = []
         events = []
 
@@ -689,16 +604,14 @@ class DetectionAssetsTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             runtime, model = DetectionAssets.installed_paths(directory)
-            with patch.object(AssetInstaller, "_open_index",
-                              return_value=Response(index, DetectionAssets.RUNTIME_INDEX_URL)), \
-                    patch.object(AssetInstaller, "download", side_effect=fetch):
+            with patch.object(AssetInstaller, "download", side_effect=fetch):
                 result = AssetInstaller.install(
                     directory, wheel, threading.Event(),
                     lambda phase, received, total: events.append((phase, received, total)))
             self.assertEqual(result, (runtime, model))
             self.assertTrue(os.path.isfile(os.path.join(runtime, *member.split("/"))))
             self.assertEqual(downloads, [
-                (index_url, os.path.join(os.path.dirname(model), wheel.filename),
+                (release_url, os.path.join(os.path.dirname(model), wheel.filename),
                  wheel.size, wheel.sha256),
                 (DetectionAssets.MODEL_URL, model, DetectionAssets.MODEL_SIZE,
                  DetectionAssets.MODEL_SHA256)])

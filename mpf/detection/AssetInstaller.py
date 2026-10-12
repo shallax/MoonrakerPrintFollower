@@ -1,7 +1,6 @@
 """Consent-only, integrity-checked installation of the local CPU assets."""
 
 import hashlib
-import json
 import os
 from pathlib import Path
 import shutil
@@ -13,9 +12,10 @@ import zipfile
 
 from .DetectionDownloadTransport import AbortHTTPSHandler, transfer_abort
 from .DetectionAssets import (
-    MODEL_SHA256, MODEL_SIZE, MODEL_URL, RUNTIME_INDEX_URL,
+    MODEL_SHA256, MODEL_SIZE, MODEL_URL,
     RuntimeWheel, installed_paths,
 )
+from ..resources.RuntimeMirror import asset_url
 
 
 class DownloadCancelled(Exception):
@@ -42,14 +42,6 @@ def _open_download(url):
     return opener.open(Request(url), timeout=3)
 
 
-def _open_index(request, timeout, context):
-    """The index fetch's one seam — the same HTTPS-at-every-hop handler
-    and Cura's own CA as the wheel download, so an intermediate hop can
-    never downgrade the scheme the way a bare urlopen allowed."""
-    opener = build_opener(AbortHTTPSHandler(context=context), _HTTPSRedirectHandler())
-    return opener.open(request, timeout=timeout)
-
-
 def _check_cancelled(cancel) -> None:
     if cancel.is_set():
         raise DownloadCancelled("Local detection setup cancelled")
@@ -68,46 +60,7 @@ def verify_file(path: str, size: int, digest: str) -> bool:
 def wheel_url(wheel: RuntimeWheel, cancel=None) -> str:
     if cancel is not None:
         _check_cancelled(cancel)
-    try:
-        # The index fetch is a hop like any other: never a bare urlopen.
-        with transfer_abort(cancel) as guard:
-            with _open_index(Request(RUNTIME_INDEX_URL, headers={"Accept": "application/json"}),
-                             timeout=3, context=_trusted_context()) as response:
-                guard.body(response)
-                if urlsplit(response.geturl()).scheme != "https" \
-                        or urlsplit(response.geturl()).hostname != "pypi.org":
-                    raise ValueError("Unexpected runtime index host")
-                chunks = []
-                total = 0
-                while total <= 1024 * 1024:
-                    if cancel is not None:
-                        _check_cancelled(cancel)
-                    block = getattr(response, "read1", response.read)(min(8192, 1024 * 1024 + 1 - total))
-                    if not block:
-                        break
-                    chunks.append(block)
-                    total += len(block)
-                raw = b"".join(chunks)
-    except Exception as exc:
-        if cancel is not None and cancel.is_set():
-            raise DownloadCancelled("Local detection setup cancelled") from exc
-        raise
-    if cancel is not None:
-        _check_cancelled(cancel)
-    if len(raw) > 1024 * 1024:
-        raise ValueError("Runtime index exceeds its size limit")
-    releases = json.loads(raw)["urls"]
-    matches = [item for item in releases if item.get("filename") == wheel.filename]
-    if len(matches) != 1:
-        raise ValueError("The pinned inference runtime is not available")
-    item = matches[0]
-    url = str(item.get("url", ""))
-    if (item.get("digests", {}).get("sha256") != wheel.sha256
-            or item.get("size") != wheel.size
-            or urlsplit(url).scheme != "https"
-            or urlsplit(url).hostname != "files.pythonhosted.org"):
-        raise ValueError("The inference runtime no longer matches its pinned release")
-    return url
+    return asset_url(wheel.filename)
 
 
 def download(url: str, path: str, size: int, digest: str, cancel, progress) -> None:
