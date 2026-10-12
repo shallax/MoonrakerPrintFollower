@@ -7,8 +7,11 @@ has been published and no binary/model payloads are included in this branch.
 ## Inventory
 
 The current pinned matrices contain 47 binary/model assets, about 1.96 GiB
-in total before source archives and notices. An individual installation only
-downloads its selected platform's optional assets.
+in total before source archives and notices. The STEP loader uses only Python
+3.12 wheels, so 20 CAD wheels in the manifest cannot currently be selected.
+The active mirror set is 27 assets (889,966,348 bytes, about 849 MiB).
+An individual installation only downloads its selected platform's optional
+assets.
 
 | Distribution | Assets | Total MiB | Largest MiB |
 | --- | ---: | ---: | ---: |
@@ -28,6 +31,24 @@ companion. ONNX Runtime includes its licence and ThirdPartyNotices; the Python
 helpers retain Python/pip notices, which do not alone describe every linked
 native dependency. Staging is complete; redistribution companions and the
 production URL/cache migration remain to be completed.
+
+The active set's staging is reproducible with `python3 tools/stage_runtime_mirror.py
+/path/outside/checkout`. The tool reads the committed pins, checks the PyPI
+index against all 15 ONNX Runtime wheel hashes, downloads the original 27
+payloads, verifies every byte and writes `manifest.json`. `--verify-only`
+rechecks an existing staging directory. It does not publish a release or
+change the plugin's download URLs.
+
+On 12 October 2026 the full 47-pin matrix was reverified; the publication set
+was narrowed to the 27 selectable assets. Source
+archives for Obico (release commit `6f938964`), ONNX Runtime v1.23.2, OCP
+7.9.3.1.1, OCCT V7_9_3, ocp-build-system v7.9.3.1.1 and
+python-build-standalone 20261003 were retrieved for the companion audit.
+This is not yet a complete corresponding-source bundle: the CAD wheels contain
+bundled native libraries without their licence files or exact source/build
+records, and the Windows archives contain Microsoft C++ runtime DLLs whose
+redistribution terms need to be resolved. Do not publish these binaries from
+this repository or change production URLs until the companion is complete.
 
 ## Hosting and migration
 
