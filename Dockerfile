@@ -46,7 +46,7 @@ RUN python3 -m venv /opt/venv \
 # These capture-only extensions currently build from source on Python 3.14.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         g++=4:15.2.0-5ubuntu1 \
-        libx11-dev=2:1.8.13-1 \
+        libx11-dev=2:1.8.13-1ubuntu0.1 \
         python3-dev=3.14.3-0ubuntu2 \
     && rm -rf /var/lib/apt/lists/* \
     && /opt/venv/bin/pip install --no-cache-dir moderngl==5.12.0 glcontext==3.0.0
