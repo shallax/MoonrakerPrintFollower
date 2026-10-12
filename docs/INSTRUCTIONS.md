@@ -22,25 +22,26 @@ files; the real-QML engine gate checks local types and singleton imports.
 
 ## Development environment
 
-The live environment map uses six exterior orthographic colour/depth views.
-Its shader traverses every crossed depth texel, including opposite views, and
-uses the colour mip chain for roughness. Unchanged directional captures sleep
-until their scene key changes; moving scene geometry or attached lights still
-refresh the map. Original CAD shading, opacity and depth remain in the raster
-path. The ray-tracing backend, binaries and renderer-selection controls have
-been removed. Old saved ray/fallback preferences are ignored; Enable reflections
-now directly controls the environment map.
+The live environment map uses six perspective colour faces captured from the
+housing centre, excluding the head. Each face retains local depth testing but
+exports only colour. All faces and roughness mipmaps complete before publication;
+unchanged scenes sleep until their key changes. The material shader keeps one
+cube lookup outside a short transition between complete maps, with a sharper
+artist roughness mip curve and optional detected-flat-bed reprojection, avoiding
+exported depth and search-hierarchy work. This is a
+single-probe approximation, with incomplete visibility behind captured surfaces
+and approximate parallax. Original CAD shading, opacity and depth remain in the
+raster path. Enable reflections directly controls the map; removed renderer and
+fallback preferences are ignored.
 
 The unused split receiver/query and shadow-map prototypes are excluded from the
 release. Their source is preserved at commit `80c4b263`; the old combined
 geometry-query/CAD-PBR variant caused a Metal GPU hang and must not be rerun.
-A private 512-pixel actual-head benchmark of the directional path measured
-18–27 ms after removing six redundant roughness searches (previously
-112–167 ms). Pairing opposite views into three shared texel walks then reduced
-an alternating isolated comparison from 21.1 ms to 11.0 ms median. This is a bounded benchmark, not a live Cura frame-rate guarantee.
-The directional GPU regression tests cover thin surfaces, opposite captures,
-silhouette discontinuities and true misses. They do not prove all possible
-concave geometry is represented by the six finite-resolution depth views.
+Directional depth-search helpers and hierarchy storage remain explicit reference
+fixtures. Their GPU tests prove boundary and nearest-hit behavior independently
+of the production central colour lookup. Standalone GPU measurements must be
+reported separately from live Cura responsiveness; a locked desktop prevents
+live visual or frame-rate validation.
 
 The Makefile is the entry point on every host. Linux defaults to the
 pinned Docker image; macOS and Windows default to native host tools.

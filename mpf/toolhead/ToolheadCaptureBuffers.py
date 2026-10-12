@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import ctypes
-from .ToolheadGLState import procedure
+from .ToolheadGLState import GeometryUncertain, procedure
+
+_uncertain_faces = []
 
 U, I, P = ctypes.c_uint, ctypes.c_int, ctypes.c_void_p
 
@@ -59,9 +61,13 @@ class CaptureVertexArray:
 
 class CaptureFace:
     """Private FBO; no Qt GL wrapper construction or host context activation."""
-    def __init__(self, gl, context, width, height, depth_format=0x81A6):
+    def __init__(self, gl, context, width, height, depth_format=0x81A6, *, samples=0):
         self.context, self.gl = context, gl
         self.framebuffer = self.texture = self.renderbuffer = 0
+        self.ms_framebuffer = self.ms_colour = self.ms_depth = 0
+        self.samples = 0
+        self.width, self.height = width, height
+        self.retained_bytes = width*height*8
         self.valid = False
 
         self._bind = procedure(context, 'glBindFramebuffer', None, U, U)
@@ -91,6 +97,9 @@ class CaptureFace:
             self.valid = bool(self.framebuffer and self.texture and self.renderbuffer
                 and procedure(context, 'glCheckFramebufferStatus', U, U)(0x8D40) == 0x8CD5)
             if not self.valid: raise RuntimeError('Reflection face target unavailable')
+            if samples: self._multisample(depth_format, samples)
+        except GeometryUncertain:
+            raise
         except Exception:
             self.close(); raise
         finally:
@@ -98,13 +107,92 @@ class CaptureFace:
             gl.glBindTexture(0x0DE1, 0)
             self._bind(0x8D40, 0)
 
+    def _close_multisample(self):
+        for function, field in (('glDeleteFramebuffers','ms_framebuffer'),
+                ('glDeleteRenderbuffers','ms_colour'),('glDeleteRenderbuffers','ms_depth')):
+            name = getattr(self,field)
+            if name:
+                try:
+                    value=U(name)
+                    procedure(self.context,function,None,I,ctypes.POINTER(U))(1,ctypes.byref(value))
+                except Exception as error:
+                    _uncertain_faces.append(self)
+                    raise GeometryUncertain(self, 'Reflection multisample cleanup uncertain') from error
+                setattr(self,field,0)
+        self.samples=0
+        self.retained_bytes=self.width*self.height*8
+
+    def _multisample(self, depth_format, samples):
+        gl,context=self.gl,self.context
+        if samples != 4 or int(gl.glGetIntegerv(0x8D57)) < samples: return
+        self.retained_bytes=self.width*self.height*40
+        try:
+            value=U()
+            procedure(context,'glGenFramebuffers',None,I,ctypes.POINTER(U))(1,ctypes.byref(value))
+            self.ms_framebuffer=value.value
+            if not self.ms_framebuffer: raise RuntimeError('Multisample framebuffer unavailable')
+            self._bind(0x8D40,self.ms_framebuffer)
+            for field,format_,attachment in (('ms_colour',0x8058,0x8CE0),('ms_depth',depth_format,0x8D00)):
+                value=U()
+                procedure(context,'glGenRenderbuffers',None,I,ctypes.POINTER(U))(1,ctypes.byref(value))
+                setattr(self,field,value.value)
+                if not value.value: raise RuntimeError('Multisample renderbuffer unavailable')
+                procedure(context,'glBindRenderbuffer',None,U,U)(0x8D41,value.value)
+                procedure(context,'glRenderbufferStorageMultisample',None,U,I,U,I,I)(
+                    0x8D41,samples,format_,self.width,self.height)
+                actual=I()
+                procedure(context,'glGetRenderbufferParameteriv',None,U,U,ctypes.POINTER(I))(
+                    0x8D41,0x8CAB,ctypes.byref(actual))
+                if actual.value != samples: raise RuntimeError('Multisample count mismatch')
+                procedure(context,'glGetRenderbufferParameteriv',None,U,U,ctypes.POINTER(I))(
+                    0x8D41,0x8D44,ctypes.byref(actual))
+                depth_bits={0x81A5:16,0x81A6:24,0x81A7:32}
+                valid_format = (actual.value == format_ if field=='ms_colour' else
+                    depth_bits.get(actual.value,0) >= depth_bits[depth_format])
+                # Colour-only resolve permits a driver's higher depth precision.
+                if not valid_format: raise RuntimeError('Multisample format mismatch')
+                procedure(context,'glFramebufferRenderbuffer',None,U,U,U,U)(0x8D40,attachment,0x8D41,value.value)
+            procedure(context,'glDrawBuffer',None,U)(0x8CE0)
+            procedure(context,'glReadBuffer',None,U)(0x8CE0)
+            if procedure(context,'glCheckFramebufferStatus',U,U)(0x8D40)!=0x8CD5 or gl.glGetError():
+                raise RuntimeError('Multisample target unavailable')
+            self.samples=samples
+            try:
+                from UM.Logger import Logger
+                Logger.log('i', 'Toolhead reflection capture: %sx%s, %s samples, colour resolve', self.width, self.height, self.samples)
+            except ImportError: pass
+        except Exception:
+            self._close_multisample()
+            # Optional allocation errors must not poison the working single target.
+            for _ in range(32):
+                if not gl.glGetError(): break
+            else: raise RuntimeError('Multisample allocation error state did not clear')
+        finally:
+            self._bind(0x8D40,self.framebuffer)
+
+    def resolve(self):
+        if self.samples:
+            self.gl.glDisable(0x0C11)
+            self._bind(0x8CA8,self.ms_framebuffer)
+            self._bind(0x8CA9,self.framebuffer)
+            procedure(self.context,'glReadBuffer',None,U)(0x8CE0)
+            procedure(self.context,'glDrawBuffer',None,U)(0x8CE0)
+            procedure(self.context,'glBlitFramebuffer',None,*([I]*8),U,U)(
+                0,0,self.width,self.height,0,0,self.width,self.height,0x4000,0x2600)
+            if self.gl.glGetError(): raise RuntimeError('Reflection multisample resolve failed')
+        self._bind(0x8D40,self.framebuffer)
+
     def isValid(self): return self.valid
 
     def bind(self):
-        self._bind(0x8D40, self.framebuffer)
+        self._bind(0x8D40, self.ms_framebuffer or self.framebuffer)
+        if self.samples:
+            self.gl.glEnable(0x809D)
+            for capability in (0x809E,0x809F,0x80A0,0x8E51): self.gl.glDisable(capability)
         return bool(self.framebuffer)
 
     def close(self):
+        self._close_multisample()
         for function, field in (('glDeleteFramebuffers', 'framebuffer'),
                 ('glDeleteTextures', 'texture'), ('glDeleteRenderbuffers', 'renderbuffer')):
             name = getattr(self, field)
@@ -113,6 +201,7 @@ class CaptureFace:
                 value = U(name)
                 procedure(self.context, function, None, I, ctypes.POINTER(U))(1, ctypes.byref(value))
         self.valid = False
+        self.retained_bytes = 0
 
 
 class CaptureTexture:

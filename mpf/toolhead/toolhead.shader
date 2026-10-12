@@ -65,6 +65,17 @@ fragment =
     uniform vec4 u_materialReflectivity5;
     uniform int u_environmentEnabled;
     uniform samplerCube u_environment;
+    uniform int u_environmentPreviousEnabled;
+    uniform samplerCube u_environmentPrevious;
+    uniform float u_environmentBlend;
+    uniform vec3 u_previousProbe;
+    uniform float u_previousFar;
+    uniform int u_previousGroundEnabled;
+    uniform vec4 u_previousGround;
+    uniform float u_previousGroundMaxZ;
+    uniform int u_environmentGroundEnabled;
+    uniform vec4 u_environmentGround;
+    uniform float u_environmentGroundMaxZ;
     uniform samplerCube u_sceneDepth;
     uniform vec3 u_probe;
     uniform vec3 u_sceneMin;
@@ -261,7 +272,7 @@ fragment =
         // six full depth searches for every shaded pixel.
         return directionalSample(central,roughness);
     }
-    vec3 environmentReflection(vec3 direction, float roughness, out float confidence) {
+    vec3 referenceEnvironmentReflection(vec3 direction, float roughness, out float confidence) {
         if(u_probeFar<0.)return directionalReflection(direction,roughness,confidence);
         confidence = 0.0;
         direction = localReflectionDirection(direction);
@@ -280,6 +291,44 @@ fragment =
         colour += textureCube(u_environment, normalize(direction + (tangent + bitangent) * cone * 0.7), level).rgb * 0.1;
         colour += textureCube(u_environment, normalize(direction - (tangent + bitangent) * cone * 0.7), level).rgb * 0.1;
         return colour;
+    }
+    vec3 centralReflectionDirection(vec3 direction, vec3 probe, float farPlane, int groundEnabled, vec4 ground, float maxZ) {
+        // Reproject a certified planar bed into the captured probe. Other
+        // directions retain the complete cube, including grazing/edge rays.
+        if (groundEnabled == 1 && direction.y < -0.0001 &&
+                v_position.y > ground.x && farPlane > 0.0) {
+            float distance = (ground.x - v_position.y) / direction.y;
+            if (distance > 0.0) {
+                vec3 hit = v_position + direction * distance;
+                float edge = min(min(hit.x-ground.y, ground.w-hit.x),
+                    min(hit.z-ground.z, maxZ-hit.z));
+                float weight = smoothstep(0.0, 2.0, edge) * smoothstep(0.01, 0.06, -direction.y);
+                vec3 captured = hit - probe;
+                if (weight > 0.0 && dot(captured, captured) > 0.000001)
+                    return mix(direction, normalize(captured), weight);
+            }
+        }
+        return direction;
+    }
+    vec3 centralReflectionDirection(vec3 direction) {
+        return centralReflectionDirection(direction,u_probe,u_probeFar,u_environmentGroundEnabled,u_environmentGround,u_environmentGroundMaxZ);
+    }
+    float centralReflectionLevel(float roughness) {
+        // Preserve useful detail: linear roughness previously selected tiny
+        // mip faces (about 23 texels at .5 on a 512-pixel capture).
+        return 6.0 * roughness * roughness;
+    }
+    vec3 environmentReflection(vec3 direction, float roughness, out float confidence) {
+        confidence = 1.0;
+        float level = centralReflectionLevel(roughness);
+        if (u_environmentPreviousEnabled != 1 || u_environmentBlend >= 1.0)
+            return textureCube(u_environment, centralReflectionDirection(direction), level).rgb;
+        vec3 previousDirection = centralReflectionDirection(direction,u_previousProbe,u_previousFar,
+            u_previousGroundEnabled,u_previousGround,u_previousGroundMaxZ);
+        vec3 previous = textureCube(u_environmentPrevious,previousDirection,level).rgb;
+        if (u_environmentBlend <= 0.0) return previous;
+        vec3 current = textureCube(u_environment, centralReflectionDirection(direction), level).rgb;
+        return mix(previous,current,u_environmentBlend);
     }
     float grainHash(vec3 cell) {
         vec3 h = fract(cell * vec3(0.1031, 0.11369, 0.13787));
@@ -474,6 +523,7 @@ vertex41core =
 
 fragment41core =
     #version 410
+    #define MPF_USE_FULL_HIERARCHY 0
     uniform float u_opacity;
     uniform float u_surfaceDetail;
     uniform int u_materialOverridesEnabled;
@@ -492,7 +542,20 @@ fragment41core =
     uniform vec4 u_materialReflectivity5;
     uniform int u_environmentEnabled;
     uniform samplerCube u_environment;
+    uniform int u_environmentPreviousEnabled;
+    uniform samplerCube u_environmentPrevious;
+    uniform float u_environmentBlend;
+    uniform vec3 u_previousProbe;
+    uniform float u_previousFar;
+    uniform int u_previousGroundEnabled;
+    uniform vec4 u_previousGround;
+    uniform float u_previousGroundMaxZ;
+    uniform int u_environmentGroundEnabled;
+    uniform vec4 u_environmentGround;
+    uniform float u_environmentGroundMaxZ;
     uniform samplerCube u_sceneDepth;
+    uniform samplerCube u_depthHierarchy;
+    uniform int u_depthHierarchyEnabled;
     uniform vec3 u_probe;
     uniform vec3 u_sceneMin;
     uniform vec3 u_sceneMax;
@@ -621,6 +684,12 @@ fragment41core =
      int axis=face/2;float forward=(face==0||face==2||face==4)?p[axis]-u_sceneMin[axis]+.01:u_sceneMax[axis]+.01-p[axis];
      return forward-depth*(-u_probeFar-u_probeNear);
     }
+    #ifndef MPF_USE_FULL_HIERARCHY
+    #define MPF_USE_FULL_HIERARCHY 0
+    #endif
+    uniform sampler2D u_fullHierarchy;
+    uniform int u_fullHierarchyEnabled;
+    #if MPF_USE_FULL_HIERARCHY
     float directionalHit(vec3 origin,vec3 direction,out vec3 lookup){
         vec3 safe=vec3(direction.x<0.?-1.:1.,direction.y<0.?-1.:1.,direction.z<0.?-1.:1.)*max(abs(direction),vec3(.000001));
         vec3 a=(u_sceneMin-origin)/safe,b=(u_sceneMax-origin)/safe;
@@ -636,19 +705,157 @@ fragment41core =
             int axis=primary+order;if(axis>=3)axis-=3;
             if(direction[axis]==0.)continue;
             int face=axis*2;
+            int level=9;vec2 frontTimes=vec2(0.),backTimes=vec2(0.);bool frontValid=false,backValid=false;
             int u=axis+1;if(u==3)u=0;int v=u+1;if(v==3)v=0;
             vec2 gridOrigin=vec2((origin[u]-u_sceneMin[u])/span[u],(origin[v]-u_sceneMin[v])/span[v])*512.;
             vec2 gridRay=vec2(direction[u]/span[u],direction[v]/span[v])*512.;
             vec2 cell=clamp(floor(gridOrigin+gridRay*first),vec2(0.),vec2(511.));
             vec2 increment=sign(gridRay);float entry=first;
-            // A projected line crosses at most 512+512 cells. Visit every cell.
-            for(int step=0;step<1026;step++){
+            // Descend only nodes whose depth interval can meet the ray.
+            // Changed cell bits ascend directly to the next sibling node.
+            // After 16384 hierarchy iterations, 1026 fine-only iterations
+            // finish the remaining 512-square walk without truncating hits.
+            for(int step=0;step<17410;step++){
                 if(any(lessThan(cell,vec2(0.)))||any(greaterThan(cell,vec2(511.)))||entry>best)break;
                 vec2 boundary=cell+max(increment,vec2(0.));
                 vec2 next=vec2(best);
                 if(gridRay.x!=0.)next.x=(boundary.x-gridOrigin.x)/gridRay.x;
                 if(gridRay.y!=0.)next.y=(boundary.y-gridOrigin.y)/gridRay.y;
                 float exitTime=min(best,min(next.x,next.y));
+                // A conservative tile rewind can leave cells behind entry.
+                // Their closed intervals cannot contain a hit; keep ties.
+                if(exitTime<entry){
+                    ivec2 oldCell=ivec2(cell);
+                    if(next.x<=next.y)cell.x+=increment.x;
+                    if(next.y<=next.x)cell.y+=increment.y;
+                    ivec2 changed=oldCell^ivec2(cell);
+                    level=clamp(findMSB(changed.x|changed.y),0,9);
+                    entry=max(entry,exitTime);continue;
+                }
+                float nodeSize=exp2(float(level));vec2 block=floor(cell/nodeSize);
+                if(u_fullHierarchyEnabled==1&&exitTime>entry&&level>0&&step<16384){
+                    int offset=512-(512>>(level-1));
+                    vec4 ranges=texelFetch(u_fullHierarchy,ivec2(block)+ivec2(offset,axis*256),0);
+                    vec2 fr=ranges.rg,br=ranges.ba;
+                    frontValid=fr.x<=fr.y;backValid=br.x<=br.y;
+                    float frontMinPlane=u_sceneMin[axis]-.01+fr.x*(-u_probeFar-u_probeNear);
+                    float frontMaxPlane=u_sceneMin[axis]-.01+fr.y*(-u_probeFar-u_probeNear);
+                    vec2 tf=vec2((frontMinPlane-origin[axis])/direction[axis],(frontMaxPlane-origin[axis])/direction[axis]);
+                    float backMinPlane=u_sceneMax[axis]+.01-br.x*(-u_probeFar-u_probeNear);
+                    float backMaxPlane=u_sceneMax[axis]+.01-br.y*(-u_probeFar-u_probeNear);
+                    vec2 tb=vec2((backMinPlane-origin[axis])/direction[axis],(backMaxPlane-origin[axis])/direction[axis]);
+                    frontTimes=vec2(min(tf.x,tf.y),max(tf.x,tf.y));backTimes=vec2(min(tb.x,tb.y),max(tb.x,tb.y));
+                    vec2 tileBoundary=(block+max(increment,vec2(0.)))*nodeSize;
+                    vec2 tileNext=vec2(best);
+                    if(gridRay.x!=0.)tileNext.x=(tileBoundary.x-gridOrigin.x)/gridRay.x;
+                    if(gridRay.y!=0.)tileNext.y=(tileBoundary.y-gridOrigin.y)/gridRay.y;
+                    float tileExit=min(best,min(tileNext.x,tileNext.y));
+                    // Include cancellation error from large translated coordinates.
+                    float tolerance=.0001*max(1.,max(abs(entry),abs(tileExit)))+0.0000019073486328125*(abs(origin[axis])+max(abs(u_sceneMin[axis]),abs(u_sceneMax[axis]))+(-u_probeFar-u_probeNear))/abs(direction[axis]);
+                    bool possible=(frontValid&&frontTimes.y>=entry-tolerance&&frontTimes.x<=tileExit+tolerance)||(backValid&&backTimes.y>=entry-tolerance&&backTimes.x<=tileExit+tolerance);
+                    // Fine and node exits can round differently: never rewind
+                    // a rejected node unless its own exit strictly advances entry.
+                    if(!possible&&tileExit>entry){
+                        if(tileExit>=best)break;
+                        cell=clamp(floor(gridOrigin+gridRay*tileExit)-increment,vec2(0.),vec2(511.));
+                        if(tileNext.x<=tileNext.y)cell.x=tileBoundary.x-(increment.x>0.?1.:0.);
+                        if(tileNext.y<=tileNext.x)cell.y=tileBoundary.y-(increment.y>0.?1.:0.);
+                        entry=max(entry,tileExit);level=0;continue;
+                    }
+                    level--;continue;
+                }
+                vec3 texel=vec3(0.);texel[axis]=1.;
+                texel[u]=(cell.x+.5)/256.-1.;texel[v]=(cell.y+.5)/256.-1.;
+                float front=textureLod(u_sceneDepth,texel,0.).r;
+                texel[axis]=-1.;
+                float back=textureLod(u_sceneDepth,texel,0.).r;
+                float frontPlane=u_sceneMin[axis]-.01+front*(-u_probeFar-u_probeNear);
+                float backPlane=u_sceneMax[axis]+.01-back*(-u_probeFar-u_probeNear);
+                float tf=(frontPlane-origin[axis])/direction[axis],tb=(backPlane-origin[axis])/direction[axis];
+                bool frontHit=front>=0.&&front<1.&&tf>=entry&&tf<=exitTime&&tf>=first&&tf<=best;
+                bool backHit=back>=0.&&back<1.&&tb>=entry&&tb<=exitTime&&tb>=first&&tb<=best;
+                if(frontHit||backHit){
+                    bool useFront=frontHit&&(!backHit||tf<tb||(tf==tb&&direction[axis]<0.));
+                    best=useFront?tf:tb;found=true;
+                    lookup=directionalLookup(origin+direction*best,face+(useFront?0:1));break;
+                }
+                if(exitTime>=best)break;
+                ivec2 oldCell=ivec2(cell);
+                if(next.x<=next.y)cell.x+=increment.x;
+                if(next.y<=next.x)cell.y+=increment.y;
+                ivec2 changed=oldCell^ivec2(cell);
+                level=clamp(findMSB(changed.x|changed.y),0,9);
+                entry=max(entry,exitTime);
+            }
+        }
+        return found?best:-1.;
+    }
+    #else
+    float directionalHit(vec3 origin,vec3 direction,out vec3 lookup){
+        vec3 safe=vec3(direction.x<0.?-1.:1.,direction.y<0.?-1.:1.,direction.z<0.?-1.:1.)*max(abs(direction),vec3(.000001));
+        vec3 a=(u_sceneMin-origin)/safe,b=(u_sceneMax-origin)/safe;
+        vec3 lo=min(a,b),hi=max(a,b);
+        float first=max(.01,max(max(lo.x,lo.y),lo.z)),last=min(min(hi.x,hi.y),hi.z);
+        if(!(last>first))return -1.;
+        vec3 span=u_sceneMax-u_sceneMin;
+        int primary=abs(direction.x)>=abs(direction.y)&&abs(direction.x)>=abs(direction.z)?0:abs(direction.y)>=abs(direction.z)?1:2;
+        float best=last;bool found=false;
+        // Both views of an axis share exactly the same projected texel walk.
+        // Inspect their depths together instead of traversing the grid twice.
+        for(int order=0;order<3;order++){
+            int axis=primary+order;if(axis>=3)axis-=3;
+            if(direction[axis]==0.)continue;
+            int face=axis*2;
+            vec2 previousBlock=vec2(-1.);vec2 frontTimes=vec2(0.),backTimes=vec2(0.);bool frontValid=false,backValid=false;
+            int u=axis+1;if(u==3)u=0;int v=u+1;if(v==3)v=0;
+            vec2 gridOrigin=vec2((origin[u]-u_sceneMin[u])/span[u],(origin[v]-u_sceneMin[v])/span[v])*512.;
+            vec2 gridRay=vec2(direction[u]/span[u],direction[v]/span[v])*512.;
+            vec2 cell=clamp(floor(gridOrigin+gridRay*first),vec2(0.),vec2(511.));
+            vec2 increment=sign(gridRay);float entry=first;
+            // Fine DDA crosses at most 1024 cells. A line crosses at most
+            // 32 coarse tiles; each jump revisits at most two fine cells
+            // plus its own iteration. 2048 covers 1024+3*32 with margin.
+            // entry never decreases; a rewound boundary cannot coarse-skip
+            // again until its fine exit exceeds entry.
+            for(int step=0;step<2048;step++){
+                if(any(lessThan(cell,vec2(0.)))||any(greaterThan(cell,vec2(511.)))||entry>best)break;
+                vec2 boundary=cell+max(increment,vec2(0.));
+                vec2 next=vec2(best);
+                if(gridRay.x!=0.)next.x=(boundary.x-gridOrigin.x)/gridRay.x;
+                if(gridRay.y!=0.)next.y=(boundary.y-gridOrigin.y)/gridRay.y;
+                float exitTime=min(best,min(next.x,next.y));
+                // A conservative tile rewind can leave cells behind entry.
+                // Their closed intervals cannot contain a hit; keep ties.
+                if(exitTime<entry){
+                    if(next.x<=next.y)cell.x+=increment.x;
+                    if(next.y<=next.x)cell.y+=increment.y;
+                    entry=max(entry,exitTime);continue;
+                }
+                vec2 block=floor(cell/32.);
+                if(u_depthHierarchyEnabled==1&&exitTime>entry&&any(notEqual(block,previousBlock))){
+                    previousBlock=block;
+                    vec3 address=vec3(0.);address[axis]=1.;address[u]=(block.x+.5)/8.-1.;address[v]=(block.y+.5)/8.-1.;
+                    vec2 fr=textureLod(u_depthHierarchy,address,0.).rg;
+                    address[axis]=-1.;vec2 br=textureLod(u_depthHierarchy,address,0.).rg;
+                    frontValid=fr.x<=fr.y;backValid=br.x<=br.y;
+                    vec2 tf=(vec2(u_sceneMin[axis]-.01)+fr*(-u_probeFar-u_probeNear)-origin[axis])/direction[axis];
+                    vec2 tb=(vec2(u_sceneMax[axis]+.01)-br*(-u_probeFar-u_probeNear)-origin[axis])/direction[axis];
+                    frontTimes=vec2(min(tf.x,tf.y),max(tf.x,tf.y));backTimes=vec2(min(tb.x,tb.y),max(tb.x,tb.y));
+                    vec2 tileBoundary=(block+max(increment,vec2(0.)))*32.;
+                    vec2 tileNext=vec2(best);
+                    if(gridRay.x!=0.)tileNext.x=(tileBoundary.x-gridOrigin.x)/gridRay.x;
+                    if(gridRay.y!=0.)tileNext.y=(tileBoundary.y-gridOrigin.y)/gridRay.y;
+                    float tileExit=min(best,min(tileNext.x,tileNext.y));
+                    float tolerance=.0001*max(1.,max(abs(entry),abs(tileExit)));
+                    bool possible=(frontValid&&frontTimes.y>=entry-tolerance&&frontTimes.x<=tileExit+tolerance)||(backValid&&backTimes.y>=entry-tolerance&&backTimes.x<=tileExit+tolerance);
+                    if(!possible){
+                        if(tileExit>=best)break;
+                        cell=clamp(floor(gridOrigin+gridRay*tileExit)-increment,vec2(0.),vec2(511.));
+                        if(tileNext.x<=tileNext.y)cell.x=tileBoundary.x-(increment.x>0.?1.:0.);
+                        if(tileNext.y<=tileNext.x)cell.y=tileBoundary.y-(increment.y>0.?1.:0.);
+                        entry=max(entry,tileExit);continue;
+                    }
+                }
                 vec3 texel=vec3(0.);texel[axis]=1.;
                 texel[u]=(cell.x+.5)/256.-1.;texel[v]=(cell.y+.5)/256.-1.;
                 float front=textureLod(u_sceneDepth,texel,0.).r;
@@ -672,6 +879,7 @@ fragment41core =
         }
         return found?best:-1.;
     }
+    #endif
     vec3 directionalSample(vec3 lookup,float roughness){
         float level=roughness*9.;float edge=max(0.,1.-exp2(level)/512.);
         int axis=abs(lookup.x)>=1.?0:abs(lookup.y)>=1.?1:2;
@@ -688,7 +896,7 @@ fragment41core =
         // six full depth searches for every shaded pixel.
         return directionalSample(central,roughness);
     }
-    vec3 environmentReflection(vec3 direction, float roughness, out float confidence) {
+    vec3 referenceEnvironmentReflection(vec3 direction, float roughness, out float confidence) {
         if(u_probeFar<0.)return directionalReflection(direction,roughness,confidence);
         confidence = 0.0;
         direction = localReflectionDirection(direction);
@@ -707,6 +915,44 @@ fragment41core =
         colour += textureLod(u_environment, normalize(direction + (tangent + bitangent) * cone * 0.7), level).rgb * 0.1;
         colour += textureLod(u_environment, normalize(direction - (tangent + bitangent) * cone * 0.7), level).rgb * 0.1;
         return colour;
+    }
+    vec3 centralReflectionDirection(vec3 direction, vec3 probe, float farPlane, int groundEnabled, vec4 ground, float maxZ) {
+        // Reproject a certified planar bed into the captured probe. Other
+        // directions retain the complete cube, including grazing/edge rays.
+        if (groundEnabled == 1 && direction.y < -0.0001 &&
+                v_position.y > ground.x && farPlane > 0.0) {
+            float distance = (ground.x - v_position.y) / direction.y;
+            if (distance > 0.0) {
+                vec3 hit = v_position + direction * distance;
+                float edge = min(min(hit.x-ground.y, ground.w-hit.x),
+                    min(hit.z-ground.z, maxZ-hit.z));
+                float weight = smoothstep(0.0, 2.0, edge) * smoothstep(0.01, 0.06, -direction.y);
+                vec3 captured = hit - probe;
+                if (weight > 0.0 && dot(captured, captured) > 0.000001)
+                    return mix(direction, normalize(captured), weight);
+            }
+        }
+        return direction;
+    }
+    vec3 centralReflectionDirection(vec3 direction) {
+        return centralReflectionDirection(direction,u_probe,u_probeFar,u_environmentGroundEnabled,u_environmentGround,u_environmentGroundMaxZ);
+    }
+    float centralReflectionLevel(float roughness) {
+        // Preserve useful detail: linear roughness previously selected tiny
+        // mip faces (about 23 texels at .5 on a 512-pixel capture).
+        return 6.0 * roughness * roughness;
+    }
+    vec3 environmentReflection(vec3 direction, float roughness, out float confidence) {
+        confidence = 1.0;
+        float level = centralReflectionLevel(roughness);
+        if (u_environmentPreviousEnabled != 1 || u_environmentBlend >= 1.0)
+            return textureLod(u_environment, centralReflectionDirection(direction), level).rgb;
+        vec3 previousDirection = centralReflectionDirection(direction,u_previousProbe,u_previousFar,
+            u_previousGroundEnabled,u_previousGround,u_previousGroundMaxZ);
+        vec3 previous = textureLod(u_environmentPrevious,previousDirection,level).rgb;
+        if (u_environmentBlend <= 0.0) return previous;
+        vec3 current = textureLod(u_environment, centralReflectionDirection(direction), level).rgb;
+        return mix(previous,current,u_environmentBlend);
     }
     float grainHash(vec3 cell) {
         vec3 h = fract(cell * vec3(0.1031, 0.11369, 0.13787));
@@ -852,11 +1098,26 @@ fragment41core =
     }
 
 [defaults]
+u_environmentPreviousEnabled = 0
+u_environmentPrevious = 3
+u_environmentBlend = 1.0
+u_previousProbe = [0.0, 0.0, 0.0]
+u_previousFar = 1000.0
+u_previousGroundEnabled = 0
+u_previousGround = [0.0, 0.0, 0.0, 0.0]
+u_previousGroundMaxZ = 0.0
 u_orthographic = 0
 u_viewDirection = 0, 0, 1
+u_environmentGroundEnabled = 0
+u_environmentGround = [0.0, -1.0, -1.0, 1.0]
+u_environmentGroundMaxZ = 1.0
 u_environmentEnabled = 0
 u_environment = 7
 u_sceneDepth = 6
+u_depthHierarchy = 5
+u_fullHierarchy = 4
+u_fullHierarchyEnabled = 0
+u_depthHierarchyEnabled = 0
 u_probe = [0.0, 0.0, 0.0]
 u_sceneMin = [-1.0, -1.0, -1.0]
 u_sceneMax = [1.0, 1.0, 1.0]

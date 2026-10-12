@@ -150,6 +150,7 @@ correct package ownership.
 | `ToolheadReadout.py` | Pure physical-position, Z offset and firmware-capability readouts | Qt, transport or movement permission |
 | `PhysicalMotion.py` | Pure physical path/travel guard, G92/base-coordinate conversion, inclusive G-code zero bounds and validated manual-move scripts | Qt, telemetry acquisition or command transport |
 | `PreviewPresentation.py` | Preview QML objects, displayed values and user-intent signals | Following or scheduling policy |
+| `GraphicsCensus.py` | Opt-in unique graphics-owner metadata and format estimates, with borrowed resources distinguished | GPU residency queries, resource mutation or retained wrappers |
 | `RenderTiming.py` | Opt-in bounded asynchronous GPU queries for plugin draw commands, never system-wide GPU utilisation | Profile settings writes, synchronous GPU waits or native timer ownership |
 | `CameraProjection.py` | Camera-keyed banner projection matrices and hover rays; unchanged telemetry reuses camera-only work | Native camera mutation or settings |
 | `ViewportHover.py` | Public Qt hover routing and visible control bounds prevent scene picking through UI panes | Input interception or native UI mutation |
@@ -183,6 +184,7 @@ correct package ownership.
 | `ToolheadSimulationCache.py` | Retained native path colour/depth with completed-prefix append and bounded storage | Fractional paths, telemetry or native framebuffer mutation |
 | `ToolheadCamera.py` | Parallel orthographic or perspective view rays from delivered camera matrices | Saved preferences or scene mutation |
 | `ToolheadSceneLighting.py` | Owned additive bed/path illumination using light-independent surfaces; legacy/compatibility forward fallback | Host shader mutation, settings writes or telemetry |
+| `ToolheadUniformCache.py` | Exact delivered-value snapshots for private toolhead uniforms | Host shader mutation or cached-value policy |
 | `ToolheadOpaqueShader.py` | Shared toolhead shader variant without alpha discard for the fully opaque single-pass path | Shader formula duplication, settings or telemetry |
 | `ToolheadGLState.py` | Independent host graphics-state restoration around owned optional effects | Native framebuffer mutation or scene recursion |
 | `ToolheadEnvironment.py` | Paired colour/depth cubemaps, frozen six-face capture, atomic probe publication and optional failure backoff | Scene discovery or printer state |
@@ -193,6 +195,7 @@ correct package ownership.
 | `ToolheadCaptureRecipe.py` | Main-thread scene freezing and worker-local reconstruction | Mutable native scene objects crossing threads |
 | `ToolheadCaptureGL.py` | Context-local graphics entry points and shader programs | Native shared shader state |
 | `ToolheadCaptureBuffers.py` | Worker-owned buffers, textures and framebuffer resources | Host buffer ownership |
+| `ToolheadDepthHierarchy.py` | Exact worker-owned depth tile extrema and paired range textures | Scene policy or independent map publication |
 | `ToolheadCaptureDraw.py` | Private draw adapters, retained borrowed-buffer reads and a bounded pure-value normal-matrix cache | Main-thread resource mutation |
 | `ToolheadShadowValues.py` | Frozen existing world-space light delivery, complete depth-cube storage admission and projected depth values | Allocating maps, publishing shadow availability or inventing direct lights |
 | `ToolheadSampleTarget.py` | Explicit owned four-sample RGBA8/Depth32F attachments, certified sample order and original per-sample depth readback; detached Qt texture and R32F staging also budgeted | Stock framebuffer access, depth resolves or synthesizing samples |
@@ -569,6 +572,15 @@ geometry. Opaque models use one shaded depth-tested draw at every global opacity
 models with intrinsically translucent materials draw all translucent colours first,
 then write their owned depth before Cura's transparent bed overlay. This protects
 completed head colours without an early transparent prepass hiding internal parts.
+Ordinary Qt head targets retain up to eight idle exact-size allocations,
+locally capped at 64 MiB. Single-sample targets charge 12 bytes per pixel;
+multisample draw/resolve pairs charge 12 bytes per sample plus 4 resolve bytes.
+Both owners must remain valid and are retained, reused and evicted together. Reuse preserves
+the crop and projection and always clears, seeds current scene depth and redraws.
+Pool bytes are included in retained-storage reporting; the local cap is not a
+combined ordinary-frame memory gate. Context retirement, target release,
+explicit per-sample targets and external receiver callbacks clear idle storage. A target exposed
+to an external receiver is not subsequently admitted to the private pool.
 
 The View Options master lighting switch persists independently of the bed/model
 choices. Disabling it bypasses scene illumination and displays the head's base
@@ -1875,9 +1887,29 @@ budget; a single GPU draw or shader compilation is indivisible. Each path draw
 has at most 32,768 indices, retaining owned VBOs and bounded EBO copies.
 The owned vertex upload snapshots attribute metadata and supplies previous line
 types before any draw. It shares immutable native arrays and the public colour
-byte API; it never creates or borrows a native LayerData cached VBO. This prevents
-Cura's late previous-type attribute from invalidating host storage. One weakly
-retained upload per source/share group serves simulation, lighting and reflection.
+byte API. A qualified native upload may instead supply the shared VBO: admission
+is qualified by the `cura/ToolheadSimulationPass` adapter against the exact
+`LayerData` type and audited uploader/simulation writer AST hashes. The host-neutral
+`ToolheadPathGeometry` owner then checks immutable source arrays,
+packed layout, previous-line values, storage size and Qt share-group provenance.
+Observed source arrays and the original buffer wrapper remain strongly retained.
+Unverified hosts or sources keep the private upload. One weakly retained upload
+per source/share group serves simulation, lighting and reflection. Native buffer
+replacement selects a new upload identity; old VAOs and worker leases retain
+their original generation until ordinary retirement. Borrowed buffers are never
+destroyed through plugin-owned cleanup. Simulation shadow instancing also borrows
+the ordinary simulation owner's complete immutable index buffer once available;
+its texture view retains the owner and never destroys the borrowed buffer.
+Context, buffer identity and allocation generation select the cached view;
+chunked and exterior-only indices are ineligible.
+If a qualified native draw exposes an existing untracked VBO before any private
+allocation, the first upload may recreate the native buffer through Uranium's
+supported uploader and certify that new generation. This replaces the otherwise
+required private upload; it is the single guarded exception to native-cache
+isolation. A retained private upload in any owner or worker cohort blocks this
+route. Upload or admission failure restores the prior native cache property and
+array-buffer binding before private fallback. Old wrappers and queued GPU reads
+may delay release; admission alone does not prove immediate memory savings.
 Bounds reduction visits at most 65,536 vertices or 32,768 indexed path elements
 per operation. Immutable full chunks are cached; only the current first/last
 partial-prefix bounds are retained. Conservative transformed tube bounds reject
@@ -1912,11 +1944,21 @@ the first missing native upload.
 
 An epoch/generation mailbox owns the two physical map pairs. Producer poll tickets
 and consumer read tickets prevent reuse during a pending fence poll or draw.
+One lazy consumer scope encloses the complete toolhead crop draw, including
+static shading, fan poses and foreground composition. Individual material
+releases restore their texture units; one final fence and flush protect all
+actual map reads. An unchanged cached image acquires no read ticket. The scope
+captures the exact published binding and quarantines an acquired read if its
+original main context is lost before completion.
 Hard source changes reject obsolete pending jobs. Soft changes select the latest
-scene but defer freezing while a capture is busy. After adoption, already-due
-work freezes the current scene immediately, avoiding discarded snapshots and
-another changed-scene delay. Adoption preserves the complete colour/depth/descriptor
-pair and a monotonic facade revision, including synchronous fallback publication.
+scene but defer freezing while a capture is busy. After adoption, an independent
+admission deadline yields GPU time before freezing the latest scene. The pause
+is at least 50 ms for central maps (150 ms for reference directional maps),
+or twice the matching capture's wall duration, capped at two seconds
+for exceptional stalls. Worker duration includes its bounded GPU-fence drains.
+The cap bounds added cooldown, not total map age or GPU utilization. Already-due debounce work cannot bypass this deadline;
+hard generation changes still start immediately. Adoption preserves the complete colour/descriptor publication
+(and exported depth in explicit reference fixtures) and a monotonic facade revision, including synchronous fallback publication.
 Disable seals demand immediately; the worker drains producer and last-consumer
 fences without requiring another ordinary frame. Fence failures request an
 explicit cleanup frame in the original main context. Only that context's verified
@@ -1934,36 +1976,51 @@ Optional mesh channels use native presence flags: an empty UV array on an
 untextured 3MF platform is absent. Empty parsing snapshots do not request path
 lighting shaders until path geometry exists. Native proofs cover empty-to-loaded
 and loaded-to-empty transitions with the same worker owner.
-Changed pose/path/light state coalesces with a 150 ms minimum interval after
-publication; unchanged directional scenes sleep until their captured scene key changes. Legacy central probes retain their periodic refresh. Earlier wake
+Changed pose/path/light state coalesces after publication. Central captures use a
+50 ms worker minimum pause, extended by twice the measured capture duration up to two seconds;
+unchanged scenes sleep until their captured scene key changes. Earlier wake
 deadlines supersede old idle timers, and obsolete callbacks cannot request a
 frame. Empty LayerData during active slice/layer production defers replacement
 and retains the complete map; a stable empty bed remains capturable. The adapter
-reads only the backend slicing/layer-job flags and public Preview busy state.
-The opt-in rendering marker logs synchronous capture wall/submission time and
-turn counts at most once per ten seconds, and completed worker capture wall time
-and worker turns on adoption. Neither report claims whole-window frame latency.
-After a successful stock draw, the simulation adapter can observe the identities
-of the stock layer, shadow and current shaders to initialize stationary previews.
-This narrow read-only host-layout dependency never changes native state; unknown
-layouts retain transition-based observation. Unsupported compatibility mode
-keeps ordinary shading. The map excludes the head. The live directional path
-captures six exterior orthographic colour/depth views over scene bounds. The
-shader visits every crossed depth texel, testing both opposite views together
-in three shared axis walks. It retains the nearest admitted surface and uses
-the colour mip chain for roughness, with independent face-edge clamping.
-No sparse ray steps or repeated roughness depth searches are used. The legacy
-central perspective path remains available to older fixtures. Finite-resolution
-exterior depth views remain an approximation for arbitrary occluded geometry.
-Captured-depth traversal publishes hit confidence independently of sampled RGB.
-A central traversal miss leaves ordinary toolhead lighting unchanged; a valid
-black captured surface retains the original reflection equation.
-Directional capture cameras enclose the prepared scene bounds, so their CPU
-chunk iteration omits redundant frustum classification while retaining exact
-prefix ranges, raster clipping, light-range rejection and bounded checkpoints.
-Perspective fixtures retain the original frustum test. Scene signatures take
-one child snapshot and one layer-data lookup per child, retaining the same
-visibility, material and geometry invalidation inputs.
+reads only backend slicing/layer-job flags and public Preview busy state.
+The opt-in rendering marker reports capture wall/submission time and turn counts;
+these measurements do not claim whole-window frame latency.
+After a successful stock draw, the simulation adapter can observe stock layer,
+shadow and current shader identities to initialize stationary previews. This
+read-only host-layout dependency never changes native state; unknown layouts
+retain transition-based observation. Unsupported compatibility mode keeps
+ordinary shading.
+
+The production map excludes the head and captures six perspective faces from
+its housing centre. Every face starts with an opaque background and uses a local
+depth attachment to retain the nearest visible surface. Colour is exported into
+one of two cubemaps; all six faces and the roughness mip chain must complete
+before publication. Partial or cancelled captures retain the previous
+complete front. Failed publication never exposes partially copied faces. Face rendering still includes the plate depth phase and current
+visible G-code prefix. Production storage does not export depth cubemaps or build
+depth-search hierarchies, saving approximately 26 MiB per capture owner compared
+with the former colour/depth plus hierarchy allocation.
+
+The production material shader samples the colour cube directly. Core shaders
+use explicit roughness LOD; compatibility shaders use the host-supported cube
+LOD bias. Cross-backend pixel equality is not assumed. There are no uninitialized
+reflection directions or search misses. A captured black surface remains black.
+A single probe is an approximation: geometry hidden from the housing centre is
+absent from the capture, and reflections do not have exact surface parallax or
+nearby occlusion. Original CAD shading, opacity and depth remain in the ordinary
+raster path. Directional depth traversal and its optional range atlases remain
+reference fixtures with explicit depth-export storage; they are not selected by
+the production shader. Their tests preserve thin-surface and boundary-hit proofs
+without allocating those resources in the ordinary renderer.
+
+Scene signatures take one child snapshot and one layer-data lookup per child,
+retaining visibility, material and geometry invalidation inputs. Capture commands
+retain prefix ranges, frustum clipping, light-range rejection and bounded
+checkpoints; moving geometry and attached lights invalidate the map.
+Private toolhead shader variants also retain exact delivered uniform values,
+including snapshots of mutable matrices and vectors, while preserving host
+pending-value and texture-binding behavior. Program replacement, relinking and
+unknown or array uploads invalidate their delivery cache.
 Private capture programs cache uniforms by their exact delivered typed values;
 rebinding does not force identical uploads. Relinking and bulk-array writes
 invalidate the cache, including individually addressed array elements.
@@ -1979,7 +2036,7 @@ must succeed before any draw. Existing capture storage receipts include the
 complete index buffer and temporary upload copies. A 200,000-path comparison
 kept all six colour/depth faces byte-identical while eliminating 84 repeated
 index uploads (9.6 MB) per warmed capture.
-The default draw uses this directional map directly at the current head pose.
+The default draw uses the complete central colour map at the current head pose.
 The unused geometry-query, receiver-layer and shadow-map prototypes are excluded
 from the release; their source remains recoverable at commit `80c4b263`.
 Optional injected worker factories retain their tested cohort lifetime hooks:
@@ -2023,14 +2080,36 @@ they do not measure total Cura frame time or predict an application speedup.
 Opaque geometry writes depth first; translucent body groups composite back to
 front for each pose, preserving glass over rotating parts. Both accumulation and
 the final image choose additive blend equations independently of host state.
-New shutter storage is capped at 128 MiB; allocation faults retain sharp rotation
-and show a fallback status. Models exceeding 64 translucent bodies refuse fan
+New shutter storage is capped at 128 MiB. Oversized blur uses a smaller sharp
+target copied from immutable static colour and depth, preserving the cached body
+between fan poses. If that target also fails, the original redraw fallback remains.
+Both modes restore host scissor and write masks. Models exceeding 64 translucent bodies refuse fan
 animation while keeping ordinary rendering available.
-Conservative all-angle bounds prevent rotor clipping. A visible moving rotor
+Ordinary foreground composition blends its premultiplied colour directly into
+the head with destination-alpha weighting and preserves head alpha. It samples
+only the foreground target, removing the intermediate merge image and colour
+copy without texture feedback. Multisample composition retains its existing
+per-sample path. A refused destination binding aborts before sampling or drawing.
+Conservative all-angle bounds prevent rotor clipping. Componentwise extrema
+of each vertex's Rodrigues rotation preserve axial thickness instead of
+inflating every rotor to a sphere; outward padding covers float32 arithmetic.
+A visible moving rotor
 requests composition at 30 Hz; hidden/stopped rotors stop that timer.
 Stopped poses reuse a completed shutter image keyed by camera, scene/depth,
 materials, rotor geometry/configuration, phase and blur. Publication happens
 after successful graphics-state restoration; faults cannot cache partial work.
+For ordinary single-sample fan updates, a completed full shutter image retains
+its exterior while subsequent poses update only the conservative all-angle
+rotor rectangle. Colour/depth copies, static glass, native foreground and
+shutter accumulation share that integer scissor without changing projection or
+pixel coordinates. A changed static key, target, rectangle or shutter mode
+rebuilds the complete image; failed updates invalidate the retained exterior.
+Within that rebuild, the first shutter pose shades the full crop. Later poses
+copy and shade only the swept rotor rectangle, preserving the first pose's
+unchanged exterior in the work target. Each pose still accumulates over the
+full crop with the original weights, preserving half-float blending rounding.
+This avoids repeating static glass and foreground shading outside the swept
+rectangle even when toolhead motion invalidates the previous frame.
 
 The selected Monitor routes raw read-only fan observations. Full samples replace
 old RPM fields; deltas retain unchanged values. Finite nonnegative measured RPM,
@@ -2071,9 +2150,142 @@ is preserved at commit `80c4b263`.
 
 Ray tracing and its Metal bridge, worker, tiled importer and packaged binaries
 have been removed. Preview retains Enable reflections, which directly controls
-the directional environment map. Obsolete ray/fallback preferences are ignored.
+the central environment map. Obsolete ray/fallback preferences are ignored.
 Renderer radio buttons, the fallback checkbox and the backend status label are
 absent. FrameCache retains ordinary cropped rendering, coherent camera/depth
 handoff, foreground composition, rotor animation and context retirement.
 Generic explicit sample targets retain ordinary sample/foreground validation;
 measured sample-pattern validation no longer imports a native ray bridge.
+
+Smooth Preview motion keeps its animation clock independent of incoming telemetry.
+An active tick deadline is preserved as observations arrive; delayed callbacks
+use their full elapsed interval, bounded by the latest reconstructed observation.
+Reflection captures sleep whenever the complete published scene key is unchanged,
+for both perspective and directional projections.
+
+Scene lighting retains its full viewport projection and additive source image, but scissors
+the final additive composition to conservative projected light bounds with tube
+extent padding. Valid emitter directions restrict these bounds to the outward
+hemisphere, matching the shader’s zero-energy rejection behind each emitter.
+Invalid directions retain sphere bounds; projection uncertainty retains the full viewport. The retained surface depth copy uses the same region after a full
+destination clear. Viewport origins and incoming clip bounds remain respected;
+unknown bounds fall back to full composition. Transient fractional-prefix depth
+and colour draws use the same clip. The full-resolution surface attributes live in
+a padded region around the illuminated pixels. Rasterization keeps the original
+projection and viewport dimensions, offset by the integer region origin. Shading
+and depth copies translate between that region and the destination viewport.
+Motion inside the envelope reuses storage; escaping it unions the padded new
+coverage with the retained envelope and rebuilds historical geometry. Existing
+margins are not padded again, avoiding growth on unrelated axes. Camera, scene or layer changes allow it to shrink.
+An explicit cropped depth-copy capability can seed compatible regions from the
+owned simulation cache. Valid empty light coverage skips drawing and allocation.
+Successful deferred rendering releases inactive forward-only depth caches.
+Clears cover each owned target; incoming scissor state is restored
+even when drawing fails. Common head receiver uniforms are
+reused only within a synchronous draw, keyed by exact camera identity. The scope
+is restored even on exceptions; frozen capture receivers remain independent.
+
+Ordinary single-sample shutter scratch pairs can retain at most four exact-size,
+exact-attachment pairs within 48 MiB. Reuse always reseeds work colour/depth and
+clears the accumulation image; explicit sample targets remain separately leased.
+Context retirement and explicit target release clear the pool. Accounting includes
+the pool's retained bytes. Perspective captures use a 50 ms minimum refresh pause
+and keep the doubled capture-duration admission floor (up to two seconds); directional captures keep
+their 150 ms pause. The previous complete map remains published during replacement.
+
+Scene-lighting image cache hits defer mesh/path lighting uniform delivery until an
+actual redraw. Mutable view values are frozen for that redraw. Triangle receiver
+batches are bounded to 256 entries and reused only for identical mesh, shader,
+transform wrapper and matrix contents; line/range batches remain independent.
+Unused entries retire each frame and scene replacement clears the cache.
+Toolhead local emitter parsing caches immutable settings, including nested values
+and paint/surface scales. Pose and opacity still apply to every fresh uniform
+snapshot, so moving lights and frozen worker captures remain independent.
+
+Ordinary foreground transparency retains up to four inactive exact-size RGBA8
+non-mipmapped targets within 24 MiB. The key includes samples, attachment and
+internal colour format even for an unchanged crop size; other formats are not
+pooled. Every reuse clears colour and copies current head depth before replaying
+foreground surfaces. Invalid cached targets are discarded; explicit sample-mode
+transition and target release clear ordinary storage. Node context replacement
+owns retirement of the whole foreground helper. Graphics admission receipts
+include inactive foreground pool bytes separately from active targets.
+Capture snapshots compute each unique LayerData prefix once, then reuse that
+metadata across transformed occurrences, shadow splits and lighting top ranges.
+Metadata is local to one snapshot and is recomputed on the next capture.
+
+Occlusion preparation partitions native solid and transparent triangle batches
+in one pass. Only solid depth candidates need vertex eligibility reads; transparent
+replay keeps its full ordered inventory. Provider depth revisions, mutable
+transform matrices and item uniforms are read again on composite-only ticks.
+
+Central reflection lookup uses an artist roughness mip curve of 6*r*r rather
+than 9*r, retaining approximately 181 face texels at roughness .5 for 512-pixel captures
+instead of 23. Ordinary generated mipmaps are not a physical GGX prefilter.
+ProbeDescriptor optionally freezes the largest planar plate's actual world Y
+and unpadded X/Z footprint. World-transformed Y halfextent must be <=.01;
+nonplanar/tilted/zero-area plates do not supply a plane. Both main and frozen
+worker snapshots derive the same metadata from their retained plate geometry.
+The single colour lookup reprojects downward bed rays from the current receiver
+position into that capture's probe. Edge and grazing weights fade continuously
+to the original complete cube direction; missing metadata, upward/outside rays
+and degenerate vectors keep the defined raw lookup. This stabilizes planar
+translation; occluding geometry, nonplanar objects and moving captured lighting
+can still change on adoption. GPU/real-Cura responsiveness remains a separate
+measurement from the analytical moving-bed shader fixture.
+
+Replacing a completed central map uses four submitted head-frame states. The old
+displayed map receives a consumer ticket before adoption seals its slot; that
+ticket remains pinned until the transition's last draw is fenced. Both maps use
+their own captured probe, far plane and plate metadata. The shader blends colour,
+with a second lookup only during the transition. No third cube is allocated;
+the worker waits for the old slot to become reusable. Composition wakes are
+bounded to 30 Hz, and one weight per head frame invalidates both static and rotor
+images. Progress advances only after a successful image submission, including
+the final new-map-only frame; elapsed time cannot skip unseen intermediate
+images. Routine maintenance preserves the previous map until that final frame. Hard scene changes and context retirement cancel the transition. A fade
+can briefly show both captures; it does not recover geometry hidden from a probe.
+
+Colour-only worker capture optionally renders each 512-pixel face into 4-sample RGBA8
+and depth renderbuffers. Every bounded command for that face retains the same
+multisample target. Once complete, a full unclipped colour-only nearest resolve
+feeds the single-sample cube copy; mip generation and the existing producer fence
+follow all six resolved faces. Exported-depth reference captures remain single
+sample. Actual sample counts/formats and framebuffer completeness are checked;
+sized depth promotion to equal-or-higher precision is accepted because no depth
+resolve is performed. Apple promotes requested D24 to D32. Optional allocation
+failure deletes its handles before fallback; uncertain deletion retains the
+owner and conservative receipt. The face retains 10 MiB at 512 pixels (2 MiB base plus
+8 MiB optional), reserved before allocation and reset only after verified cleanup.
+This improves geometry coverage, not pixel-frequency procedural texture filtering.
+Required-GL tests execute fractional coverage, partial-turn nearest depth,
+allocation fallback and a translated 0.375-pixel line over 16 subpixel phases.
+On Apple M1 Pro its integrated coverage range drops 1.0→0.251 (about 75%).
+This fixture result is not proof that all live map-adoption changes disappear.
+
+Graphics allocation diagnostics can be enabled independently with the untracked
+`toolhead/.profile-graphics` marker. The ten-second census lists unique owned and
+borrowed resources using cached metadata; it does not query GPU residency or
+retain resource wrappers or copy mesh arrays. Mesh buffer estimates use existing
+array layouts, and chunked index buffers are labelled upper bounds. The capture
+worker publishes an immutable scalar snapshot after a completed capture, at most
+once per ten seconds, including its buffer allocation receipts and owned target
+names. Each snapshot carries its capture serial and is labelled stale when it
+differs from the current published map. Worker shutdown clears the snapshot.
+Absent worker snapshots, retired cohorts, host-only allocations and driver
+overhead remain explicitly uncounted; these figures cannot explain total process
+GPU residency by themselves. Removing the marker stops subsequent standalone
+reports; normal marker-absent rendering does not poll the filesystem.
+
+For sustained lighting coverage, parse the Python literal following
+`toolhead graphics census (metadata, not residency): ` with `ast.literal_eval`.
+The `lighting.coverage` row gives the requested `requested` rectangle, retained
+`retained` rectangle and full `view_size`; rectangles are `(x, y, width, height)`.
+Compare their areas over timestamped samples, alongside the
+`lighting._surface_cache._fbo` row's dimensions and `estimated_bytes`, instead of
+judging only the first allocation. `key_identity` is an opaque diagnostic hint,
+not a durable geometry revision. A null requested rectangle denotes full-view
+fallback; a null retained rectangle means no retained surface region is present.
+Do not add attachment texture rows to their parent framebuffer's byte estimate,
+or count borrowed buffers as additional plugin allocations. Stale worker receipts
+are historical observations, not simultaneous live-allocation totals.

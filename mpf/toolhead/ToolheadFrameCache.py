@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 import itertools
+from collections import OrderedDict
 from contextlib import ExitStack
 from .ToolheadGLState import preserved_samples, SampleStateUnavailable
 from .ToolheadSampleTarget import ToolheadSampleTarget, SampleTargetUnavailable, sample_blit
@@ -12,18 +13,21 @@ from weakref import ref
 import numpy as np
 
 FRAME_MEMORY_BUDGET = 512 << 20
+IDLE_TARGET_BUDGET = 64 << 20
 
 
 def retained_graphics(node, width, height, *, samples=0, shutter=None, import_pixels=0):
     """Count retained Qt owners that cannot serve the requested crop."""
     size = (width, height, samples)
-    retained = 0
+    retained = getattr(getattr(node, '_frame_cache', None), '_pool_bytes', 0)
     for owner in (shutter, getattr(node, '_rotor_render', None)):
+        retained += getattr(owner, '_pool_bytes', 0)
         previous = getattr(owner, '_size', None)
         if previous is not None and previous != size:
             w, h, previous_samples = previous
             retained += w*h*(max(1, previous_samples)*12+(4 if previous_samples else 0)+8)
     foreground = getattr(getattr(node, '_occlusion', None), '_transparency', None)
+    retained += getattr(foreground, '_pool_bytes', 0)
     for name in ('_size', '_sample_size'):
         previous = getattr(foreground, name, None)
         if previous is None: continue
@@ -61,6 +65,41 @@ class ToolheadFrameCache:
         self._generation = self._retirement = None
         self._backend = None
         self._sample_refusal = None
+        self._pool = OrderedDict()
+        self._pool_bytes = self._pool_hits = 0
+        self._pool_active = False
+
+    def _clear_pool(self):
+        self._pool.clear()
+        self._pool_bytes = 0
+        self._pool_active = False
+
+    @staticmethod
+    def _target_charge(size):
+        width, height, samples = size
+        return width*height*(12*max(1, samples)+(4 if samples else 0))
+
+    def _pooled_target(self, size, previous, previous_size, allowed, previous_resolved=None):
+        if not allowed:
+            self._clear_pool()
+            return None
+        pair = self._pool.pop(size, None)
+        if pair is not None:
+            self._pool_bytes -= self._target_charge(size)
+            if pair[0].isValid() and (not size[2] or pair[1] is not None and pair[1].isValid()):
+                self._pool_hits += 1
+            else: pair = None
+        if (previous is not None and previous_size is not None
+                and not isinstance(previous, ToolheadSampleTarget) and previous.isValid()
+                and (not previous_size[2] or previous_resolved is not None and previous_resolved.isValid())):
+            charge = self._target_charge(previous_size)
+            if charge <= IDLE_TARGET_BUDGET:
+                while self._pool and (len(self._pool) >= 8 or self._pool_bytes+charge > IDLE_TARGET_BUDGET):
+                    old_size, _ = self._pool.popitem(last=False)
+                    self._pool_bytes -= self._target_charge(old_size)
+                self._pool[previous_size] = previous, previous_resolved
+                self._pool_bytes += charge
+        return pair
 
 
     def draw(self, *args, requested_samples=None, **kwargs):
@@ -82,7 +121,7 @@ class ToolheadFrameCache:
     def _draw(self, gl, camera, bounds, transform, state, render, *, additive=False, opacity=1.0,
              depth_seed=None, depth_revision=None, post_render=None, animate=None,
              fallback_backend="Ordinary shading", requested_samples=None,
-             retire_graphics=None,
+             retire_graphics=None, composition_rect=None,
              receiver_step=None, receiver_prepare=None, _crop=None, _compose=True):
         from PyQt6.QtCore import QRect, QRectF
         from PyQt6.QtGui import QOpenGLContext
@@ -94,12 +133,14 @@ class ToolheadFrameCache:
             # VAOs, programs and FBO names belong to a context generation.
             self._key = self._size = self._fbo = self._resolved = self._blitter = self._bind = None
             self._sample_refusal = None
+            self._clear_pool()
         if self._context is not context:
             self._generation=object()
             token=self._generation;owner=ref(self)
             def retired():
                 instance=owner()
                 if instance is not None and instance._generation is token:
+                    instance._clear_pool()
                     instance._key=instance._size=instance._fbo=instance._resolved=instance._blitter=instance._bind=None
                     instance._context=instance._generation=None
                     instance._sample_refusal=None
@@ -129,11 +170,18 @@ class ToolheadFrameCache:
             requested_samples=None
             fallback_backend += self._sample_refusal[1]
         samples = 4 if requested_samples == 4 else host_samples
+        pool_allowed = (self._depth_only and requested_samples != 4
+                        and receiver_step is None and receiver_prepare is None)
+        if not pool_allowed:
+            self._clear_pool()
         if retire_graphics is not None: retire_graphics(cw, ch, samples)
         if self._bind is None:
             address = context.getProcAddress(b"glBindFramebuffer")
             if not address: raise RuntimeError("Toolhead framebuffer binding unavailable")
             self._bind = ctypes.CFUNCTYPE(None, ctypes.c_uint, ctypes.c_uint)(int(address))
+        composition_scissor = None
+        if composition_rect is not None:
+            composition_scissor = bool(gl.glIsEnabled(0x0C11)), tuple(map(int, gl.glGetIntegerv(0x0C10)))
         blend_colour = None
         blend_equations = (int(gl.glGetIntegerv(0x8009)), int(gl.glGetIntegerv(0x883D)))
         try:
@@ -141,17 +189,22 @@ class ToolheadFrameCache:
                     or isinstance(self._fbo,ToolheadSampleTarget) != (requested_samples == 4)
                     or (isinstance(self._fbo,ToolheadSampleTarget) and not self._fbo.isValid())):
                 self._key = None
-                # Retire the whole obsolete crop before evaluating the next
-                # constructor. Assignment otherwise keeps old + new storage
-                # alive together, outside the session's retained-owner count.
+                # Reuse only identical private storage; content is always
+                # cleared and redrawn. Ordinary Qt draw/resolve owners stay
+                # paired; explicit multisample texture leases retire separately.
                 previous = self._fbo
+                previous_resolved = self._resolved
+                previous_size = self._size
                 self._fbo = self._resolved = self._size = None
+                pooled = self._pooled_target((cw,ch,samples), previous if self._pool_active else None,
+                                             previous_size, pool_allowed, previous_resolved)
+                self._pool_active = pool_allowed
                 if isinstance(previous, ToolheadSampleTarget):
                     try: previous.close()
                     except Exception:
                         self._fbo = previous  # Keep an unretired name leased.
                         raise
-                previous = None
+                previous = previous_resolved = None
                 format_ = QOpenGLFramebufferObjectFormat()
                 format_.setAttachment(QOpenGLFramebufferObject.Attachment.Depth if self._depth_only and not samples
                                       else QOpenGLFramebufferObject.Attachment.CombinedDepthStencil)
@@ -167,9 +220,9 @@ class ToolheadFrameCache:
                         format_.setAttachment(QOpenGLFramebufferObject.Attachment.Depth if self._depth_only and not samples
                                               else QOpenGLFramebufferObject.Attachment.CombinedDepthStencil)
                         self._fbo=QOpenGLFramebufferObject(cw,ch,format_)
-                else:self._fbo=QOpenGLFramebufferObject(cw,ch,format_)
+                else:self._fbo=pooled[0] if pooled is not None else QOpenGLFramebufferObject(cw,ch,format_)
                 if not self._fbo.isValid(): raise RuntimeError("Toolhead framebuffer unavailable")
-                self._resolved = QOpenGLFramebufferObject(cw, ch) if samples else None
+                self._resolved = (pooled[1] if pooled is not None else QOpenGLFramebufferObject(cw, ch)) if samples else None
                 if self._resolved is not None and not self._resolved.isValid():
                     raise RuntimeError("Toolhead antialiasing resolve unavailable")
                 self._size = cw, ch, samples
@@ -261,6 +314,17 @@ class ToolheadFrameCache:
             gl.glDisable(gl.GL_DEPTH_TEST)
             gl.glDisable(gl.GL_CULL_FACE)
             gl.glDisable(0x0C11)
+            if composition_rect is not None:
+                rx, ry, rw, rh = composition_rect
+                x0, y0 = max(vx, vx+rx), max(vy, vy+ry)
+                x1, y1 = min(vx+width, vx+rx+rw), min(vy+height, vy+ry+rh)
+                if composition_scissor[0]:
+                    sx, sy, sw, sh = composition_scissor[1]
+                    x0, y0 = max(x0,sx), max(y0,sy)
+                    x1, y1 = min(x1,sx+sw), min(y1,sy+sh)
+                if x1 <= x0 or y1 <= y0: return self._backend
+                gl.glEnable(0x0C11)
+                gl.glScissor(x0,y0,x1-x0,y1-y0)
             gl.glEnable(gl.GL_BLEND)
             gl.glBlendEquationSeparate(0x8006, 0x8006)  # GL_FUNC_ADD, including final shutter composition
             # Fade the completed premultiplied image once, never overlapping
@@ -288,12 +352,18 @@ class ToolheadFrameCache:
                     finally: gl.glBlendEquationSeparate(*blend_equations)
                 finally:
                     try: self._bind(0x8D40, target)
-                    finally: gl.glViewport(*viewport)
+                    finally:
+                        try: gl.glViewport(*viewport)
+                        finally:
+                            if composition_scissor is not None:
+                                try: gl.glScissor(*composition_scissor[1])
+                                finally: (gl.glEnable if composition_scissor[0] else gl.glDisable)(0x0C11)
         return self._backend
 
     def release_targets(self):
         """Drop obsolete private storage, retaining failed explicit leases."""
         previous = self._fbo
+        self._clear_pool()
         self._key = self._size = self._resolved = None
         if isinstance(previous, ToolheadSampleTarget): previous.close()
         self._fbo = None

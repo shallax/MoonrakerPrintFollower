@@ -40,7 +40,9 @@ class CaptureMemoryReceiptTests(unittest.TestCase):
                 scene.texture = object()
                 frame = module.CaptureFrame((0, 0, 0), UniformValue('scalar', 1),
                     (entry[:-1]+(current_settings,),), (), (), lighting, effects, (), None)
-                scene.snapshot(frame)
+                with patch.object(module,'EnvironmentSnapshot',return_value=Mock()) as snapshot:
+                    scene.snapshot(frame)
+                    self.assertEqual(snapshot.call_args.kwargs['projection'],0)
                 scene.plates.retain.assert_called_once_with(expected)
                 self.assertEqual(bool(scene.receivers), -19 in expected)
 

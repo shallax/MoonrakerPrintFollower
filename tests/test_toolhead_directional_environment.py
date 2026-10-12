@@ -21,7 +21,8 @@ class DirectionalEnvironmentTests(unittest.TestCase):
         helpers=source[source.index('vec3 directionalLookup'):source.index('vec3 directionalReflection')]
         cls.shader=cls.context.program(vertex_shader='''#version 410
 void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-1.,0.,1.);}''',fragment_shader='''#version 410
-uniform samplerCube u_sceneDepth,u_environment;
+uniform samplerCube u_sceneDepth,u_environment,u_depthHierarchy;
+uniform int u_depthHierarchyEnabled;
 uniform vec3 u_sceneMin,u_sceneMax,origin,ray;
 uniform float u_probeFar,u_probeNear;
 out vec4 colour;

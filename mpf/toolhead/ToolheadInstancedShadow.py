@@ -155,6 +155,7 @@ class ToolheadInstancedShadow:
         self._diagnostic = diagnostic
         self._context = self._mesh = self._storage = self._blocked = None
         self._reported = None
+        self._borrowed_key = None
 
     def _notice(self, text):
         if self._diagnostic and self._reported is not self._context:
@@ -176,10 +177,10 @@ class ToolheadInstancedShadow:
         if storage is not None and QOpenGLContext.currentContext() is self._context:
             try: storage['delete'](2, storage['textures'])
             except Exception: pass
-            for item in (storage['vao'], storage['lines'], storage['template']):
+            for item in (storage['vao'], storage['template'], *(() if storage.get('index_owner') is not None else (storage['lines'],))):
                 try: item.destroy()
                 except Exception: pass
-        self._mesh = self._blocked = None
+        self._mesh = self._blocked = self._borrowed_key = None
 
     @staticmethod
     def _state(gl):
@@ -209,7 +210,7 @@ class ToolheadInstancedShadow:
                 if failure is None: failure = error
         if failure is not None: raise RuntimeError('Shadow GL state restoration failed') from failure
 
-    def _create(self, mesh, path, context, gl):
+    def _create(self, mesh, path, context, gl, borrowed=None):
         from PyQt6.QtOpenGL import QOpenGLBuffer, QOpenGLVertexArrayObject
         from UM.View.GL.OpenGL import OpenGL
         from UM.View.GL.ShaderProgram import ShaderProgram
@@ -248,13 +249,15 @@ class ToolheadInstancedShadow:
                 ('u_projectionMatrix', 'projection_matrix'), ('u_lightPosition', 'light_0_position')):
             shader.addBinding(name, binding)
         vao = QOpenGLVertexArrayObject()
-        lines = QOpenGLBuffer()
+        lines = QOpenGLBuffer() if borrowed is None else borrowed[1]
         template = QOpenGLBuffer(QOpenGLBuffer.Type.IndexBuffer)
         textures = (ctypes.c_uint * 2)()
         try:
             if not vao.create(): raise RuntimeError('Shadow VAO unavailable')
             vao.bind()
-            for buffer, body in ((lines, indices.tobytes()), (template, self._pattern().tobytes())):
+            allocations = [(template, self._pattern().tobytes())]
+            if borrowed is None: allocations.insert(0, (lines, indices.tobytes()))
+            for buffer, body in allocations:
                 if not buffer.create() or not buffer.bind(): raise RuntimeError('Shadow EBO unavailable')
                 buffer.allocate(body, len(body))
                 if buffer.size() != len(body): raise RuntimeError('Shadow EBO storage incomplete')
@@ -265,11 +268,12 @@ class ToolheadInstancedShadow:
                 gl.glBindTexture(self.TARGET, int(texture))
                 texture_buffer(self.TARGET, kind, int(buffer.bufferId()))
             return dict(vertex=vertex, offsets=offsets, shader=shader, vao=vao, lines=lines,
-                        template=template, textures=textures, delete=delete, draw=draw, count=len(indices), vertex_bytes=expected)
+                        template=template, textures=textures, delete=delete, draw=draw, count=len(indices), vertex_bytes=expected,
+                        index_owner=None if borrowed is None else borrowed[0])
         except Exception:
             try: delete(2, textures)
             except Exception: pass
-            for item in (vao, lines, template):
+            for item in (vao, template, *(() if borrowed is not None else (lines,))):
                 try: item.destroy()
                 except Exception: pass
             raise
@@ -283,7 +287,7 @@ class ToolheadInstancedShadow:
                     else (first + point - 1, first + point - 2, first + point))
         return np.asarray(pattern, dtype=np.uint32)
 
-    def render(self, mesh, native_path, camera, transform, start, end, view, gl):
+    def render(self, mesh, native_path, camera, transform, start, end, view, gl, *, index_owner=None):
         from PyQt6.QtGui import QOpenGLContext
         context = QOpenGLContext.currentContext()
         if context is None or context.isOpenGLES() or (context.format().majorVersion(), context.format().minorVersion()) < (4, 1): return False
@@ -302,15 +306,21 @@ class ToolheadInstancedShadow:
         if gl.glGetError():
             self._notice('native fallback (preexisting GL error)')
             return False
+        borrowed = None if index_owner is None else index_owner.shared_index_buffer(context, mesh)
+        # Only the geometry owner supplies this certificate; keep the actual
+        # wrapper and generation in identity, not a recyclable numeric GL name.
+        if not isinstance(borrowed, tuple) or len(borrowed) != 4: borrowed = None
+        borrowed_key = None if borrowed is None else (id(borrowed[0]), id(borrowed[1]), borrowed[2], borrowed[3])
         state = self._state(gl)
         shader = None
         failure = None
         result = False
         try:
-            if mesh is not self._mesh:
+            if mesh is not self._mesh or borrowed_key != self._borrowed_key:
                 self.close()
-                self._storage = self._create(mesh, native_path, context, gl)
+                self._storage = self._create(mesh, native_path, context, gl, borrowed)
                 self._mesh = mesh
+                self._borrowed_key = borrowed_key
                 if self._storage is None:
                     self._blocked = mesh
                     self._notice('native fallback (shader/layout/capability)')

@@ -1,15 +1,14 @@
 """Ordinary plugin scene node, independent of Cura's estimated NozzleNode."""
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import numpy as np
 from UM.Mesh.MeshData import MeshData
 from UM.Scene.SceneNode import SceneNode
 from UM.View.GL.OpenGL import OpenGL
 from UM.View.RenderBatch import RenderBatch
-from ..resources.PluginPaths import plugin_path
 from ..geometry.ToolheadMaterials import material_parameters, surface_detail, finish_uniforms, material_overrides, painted_materials, local_finish_overrides, local_finish_parameters
 from ..geometry.ToolheadOpacity import opacity_overrides, opacity_colours, colour_overrides
-from ..geometry.ToolheadRotors import rotors, RotorMotion, rotation, speed
+from ..geometry.ToolheadRotors import rotors, RotorMotion, rotation, speed, swept_bounds
 from ..geometry.ToolheadLighting import light_values, validated_lights
 
 
@@ -59,6 +58,7 @@ class ToolheadCompositePass:
             gl.glDepthMask(gl.GL_TRUE)
             gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
             self.node._render_timing.measure("head", lambda: self.node.draw(camera))
+            self.node._graphics_census.report(self.node, self.node._render_timing.enabled, self.node._render_context)
         except Exception as error:
             # A plugin graphics failure must never abort Qt's render callback.
             self.node.fail_rendering(error)
@@ -95,6 +95,7 @@ class ToolheadSceneNode(SceneNode):
         self._surface_detail = .35
         self._material_overrides, self._surface_materials = {}, {}
         self._attached_lights = []
+        self._parsed_light_cache = None
         self._scene_lighting = None
         self._light_bed = self._light_models = True
         self._lighting_enabled = True
@@ -107,6 +108,7 @@ class ToolheadSceneNode(SceneNode):
         self._frame_cache = None
         self._environment_frame = None
         self._render_context = None
+        self._hierarchy_shader_cache = self._full_opaque_shader_cache = None
         self._environment = self._environment_scene = None
         self._rotor_render = None
         self._rotor_meshes = {}
@@ -117,6 +119,8 @@ class ToolheadSceneNode(SceneNode):
         self._depth_seed = self._depth_revision = None
         from ..diagnostics.RenderTiming import RenderTiming
         self._render_timing = RenderTiming()
+        from ..diagnostics.GraphicsCensus import GraphicsCensus
+        self._graphics_census = GraphicsCensus()
 
     def visible_for_render(self): return self.isVisible() and self._opacity > 0
 
@@ -137,6 +141,7 @@ class ToolheadSceneNode(SceneNode):
             self._depth_seed = self._depth_revision = None
             self._render_failure = ""
             self._lighting_failure = ""
+            self._hierarchy_shader_cache = self._full_opaque_shader_cache = None
             self._render_context = context
             self._render_generation=object()
             token=self._render_generation
@@ -386,16 +391,34 @@ class ToolheadSceneNode(SceneNode):
     def scene_lighting_signature(self):
         return self._opacity, self._lighting_enabled, self._light_bed, self._light_models, repr(self._attached_lights)
 
+    def _parsed_local_lights(self):
+        """Reuse immutable configuration; pose, tip and opacity stay live."""
+        key = tuple((tuple(light['position']), tuple(light['direction']), light['colour'],
+            light['brightness'], light['range'], light['surface'], light['paint'])
+            for light in self._attached_lights)
+        cached = getattr(self, '_parsed_light_cache', None)
+        if cached is None or cached[0] != key:
+            rows = tuple((light_values(light), float(light['surface']),
+                tuple(int(light['colour'][j:j+2], 16)/255 for j in (1,3,5)) + (float(light['paint']),))
+                for light in self._attached_lights)
+            cached = self._parsed_light_cache = key, rows
+        return cached[1]
+
     def scene_light_bounds(self):
         world = self.render_position()
         origin = np.array([world.x, world.y, world.z])
         result = []
-        for light in self._attached_lights:
-            position, _direction, colour, reach = light_values(light)
+        for values, _surface, _paint in self._parsed_local_lights():
+            position, _direction, colour, reach = values
             if max(colour) <= 0: continue
             local = np.asarray(position) - self._tip
             result.append((origin + [local[0], local[2], -local[1]], reach))
         return result
+
+    def scene_light_directions(self):
+        return [(direction[0], direction[2], -direction[1])
+            for (_position, direction, colour, _reach), _surface, _paint in self._parsed_local_lights()
+            if max(colour) > 0]
 
     def light_dimensions(self): return self._lights
 
@@ -407,14 +430,34 @@ class ToolheadSceneNode(SceneNode):
         values = {"u_lightOpacity": self._opacity, "u_attachedCount": len(self._attached_lights)}
         if not self._attached_lights: return values
         world = self.render_position()
-        for index, light in enumerate(self._attached_lights):
-            delivered = attached_light(index, light_values(light), self._tip, (world.x, world.y, world.z))
+        for index, (local_values, surface, paint) in enumerate(self._parsed_local_lights()):
+            delivered = attached_light(index, local_values, self._tip, (world.x, world.y, world.z))
             for name, vector in (("Position", delivered.position), ("Direction", delivered.direction), ("Colour", delivered.colour)):
                 values["u_attached"+name+"["+str(index)+"]"] = list(vector)
             values["u_attachedRange["+str(index)+"]"] = delivered.reach
-            values["u_attachedSurface["+str(index)+"]"] = float(light['surface'])
-            rgb = [int(light['colour'][j:j+2], 16)/255 for j in (1, 3, 5)]
-            values["u_attachedPaint["+str(index)+"]"] = rgb + [float(light['paint'])]
+            values["u_attachedSurface["+str(index)+"]"] = surface
+            values["u_attachedPaint["+str(index)+"]"] = list(paint)
+        return values
+
+    @contextmanager
+    def _receiver_uniform_scope(self):
+        """Reuse common values only during this synchronous head draw."""
+        previous = getattr(self, '_receiver_frame_uniforms', None)
+        self._receiver_frame_uniforms = []
+        try:
+            yield
+        finally:
+            self._receiver_frame_uniforms = previous
+
+    def _draw_receiver_uniforms(self, camera):
+        cache = getattr(self, '_receiver_frame_uniforms', None)
+        if cache is None:
+            return self.receiver_uniforms(camera)
+        for captured_camera, values in cache:
+            if captured_camera is camera:
+                return values
+        values = self.receiver_uniforms(camera)
+        cache.append((camera, values))
         return values
 
     def receiver_uniforms(self, camera):
@@ -468,6 +511,7 @@ class ToolheadSceneNode(SceneNode):
         self._occlusion = None
         self._depth_seed = self._depth_revision = self._rotor_render = None
         self._opaque_shader_cache = None
+        self._hierarchy_shader_cache = self._full_opaque_shader_cache = None
         self._recovery_shader_cache = None
 
     def set_model(self, model, tip):
@@ -503,6 +547,7 @@ class ToolheadSceneNode(SceneNode):
         vertices[:, 2] = anchor[1] - points[:, 1]
         triangles = vertices.reshape(-1, 3, 3)
         self._model_bounds = vertices.min(axis=0), vertices.max(axis=0)
+        self._rotor_bounds = None
         # Use the same CAD-face normals as the editor, rotated into Cura's
         # Y-up frame without welding across face/material/body boundaries.
         normals = model.vertex_normals[:, :, [0, 2, 1]] * np.array([1, 1, -1], dtype=np.float32)
@@ -535,8 +580,15 @@ class ToolheadSceneNode(SceneNode):
             if len(selected):
                 centre = np.array(row['centre'])-self._tip
                 centre = centre[[0,2,1]] * [1,1,-1]
-                radius = np.linalg.norm(selected-centre,axis=1).max()
+                axis = np.asarray(row['axis'])[[0,2,1]] * [1,1,-1]
+                swept_low, swept_high = swept_bounds(selected, centre, axis)
+                if self._rotor_bounds is None:
+                    self._rotor_bounds = swept_low, swept_high
+                else:
+                    lo,hi = self._rotor_bounds
+                    self._rotor_bounds = np.minimum(lo,swept_low),np.maximum(hi,swept_high)
                 low,high = self._model_bounds
+                radius = np.linalg.norm(selected-centre,axis=1).max()
                 self._model_bounds = np.minimum(low,centre-radius),np.maximum(high,centre+radius)
         self.setMeshData(batch(opaque & static))
         self._translucent_mesh = batch(~opaque & static)
@@ -608,6 +660,14 @@ class ToolheadSceneNode(SceneNode):
             return float(np.sum((world[:3]-position)**2))
         return tuple(opaque + sorted(transparent, key=distance, reverse=True))
 
+    def _apply_rotor_region(self, gl):
+        """Reassert the owned shutter clip after RenderBatch sets its state."""
+        clip = getattr(getattr(self, '_rotor_render', None), '_update_region', None)
+        if clip is not None:
+            gl.glEnable(gl.GL_SCISSOR_TEST)
+            gl.glScissor(*clip)
+        return clip
+
     def _animate_rotors(self, gl, static, camera, size):
         from .ToolheadRotorRender import ToolheadRotorRender
         if self._rotor_render is None: self._rotor_render = ToolheadRotorRender()
@@ -619,28 +679,48 @@ class ToolheadSceneNode(SceneNode):
                   for row,phase,blur,_label in poses),
             tuple((body,tuple(map(id,meshes))) for body,meshes in sorted(self._rotor_meshes.items())),
             tuple(map(id,self._static_transparent)))
+        region = None
+        bounds = getattr(self, '_rotor_bounds', None)
+        if size[2] == 0 and bounds is not None:
+            from .ToolheadFrameCache import projected_bounds
+            region = projected_bounds(bounds, self.render_transformation().getData(),
+                camera.getInverseWorldTransformation().getData(), camera.getProjectionMatrix().getData(), *size[:2])
+        background_key = None if cache_key is None else (
+            cache_key[:3], tuple((row['body'],tuple(row['centre']),tuple(row['axis']),row['direction'])
+                                for row,_phase,_blur,_label in poses), cache_key[4:])
         current_target = [None]
+        def apply_region():
+            return self._apply_rotor_region(gl)
         def render(cropped_camera, fraction):
             if current_target[0] is None: current_target[0] = self._rotor_render._work
             transparent = []
             for mesh, glass, transform, normal in self.rotor_draw_plan(cropped_camera, poses, fraction):
+                apply_region()
                 recovery=getattr(self,'_environment_frame',None)
                 corrected=recovery is not None and recovery.draw(mesh)
                 if not corrected:self._draw_mesh(cropped_camera,None if glass else mesh,mesh if glass else None,transform,normal)
                 if glass: transparent.append((mesh,transform,normal))
             if self._depth_seed is not None:
+                apply_region()
                 self._write_translucent_depth(cropped_camera, transparent)
-                self._occlusion.overlay(gl, current_target[0], cropped_camera)
+                clip = apply_region()
+                self._occlusion.overlay(gl, current_target[0], cropped_camera, **({'clip':clip} if clip is not None else {}))
         import time
         if time.monotonic() >= self._rotor_retry:
             try:
                 result = self._rotor_render.combine(gl,static,camera,size,render,
-                    blurred=any(blur>.02 for _row,_phase,blur,_label in poses), cache_key=cache_key)
+                    blurred=any(blur>.02 for _row,_phase,blur,_label in poses), cache_key=cache_key,
+                    region=region, background_key=background_key)
                 self._rotor_status = ""
                 return result
             except Exception:
                 self._rotor_status = "Fan blur unavailable; sharp rotation shown."
                 self._rotor_retry = time.monotonic()+5.
+        try:
+            current_target[0] = None
+            return self._rotor_render.sharp(gl,static,camera,size,render,cache_key=cache_key)
+        except Exception:
+            pass
         # Optional shutter storage must not hide an otherwise valid head.
         # Single-pose fallback uses freshly rebuilt static colour/depth.
         self._frame_cache._key = None
@@ -659,6 +739,7 @@ class ToolheadSceneNode(SceneNode):
         self._mesh_centres = {}
         self._occlusion = self._depth_seed = self._depth_revision = None
         self._opaque_shader_cache = None
+        self._hierarchy_shader_cache = self._full_opaque_shader_cache = None
         self._recovery_shader_cache = None
         self._rotor_status = ""
         self.set_simulation_active(False)
@@ -703,7 +784,7 @@ class ToolheadSceneNode(SceneNode):
         rotor = self._rotor_render
         if rotor is not None and (rotor._size != (width, height, samples)
                                   or isinstance(rotor._work, ToolheadSampleTarget)):
-            rotor.release_targets()
+            rotor.retire_for_ordinary(width, height, samples)
         foreground = getattr(self._occlusion, '_transparency', None)
         if foreground is not None: foreground.retire_for_ordinary(width, height)
 
@@ -716,23 +797,32 @@ class ToolheadSceneNode(SceneNode):
         if self._frame_cache is None:
             from .ToolheadFrameCache import ToolheadFrameCache
             self._frame_cache = ToolheadFrameCache(depth_only=True)
+        environment = self._environment
+        begin = getattr(environment, 'begin_frame', None)
+        fade_frame = begin() if begin is not None else None
         state = (id(self.getMeshData()), id(self._translucent_mesh), self._lighting_enabled, self._reflections_enabled,
             self._lights, repr(self._attached_lights), self._surface_detail, repr(self._material_overrides),
             (self._environment.available, self._environment.revision,
-             getattr(self._environment, 'recovery_identity', None)) if self._environment else None,
+             getattr(self._environment, 'recovery_identity', None),
+             getattr(self._environment, 'transition_cache_identity',
+                 getattr(self._environment, 'transition_identity', None))) if self._environment else None,
             self.rotor_identity() if self._rotor_meshes else None)
         if self._environment_frame is not None:self._close_recovery()
         fallback = "Environment map" if (self._lighting_enabled and self._reflections_enabled and
             self._environment is not None and self._environment.available) else "Ordinary shading"
         if fallback == "Environment map" and getattr(self._environment.descriptor,"projection",0)==1:
             fallback="Environment map (six directional views)"
-        self._displayed_backend = self._frame_cache.draw(OpenGL.getInstance().getBindingsObject(), camera, self._model_bounds,
-            self.render_transformation(), state, self._draw, opacity=self._opacity,
-            depth_seed=self._depth_seed, depth_revision=self._depth_revision,
-            post_render=self._occlusion.overlay if self._depth_seed is not None and not self._rotor_meshes else None,
-            animate=self._animate_rotors if self._rotor_meshes else None,
-            fallback_backend=fallback,
-            retire_graphics=self._retire_ordinary_graphics)
+        with self._receiver_uniform_scope(), self._environment.read_scope() if self._environment is not None else nullcontext():
+            self._displayed_backend = self._frame_cache.draw(OpenGL.getInstance().getBindingsObject(), camera, self._model_bounds,
+                self.render_transformation(), state, self._draw, opacity=self._opacity,
+                depth_seed=self._depth_seed, depth_revision=self._depth_revision,
+                post_render=self._occlusion.overlay if self._depth_seed is not None and not self._rotor_meshes else None,
+                animate=self._animate_rotors if self._rotor_meshes else None,
+                fallback_backend=fallback,
+                retire_graphics=self._retire_ordinary_graphics)
+        if begin is not None and self._displayed_backend is not None:
+            environment.commit_frame(fade_frame)
+
 
     def _draw_native(self, camera):
         mesh = self.getMeshData()
@@ -768,8 +858,14 @@ class ToolheadSceneNode(SceneNode):
         shader = self._shader
         shader.setUniformValue("u_depthOnly", 1)
         try:
+            shader.setUniformValue("u_environmentPreviousEnabled", 0)
+            # Colour can select another compiled variant after publication.
+            # This depth-only program must not bind its former map ticket.
+            from .ToolheadEnvironment import TEXTURE_UNIT, DEPTH_UNIT, HIERARCHY_UNIT, FULL_HIERARCHY_UNIT
+            for unit in (TEXTURE_UNIT, DEPTH_UNIT, HIERARCHY_UNIT, FULL_HIERARCHY_UNIT, 3):
+                shader.setTexture(unit, None)
             batch = RenderBatch(shader, type=RenderBatch.RenderType.Solid, backface_cull=True,
-                state_setup_callback=lambda bindings: (bindings.glColorMask(False, False, False, False),
+                state_setup_callback=lambda bindings: (self._apply_rotor_region(bindings), bindings.glColorMask(False, False, False, False),
                     bindings.glDepthMask(True), bindings.glDepthFunc(bindings.GL_LESS)))
             for mesh, transform, normal in surfaces:
                 batch.addItem(transform, mesh=mesh, **({"normal_transformation": normal} if normal is not None else {}))
@@ -806,31 +902,61 @@ class ToolheadSceneNode(SceneNode):
                 shader = cached[1]
             else:
                 if self._shader is None:
-                    self._shader = OpenGL.getInstance().createShaderProgram(plugin_path("toolhead", "toolhead.shader"))
+                    from .ToolheadOpaqueShader import create_toolhead_shader
+                    self._shader = create_toolhead_shader()
                 shader = self._shader
+            # Select a separately compiled traversal only for a published atlas.
+            # Keeping both searches in one GPU program increases its cost even
+            # when the old branch is never taken. The base mixed shader remains
+            # available for the independent translucent depth draw.
+            storage = getattr(self._environment, "_storage", None)
+            full_texture = getattr(storage, "front_full_hierarchy", 0)
+            if (receiver_values is None and layer_draw is None and type(full_texture) is int
+                    and full_texture > 0 and self._environment.available):
+                slot = "_full_opaque_shader_cache" if single_pass else "_hierarchy_shader_cache"
+                cached = getattr(self, slot, None)
+                if cached is None or cached[0] is not self._render_context:
+                    from .ToolheadOpaqueShader import create_hierarchy_shader
+                    cached = self._render_context, create_hierarchy_shader(opaque=single_pass)
+                    setattr(self, slot, cached)
+                shader = cached[1]
             if layer_draw is not None:
                 shader = layer_draw.shader(single_pass)
             # Completed query geometry is ONLY for the separate bounded query
             # pass. Its presence must never activate the failed combined PBR
             # shader while the safe layer adapter is being wired.
             if receiver_values is None:
-                for name, value in self.receiver_uniforms(camera).items(): shader.setUniformValue(name, value)
+                for name, value in self._draw_receiver_uniforms(camera).items(): shader.setUniformValue(name, value)
                 environment = self._environment
             else:
                 receiver_values.apply(shader)
                 environment = receiver_map
             if environment is not None: environment.apply(shader)
             else:
-                from .ToolheadEnvironment import TEXTURE_UNIT, DEPTH_UNIT
+                from .ToolheadEnvironment import TEXTURE_UNIT, DEPTH_UNIT, HIERARCHY_UNIT, FULL_HIERARCHY_UNIT
                 shader.setUniformValue("u_environmentEnabled", 0)
+                shader.setUniformValue("u_environmentPreviousEnabled", 0)
                 # ShaderProgram binds registered textures even when sampling is disabled.
                 try:
                     shader.setTexture(TEXTURE_UNIT, None)
                 finally:
-                    shader.setTexture(DEPTH_UNIT, None)
+                    try:
+                        shader.setTexture(DEPTH_UNIT, None)
+                    finally:
+                        try:
+                            shader.setTexture(HIERARCHY_UNIT, None)
+                        finally:
+                            try:
+                                shader.setTexture(FULL_HIERARCHY_UNIT, None)
+                            finally:
+                                try: shader.setTexture(3, None)
+                                finally:
+                                    shader.setUniformValue("u_depthHierarchyEnabled", 0)
+                                    shader.setUniformValue("u_fullHierarchyEnabled", 0)
             scope = layer_draw.read() if layer_draw is not None else nullcontext()
             def original_state(mesh, action):
                 def deliver(gl):
+                    self._apply_rotor_region(gl)
                     if layer_draw is not None: layer_draw.apply(shader, mesh)
                     action(gl)
                 return deliver

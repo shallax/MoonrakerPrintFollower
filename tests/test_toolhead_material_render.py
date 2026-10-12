@@ -60,7 +60,7 @@ class MaterialRenderTests(unittest.TestCase):
                       u_lightingEnabled=1, u_depthOnly=0, u_attachedCount=0,
                       u_viewPosition=(translation+2+eye_offset, 2, 5),
                       u_orthographic=int(orthographic), u_viewDirection=(0, 0, 1))
-        if environment:
+        if environment and environment != 'unavailable':
             cube = self.context.texture_cube((4, 4), 3)
             self.addCleanup(cube.release)
             for face, colour in enumerate(((255,0,0), (0,255,0), (0,0,255), (255,255,0), (255,0,255), (0,255,255))):
@@ -214,17 +214,25 @@ class MaterialRenderTests(unittest.TestCase):
         self.assertGreater(np.count_nonzero(np.abs(original[:, :, :3]-polished[:, :, :3]) > .01), 1000)
         np.testing.assert_array_equal(original[:, :, 3], polished[:, :, 3])
 
-    def test_missing_reflection_retains_lighting_but_valid_black_hit_remains_dark(self):
+    def test_unavailable_reflection_retains_lighting_but_complete_black_map_remains_dark(self):
         for material in ('ABS', 'Polished steel'):
             with self.subTest(material=material):
                 finish = {'roughness': .05, 'reflectivity': .9}
                 ordinary = self.render(material, 0, local_finish=finish)
-                missing = self.render(material, 0, local_finish=finish, environment='missing')
+                missing = self.render(material, 0, local_finish=finish, environment='unavailable')
                 black = self.render(material, 0, local_finish=finish, environment='black')
                 np.testing.assert_array_equal(missing, ordinary)
                 np.testing.assert_array_equal(black[:, :, 3], ordinary[:, :, 3])
                 self.assertLess(float(black[:, :, :3].mean()), float(ordinary[:, :, :3].mean()))
                 self.assertEqual(self.context.error, 'GL_NO_ERROR')
+
+    def test_complete_central_colour_map_does_not_depend_on_exported_depth(self):
+        for material in ('ABS','Polished steel'):
+            with self.subTest(material=material):
+                colour = self.render(material,0,environment=True)
+                no_depth_hit = self.render(material,0,environment='missing')
+                np.testing.assert_array_equal(colour,no_depth_hit)
+                self.assertEqual(self.context.error,'GL_NO_ERROR')
 
     def depth_direction(self, position, direction, *, hole=False, enclosure=False, jump=False, second_hit=False,
                         reflection=None, occluder=False):
@@ -232,14 +240,16 @@ class MaterialRenderTests(unittest.TestCase):
         source = configparser.ConfigParser(interpolation=None, comment_prefixes=(';',))
         source.read(Path(__file__).parents[1] / 'mpf/toolhead/toolhead.shader')
         fragment = source['shaders']['fragment41core']
-        trace = fragment[fragment.index('float radialResidual'):fragment.index('float grainHash') if reflection is not None else fragment.index('vec3 environmentReflection')]
+        trace = fragment[fragment.index('float radialResidual'):fragment.index('vec3 centralReflectionDirection')]
         main = '\nvoid main(){colour=vec4(localReflectionDirection(normalize(ray)),1.);}'
         if reflection is not None:
-            main = '\nvoid main(){float confidence;vec3 reflected=environmentReflection(normalize(ray),0.,confidence);colour=vec4(reflected,confidence);}'
+            main = '\nvoid main(){float confidence;vec3 reflected=referenceEnvironmentReflection(normalize(ray),0.,confidence);colour=vec4(reflected,confidence);}'
         shader = self.context.program(vertex_shader='''#version 410
             void main() { vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-1.,0.,1.); }''',
             fragment_shader='''#version 410
             uniform samplerCube u_sceneDepth, u_environment;
+            uniform samplerCube u_depthHierarchy;
+            uniform int u_depthHierarchyEnabled;
             uniform vec3 u_probe, u_sceneMin, u_sceneMax, v_position, ray;
             uniform float u_probeNear, u_probeFar;
             out vec4 colour;

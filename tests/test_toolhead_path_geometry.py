@@ -288,6 +288,26 @@ class PathGeometryTests(unittest.TestCase):
         self.assertIsNone(geometry._index_buffer)
 
 
+    def test_shared_index_certificate_requires_full_immutable_current_generation(self):
+        mesh=self.mesh([[0,0,0],[1,0,0]])
+        indices=np.array([0,1],np.int32);indices.flags.writeable=False
+        mesh.getIndices=lambda:indices
+        geometry=ToolheadPathGeometry(mesh);context=object();upload=object();buffer=Mock()
+        buffer.bufferId.return_value=71
+        geometry._context=context;geometry._vertex_mesh=upload
+        geometry._index_buffer=buffer;geometry._index_bytes=8;geometry._index_generation=3
+        expected=(geometry,buffer,71,3)
+        self.assertEqual(geometry.shared_index_buffer(context,upload),expected)
+        buffer.bind.assert_not_called();buffer.size.assert_not_called()
+        self.assertIsNone(geometry.shared_index_buffer(object(),upload))
+        self.assertIsNone(geometry.shared_index_buffer(context,object()))
+        for attribute,value in [('_full_indices',False),('_index_chunk',32),('_element_base',2),('_index_bytes',4)]:
+            previous=getattr(geometry,attribute);setattr(geometry,attribute,value)
+            self.assertIsNone(geometry.shared_index_buffer(context,upload))
+            setattr(geometry,attribute,previous)
+        geometry._indices=geometry._indices.copy()
+        self.assertIsNone(geometry.shared_index_buffer(context,upload))
+
 class PathRenderContracts(unittest.TestCase):
     def test_same_turn_session_reuses_frozen_bindings_but_uploads_each_chunk(self):
         self.geometry._index_chunk=2

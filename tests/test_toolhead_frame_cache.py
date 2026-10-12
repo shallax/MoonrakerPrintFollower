@@ -47,6 +47,188 @@ class FrameCacheTests(unittest.TestCase):
         self.cache.draw(self.gl, self.camera, self.bounds, self.transform, state, self.render)
 
 
+    def test_composition_rectangle_changes_only_final_quad_and_intersects_host_scissor(self):
+        self.viewport = (20,30,800,600)
+        self.gl.glGetIntegerv.side_effect = lambda name: self.viewport if name==0x0BA2 else (40,50,40,60) if name==0x0C10 else 0 if name==0x80A9 else 17
+        self.gl.glIsEnabled.return_value = True
+        seen=[]
+        self.blitter.blit.side_effect=lambda *args: seen.append(self.gl.glScissor.call_args.args)
+        for rect in ((10,10,100,100),(15,15,90,90)):
+            self.cache.draw(self.gl,self.camera,None,self.transform,'same',self.render,
+                additive=True,composition_rect=rect)
+        self.assertEqual(seen,[(40,50,40,60)]*2)
+        self.assertEqual(self.render.call_count,1)
+        self.assertEqual(self.cache._size[:2],(800,600))
+        self.gl.glScissor.assert_called_with(40,50,40,60)
+        self.gl.glEnable.assert_called_with(0x0C11)
+
+    def test_composition_exception_restores_disabled_host_scissor(self):
+        self.gl.glGetIntegerv.side_effect=lambda name:self.viewport if name==0x0BA2 else (1,2,3,4) if name==0x0C10 else 0 if name==0x80A9 else 17
+        self.gl.glIsEnabled.return_value=False
+        self.blitter.blit.side_effect=RuntimeError('composition failed')
+        with self.assertRaisesRegex(RuntimeError,'composition failed'):
+            self.cache.draw(self.gl,self.camera,None,self.transform,'same',self.render,
+                additive=True,composition_rect=(10,20,30,40))
+        self.gl.glScissor.assert_called_with(1,2,3,4)
+        self.gl.glDisable.assert_called_with(0x0C11)
+
+    def test_empty_composition_keeps_cache_build_but_skips_quad(self):
+        self.gl.glGetIntegerv.side_effect=lambda name:self.viewport if name==0x0BA2 else (1,2,3,4) if name==0x0C10 else 0 if name==0x80A9 else 17
+        self.gl.glIsEnabled.return_value=False
+        self.cache.draw(self.gl,self.camera,None,self.transform,'same',self.render,
+            additive=True,composition_rect=(0,0,0,0))
+        self.render.assert_called_once()
+        self.blitter.blit.assert_not_called()
+        self.gl.glScissor.assert_called_with(1,2,3,4)
+        self.gl.glDisable.assert_called_with(0x0C11)
+
+    def test_private_exact_sizes_reuse_storage_but_redraw_every_new_frame(self):
+        self.cache = ToolheadFrameCache(depth_only=True)
+        targets = [Mock(name='size A'), Mock(name='size B')]
+        self.factory.side_effect = targets
+        for index, crop in enumerate(((0,0,64,32),(32,0,96,32),(0,32,64,32))):
+            self.cache.draw(self.gl,self.camera,None,self.transform,index,self.render,_crop=crop)
+        self.assertEqual(self.factory.call_count,2)
+        self.assertEqual(self.render.call_count,3)
+        self.assertIs(self.cache._fbo,targets[0])
+        self.assertEqual(self.cache._pool_hits,1)
+        self.assertEqual(self.cache._pool_bytes,96*32*12)
+        self.assertEqual(self.gl.glClear.call_count,3)
+
+    def test_ordinary_multisample_draw_and_resolve_reuse_as_one_pair(self):
+        self.cache=ToolheadFrameCache(depth_only=True)
+        samples=4
+        self.gl.glGetIntegerv.side_effect=lambda name:self.viewport if name==0x0BA2 else samples if name==0x80A9 else 17
+        targets=[Mock(name=name) for name in ('draw A','resolve A','draw B','resolve B')]
+        self.factory.side_effect=targets
+        for index,width in enumerate((64,96,64)):
+            self.cache.draw(self.gl,self.camera,None,self.transform,index,self.render,_crop=(0,0,width,32))
+        self.assertEqual(self.factory.call_count,4)
+        self.assertIs(self.cache._fbo,targets[0]);self.assertIs(self.cache._resolved,targets[1])
+        self.assertEqual(self.cache._pool_bytes,96*32*52)
+        self.assertEqual(self.cache._pool_hits,1)
+        self.assertEqual(self.gl.glClear.call_count,3);self.assertEqual(self.render.call_count,3)
+        self.factory.blitFramebuffer.assert_any_call(targets[1],targets[0])
+        self.factory.blitFramebuffer.assert_any_call(targets[3],targets[2])
+
+    def test_multisample_invalid_resolve_rejects_whole_pair_and_sample_count_is_exact(self):
+        self.cache=ToolheadFrameCache(depth_only=True)
+        draw,resolve=Mock(),Mock()
+        self.cache._pooled_target((1,1,4),draw,(64,32,4),True,resolve)
+        self.assertIsNone(self.cache._pooled_target((64,32,2),None,None,True))
+        self.assertEqual(self.cache._pool_bytes,64*32*52)
+        resolve.isValid.return_value=False
+        self.assertIsNone(self.cache._pooled_target((64,32,4),None,None,True))
+        self.assertEqual(self.cache._pool_bytes,0)
+        self.assertEqual(self.cache._pool_hits,0)
+        self.cache._pooled_target((1,1,4),draw,(64,32,4),True,resolve)
+        self.assertFalse(self.cache._pool)
+
+    def test_multisample_pool_budget_counts_resolve_and_exposure_excludes_pair(self):
+        from mpf.toolhead import ToolheadFrameCache as module
+        self.cache=ToolheadFrameCache(depth_only=True)
+        with patch.object(module,'IDLE_TARGET_BUDGET',64*32*52):
+            self.cache._pooled_target((1,1,4),Mock(),(64,32,4),True,Mock())
+            self.cache._pooled_target((1,1,4),Mock(),(96,32,4),True,Mock())
+            self.assertEqual(self.cache._pool_bytes,64*32*52)
+            self.assertEqual(list(self.cache._pool),[(64,32,4)])
+            self.cache._pooled_target((1,1,4),Mock(),(32,32,4),True,Mock())
+            self.assertEqual(list(self.cache._pool),[(32,32,4)])
+        self.cache.release_targets()
+        self.gl.glGetIntegerv.side_effect=lambda name:self.viewport if name==0x0BA2 else 4 if name==0x80A9 else 17
+        self.factory.side_effect=lambda *args:Mock()
+        def draw(width,index,**kwargs):self.cache.draw(self.gl,self.camera,None,self.transform,index,self.render,_crop=(0,0,width,32),**kwargs)
+        draw(64,0);exposed=(self.cache._fbo,self.cache._resolved)
+        draw(64,1,receiver_prepare=lambda *args:None)
+        draw(64,2);draw(96,3);draw(64,4)
+        self.assertIsNot(self.cache._fbo,exposed[0]);self.assertIsNot(self.cache._resolved,exposed[1])
+        self.assertEqual(self.cache._pool_hits,0)
+
+    def test_external_receiver_target_never_enters_pool_after_same_size_return(self):
+        self.cache = ToolheadFrameCache(depth_only=True)
+        self.factory.side_effect = lambda *args: Mock()
+        def draw(crop,state,**kwargs):
+            self.cache.draw(self.gl,self.camera,None,self.transform,state,self.render,_crop=crop,**kwargs)
+        a,b=(0,0,64,32),(0,0,96,32)
+        draw(a,0); first=self.cache._fbo
+        draw(b,1)
+        self.assertEqual(len(self.cache._pool),1)
+        exposed=[]
+        draw(b,2,receiver_prepare=lambda camera,target,*args:exposed.append(target))
+        self.assertFalse(self.cache._pool)
+        draw(b,3)  # Becoming eligible must not adopt previously exposed storage.
+        draw(a,4)
+        self.assertIsNot(self.cache._fbo,first)
+        self.assertFalse(self.cache._pool)
+        draw(b,5)
+        self.assertIsNot(self.cache._fbo,exposed[0])
+
+    def test_idle_pool_evicts_oldest_by_budget_and_drops_invalid_targets(self):
+        from mpf.toolhead import ToolheadFrameCache as module
+        self.cache = ToolheadFrameCache(depth_only=True)
+        a,b,c=Mock(),Mock(),Mock()
+        with patch.object(module,'IDLE_TARGET_BUDGET',64*32*12+96*32*12):
+            self.cache._pooled_target((1,1,0),a,(64,32,0),True)
+            self.cache._pooled_target((1,1,0),b,(96,32,0),True)
+            self.cache._pooled_target((1,1,0),c,(128,32,0),True)
+            self.assertEqual(list(self.cache._pool),[(128,32,0)])
+            self.assertEqual(self.cache._pool_bytes,128*32*12)
+            c.isValid.return_value=False
+            self.assertIsNone(self.cache._pooled_target((128,32,0),None,None,True))
+            self.assertEqual(self.cache._pool_bytes,0)
+        for width in range(1,11):
+            self.cache._pooled_target((100,100,0),Mock(),(width,1,0),True)
+        self.assertEqual(len(self.cache._pool),8)
+        self.assertEqual(next(iter(self.cache._pool)),(3,1,0))
+        self.cache.release_targets()
+        self.assertFalse(self.cache._pool); self.assertEqual(self.cache._pool_bytes,0)
+
+    def test_pool_is_context_local_and_old_retirement_cannot_clear_new_generation(self):
+        self.cache = ToolheadFrameCache(depth_only=True)
+        self.factory.side_effect = lambda *args: Mock()
+        def draw(width):
+            self.cache.draw(self.gl,self.camera,None,self.transform,width,self.render,_crop=(0,0,width,32))
+        draw(64); old=self.cache._fbo; retired=self.cache._retirement
+        draw(96); self.assertEqual(len(self.cache._pool),1)
+        self.current_context=SimpleNamespace(getProcAddress=lambda _:ctypes.cast(self.native_bind,ctypes.c_void_p).value)
+        draw(64)
+        self.assertIsNot(self.cache._fbo,old)
+        self.assertFalse(self.cache._pool)
+        draw(96); active=self.cache._fbo
+        retired()
+        self.assertIs(self.cache._fbo,active)
+        self.assertEqual(len(self.cache._pool),1)
+        self.cache._retirement()
+        self.assertFalse(self.cache._pool)
+        self.assertEqual(self.cache._pool_bytes,0)
+        self.assertIsNone(self.cache._fbo)
+
+    def test_failed_new_allocation_preserves_old_pool_but_never_old_pixels(self):
+        self.cache = ToolheadFrameCache(depth_only=True)
+        target=Mock()
+        self.factory.side_effect=[target,RuntimeError('allocation failed')]
+        self.cache.draw(self.gl,self.camera,None,self.transform,'old',self.render,_crop=(0,0,64,32))
+        with self.assertRaisesRegex(RuntimeError,'allocation failed'):
+            self.cache.draw(self.gl,self.camera,None,self.transform,'new',self.render,_crop=(0,0,96,32))
+        self.assertIsNone(self.cache._key)
+        self.assertIsNone(self.cache._fbo)
+        self.render.reset_mock()
+        self.cache.draw(self.gl,self.camera,None,self.transform,'old',self.render,_crop=(0,0,64,32))
+        self.assertIs(self.cache._fbo,target)
+        self.render.assert_called_once()
+        self.assertEqual(self.factory.call_count,2)
+        self.assertEqual(self.cache._pool_bytes,0)
+
+    def test_pool_accounting_includes_idle_storage_and_rejects_oversized_entries(self):
+        from mpf.toolhead.ToolheadFrameCache import retained_graphics, IDLE_TARGET_BUDGET
+        self.cache=ToolheadFrameCache(depth_only=True)
+        self.cache._pooled_target((1,1,0),Mock(),(64,32,0),True)
+        self.cache._pooled_target((1,1,0),Mock(),(IDLE_TARGET_BUDGET,1,0),True)
+        self.assertEqual(self.cache._pool_bytes,64*32*12)
+        node=SimpleNamespace(_frame_cache=self.cache, _occlusion=SimpleNamespace(
+            _transparency=SimpleNamespace(_pool_bytes=1234)))
+        self.assertEqual(retained_graphics(node,64,32,import_pixels=64*32),64*32*12+1234)
+
     def test_released_targets_reallocate_the_same_crop(self):
         self.draw()
         self.cache.release_targets()

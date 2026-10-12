@@ -117,6 +117,22 @@ class SimulationPassTests(unittest.TestCase):
         return SimpleNamespace(getElementCounts=lambda: {0: np.int64(6), 1: np.int64(8)},
             getLayer=lambda layer: SimpleNamespace(polygons=polygons), hasAttribute=lambda name: True)
 
+    def test_native_upload_admission_wraps_only_successful_native_render(self):
+        events=[];observation=object()
+        with patch.object(self.module,'observe_native_upload',
+                side_effect=lambda *args: events.append(('observe',args)) or observation), patch(
+                'mpf.toolhead.ToolheadPathGeometry.admit_native_upload',
+                side_effect=lambda *args: events.append(('admit',args))):
+            self.original.render.side_effect=lambda: events.append(('render',()))
+            self.adapter.render()
+            self.assertEqual([item[0] for item in events],['observe','render','admit'])
+            self.assertIs(events[0][1][0],self.data)
+            self.assertIs(events[2][1][2],observation)
+            events.clear();self.adapter._previous=None
+            self.original.render.side_effect=RuntimeError('native draw failed')
+            with self.assertRaisesRegex(RuntimeError,'native draw failed'):self.adapter.render()
+            self.assertEqual([item[0] for item in events],['observe'])
+
     def activate(self, path=.5):
         self.adapter.render()  # Native warmup establishes deterministic state.
         self.path = path
@@ -613,6 +629,14 @@ class SimulationPassTests(unittest.TestCase):
         self.assertIs(first_risks, self.adapter._depth_risks)
         self.data.getVertices.assert_called_once()  # Camera requests never rescan immutable source arrays.
 
+    def test_shared_depth_crop_forwards_region_without_weakening_projection_proof(self):
+        _attributes, paths = self.depth_fixture()
+        output, region = object(), (20,30,120,90)
+        self.assertTrue(self.adapter.try_copy_completed_depth(self.gl, output, self.camera, paths,
+            self.view, source_region=region))
+        self.adapter._cache.try_copy_depth.assert_called_once_with(self.gl, output,
+            self.adapter._depth_snapshot['key'], 10, source_region=region)
+
     def test_shadow_support_starts_and_hidden_prime_towers_reject_only_affected_older_range(self):
         attributes, paths = self.depth_fixture((4, 1, 11))
         output = object()
@@ -865,7 +889,7 @@ class SimulationPassTests(unittest.TestCase):
         self.instanced.render.return_value = True
         self.activate(.5)
         self.instanced.render.assert_called_once_with(self.geometry.vertex_mesh.return_value, Path('/native/shaders/layers3d_shadow.shader'),
-            self.camera, 'world', 0, 6, self.view, self.gl)
+            self.camera, 'world', 0, 6, self.view, self.gl, index_owner=self.geometry)
         self.assertEqual(self.geometry.render.call_args_list, [call(self.normal, self.camera, 'world', [(6, 8)], self.gl)])
         self.normal.setUniformValue.assert_any_call('u_last_line_ratio', .5)
 

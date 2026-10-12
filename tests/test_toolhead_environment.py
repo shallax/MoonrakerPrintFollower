@@ -30,6 +30,28 @@ class EnvironmentTests(unittest.TestCase):
     def finish(self, hard='file', soft='pose'):
         for _ in range(12): self.step(hard, soft)
 
+    def test_ground_descriptor_validation_and_uniform_withdrawal(self):
+        base=((0.,0.,0.),(-10.,-10.,-10.),(10.,10.,10.))
+        for ground in ((0,1,0,1,2),(0,0,2,1,2),(0,0,0,1,float('nan')),(0,0,0,1)):
+            with self.assertRaisesRegex(ValueError,'ground'):
+                ProbeDescriptor(*base,ground=ground)
+        self.environment._storage=self.storage
+        self.environment.available=True
+        self.environment.descriptor=ProbeDescriptor(*base,ground=(2.,-3.,-4.,5.,6.))
+        shader=Mock()
+        self.environment.apply(shader)
+        shader.setUniformValue.assert_any_call('u_environmentGroundEnabled',1)
+        shader.setUniformValue.assert_any_call('u_environmentGround',[2.,-3.,-4.,5.])
+        shader.setUniformValue.assert_any_call('u_environmentGroundMaxZ',6.)
+        for descriptor,available in ((ProbeDescriptor(*base),True),(self.environment.descriptor,False)):
+            shader.reset_mock()
+            self.environment.descriptor=descriptor
+            self.environment.available=available
+            self.environment.apply(shader)
+            shader.setUniformValue.assert_any_call('u_environmentGroundEnabled',0)
+            self.assertFalse(any(call.args[0]=='u_environmentGround'
+                for call in shader.setUniformValue.call_args_list))
+
     def test_only_six_complete_faces_publish_and_snapshot_stays_frozen(self):
         self.step(soft='old')
         for _ in range(10): self.step(soft='new')
@@ -343,6 +365,79 @@ class StorageFaultTests(unittest.TestCase):
         self.addCleanup(self.storage.close)
         self.ctypes=ctypes
 
+    def test_face_resolve_precedes_colour_and_depth_copies_and_failure_keeps_front(self):
+        order=[]
+        self.fbo.resolve.side_effect=lambda:order.append('resolved')
+        self.storage._copy.side_effect=lambda *args:order.append('copied')
+        self.storage.copy(self.gl,0)
+        self.assertEqual(order,['resolved','copied','copied'])
+        front=self.storage.front
+        self.storage._copy.reset_mock()
+        self.fbo.resolve.side_effect=RuntimeError('resolve failed')
+        with self.assertRaisesRegex(RuntimeError,'resolve failed'):
+            self.storage.copy(self.gl,1)
+        self.storage._copy.assert_not_called()
+        self.assertEqual(self.storage.front,front)
+
+    def test_colour_only_storage_keeps_face_depth_and_publishes_atomically(self):
+        storage=self.module.CubeStorage(self.gl,self.context,export_depth=False)
+        self.addCleanup(storage.close)
+        self.assertEqual(storage.names,[10,11])
+        self.assertEqual((storage.front_depth,storage.back_depth),(0,0))
+        self.format.setAttachment.assert_called_with(1)
+        storage.begin(self.gl,True)
+        self.gl.glDepthMask.assert_called_with(True)
+        self.gl.glClear.assert_called_with(3)
+        self.gl.glBindTexture.reset_mock()
+        for face in range(6):storage.copy(self.gl,face)
+        self.assertEqual(storage._copy.call_count,6)
+        self.assertEqual(self.gl.glBindTexture.call_args_list,[((0x8513,11),)]*6)
+        self.gl.glGetError.return_value=1282
+        with self.assertRaisesRegex(RuntimeError,'capture failed'):storage.publish(self.gl)
+        self.assertEqual((storage.front,storage.back),(10,11))
+        self.gl.glGetError.return_value=0
+        storage.publish(self.gl)
+        self.assertEqual((storage.front,storage.back),(11,10))
+
+    def test_worker_colour_only_select_ignores_cancelled_private_swap_without_hierarchy(self):
+        with patch.dict(sys.modules, {
+            'mpf.toolhead.ToolheadCaptureGL': SimpleNamespace(RawBindings=object),
+            'mpf.toolhead.ToolheadCaptureRecipe': SimpleNamespace(CaptureScene=object),
+        }):
+            from mpf.toolhead import ToolheadEnvironmentWorker as worker
+        with patch.object(worker,'CaptureFace',return_value=self.fbo), patch.object(worker.DepthHierarchy,'optional') as hierarchy, patch.object(worker,'procedure',return_value=Mock()):
+            storage=worker.WorkerStorage(self.gl,self.context,0x81A6,export_depth=False)
+            try:
+                hierarchy.assert_not_called()
+                names=tuple(storage.names)
+                for target in (1,0,1,0):
+                    storage.select(target)
+                    self.assertEqual(storage.back,names[target])
+                    self.assertEqual(storage.back_depth,0)
+                    storage.publish(self.gl)  # A result may be cancelled after this private swap.
+                    self.assertEqual(storage.front,names[target])
+                    self.assertEqual((storage.front_depth,storage.front_hierarchy,storage.front_full_hierarchy),(0,0,0))
+            finally:storage.close()
+
+    def test_default_environment_requests_colour_only_and_clears_old_depth_bindings(self):
+        with patch.object(self.module,'CubeStorage',return_value=self.storage) as factory:
+            owner=ToolheadEnvironment();owner._factory(self.gl,self.context)
+            factory.assert_called_once_with(self.gl,self.context,export_depth=False)
+        owner._storage=self.storage;owner.available=True
+        owner.descriptor=ProbeDescriptor((0,0,0),(-1,-1,-1),(1,1,1))
+        self.storage.front_depth=0
+        self.storage.front_hierarchy=77;self.storage.front_full_hierarchy=88
+        shader=Mock();owner.apply(shader)
+        for unit in (4,5,6):shader.setTexture.assert_any_call(unit,None)
+        shader.setTexture.assert_any_call(7,self.storage)
+        shader.setUniformValue.assert_any_call('u_depthHierarchyEnabled',0)
+        shader.setUniformValue.assert_any_call('u_fullHierarchyEnabled',0)
+        # The async adapter exposes the published receipt rather than names.
+        owner._storage=SimpleNamespace(result=SimpleNamespace(depth=0),depth=object(),
+            front_hierarchy=77,front_full_hierarchy=88)
+        shader.reset_mock();owner.apply(shader)
+        for unit in (4,5,6):shader.setTexture.assert_any_call(unit,None)
+
     def test_failed_first_sampler_restore_cannot_skip_the_second_owned_unit(self):
         self.storage.bind(7);self.storage.depth.bind(6)
         original=self.gl.glBindTexture.side_effect
@@ -379,6 +474,14 @@ class StorageFaultTests(unittest.TestCase):
         self.storage.depth.release(6)
         self.assertEqual(self.storage._bindings,{})
         self.gl.glActiveTexture.assert_called_with(9)
+
+    def test_full_hierarchy_restores_2d_binding_without_changing_cube_target(self):
+        self.storage.front_full_hierarchy = 45
+        self.storage.full_hierarchy.bind(4)
+        self.gl.glBindTexture.assert_called_with(0x0DE1,45)
+        self.storage.full_hierarchy.release(4)
+        self.assertEqual(self.storage._bindings,{})
+        self.gl.glBindTexture.assert_called_with(0x0DE1,23)
 
     def test_allocation_failure_retires_any_partial_raw_names(self):
         with patch.object(self.module,'procedure',return_value=Mock()):

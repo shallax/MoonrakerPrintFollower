@@ -1,5 +1,6 @@
 """Native scene admission, frozen probe cameras and bounded path commands."""
 import sys
+from itertools import product
 import tempfile
 import unittest
 from pathlib import Path
@@ -38,6 +39,78 @@ class EnvironmentSceneTests(unittest.TestCase):
         for face in range(6):
             self.assertEqual(list(snapshot.commands(face)), [])
         owner.light_path_shader.assert_not_called()
+
+    def test_plate_bounds_reduce_in_chunks_and_reuse_local_bounds_across_transforms(self):
+        points=np.zeros((module.BOUNDS_CHUNK+1,3))
+        points[0]=[-2,-3,-4];points[-1]=[2,3,4]
+        mesh=HashMesh(points)
+        transform=Matrix([[2,1,0,10],[0,3,0,-5],[0,0,1,7],[0,0,0,1]])
+        plate=('native',dict(mesh=mesh,transformation=transform),{})
+        snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[plate],[],{},False)
+        turns=snap.prepare()
+        next(turns)();self.assertIsNone(snap.descriptor)
+        next(turns)();self.assertIsNone(snap.descriptor)
+        with self.assertRaises(StopIteration):next(turns)
+        np.testing.assert_allclose(snap.descriptor.minimum,[1,-16,1])
+        np.testing.assert_allclose(snap.descriptor.maximum,[19,6,13])
+        mesh.getVertices=Mock(side_effect=AssertionError('cached plate vertices rescanned'))
+        # Many transformed occurrences must retain cooperative checkpoints.
+        plates=[]
+        for index in range(33):
+            moved=Matrix();moved.data[0,3]=index*10
+            plates.append(('native',dict(mesh=mesh,transformation=moved),{}))
+        repeated=module.EnvironmentSnapshot(self.owner,(0,0,0),None,plates,[],{},False)
+        work=repeated.prepare();next(work)()
+        self.assertIsNone(repeated.descriptor)
+        with self.assertRaises(StopIteration):next(work)
+        np.testing.assert_allclose(repeated.descriptor.minimum,[-4,-5,-6])
+        np.testing.assert_allclose(repeated.descriptor.maximum,[324,5,6])
+        mesh.getVertices.assert_not_called()
+
+    def test_ground_plane_uses_largest_unpadded_world_plate_in_live_and_frozen_snapshots(self):
+        small=HashMesh([[-1,0,-1],[1,0,1]])
+        bed=HashMesh([[-2,0,-3],[2,0,3]])
+        solid=HashMesh([[-100,-1,-100],[100,1,100]])
+        moved=Matrix([[2,0,0,10],[0,1,0,7],[0,0,3,-4],[0,0,0,1]])
+        plates=[('native',dict(mesh=mesh,transformation=transform),{})
+            for mesh,transform in ((small,Matrix()),(bed,moved),(solid,Matrix()))]
+        descriptors=[]
+        for renderer in (None,Mock()):
+            snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,plates,[],{},False,
+                plate_renderer=renderer)
+            for command in snap.prepare():command()
+            descriptors.append(snap.descriptor)
+            self.assertEqual(snap.descriptor.ground,(7.,6.,-13.,14.,5.))
+            self.assertLess(snap.descriptor.minimum[1],7.)
+        self.assertEqual(*descriptors)
+
+    def test_ground_plane_rejects_tilted_nonplanar_and_zero_area_plates(self):
+        flat=HashMesh([[-2,0,-3],[2,0,3]])
+        thick=HashMesh([[-2,-.02,-3],[2,.02,3]])
+        line=HashMesh([[0,0,-3],[0,0,3]])
+        tilted=Matrix([[1,0,0,0],[.1,1,0,0],[0,0,1,0],[0,0,0,1]])
+        for mesh,transform in ((flat,tilted),(thick,Matrix()),(line,Matrix())):
+            snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,
+                [('native',dict(mesh=mesh,transformation=transform),{})],[],{},False)
+            for command in snap.prepare():command()
+            self.assertIsNone(snap.descriptor.ground)
+
+    def test_invalid_plate_bounds_never_publish_a_descriptor(self):
+        mesh=HashMesh([[0,0,0],[float('nan'),1,2],[1,2,3]])
+        snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,
+            [('native',dict(mesh=mesh,transformation=Matrix()),{})],[],{},False)
+        with self.assertRaisesRegex(RuntimeError,'Invalid reflection scene vertices'):
+            for reduction in snap.prepare():reduction()
+        self.assertIsNone(snap.descriptor)
+        self.assertNotIn(mesh,self.owner._mesh_bounds)
+
+    def test_frozen_plate_renderer_receives_exact_phase_without_native_batch(self):
+        renderer=Mock();shader,item,camera,gl=object(),object(),object(),object()
+        snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[],{},False,plate_renderer=renderer)
+        for phase in ('depth','colour','light'):
+            snap._render_plate(shader,item,camera,gl,phase)
+        self.assertEqual([call.args for call in renderer.call_args_list],
+            [(shader,item,camera,gl,phase) for phase in ('depth','colour','light')])
 
     def test_turn_batches_frozen_bindings_and_breaks_on_camera_geometry_or_fault(self):
         from contextlib import contextmanager
@@ -350,7 +423,7 @@ class EnvironmentSceneTests(unittest.TestCase):
         snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[(geometry,transform,(0,chunk+2),None,0)],{},False)
         count=0
         for reduction in snap.prepare(): reduction();count+=1
-        self.assertEqual(count,3)
+        self.assertEqual(count,2)
         self.assertEqual(len(self.owner._path_bounds[mesh]),1)
         self.assertEqual(len(self.owner._path_edges[mesh]),1)
         low,high=snap.path_bounds[id(geometry),0]
@@ -362,7 +435,7 @@ class EnvironmentSceneTests(unittest.TestCase):
         self.assertEqual(list(other.prepare()),[])
         bad=HashMesh([[0,0,0],[float('nan'),0,0]])
         bad_snap=module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[(NS(mesh=bad),Matrix(),(0,2),None,0)],{},False)
-        with self.assertRaisesRegex(RuntimeError,'Invalid reflection scene vertices'):
+        with self.assertRaisesRegex(RuntimeError,'Invalid reflection path vertices'):
             for reduction in bad_snap.prepare():reduction()
         self.owner._mesh_bounds[bad]=(np.zeros(3),np.ones(3))
         with self.assertRaisesRegex(RuntimeError,'Invalid reflection path vertices'):
@@ -434,6 +507,44 @@ class EnvironmentDelta(unittest.TestCase):
     def snapshot_node(self):
         return NS(_view=self.view, _root=self.root, _model_bounds=np.array([[0, 2, 4], [4, 6, 8]]), render_position=lambda: NS(x=3, y=4, z=5), light_dimensions=lambda: (100, 100, 100))
 
+    def test_snapshot_metadata_is_shared_per_mesh_and_fresh_next_capture(self):
+        first,second=HashMesh(),HashMesh()
+        counts={0:2,1:8}
+        first.getElementCounts=Mock(side_effect=lambda:counts)
+        second.getElementCounts=Mock(return_value={0:6,1:8})
+        polygon=NS(data=np.array([[0,0,0],[1,0,0],[2,0,0]]))
+        first.getLayer=Mock(return_value=NS(polygons=[polygon]))
+        second.getLayer=Mock(return_value=NS(polygons=[polygon]))
+        left,right=self.child(first),self.child(first)
+        translation=Matrix();translation.data[0,3]=70
+        right.getWorldTransformation=lambda:translation
+        self.children=[left,right,self.child(second)]
+        self.view.getCurrentPath.return_value=1.5
+        node=self.snapshot_node();node._lighting_enabled=True;node._attached_lights=[1]
+        node.apply_attached_lights=lambda shader:shader.setUniformValue('u_strength',1.)
+        node.scene_lighting_effects=lambda:(False,True)
+        signature=self.owner.signature(self.renderer,self.view,self.root)
+        with patch.object(module,'ToolheadPathGeometry',side_effect=lambda mesh,**kwargs:NS(mesh=mesh)), \
+                patch.object(module,'layer_range',wraps=module.layer_range) as ranges:
+            snap=self.owner.snapshot(node,self.renderer,NS(getCameraLightPosition=lambda:None),signature)
+            self.assertEqual(ranges.call_count,2)
+            self.assertEqual(first.getElementCounts.call_count,2)
+            self.assertEqual(second.getElementCounts.call_count,2)
+            self.assertEqual(first.getLayer.call_count,1)
+            self.assertEqual([row[2] for row in snap.paths],[(0,6),(0,6),(0,10)])
+            self.assertEqual([row[4] for row in snap.paths],[2,2,6])
+            self.assertEqual(snap.paths[0][3],([1.,0.,0.],[2.,0.,0.],.5))
+            self.assertEqual(snap.paths[1][1].getData()[0,3],70)
+            self.assertEqual(snap.path_top[id(snap.paths[0][0])],2)
+            self.assertEqual(snap.projection,0)
+            counts[0]=10
+            fresh=self.owner.snapshot(node,self.renderer,NS(getCameraLightPosition=lambda:None),signature)
+            self.assertEqual(ranges.call_count,4)
+            self.assertEqual(fresh.paths[0][2],(0,14))
+            self.assertEqual(fresh.paths[0][4],10)
+            self.assertEqual(fresh.path_top[id(fresh.paths[0][0])],10)
+            self.assertEqual(snap.paths[0][2],(0,6))
+
     def test_owned_light_shader_and_receiver_caches_keep_native_mesh_unchanged(self):
         mesh=HashMesh();original=mesh.vertices.copy();receiver=object()
         with patch.object(module,'owned_shader',return_value=self.shader) as shader_factory, patch.object(module,'create_path_shader',side_effect=['core','legacy']) as path_factory, patch.dict(sys.modules,{'UM.Mesh.MeshData':NS(MeshData=Mock(return_value=receiver))}):
@@ -468,29 +579,34 @@ class EnvironmentDelta(unittest.TestCase):
         self.assertEqual(snap.path_top[id(geometry)],2)
         self.assertIs(type(snap.path_top[id(geometry)]),int, 'Qt rejects NumPy scalar uniform values at bind')
 
-    def test_bounds_preflight_is_chunked_cached_and_transformed_without_whole_print_scan(self):
+    def test_perspective_descriptor_uses_only_padded_admitted_transformed_paths(self):
         vertices = np.zeros((module.BOUNDS_CHUNK+3,3))
-        vertices[-1] = [10,20,30]
+        vertices[1] = [1,2,3]
+        vertices[-1] = [1e6,2e6,3e6]  # Future geometry must not inflate far.
         mesh = HashMesh(vertices)
+        mesh.getIndices = lambda: np.arange(len(vertices))
+        mesh.getAttribute = lambda name: {'value': np.tile([3.,.4], (len(vertices),1))}
         geometry = NS(mesh=mesh)
-        transform = Matrix(); transform.data[0,3] = 40
-        snap = module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[(geometry,transform,(0,2),None,0)],{},False)
+        transform = Matrix([[2,1,0,40],[0,3,0,0],[0,0,1,0],[0,0,0,1]])
+        other_transform = Matrix(); other_transform.data[0,3] = -10
+        paths = [(geometry,t,(0,2),None,0) for t in (transform,other_transform)]
+        snap = module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],paths,{},False)
         work = snap.prepare()
-        next(work)()
+        next(work)()  # One admitted-prefix reduction, reused by both instances.
         self.assertIsNone(snap.descriptor)
-        self.assertNotIn(mesh,self.owner._mesh_bounds)
-        next(work)()
-        self.assertIsNone(snap.descriptor)
-        next(work)()  # At most PATH_CHUNK indices for the admitted prefix.
         with self.assertRaises(StopIteration): next(work)
-        np.testing.assert_allclose(snap.descriptor.minimum,(38,-2,-2))
-        np.testing.assert_allclose(snap.descriptor.maximum,(52,22,32))
+        self.assertNotIn(mesh,self.owner._mesh_bounds)
+        # Six-unit tube padding, conservatively expanded by transform row norm.
+        np.testing.assert_allclose(snap.descriptor.minimum,(-16,-18,-18))
+        np.testing.assert_allclose(snap.descriptor.maximum,(62,24,21))
         self.assertLess(snap.descriptor.far,100.)
-        transform.data[0,3] = -10
-        other = module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],[(geometry,transform,(0,2),None,0)],{},False)
-        mesh.getVertices = Mock(side_effect=AssertionError('cached immutable mesh must not be rescanned'))
+        low,high = snap.path_bounds[id(geometry),0]
+        for corner in product(*zip(low,high,strict=True)):
+            self.assertLess(np.linalg.norm(np.asarray(corner)-snap.origin),snap.descriptor.far)
+        mesh.getVertices = Mock(side_effect=AssertionError('cached admitted prefix must not be rescanned'))
+        other = module.EnvironmentSnapshot(self.owner,(0,0,0),None,[],paths,{},False)
         self.assertEqual(list(other.prepare()),[])
-        np.testing.assert_allclose(other.descriptor.minimum,(-12,-2,-2))
+        self.assertEqual(other.descriptor,snap.descriptor)
 
     def test_admission_prefix_transform_origin_and_pruning(self):
         visible, hidden, stale = (HashMesh(), HashMesh(), HashMesh())
@@ -631,8 +747,7 @@ class EnvironmentDelta(unittest.TestCase):
         with patch('mpf.toolhead.ToolheadEnvironment.preserved_state', side_effect=lambda *args: nullcontext()):
             step = lambda: environment.step(Mock(), object_context, 'file', 'pose', lambda: snap)
             object_context = object()
-            self.assertTrue(step())  # Bounded scene-bounds preflight.
-            self.assertTrue(step())  # Bounded path chunk preflight.
+            self.assertTrue(step())  # Only the admitted path chunk needs preflight.
             self.assertFalse(step())
             self.assertIn('compile failed', environment.failure)
             for _ in range(20):

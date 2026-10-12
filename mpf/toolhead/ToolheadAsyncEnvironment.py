@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import ctypes
-from contextlib import contextmanager
+import math
+from contextlib import contextmanager, nullcontext
 from weakref import WeakSet
 from PyQt6.QtCore import QCoreApplication, QThread, QTimer, Qt, QRunnable
 from PyQt6.QtGui import QOpenGLContext, QOffscreenSurface
 from PyQt6 import sip
-from .ToolheadEnvironment import ToolheadEnvironment, TEXTURE_UNIT, DEPTH_UNIT, CHANGED_INTERVAL, PERIODIC_INTERVAL
+from .ToolheadEnvironment import ToolheadEnvironment, TEXTURE_UNIT, DEPTH_UNIT, HIERARCHY_UNIT, FULL_HIERARCHY_UNIT, CHANGED_INTERVAL, PERIODIC_INTERVAL
 from .ToolheadEnvironmentWorker import EnvironmentWorker, CaptureJob
 from .ToolheadCaptureRecipe import CaptureFreezer
 from .ToolheadGLState import GeometryUncertain, preserved_state, procedure
@@ -30,8 +31,8 @@ class _MainFinish(QRunnable):
 
 
 class _Depth:
-    def __init__(self, bindings): self.bindings = bindings
-    def bind(self, unit): self.bindings.bind_depth(unit)
+    def __init__(self, bindings, attribute="depth"): self.bindings, self.attribute = bindings, attribute
+    def bind(self, unit): self.bindings._bind(unit, getattr(self.bindings.result, self.attribute))
     def release(self, unit): self.bindings.release(unit)
 
 
@@ -39,8 +40,13 @@ class _ConsumerBindings:
     def __init__(self, owner, result):
         self.owner, self.result = owner, result
         self.depth = _Depth(self)
+        self.hierarchy = _Depth(self, "hierarchy")
+        self.front_hierarchy = getattr(result, "hierarchy", 0)
+        self.full_hierarchy = _Depth(self, "full_hierarchy")
+        self.front_full_hierarchy = getattr(result, "full_hierarchy", 0)
         self._bindings, self._use = {}, None
         self._queries = 0
+        self._held = False
 
     def bind(self, unit): self._bind(unit, self.result.colour)
     def bind_depth(self, unit): self._bind(unit, self.result.depth)
@@ -56,6 +62,20 @@ class _ConsumerBindings:
             owner._reads.add(self)
             if payload is not self.result:
                 self._finish(); raise RuntimeError('Reflection consumer descriptor changed')
+
+    @contextmanager
+    def read_scope(self):
+        """Batch actual texture reads; a cached frame acquires no ticket."""
+        self._queries += 1
+        try:
+            yield
+        finally:
+            self._queries -= 1
+            if not self._queries and self._use is not None:
+                if not self.owner._is_main_current():
+                    if not self.owner._quarantine: self.owner._abandon()
+                    raise RuntimeError('Reflection frame read lost its original context')
+                if not self._bindings: self._finish()
 
     @contextmanager
     def query(self, selected_key, source_key):
@@ -87,11 +107,12 @@ class _ConsumerBindings:
         owner, gl = self.owner, self.owner._gl
         self._acquire()
         active = int(gl.glGetIntegerv(0x84E0))
+        target = 0x0DE1 if unit == FULL_HIERARCHY_UNIT else 0x8513
         try:
             gl.glActiveTexture(0x84C0+unit)
-            self._bindings.setdefault(unit, (int(gl.glGetIntegerv(0x8514)), int(gl.glGetIntegerv(0x8919))))
+            self._bindings.setdefault(unit, (int(gl.glGetIntegerv(0x8069 if target == 0x0DE1 else 0x8514)), int(gl.glGetIntegerv(0x8919))))
             owner._sampler(unit, 0)
-            gl.glBindTexture(0x8513, name)
+            gl.glBindTexture(target, name)
         except Exception:
             self.release(unit); raise
         finally: gl.glActiveTexture(active)
@@ -106,13 +127,13 @@ class _ConsumerBindings:
             active = int(gl.glGetIntegerv(0x84E0))
             try:
                 gl.glActiveTexture(0x84C0+unit)
-                try: gl.glBindTexture(0x8513, binding[0])
+                try: gl.glBindTexture(0x0DE1 if unit == FULL_HIERARCHY_UNIT else 0x8513, binding[0])
                 finally: owner._sampler(unit, binding[1])
             finally: gl.glActiveTexture(active)
         if not self._bindings and not self._queries: self._finish()
 
     def _finish(self):
-        if self._use is None or self._queries: return
+        if self._use is None or self._queries or self._held: return
         owner = self.owner
         if owner._main_retired or owner._quarantine: return
         fence = None
@@ -193,11 +214,14 @@ class AsyncEnvironment(ToolheadEnvironment):
         # Directional maps are sampled directly by the current raster pose.
         self._worker = EnvironmentWorker(worker_context, self._surface, QThread.currentThread(), constants, depth)
         self._recovery_hold = None
+        self._transition = None
+        self._transition_weight = 1.
         worker_context.moveToThread(self._worker)
         self._worker.ready.connect(self._arrived, Qt.ConnectionType.QueuedConnection)
         self._worker.finished.connect(self._finished, Qt.ConnectionType.QueuedConnection)
         self._freezer, self._leases = CaptureFreezer(), {}
         self._serial, self._submitted = 0, None
+        self._capture_not_before = 0.
         self._selected_key = None
         self._busy = self._closed = False
         self.requires_replacement = False
@@ -223,13 +247,13 @@ class AsyncEnvironment(ToolheadEnvironment):
     def wake_delay(self):
         if self._closed:
             return max(.01, self._retry-self._clock()) if self.requires_replacement else None
+        if getattr(self, "_transition", None) is not None: return 1./30
         if self._busy or self._held_recovery(): return None
-        if self._unchanged_directional(): return None
-        return max(.01, max(self._next, self._retry)-self._clock())
+        if self._unchanged_map(): return None
+        return max(.01, max(self._next, self._retry, getattr(self, '_capture_not_before', 0.))-self._clock())
 
-    def _unchanged_directional(self):
-        return (self.available and getattr(self.descriptor, 'projection', 0) == 1
-                and self._selected_key == self._submitted
+    def _unchanged_map(self):
+        return (self.available and self._selected_key == self._submitted
                 and self._selected_key == (self._hard, self._published))
 
     def _collect(self):
@@ -277,13 +301,16 @@ class AsyncEnvironment(ToolheadEnvironment):
             # query scope which could submit another read after this callback.
             # Teardown callers quarantine rather than release a live ticket.
             raise RuntimeError('Reflection query scope is still active')
+        if self._closed: self._end_transition()
         self._main_finish()
         for binding in tuple(self._reads):
+            if binding._held: continue  # Maintenance cannot retire a map used by future fade frames.
             previous = self._worker.mailbox.end_read(binding._use, None, gpu_complete=True)
             binding._use = None
             self._reads.discard(binding)
             if previous: self._delete(ctypes.c_void_p(previous))
-        self._worker.host_drained.set()
+        if not self._reads: self._worker.host_drained.set()
+        else: self._worker.host_drained.clear()
         self._worker.wake()
         self._collect()
 
@@ -303,19 +330,87 @@ class AsyncEnvironment(ToolheadEnvironment):
         hold=getattr(self,'_recovery_hold',None)
         return hold is not None and hold[1] is self._storage and hold[2]==self._selected_key and not self._closed
 
+    def _end_transition(self):
+        transition = getattr(self, '_transition', None)
+        self._transition = None
+        self._transition_weight = 1.
+        if transition is None: return
+        previous = transition[0]
+        previous._held = False
+        for shader in self._shaders:
+            try: shader.setTexture(3, None)
+            except Exception: pass
+        if previous._use is not None and not previous._bindings:
+            if self._is_main_current(): previous._finish()
+            else: self._schedule_cleanup()
+
+    @property
+    def transition_identity(self):
+        transition = getattr(self, '_transition', None)
+        return None if transition is None else (transition[0].result.serial, self._transition_weight)
+
+    @property
+    def transition_cache_identity(self):
+        # The alpha-one image is already the steady current-map image.
+        return None if self._transition_weight >= 1. else self.transition_identity
+
+    def begin_frame(self):
+        """Snapshot one fade state for every material in an actual head draw."""
+        transition = getattr(self, '_transition', None)
+        if transition is None: return None
+        if transition[2] is None:
+            self._transition = transition[0], transition[1], self._clock()
+        return self.transition_identity
+
+    def commit_frame(self, identity):
+        """Advance only after the complete head image was submitted successfully."""
+        if identity is None or identity != self.transition_identity: return
+        if self._transition_weight >= 1.:
+            self._end_transition()
+        else:
+            self._transition_weight = min(1., self._transition_weight+1./3)
+            previous, descriptor, _started = self._transition
+            self._transition = previous, descriptor, self._clock()
+
     def _adopt(self):
-        if self._held_recovery():return
+        if self._held_recovery() or getattr(self, "_transition", None) is not None:return
         admission = self._worker.mailbox.begin_poll()
         if admission is None: return
         use, fence = admission
         complete = False
+        previous = None
         try:
             status = self._poll(ctypes.c_void_p(fence), 0, 0) if fence else 0x911A
             if status == 0x911D: raise RuntimeError('Reflection producer fence failed')
             complete = status in (0x911A, 0x911C)
+            candidate = self._storage
+            if (complete and isinstance(candidate, _ConsumerBindings) and self.available
+                    and getattr(self.descriptor,'projection',None)==0
+                    and getattr(candidate.result,'key',None) is not None
+                    and candidate.result.key[0] == self._hard):
+                self._end_transition()
+                candidate._acquire()
+                candidate._held = True
+                previous = candidate
+        except Exception:
+            complete = False
+            raise
         finally:
-            result = self._worker.mailbox.end_poll(use, complete)
-            self._worker.wake()
+            try:
+                result = self._worker.mailbox.end_poll(use, complete)
+            except Exception:
+                if previous is not None:
+                    previous._held = False
+                    previous._finish()
+                raise
+            finally: self._worker.wake()
+        if previous is not None:
+            if result is not None:
+                self._transition = previous, self.descriptor, None
+                self._transition_weight = 0.
+            else:
+                previous._held = False
+                previous._finish()
         if result is None:
             if not self._closed: self._retry_timer.start()
             return
@@ -327,11 +422,27 @@ class AsyncEnvironment(ToolheadEnvironment):
         self.revision += 1
         self._published, self._busy = payload.soft, payload.serial != self._serial
         completed = self._clock()
-        self._changed_next, self._next = completed+CHANGED_INTERVAL, completed+PERIODIC_INTERVAL
+        projection = getattr(payload.descriptor, 'projection', None)
+        interval = .05 if type(projection) is int and projection == 0 else CHANGED_INTERVAL
+        self._changed_next, self._next = completed+interval, completed+PERIODIC_INTERVAL
+        # Yield GPU time after each complete capture. The changed-scene
+        # debounce may be bypassed for a waiting pose; this admission floor
+        # cannot. Worker wall time includes its bounded GPU-fence drains.
+        # Pause twice that measured work, capped at two seconds so a machine
+        # stall cannot suppress reflections indefinitely; this is not a GPU
+        # utilization guarantee. Only the exact published serial is usable.
+        duration = interval
+        timings = self._worker.timings
+        if isinstance(timings, tuple) and len(timings) == 3 and timings[0] == payload.serial:
+            elapsed = timings[1]
+            if isinstance(elapsed, (int, float)) and math.isfinite(elapsed) and elapsed >= 0.:
+                duration = max(duration, min(2., elapsed/500.))
+        self._capture_not_before = completed+duration
         if self._diagnostic and self._worker.timings:
             from UM.Logger import Logger
             serial, elapsed, turns = self._worker.timings
-            Logger.log('i', 'Toolhead worker capture: job %s, wall %.1f ms, %s worker turns', serial, elapsed, turns)
+            Logger.log('i', 'Toolhead worker capture: job %s, wall %.1f ms, %s worker turns, hierarchy %s',
+                serial, elapsed, turns, bool(getattr(payload, 'hierarchy', 0)))
 
     def step(self, gl, context, hard, soft, snapshot):
         if self._closed: return False
@@ -341,25 +452,30 @@ class AsyncEnvironment(ToolheadEnvironment):
         if self._deletions: self._schedule_cleanup()
         now = self._clock()
         if hard != self._hard:
+            self._end_transition()
             self._worker.mailbox.change_generation()
             self._worker.wake()
             self._hard, self._submitted, self._busy = hard, None, False
             self._next = self._retry = self._changed_next = 0
+            self._capture_not_before = 0.
         key = hard, soft
         if soft != self._published: self._next = min(self._next, self._changed_next)
         # Freeze only when a capture can actually start. Moving poses used to
         # replace queued snapshots repeatedly, including their GL fences and
         # borrowed-buffer checks. Completion already requests a fresh frame.
         deferred_due = self._busy and key != self._submitted and now >= max(self._next, self._retry)
+        transition = getattr(self, '_transition', None)
+        if transition is not None and transition[2] is not None and now-transition[2] > 1.:
+            self._end_transition()  # Abandoned/failed drawing must not retain a pair indefinitely.
         self._adopt()
         if self._held_recovery():return self._busy
         if self._busy: return True
         # Work that became due during capture should use the latest scene now,
         # rather than pay another changed-scene delay after publication.
         if deferred_due and soft != self._published: self._next = min(self._next, now)
-        if not self._busy and self._unchanged_directional(): return False
+        if not self._busy and self._unchanged_map(): return False
         if soft != self._published: self._next = min(self._next, self._changed_next)
-        if now < max(self._next, self._retry): return self._busy
+        if now < max(self._next, self._retry, getattr(self, '_capture_not_before', 0.)): return self._busy
         data = snapshot()
         frozen = self._freezer.freeze(data, context)
         if frozen is None:
@@ -387,10 +503,44 @@ class AsyncEnvironment(ToolheadEnvironment):
         self._submitted, self._busy = key, True
         return True
 
+    def read_scope(self):
+        """Capture this exact published binding, including across facade close."""
+        storage = self._storage
+        return (storage.read_scope() if not self._closed and self.available
+                and isinstance(storage, _ConsumerBindings) else nullcontext())
+
     def apply(self, shader):
         shader.setUniformValue('mpf_recoveryEnabled', 0)
         self._shaders.add(shader)
         super().apply(shader)
+        transition = getattr(self, '_transition', None)
+        shader.setUniformValue('u_environmentPreviousEnabled', int(transition is not None))
+        shader.setUniformValue('u_environmentBlend', getattr(self, '_transition_weight', 1.))
+        shader.setUniformValue('u_environmentPrevious', 3)
+        shader.setTexture(3, transition[0] if transition is not None else None)
+        if transition is not None:
+            descriptor = transition[1]
+            ground = getattr(descriptor, 'ground', None)
+            shader.setUniformValue('u_previousProbe', list(descriptor.origin))
+            shader.setUniformValue('u_previousFar', descriptor.far)
+            shader.setUniformValue('u_previousGroundEnabled', int(ground is not None))
+            shader.setUniformValue('u_previousGround', list(ground[:4]) if ground is not None else [0.,0.,0.,0.])
+            shader.setUniformValue('u_previousGroundMaxZ', ground[4] if ground is not None else 0.)
+
+    def release_bindings(self):
+        failure = None
+        try: super().release_bindings()
+        except Exception as error: failure = error
+        # Close can withdraw the transition during a draw. The active read
+        # registry still owns its binding until this independent unwind.
+        previous = {binding for binding in self._reads if binding is not self._storage}
+        transition = getattr(self, '_transition', None)
+        if transition is not None: previous.add(transition[0])
+        for binding in previous:
+            try: binding.release(3)
+            except Exception as error:
+                if failure is None: failure = error
+        if failure is not None: raise RuntimeError('Environment bindings could not be restored') from failure
 
     @property
     def recovery_ready(self):
@@ -416,6 +566,7 @@ class AsyncEnvironment(ToolheadEnvironment):
         finally: shader.setUniformValue('mpf_recoveryEnabled', 0)
 
     def defer(self):
+        self._end_transition()
         if self._closed: return
         self._selected_key = None
         self._worker.mailbox.change_generation()
@@ -432,12 +583,13 @@ class AsyncEnvironment(ToolheadEnvironment):
 
     def close(self):
         if self._closed: return
+        self._end_transition()
         self._closed = True
         self._recovery_hold = None
         self._retry_timer.stop()
         self.available, self._busy = False, False
         for shader in self._shaders:
-            for unit in (TEXTURE_UNIT, DEPTH_UNIT):
+            for unit in (TEXTURE_UNIT, DEPTH_UNIT, HIERARCHY_UNIT, FULL_HIERARCHY_UNIT, 3):
                 try: shader.setTexture(unit, None)
                 except Exception:
                     pass  # Withdraw each independent binding and always stop the producer.

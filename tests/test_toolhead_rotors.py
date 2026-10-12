@@ -2,13 +2,31 @@
 import math
 import unittest
 import numpy as np
-from mpf.geometry.ToolheadRotors import finite, rotors, speed, RotorMotion, rotation, body_axis
+from mpf.geometry.ToolheadRotors import finite, rotors, speed, RotorMotion, rotation, body_axis, swept_bounds
 from mpf.geometry.ToolheadFanReadings import FanReadings
 from mpf.geometry.ToolheadGeometry import default_mesh
 from mpf.geometry.ToolheadRotorAxis import rotation_axis
 
 
 class RotorTests(unittest.TestCase):
+    def test_swept_bounds_cover_full_rotations_and_preserve_thin_axial_extent(self):
+        rng = np.random.default_rng(190)
+        for centre in (np.zeros(3), np.array([10000., -9000., 8000.])):
+            points = centre+rng.uniform(-30, 30, (80,3))
+            for axis in ([1.,0.,0.], [0.,0.,1.], [1.,2.,-3.]):
+                axis = np.asarray(axis)/np.linalg.norm(axis)
+                low, high = swept_bounds(points, centre, axis)
+                for angle in np.linspace(-math.tau, math.tau, 257):
+                    moved = np.column_stack((points, np.ones(len(points)))) @ rotation(centre, axis, angle).T
+                    self.assertTrue(np.all(moved[:,:3] >= low))
+                    self.assertTrue(np.all(moved[:,:3] <= high))
+                    moved32 = np.column_stack((points, np.ones(len(points)))).astype(np.float32) @ rotation(centre, axis, angle).astype(np.float32).T
+                    self.assertTrue(np.all(moved32[:,:3] >= low))
+                    self.assertTrue(np.all(moved32[:,:3] <= high))
+        low, high = swept_bounds(np.array([[30.,0.,-.1],[-30.,0.,.1]]), [0,0,0], [0,0,1])
+        self.assertLess(high[2]-low[2], .201)
+        self.assertGreater(high[0]-low[0], 60.)
+
     def row(self, **kwargs):
         return dict(body=0, centre=[0,0,0], axis=[0,0,1], rpm=3000., direction=1, fan='', blur=True, **kwargs)
 

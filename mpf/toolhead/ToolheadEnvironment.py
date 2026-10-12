@@ -4,13 +4,15 @@ from __future__ import annotations
 import ctypes
 import math
 import time
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from .ToolheadGLState import preserved_state, procedure, retire_textures, flush_texture_deletions
 
 SIZE = 512
 TEXTURE_UNIT = 7
 DEPTH_UNIT = 6
+HIERARCHY_UNIT = 5
+FULL_HIERARCHY_UNIT = 4
 TURN_COMMANDS = 64
 TURN_SECONDS = .002  # CPU submission budget; a single GPU draw is indivisible.
 CHANGED_INTERVAL = .15
@@ -30,7 +32,13 @@ class ProbeDescriptor:
     far: float = 1000.
     projection: int = 0  # 0: central perspective; 1: six exterior orthographic views.
 
+    ground: tuple | None = None  # World Y and unpadded X/Z footprint.
+
     def __post_init__(self):
+        if self.ground is not None:
+            if (len(self.ground) != 5 or not all(math.isfinite(value) for value in self.ground)
+                    or self.ground[1] >= self.ground[3] or self.ground[2] >= self.ground[4]):
+                raise ValueError("Invalid environment ground plane")
         if self.projection not in (0,1): raise ValueError("Invalid environment projection")
         vectors = (self.origin, self.minimum, self.maximum)
         if any(len(vector) != 3 or not all(math.isfinite(value) for value in vector) for vector in vectors):
@@ -40,14 +48,14 @@ class ProbeDescriptor:
 
 
 class DepthSampler:
-    def __init__(self, storage): self.storage = storage
-    def bind(self, unit): self.storage._bind(unit, self.storage.front_depth)
+    def __init__(self, storage, attribute="front_depth"): self.storage, self.attribute = storage, attribute
+    def bind(self, unit): self.storage._bind(unit, getattr(self.storage, self.attribute))
     def release(self, unit): self.storage.release(unit)
 
 
 class CubeStorage:
     """Atomic colour/depth pairs and one single-sample face target."""
-    def __init__(self, gl, context, *, face_factory=None):
+    def __init__(self, gl, context, *, face_factory=None, export_depth=True):
         from PyQt6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
         self.context = context
         self.group = context.shareGroup()
@@ -58,8 +66,9 @@ class CubeStorage:
         self._copy = procedure(context, "glCopyTexSubImage2D", None, ctypes.c_uint, *([ctypes.c_int] * 7))
         self._mips = procedure(context, "glGenerateMipmap", None, ctypes.c_uint)
         self._sampler = procedure(context, "glBindSampler", None, ctypes.c_uint, ctypes.c_uint)
-        names = (ctypes.c_uint * 4)()
-        gen(4, names)
+        count = 4 if export_depth else 2
+        names = (ctypes.c_uint * count)()
+        gen(count, names)
         self.names = list(names)
         if not all(self.names):
             self.close(); raise RuntimeError("Environment texture allocation failed")
@@ -81,8 +90,13 @@ class CubeStorage:
             if not self.face.isValid(): raise RuntimeError("Environment face target unavailable")
         except Exception:
             self.close(); raise
-        self.front, self.back, self.front_depth, self.back_depth = self.names
+        self.front, self.back = self.names[:2]
+        self.front_depth, self.back_depth = self.names[2:] if export_depth else (0, 0)
+        self.front_hierarchy = 0
         self.depth = DepthSampler(self)
+        self.hierarchy = DepthSampler(self, "front_hierarchy")
+        self.full_hierarchy = DepthSampler(self, "front_full_hierarchy")
+        self.front_full_hierarchy = 0
         self._bindings = {}
 
     def begin(self, gl, clear):
@@ -98,12 +112,16 @@ class CubeStorage:
             gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
     def copy(self, gl, face):
+        # Private multisample captures resolve only after this face finishes.
+        resolve = getattr(self.face, "resolve", None)
+        if callable(resolve): resolve()
         gl.glActiveTexture(0x84C0 + TEXTURE_UNIT)
         gl.glBindTexture(0x8513, self.back)
         self._copy(0x8515 + face, 0, 0, 0, 0, 0, SIZE, SIZE)
-        gl.glActiveTexture(0x84C0 + DEPTH_UNIT)
-        gl.glBindTexture(0x8513, self.back_depth)
-        self._copy(0x8515 + face, 0, 0, 0, 0, 0, SIZE, SIZE)
+        if self.back_depth:
+            gl.glActiveTexture(0x84C0 + DEPTH_UNIT)
+            gl.glBindTexture(0x8513, self.back_depth)
+            self._copy(0x8515 + face, 0, 0, 0, 0, 0, SIZE, SIZE)
 
     def publish(self, gl):
         gl.glActiveTexture(0x84C0 + TEXTURE_UNIT)
@@ -120,11 +138,12 @@ class CubeStorage:
         from UM.View.GL.OpenGL import OpenGL
         gl = OpenGL.getInstance().getBindingsObject()
         active = int(gl.glGetIntegerv(0x84E0))
+        target = 0x0DE1 if unit == FULL_HIERARCHY_UNIT else 0x8513
         try:
             gl.glActiveTexture(0x84C0 + unit)
-            self._bindings.setdefault(unit, (int(gl.glGetIntegerv(0x8514)), int(gl.glGetIntegerv(0x8919))))
+            self._bindings.setdefault(unit, (int(gl.glGetIntegerv(0x8069 if target == 0x0DE1 else 0x8514)), int(gl.glGetIntegerv(0x8919))))
             self._sampler(unit, 0)
-            gl.glBindTexture(0x8513, name)
+            gl.glBindTexture(target, name)
         except Exception:
             self.release(unit)
             raise
@@ -140,7 +159,7 @@ class CubeStorage:
         try:
             gl.glActiveTexture(0x84C0 + unit)
             try:
-                gl.glBindTexture(0x8513, previous)
+                gl.glBindTexture(0x0DE1 if unit == FULL_HIERARCHY_UNIT else 0x8513, previous)
             finally:
                 self._sampler(unit, sampler)
         finally:
@@ -153,10 +172,11 @@ class CubeStorage:
 
 
 class ToolheadEnvironment:
-    def __init__(self, *, clock=time.monotonic, storage_factory=CubeStorage, window=None,
+    def __init__(self, *, clock=time.monotonic, storage_factory=None, window=None,
                  commands_per_turn=TURN_COMMANDS, turn_clock=time.perf_counter, diagnostic=False):
         self._window = window
-        self._clock, self._factory = clock, storage_factory
+        self._clock, self._factory = clock, storage_factory if storage_factory is not None else (
+            lambda gl, context: CubeStorage(gl, context, export_depth=False))
         self._commands_per_turn = max(1, min(TURN_COMMANDS, int(commands_per_turn)))
         self._turn_clock = turn_clock
         self._context = self._storage = None
@@ -174,12 +194,16 @@ class ToolheadEnvironment:
         self._capture_start = None
         self._capture_cpu = self._capture_turns = self._report_at = 0.
 
+    def read_scope(self):
+        """Synchronous captures and draws already share one ordered context."""
+        return nullcontext()
+
     def release_bindings(self):
         # ShaderProgram stops its texture loop at the first release exception.
         # Each owned unit must still unwind independently of that host loop.
         if self._storage is None: return
         failure = None
-        for unit in (TEXTURE_UNIT, DEPTH_UNIT):
+        for unit in (TEXTURE_UNIT, DEPTH_UNIT, HIERARCHY_UNIT, FULL_HIERARCHY_UNIT):
             try: self._storage.release(unit)
             except Exception as error:
                 if failure is None: failure = error
@@ -324,11 +348,30 @@ class ToolheadEnvironment:
         self._retry = self._clock() + .05
 
     def apply(self, shader):
+        shader.setUniformValue("u_environmentPreviousEnabled", 0)
+        shader.setTexture(3, None)
+        ground = getattr(self.descriptor, "ground", None) if self.available else None
+        shader.setUniformValue("u_environmentGroundEnabled", int(ground is not None))
+        if ground is not None:
+            shader.setUniformValue("u_environmentGround", list(ground[:4]))
+            shader.setUniformValue("u_environmentGroundMaxZ", float(ground[4]))
         shader.setUniformValue("u_environmentEnabled", int(self.available))
         shader.setUniformValue("u_environment", TEXTURE_UNIT)
         shader.setUniformValue("u_sceneDepth", DEPTH_UNIT)
+        depth_name = getattr(self._storage, "front_depth", None)
+        if depth_name is None:
+            depth_name = getattr(getattr(self._storage, "result", None), "depth", None)
+        has_depth = self.available and not (type(depth_name) is int and depth_name == 0)
+        hierarchy = has_depth and bool(getattr(self._storage, "front_hierarchy", 0))
+        shader.setUniformValue("u_depthHierarchyEnabled", int(hierarchy))
+        shader.setUniformValue("u_depthHierarchy", HIERARCHY_UNIT)
+        shader.setTexture(HIERARCHY_UNIT, self._storage.hierarchy if hierarchy else None)
+        full = has_depth and bool(getattr(self._storage, "front_full_hierarchy", 0))
+        shader.setUniformValue("u_fullHierarchyEnabled", int(full))
+        shader.setUniformValue("u_fullHierarchy", FULL_HIERARCHY_UNIT)
+        shader.setTexture(FULL_HIERARCHY_UNIT, self._storage.full_hierarchy if full else None)
         shader.setTexture(TEXTURE_UNIT, self._storage if self.available else None)
-        shader.setTexture(DEPTH_UNIT, self._storage.depth if self.available else None)
+        shader.setTexture(DEPTH_UNIT, self._storage.depth if has_depth else None)
         if self.available:
             descriptor = self.descriptor
             for name, value in (("u_probe", descriptor.origin), ("u_sceneMin", descriptor.minimum),

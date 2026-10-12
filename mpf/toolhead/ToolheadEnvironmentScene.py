@@ -163,9 +163,10 @@ class EnvironmentSnapshot:
     def prepare(self):
         """Reduce immutable mesh bounds once, in bounded render-thread turns."""
         entries = [(item["mesh"], item["transformation"]) for _shader, item, _settings in self.plates]
-        if not self.projection:
-            entries += [(geometry.mesh, transform) for geometry, transform, *_rest in self.paths]
+        # Path descriptors use the admitted, tube-padded prefix below for both
+        # projections. Scanning the complete mesh also includes future layers.
         world = []
+        ground, ground_area = None, 0.
         cached_work = 0
         for mesh, transform in entries:
             if mesh not in self.owner._mesh_bounds:
@@ -185,6 +186,14 @@ class EnvironmentSnapshot:
             centre = matrix[:3, :3] @ centre + matrix[:3, 3]
             extent = np.abs(matrix[:3, :3]) @ extent
             world.append((centre - extent, centre + extent))
+            # Use actual world plate bounds, never the padded scene floor.
+            area = float(4 * extent[0] * extent[2])
+            if (np.isfinite(centre).all() and np.isfinite(extent).all()
+                    and extent[1] <= .01 and extent[0] > 0 and extent[2] > 0
+                    and area > ground_area):
+                ground_area = area
+                ground = tuple(map(float, (centre[1], centre[0]-extent[0],
+                    centre[2]-extent[2], centre[0]+extent[0], centre[2]+extent[2])))
             cached_work += 1
             if cached_work == 32:
                 cached_work = 0
@@ -248,7 +257,7 @@ class EnvironmentSnapshot:
         reach = float(np.linalg.norm(np.maximum(abs(low - self.origin), abs(high - self.origin)))) + 1
         self.descriptor = ProbeDescriptor(self.origin, tuple(low), tuple(high),
             far=max(2., reach, float(np.max(high-low))+.22) if self.projection else max(2.,reach),
-            projection=self.projection)
+            projection=self.projection, ground=ground)
 
     def visible_chunks(self, geometry, camera, first, last, *, lights=None):
         """Reject only whole padded chunks outside one homogeneous clip plane."""
@@ -592,15 +601,24 @@ class ToolheadEnvironmentScene:
         plates.extend(heightmap_plates)
         shadow = _hard[3]
         used, paths = set(), []
+        metadata, tops = {}, {}
+        lighting = bool(getattr(node, '_lighting_enabled', False) and getattr(node, '_attached_lights', ()))
+        current_layer = int(view.getCurrentLayer())
         for mesh, raw_transform, visible in data:
             if not visible: continue
-            bounds = layer_range(mesh, view)
+            if mesh not in metadata:
+                bounds = layer_range(mesh, view)
+                top = int(sum(count for layer, count in mesh.getElementCounts().items()
+                    if layer < current_layer)) if shadow or lighting else 0
+                metadata[mesh] = bounds, top
+            bounds, top = metadata[mesh]
             if bounds is None or bounds[1] <= bounds[0]: continue
             used.add(mesh)
             if mesh not in self._geometry: self._geometry[mesh] = ToolheadPathGeometry(mesh, build_bounds=False, index_chunk=PATH_CHUNK)
             transform = Matrix(np.frombuffer(raw_transform, dtype=np.float64).reshape(4, 4))
-            before = sum(count for layer, count in mesh.getElementCounts().items() if layer < int(view.getCurrentLayer())) if shadow else 0
-            paths.append((self._geometry[mesh], transform, bounds[:2], bounds[2], int(before)))
+            geometry = self._geometry[mesh]
+            paths.append((geometry, transform, bounds[:2], bounds[2], top if shadow else 0))
+            if lighting: tops[id(geometry)] = int(max(bounds[0], top))
         self._geometry = {key: value for key, value in self._geometry.items() if key in used}
         self._path_bounds = {key: value for key, value in self._path_bounds.items() if key in used}
         self._path_edges = {key: value for key, value in self._path_edges.items() if key in used}
@@ -611,13 +629,10 @@ class ToolheadEnvironmentScene:
         point = node.render_position()
         origin = np.array((point.x, point.y, point.z)) + np.mean(node._model_bounds, axis=0)
         snapshot = EnvironmentSnapshot(self, origin, camera.getCameraLightPosition(), plates, paths,
-                                   uniforms, bool(view.getCompatibilityMode()), projection=1)
-        if getattr(node, '_lighting_enabled', False) and getattr(node, '_attached_lights', ()):
+                                   uniforms, bool(view.getCompatibilityMode()), projection=0)
+        if lighting:
             node.apply_attached_lights(SimpleNamespace(setUniformValue=lambda name, value: snapshot.lighting.__setitem__(name, deepcopy(value))))
             snapshot.light_effects = node.scene_lighting_effects()
-            for geometry, _transform, bounds, _partial, _shadow in paths:
-                # Native LayerData counts are NumPy integers. Qt's scalar
-                # uniform overload accepts Python int only, including after
-                # ShaderProgram defers this upload until the next bind.
-                snapshot.path_top[id(geometry)] = int(max(bounds[0], sum(count for layer, count in geometry.mesh.getElementCounts().items() if layer < int(view.getCurrentLayer()))))
+            # Values are native Python ints before Qt's deferred upload.
+            snapshot.path_top.update(tops)
         return snapshot

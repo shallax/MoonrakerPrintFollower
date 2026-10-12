@@ -102,6 +102,145 @@ class EnvironmentGLTests(unittest.TestCase):
         gl.glActiveTexture(0x84C0)
         self.assertEqual(int(gl.glGetError()), 0)
 
+    def test_multisample_face_preserves_partial_turns_and_nearest_coverage(self):
+        if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
+        from PyQt6.QtOpenGL import QOpenGLShader, QOpenGLShaderProgram
+        from mpf.toolhead.ToolheadCaptureBuffers import CaptureFace
+        gl=self.gl;face=CaptureFace(gl,self.context,32,32,samples=4)
+        if face.samples != 4:
+            face.close();self.skipTest('Four sample renderbuffers unavailable')
+        program=QOpenGLShaderProgram();vao=QOpenGLVertexArrayObject()
+        self.assertTrue(program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Vertex,
+            '#version 410\nuniform float z;void main(){vec2 p[3]=vec2[3](vec2(-1.,-1.),vec2(1.,-1.),vec2(-1.,.97));gl_Position=vec4(p[gl_VertexID],z,1.);}'))
+        self.assertTrue(program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Fragment,
+            '#version 410\nuniform float red;out vec4 colour;void main(){colour=vec4(red,1.-red,0.,1.);}'))
+        self.assertTrue(program.link());self.assertTrue(vao.create())
+        pixels=(ctypes.c_ubyte*(32*32*4))()
+        read=procedure(self.context,'glReadPixels',None,*([ctypes.c_int]*4),ctypes.c_uint,ctypes.c_uint,ctypes.c_void_p)
+        try:
+            with preserved_state(gl,self.context):
+                face.bind();gl.glViewport(0,0,32,32);gl.glDisable(gl.GL_SCISSOR_TEST)
+                gl.glColorMask(True,True,True,True);gl.glDepthMask(True)
+                gl.glClearColor(0,0,0,0);gl.glClearDepth(1.)
+                gl.glClear(gl.GL_COLOR_BUFFER_BIT|gl.GL_DEPTH_BUFFER_BIT)
+                gl.glEnable(gl.GL_DEPTH_TEST);gl.glDepthFunc(gl.GL_LESS)
+                gl.glDisable(gl.GL_BLEND);gl.glDisable(gl.GL_CULL_FACE)
+                program.bind();vao.bind()
+                program.setUniformValue('z',-.5);program.setUniformValue('red',1.)
+                gl.glDrawArrays(gl.GL_TRIANGLES,0,3)
+                face.resolve();read(0,0,32,32,0x1908,0x1401,pixels)
+                first=bytes(pixels)
+                self.assertTrue(any(0<value<255 for value in first[0::4]))
+                self.assertEqual(set(first[1::4]),{0})
+                # A later command resumes the same MS depth/colour, without a clear.
+                face.bind();program.setUniformValue('z',.5);program.setUniformValue('red',0.)
+                gl.glDrawArrays(gl.GL_TRIANGLES,0,3)
+                face.resolve();read(0,0,32,32,0x1908,0x1401,pixels)
+                self.assertEqual(bytes(pixels),first)
+                self.assertEqual(face.retained_bytes,32*32*40)
+                vao.release();program.release()
+                self.assertEqual(int(gl.glGetError()),0)
+        finally:face.close();vao.destroy();program.removeAllShaders()
+        self.assertEqual((face.ms_framebuffer,face.ms_colour,face.ms_depth),(0,0,0))
+
+    def test_multisample_reduces_translated_subpixel_line_coverage_variation(self):
+        """A 0.375px line must vary less across 16 phases than 1x 0/1 snapping."""
+        if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
+        from PyQt6.QtOpenGL import QOpenGLShader, QOpenGLShaderProgram
+        from mpf.toolhead.ToolheadCaptureBuffers import CaptureFace
+        gl=self.gl
+        faces=[CaptureFace(gl,self.context,32,32,samples=count) for count in (0,4)]
+        if faces[1].samples!=4:
+            for face in faces:face.close()
+            self.skipTest('Four sample renderbuffers unavailable')
+        program=QOpenGLShaderProgram();vao=QOpenGLVertexArrayObject()
+        self.assertTrue(program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Vertex,
+            '#version 410\nuniform float phase;void main(){vec2 p[6]=vec2[6](vec2(0,0),vec2(1,0),vec2(0,1),vec2(0,1),vec2(1,0),vec2(1,1));vec2 q=p[gl_VertexID];gl_Position=vec4((15.+phase+q.x*.375)/16.-1.,q.y*2.-1.,0.,1.);}'))
+        self.assertTrue(program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Fragment,
+            '#version 410\nout vec4 colour;void main(){colour=vec4(1.);}'))
+        self.assertTrue(program.link());self.assertTrue(vao.create())
+        pixels=(ctypes.c_ubyte*(32*32*4))()
+        read=procedure(self.context,'glReadPixels',None,*([ctypes.c_int]*4),ctypes.c_uint,ctypes.c_uint,ctypes.c_void_p)
+        coverage=[]
+        try:
+            with preserved_state(gl,self.context):
+                gl.glViewport(0,0,32,32);gl.glDisable(gl.GL_SCISSOR_TEST)
+                gl.glDisable(gl.GL_DEPTH_TEST);gl.glDisable(gl.GL_BLEND);gl.glDisable(gl.GL_CULL_FACE)
+                gl.glColorMask(True,True,True,True);gl.glClearColor(0,0,0,0)
+                program.bind();vao.bind()
+                for face in faces:
+                    phases=[]
+                    for phase in range(16):
+                        face.bind();gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+                        program.setUniformValue('phase',phase/16.)
+                        gl.glDrawArrays(gl.GL_TRIANGLES,0,6)
+                        face.resolve();read(0,0,32,32,0x1908,0x1401,pixels)
+                        phases.append(sum(bytes(pixels)[0::4])/(255.*32))
+                    coverage.append(phases)
+                vao.release();program.release()
+                self.assertEqual(int(gl.glGetError()),0)
+            single,multi=coverage
+            self.assertEqual((min(single),max(single)),(0.,1.))
+            self.assertLess(max(multi)-min(multi),.8*(max(single)-min(single)),coverage)
+        finally:
+            for face in faces:face.close()
+            vao.destroy();program.removeAllShaders()
+
+    def test_multisample_allocation_failure_retains_single_target(self):
+        if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
+        from unittest.mock import patch
+        from mpf.toolhead import ToolheadCaptureBuffers as module
+        original=module.procedure
+        def fail(ctx,name,*signature):
+            if name=='glRenderbufferStorageMultisample':
+                return lambda *args: (_ for _ in ()).throw(RuntimeError('allocation failed'))
+            return original(ctx,name,*signature)
+        with patch.object(module,'procedure',side_effect=fail):
+            face=module.CaptureFace(self.gl,self.context,8,8,samples=4)
+        try:
+            self.assertTrue(face.isValid());self.assertTrue(face.bind())
+            self.assertEqual((face.samples,face.ms_framebuffer,face.ms_colour,face.ms_depth),(0,0,0,0))
+            self.assertEqual(face.retained_bytes,8*8*8)
+            face.resolve()
+            self.assertEqual(int(self.gl.glGetError()),0)
+        finally:face.close()
+
+    def test_multisample_caps_mismatch_and_uncertain_cleanup(self):
+        if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
+        from unittest.mock import Mock, patch
+        from mpf.toolhead import ToolheadCaptureBuffers as module
+        from mpf.toolhead.ToolheadGLState import GeometryUncertain
+        gl=Mock(wraps=self.gl)
+        gl.glGetIntegerv.side_effect=lambda key: 2 if key==0x8D57 else self.gl.glGetIntegerv(key)
+        face=module.CaptureFace(gl,self.context,8,8,samples=4)
+        self.assertEqual(face.samples,0);face.close()
+        if int(self.gl.glGetIntegerv(0x8D57))<4:return
+        original=module.procedure
+        def mismatch(ctx,name,*signature):
+            if name=='glGetRenderbufferParameteriv':
+                return lambda target,key,value: setattr(value._obj,'value',2)
+            return original(ctx,name,*signature)
+        with patch.object(module,'procedure',side_effect=mismatch):
+            face=module.CaptureFace(self.gl,self.context,8,8,samples=4)
+        self.assertTrue(face.isValid());self.assertEqual(face.samples,0)
+        self.assertEqual((face.ms_framebuffer,face.ms_colour,face.ms_depth),(0,0,0));face.close()
+        def uncertain(ctx,name,*signature):
+            if name=='glRenderbufferStorageMultisample' or name=='glDeleteRenderbuffers':
+                return lambda *args: (_ for _ in ()).throw(RuntimeError('injected failure'))
+            return original(ctx,name,*signature)
+        try:
+            with patch.object(module,'procedure',side_effect=uncertain):
+                with self.assertRaises(GeometryUncertain):
+                    module.CaptureFace(self.gl,self.context,8,8,samples=4)
+            retained=module._uncertain_faces[-1]
+            self.assertNotEqual(retained.ms_colour,0)
+            self.assertNotEqual(retained.framebuffer,0)
+            self.assertEqual(retained.retained_bytes,8*8*40)
+        finally:
+            for retained in module._uncertain_faces[:]:
+                retained.close();module._uncertain_faces.remove(retained)
+        self.assertEqual(int(self.gl.glGetError()),0)
+
     def test_private_capture_allocation_failures_clean_partial_resources(self):
         if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
         from unittest.mock import patch
@@ -282,6 +421,37 @@ class EnvironmentGLTests(unittest.TestCase):
             self.assertEqual(int(gl.glGetIntegerv(0x8CA7)), previous)
             self.assertEqual(int(gl.glGetError()), 0)
 
+    def test_colour_only_capture_still_selects_nearest_surface_colour(self):
+        if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
+        from PyQt6.QtOpenGL import QOpenGLShader, QOpenGLShaderProgram
+        gl=self.gl;storage=CubeStorage(gl,self.context,export_depth=False)
+        program=QOpenGLShaderProgram();vao=QOpenGLVertexArrayObject()
+        self.assertTrue(program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Vertex,
+            '#version 410\nuniform float z;void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-1.,z,1.);}'))
+        self.assertTrue(program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Fragment,
+            '#version 410\nuniform float red;out vec4 colour;void main(){colour=vec4(red,1.-red,0.,1.);}'))
+        self.assertTrue(program.link());self.assertTrue(vao.create())
+        get=procedure(self.context,'glGetTexImage',None,ctypes.c_uint,ctypes.c_int,ctypes.c_uint,ctypes.c_uint,ctypes.c_void_p)
+        pixels=(ctypes.c_ubyte*(SIZE*SIZE*4))()
+        try:
+            with preserved_state(gl,self.context):
+                for face in range(6):
+                    storage.begin(gl,True);gl.glEnable(gl.GL_DEPTH_TEST);gl.glDepthFunc(gl.GL_LESS)
+                    gl.glDisable(gl.GL_BLEND);gl.glDisable(gl.GL_CULL_FACE)
+                    program.bind();vao.bind()
+                    for z,red in ((-.5,1.),(.5,0.)):
+                        program.setUniformValue('z',z);program.setUniformValue('red',red)
+                        gl.glDrawArrays(gl.GL_TRIANGLES,0,3)
+                    vao.release();program.release();storage.copy(gl,face)
+                storage.publish(gl)
+                self.assertEqual((len(storage.names),storage.front_depth),(2,0))
+                gl.glBindTexture(0x8513,storage.front)
+                for face in range(6):
+                    get(0x8515+face,0,0x1908,0x1401,pixels)
+                    self.assertEqual(bytes(pixels),bytes((255,0,0,255))*(SIZE*SIZE))
+                self.assertEqual(int(gl.glGetError()),0)
+        finally:storage.close();vao.destroy();program.removeAllShaders()
+
     def test_worker_storage_selects_physical_pair_and_retires_all_names(self):
         if not self.available: self.skipTest('Offscreen Qt OpenGL unavailable')
         from unittest.mock import patch
@@ -392,7 +562,7 @@ class EnvironmentGLTests(unittest.TestCase):
         gl.glViewport(1, 2, 8, 9)
         gl.glActiveTexture(0x84C3)
         gl.glEnable(gl.GL_SCISSOR_TEST); gl.glScissor(2, 3, 4, 5)
-        environment = ToolheadEnvironment(commands_per_turn=1)
+        environment = ToolheadEnvironment(commands_per_turn=1, storage_factory=lambda gl, context: CubeStorage(gl, context, export_depth=True))
         self.addCleanup(environment.close)
         colours = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0), (1, 0, 1), (0, 1, 1)]
         def commands(face):
@@ -447,3 +617,34 @@ class EnvironmentGLTests(unittest.TestCase):
         self.assertEqual(environment.descriptor,replacement.descriptor)
         self.assertNotEqual((environment._storage.front,environment._storage.front_depth),old_names)
         self.assertEqual(int(gl.glGetError()),0)
+
+class CaptureFaceFailureTests(unittest.TestCase):
+    def test_optional_accounting_tracks_fallback_and_uncertain_native_owners(self):
+        from unittest.mock import Mock, patch
+        from mpf.toolhead import ToolheadCaptureBuffers as module
+        from mpf.toolhead.ToolheadGLState import GeometryUncertain
+        gl=Mock();gl.glGetIntegerv.return_value=4;gl.glGetError.return_value=0
+        for uncertain in (False,True):
+            next_name=[0]
+            def resolve(context,name,*signature,uncertain=uncertain,next_name=next_name):
+                if name.startswith('glGen'):
+                    def generate(count,pointer):
+                        next_name[0]+=1;pointer._obj.value=next_name[0]
+                    return generate
+                if name=='glCheckFramebufferStatus':return lambda *args:0x8CD5
+                if name=='glRenderbufferStorageMultisample' or (uncertain and name=='glDeleteRenderbuffers'):
+                    def fail(*args):raise RuntimeError('injected allocation/cleanup failure')
+                    return fail
+                return lambda *args:None
+            with patch.object(module,'procedure',side_effect=resolve):
+                if uncertain:
+                    with self.assertRaises(GeometryUncertain):module.CaptureFace(gl,object(),512,512,samples=4)
+                    face=module._uncertain_faces.pop()
+                    self.assertEqual(face.retained_bytes,10*1024*1024)
+                    self.assertNotEqual(face.ms_colour,0)
+                else:
+                    face=module.CaptureFace(gl,object(),512,512,samples=4)
+                    self.assertEqual(face.retained_bytes,2*1024*1024)
+                    self.assertEqual(face.samples,0)
+            with patch.object(module,'procedure',return_value=lambda *args:None):face.close()
+            self.assertEqual(face.retained_bytes,0)

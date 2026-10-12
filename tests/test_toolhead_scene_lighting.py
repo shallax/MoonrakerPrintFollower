@@ -38,6 +38,8 @@ class SceneLightingTests(unittest.TestCase):
         shader = Mock()
         self.matrix_factory = Mock(side_effect=lambda *_: Mock())
         self.gl = Mock(GL_DEPTH_BUFFER_BIT=256, GL_COLOR_BUFFER_BIT=16384, GL_LEQUAL=515, GL_LESS=513, GL_BLEND=3042)
+        self.gl.glGetIntegerv.side_effect = lambda name: (0,0,800,600) if name in (0x0BA2,0x0C10) else 0
+        self.gl.glIsEnabled.return_value = False
         opengl = SimpleNamespace(createShaderProgram=lambda *_: shader, getBindingsObject=lambda: self.gl)
         surfaces = {
             "UM.Math.Matrix": SimpleNamespace(Matrix=self.matrix_factory),
@@ -56,7 +58,7 @@ class SceneLightingTests(unittest.TestCase):
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
         self.lighting = self.module.ToolheadSceneLighting()
-        self.node = SimpleNamespace(apply_attached_lights=Mock(), light_dimensions=lambda: (250, 250, 250),
+        self.node = SimpleNamespace(apply_attached_lights=Mock(), attached_light_uniforms=Mock(return_value={}), light_dimensions=lambda: (250, 250, 250),
             scene_lighting_effects=lambda: (True, True), scene_lighting_signature=lambda: (),
             render_transformation=lambda: self.transform)
         # These geometry/depth contracts bypass the independent image cache.
@@ -76,6 +78,21 @@ class SceneLightingTests(unittest.TestCase):
         self.lighting.draw(self.node, self.renderer, self.camera, None, self.root)
         return [batch for batch in Batch.rendered if batch.options.get("blend_mode") == 2]
 
+    def test_composition_scissor_is_viewport_local_padded_and_conservative(self):
+        matrix=SimpleNamespace(getData=lambda:np.eye(4))
+        camera=SimpleNamespace(getInverseWorldTransformation=lambda:matrix,getProjectionMatrix=lambda:matrix)
+        rect=self.module.composition_scissor(camera,[((0,0,0),.1)],(100,200,800,600),.2)
+        x,y,w,h=rect
+        self.assertLessEqual(x,280);self.assertGreaterEqual(x+w,520)
+        self.assertLessEqual(y,210);self.assertGreaterEqual(y+h,390)
+        self.assertEqual(rect,self.module.composition_scissor(camera,[((0,0,0),.1)],(0,0,800,600),.2))
+        self.assertEqual(self.module.composition_scissor(camera,[((10,0,0),.1)],(100,200,800,600)),(0,0,0,0))
+        self.assertIsNone(self.module.composition_scissor(camera,[((float('nan'),0,0),1)],(0,0,800,600)))
+        self.assertIsNone(self.module.composition_scissor(camera,[((0,0,0),1)],(0,0,800,600),float('nan')))
+        behind=np.eye(4);behind[3,3]=-1
+        camera.getProjectionMatrix=lambda:SimpleNamespace(getData=lambda:behind)
+        self.assertEqual(self.module.composition_scissor(camera,[((0,0,0),.1)],(0,0,800,600)),(0,0,800,600))
+
     def test_cached_redraws_keep_plate_receivers_after_renderer_clears_batches(self):
         full = self.draw()
         self.assertEqual(len(full), 1)
@@ -86,7 +103,7 @@ class SceneLightingTests(unittest.TestCase):
             self.assertEqual(len(cached), 1)
             self.assertIs(cached[0].items[0]["mesh"], mesh)
             self.assertIs(cached[0].items[0]["transformation"], self.transform)
-        self.node.apply_attached_lights.assert_called()
+        self.node.attached_light_uniforms.assert_called()
 
     def test_full_frame_replaces_receivers_and_scene_change_invalidates_retained_geometry(self):
         self.draw()
@@ -124,6 +141,72 @@ class SceneLightingTests(unittest.TestCase):
             self.draw()
             self.draw()
             self.assertEqual(scan.call_count, 1)
+
+    def test_cached_image_and_moving_lights_reuse_triangle_descriptors(self):
+        self.lighting._frame_cache=SimpleNamespace(draw=Mock())
+        created=[]
+        original=Batch.__init__
+        def construct(batch,*args,**kwargs):
+            created.append(batch);original(batch,*args,**kwargs)
+        with patch.object(Batch,'__init__',construct):
+            self.draw()
+            self.assertEqual(len(created),1)
+            first=created[0]
+            self.batches.clear()
+            for phase in range(4):
+                self.node.scene_lighting_signature=lambda phase=phase:('pose',phase)
+                self.draw()
+            self.assertEqual(created,[first])
+            self.assertEqual(list(self.lighting._triangle_batches.values()),[first])
+
+    def test_triangle_cache_distinguishes_mutations_wrappers_shaders_and_occurrences(self):
+        shader=Mock();mesh=Mesh();data=np.eye(4)
+        transform=SimpleNamespace(getData=lambda:data)
+        first=self.lighting._batch(shader,transform,mesh)
+        self.assertIs(first,self.lighting._batch(shader,transform,mesh))
+        data[0,3]=12
+        moved=self.lighting._batch(shader,transform,mesh)
+        self.assertIsNot(first,moved)
+        replacement_data=data.copy()
+        replacement=SimpleNamespace(getData=lambda:replacement_data)
+        second=self.lighting._batch(shader,replacement,mesh)
+        self.assertIsNot(moved,second)
+        data[0,3]=99
+        self.assertEqual(second.items[0]['transformation'].getData()[0,3],12)
+        self.assertIs(second,self.lighting._batch(shader,replacement,mesh))
+        self.assertIsNot(second,self.lighting._batch(Mock(),replacement,mesh))
+        another=SimpleNamespace(getData=lambda:np.diag([2.,3.,4.,1.]))
+        third=self.lighting._batch(shader,another,mesh)
+        self.assertIsNot(third.items[0]['normal_transformation'],second.items[0]['normal_transformation'])
+        self.assertIs(second,self.lighting._batch(shader,replacement,mesh))
+        self.assertIsNot(self.lighting._batch(shader,replacement,mesh,lines=True,bounds=(0,2)),
+                         self.lighting._batch(shader,replacement,mesh,lines=True,bounds=(0,2)))
+
+    def test_triangle_cache_prunes_old_meshes_transforms_and_scene_ownership(self):
+        self.lighting._frame_cache=SimpleNamespace(draw=Mock())
+        self.draw();first=list(self.lighting._triangle_batches.values())[0]
+        data=np.eye(4);self.transform.getData=lambda:data
+        for phase in range(20):
+            data[0,3]=phase
+            self.draw()
+            self.assertEqual(len(self.lighting._triangle_batches),1)
+        replacement=Batch(self.native.shader,type=1)
+        replacement.addItem(self.transform,Mesh(np.array([[0,0,0],[1,2,0],[0,0,1]])))
+        self.batches[:]=[replacement];self.draw()
+        self.assertEqual(len(self.lighting._triangle_batches),1)
+        self.assertNotIn(first,self.lighting._triangle_batches.values())
+        self.root=object();self.batches.clear();self.draw()
+        self.assertEqual(self.lighting._triangle_batches,{})
+        # SceneNode replaces the entire lighting owner on GL context changes.
+        fresh=self.module.ToolheadSceneLighting()
+        self.assertEqual(fresh._triangle_batches,{})
+
+    def test_triangle_descriptor_retention_has_a_fixed_cap(self):
+        shader=Mock();mesh=Mesh()
+        for phase in range(300):
+            data=np.eye(4);data[0,3]=phase
+            self.lighting._batch(shader,SimpleNamespace(getData=lambda data=data:data),mesh)
+        self.assertEqual(len(self.lighting._triangle_batches),256)
 
     def test_normal_matrix_is_reused_until_receiver_transform_changes(self):
         first = self.draw()[0].items[0]["normal_transformation"]
@@ -487,6 +570,51 @@ class SceneLightingTests(unittest.TestCase):
         shaders.assert_called_once_with(False)
         self.assertEqual(geometry.ranges.call_count, len(images))
 
+    def test_image_hits_skip_uniform_delivery_and_misses_deliver_snapshot_before_both_paths(self):
+        data, child, view, geometry = self.path_fixture()
+        self.module.OpenGLContext.isLegacyOpenGL.return_value = False
+        path_shader = Mock()
+        opacity = np.array([.2, .8], dtype=np.float32)
+        view.getExtruderOpacities.return_value = opacity
+        lights = {"u_lightOpacity": .4, "u_attachedPosition[0]": [1., 2., 3.]}
+        # Node owns these values and returns fresh lists on each invocation.
+        self.node.attached_light_uniforms.side_effect = lambda: {
+            name: list(value) if isinstance(value,list) else value for name,value in lights.items()}
+        state_keys = []
+        should_render = [False]
+        def image_draw(gl, camera, bounds, transform, state, render, **options):
+            state_keys.append(state)
+            if should_render[0]:
+                # Delivery uses captured values, not mutable getter results.
+                opacity[:] = .9
+                lights["u_attachedPosition[0]"][0] = 99.
+                render(camera)
+        self.lighting._frame_cache = SimpleNamespace(draw=image_draw)
+        with patch.object(self.module, 'ToolheadPathGeometry', return_value=geometry), \
+                patch.object(self.module, 'create_path_shader', return_value=path_shader), \
+                patch.object(self.lighting, '_draw_deferred') as deferred, \
+                patch.object(self.lighting, '_draw_lighting') as forward:
+            self.lighting.draw(self.node, self.renderer, self.camera, view, self.root)
+            self.lighting._mesh_shader.setUniformValue.assert_not_called()
+            path_shader.setUniformValue.assert_not_called()
+            deferred.assert_not_called(); forward.assert_not_called()
+            should_render[0] = True
+            for fallback in (False, True):
+                self.lighting._surface_failed = False
+                opacity[:] = [.3, .7] if fallback else [.2, .8]
+                lights["u_attachedPosition[0]"][0] = 4. if fallback else 1.
+                expected_opacity = opacity.copy()
+                expected_position = list(lights["u_attachedPosition[0]"])
+                path_shader.reset_mock()
+                deferred.side_effect = RuntimeError('deferred refused') if fallback else None
+                self.lighting.draw(self.node, self.renderer, self.camera, view, self.root)
+                delivered = dict(call.args for call in path_shader.setUniformValue.call_args_list)
+                np.testing.assert_array_equal(delivered['u_extruder_opacity'], expected_opacity)
+                self.assertEqual(delivered['u_attachedPosition[0]'], expected_position)
+                self.assertIn('u_viewDirection', delivered)
+                self.assertEqual(forward.call_count, int(fallback))
+            self.assertNotEqual(state_keys[-2], state_keys[-1])
+
     def test_unavailable_mesh_shader_skips_receivers_and_frame_work(self):
         module = sys.modules['UM.View.GL.OpenGL']
         with patch.object(module.OpenGL, 'getInstance', return_value=SimpleNamespace(createShaderProgram=lambda *_: None)):
@@ -511,9 +639,9 @@ class SceneLightingTests(unittest.TestCase):
             copy_depth = Mock()
             shade = Mock()
             owned_target = object()
-            def try_seed_depth(cache, callback):
+            def try_seed_depth(cache, callback, **_options):
                 return False if callback is None else callback(cache.owned_target)
-            def prepare(cache, gl, key, completed, rebuild, append):
+            def prepare(cache, gl, key, completed, rebuild, append, **_options):
                 if key != cache.key or cache.completed is None or any(new < old for old, new in zip(cache.completed, completed, strict=True)):
                     cache.rebuilds += 1; rebuild()
                 elif completed != cache.completed:
@@ -526,6 +654,14 @@ class SceneLightingTests(unittest.TestCase):
         for context in patches:
             context.start(); self.addCleanup(context.stop)
         return data, child, view, geometry, cache, captures, surface_shader, mesh_shader
+
+    def test_offscreen_lights_do_not_allocate_or_redraw_surface_storage(self):
+        _data, _child, view, _geometry, cache, _captures, _surface, _mesh = self.deferred_fixture()
+        with patch.object(self.module, 'composition_scissor', return_value=(0,0,0,0)):
+            self.lighting.draw(self.node, self.renderer, self.camera, view, self.root)
+        self.assertEqual(cache.rebuilds, 0)
+        self.assertEqual(cache.appends, 0)
+        cache.shade.assert_not_called()
 
     def test_deferred_surface_geometry_is_independent_of_light_motion_and_appends_only_new_prefix(self):
         data, child, view, geometry, cache, captures, surface_shader, mesh_shader = self.deferred_fixture()
@@ -569,6 +705,54 @@ class SceneLightingTests(unittest.TestCase):
         self.assertEqual(cache.rebuilds, 4)
         self.assertNotIn("models_available", cache.shade.call_args.kwargs)
         self.assertEqual(cache.shade.call_count, 4)
+
+    def test_transient_prefix_clip_leaves_retained_build_and_clears_full_size(self):
+        data, child, view, geometry, cache, captures, surface_shader, mesh_shader = self.deferred_fixture()
+        data.getLayer.return_value=SimpleNamespace(polygons=[SimpleNamespace(data=np.array([[0,0,0],[1,0,0],[2,0,0],[3,0,0]]))])
+        view.getCurrentPath.return_value=2.25
+        state={'enabled':True,'box':(1,2,3,4)}
+        self.gl.glGetIntegerv.side_effect=lambda name:(13,17,800,600) if name==0x0BA2 else state['box'] if name==0x0C10 else 0
+        self.gl.glIsEnabled.side_effect=lambda name:state['enabled']
+        self.gl.glEnable.side_effect=lambda flag:state.update(enabled=True) if flag==0x0C11 else None
+        self.gl.glDisable.side_effect=lambda flag:state.update(enabled=False) if flag==0x0C11 else None
+        self.gl.glScissor.side_effect=lambda *box:state.update(box=box)
+        seen=[];clears=[]
+        geometry.render.side_effect=lambda shader,*args:seen.append((shader is surface_shader,state['enabled'],state['box']))
+        self.gl.glClear.side_effect=lambda mask:clears.append(state['enabled'])
+        cache.shade.side_effect=lambda *args,**kwargs:self.gl.glDisable(0x0C11)
+        for rect,expected in (((10,20,30,40),(True,(23,37,30,40))),
+                              (None,(False,None)),((0,0,800,600),(True,(13,17,800,600))),
+                              ((0,0,0,0),None)):
+            with self.subTest(rect=rect), patch.object(self.module,'composition_scissor',return_value=rect):
+                seen.clear();clears.clear()
+                self.lighting.draw(self.node,self.renderer,self.camera,view,self.root)
+                retained=[row for row in seen if row[0]]
+                self.assertTrue(all(not row[1] for row in retained))
+                transient=[row for row in seen if not row[0]]
+                if expected is None:self.assertEqual(transient,[])
+                else:
+                    self.assertEqual(len(transient),2)
+                    self.assertTrue(all(row[1]==expected[0] for row in transient))
+                    if expected[0]:self.assertTrue(all(row[2]==expected[1] for row in transient))
+                if expected is None:self.assertEqual(clears,[])
+                else:self.assertTrue(clears);self.assertFalse(any(clears))
+                self.assertEqual(state,{'enabled':True,'box':(1,2,3,4)})
+        self.assertEqual(cache.rebuilds,1)
+
+    def test_transient_failure_clears_full_depth_then_restores_caller_clip(self):
+        data, child, view, geometry, cache, captures, surface_shader, mesh_shader = self.deferred_fixture()
+        self.gl.glGetIntegerv.side_effect=lambda name:(0,0,800,600) if name==0x0BA2 else (4,5,6,7)
+        self.gl.glIsEnabled.return_value=True
+        cache.shade.side_effect=RuntimeError('shade failed')
+        # Call the deferred implementation without its higher-level fallback,
+        # so its exception boundary is checked independently.
+        with patch.object(self.lighting,'_draw_with_surfaces',lambda *args:self.lighting._draw_deferred(*args[:5],*args[6:])):
+            with self.assertRaisesRegex(RuntimeError,'shade failed'):
+                self.lighting.draw(self.node,self.renderer,self.camera,view,self.root)
+        calls=self.gl.method_calls
+        clear_index=max(i for i,call in enumerate(calls) if call[0]=='glClear')
+        self.assertIn(('glDisable',(0x0C11,),{}),calls[:clear_index])
+        self.assertEqual(calls[-2:], [('glScissor',(4,5,6,7),{}),('glEnable',(0x0C11,),{})])
 
     def test_deferred_fraction_stays_transient_and_model_toggle_preserves_occlusion_without_colour(self):
         data, child, view, geometry, cache, captures, surface_shader, mesh_shader = self.deferred_fixture()

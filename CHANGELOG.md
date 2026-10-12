@@ -4,10 +4,49 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 5.3.0
 
-- Capture reflections from six exterior directional views to improve surface
-  coverage. Traverse every crossed depth texel, pair opposite views, and use
-  existing colour mipmaps for roughness without repeated depth searches.
-- Keep unchanged reflection captures asleep. Reuse path index uploads and
+- Keep full-resolution lighting surface storage within a padded illuminated
+  region, reuse compatible cropped depth, and release inactive rendering caches.
+
+- Share qualified native print-path vertex buffers across simulation, lighting
+  and reflection captures, avoiding an extra whole-print upload. Reuse the
+  simulation index buffer for its instanced draw instead of duplicating it.
+- Transition between complete reflection captures while the toolhead moves.
+- Antialias reflection capture geometry before publishing complete maps,
+  reducing subpixel coverage changes in thin paths.
+- Preserve reflection detail with a sharper roughness mip curve. Reproject
+  detected flat-bed reflections as the head moves between captures, with
+  gradual fallback at bed edges and grazing angles.
+
+- Keep smooth tracking responsive when telemetry arrives between animation ticks,
+  and catch up to observed motion after delayed frames without advancing beyond it.
+
+- Reuse bounded intermediate shutter targets across matching crop sizes, and
+  shorten central reflection-map refresh delays while retaining capture backpressure.
+
+- Restrict scene-lighting composition and depth copies to the illuminated area,
+  and reuse common toolhead material and lighting values within each frame.
+
+- Reuse identical-sized toolhead render targets as the head moves, with a
+  bounded cache, including ordinary multisample draw/resolve pairs. Clear and
+  redraw reused targets with the current scene depth.
+- Sample complete central colour maps directly and omit unused depth exports
+  and search maps. Keep local depth testing, initialized backgrounds, and all
+  six faces plus roughness mipmaps complete before replacing reflections.
+- Reuse receiver geometry batches and parsed local light settings. Deliver
+  scene-lighting uniforms only when its cached image needs a redraw, and clip
+  transient path lighting to the illuminated region.
+- Fan animation reuses the completed image outside the rotating parts instead
+  of repeatedly shading stationary glass, including between blur samples.
+- Yield GPU time between changing reflection captures. Keep large-view fan
+  rotation from repeatedly rebuilding the cached static toolhead when blur
+  exceeds its memory budget.
+- Blend ordinary foreground transparency directly into the head, removing an
+  intermediate image and colour copy while preserving its coverage and depth.
+- Capture reflections from six perspective views surrounding the toolhead
+  centre, with complete background coverage and colour mipmaps for roughness.
+- Reuse bounded exact-format foreground targets across changing toolhead crops,
+  clearing colour and reseeding current depth on every draw.
+- Keep unchanged reflection captures asleep. Reuse per-snapshot path ranges, path index uploads and
   private shader uniforms, and avoid redundant scene scans and visibility work.
 - Reuse capture normal matrices and avoid general matrix solves for animated
   fan rotations, reducing repeated CPU work without changing material shading.

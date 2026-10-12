@@ -32,6 +32,60 @@ class DeferredSurfaceTests(unittest.TestCase):
     def prepare(self, completed=(10, 20), key='camera'):
         self.cache.prepare(self.gl, key, completed, self.rebuild, self.append)
 
+    def test_region_reuses_motion_grows_on_escape_and_rebuilds_camera_changes(self):
+        self.viewport = (8, 12, 2400, 1600)
+        def capture(rect, key='camera', completed=(10, 20)):
+            self.cache.prepare(self.gl, key, completed, self.rebuild, self.append, rect=rect)
+        capture((800, 600, 200, 200))
+        first = self.cache._region
+        self.assertLess(self.cache._size[0]*self.cache._size[1], 2400*1600//2)
+        self.gl.glViewport.assert_any_call(-first[0], -first[1], 2400, 1600)
+        capture((820, 620, 200, 200))
+        self.assertEqual(self.cache._region, first)
+        self.rebuild.assert_called_once()
+        capture((820, 620, 200, 200), completed=(12, 20))
+        self.append.assert_called_once_with((10, 20), (12, 20))
+        capture((1800, 1000, 200, 200))
+        self.assertEqual(self.rebuild.call_count, 2)
+        self.assertNotEqual(self.cache._region, first)
+        capture((800, 600, 200, 200), key='moved camera')
+        self.assertEqual(self.cache._region, first)
+        self.assertEqual(self.rebuild.call_count, 3)
+        provider = Mock()
+        self.assertFalse(self.cache.try_seed_depth(provider))
+        provider.assert_not_called()
+        cropped_provider = Mock(return_value=True)
+        self.assertTrue(self.cache.try_seed_depth(provider, region_copy=cropped_provider))
+        cropped_provider.assert_called_once_with(self.fbo, first)
+        provider.assert_not_called()
+        rx, ry, _, _ = first
+        self.cache.copy_depth(self.gl, rect=(800, 600, 200, 200))
+        self.gl.glBlitFramebuffer.assert_called_with(800-rx,600-ry,1000-rx,800-ry,808,612,1008,812,4,0x2600)
+        capture(None)
+        self.assertEqual(self.cache._region, (0,0,2400,1600))
+
+    def test_horizontal_escape_does_not_repad_previous_vertical_envelope(self):
+        self.viewport = (0, 0, 2400, 1600)
+        self.cache.prepare(self.gl, 'camera', (10,20), self.rebuild, self.append, rect=(800,600,200,200))
+        first = self.cache._region
+        for x in (1100,1400,1700,2000):
+            self.cache.prepare(self.gl, 'camera', (10,20), self.rebuild, self.append, rect=(x,600,200,200))
+            region = self.cache._region
+            self.assertEqual((region[1],region[3]), (first[1],first[3]))
+            self.assertLessEqual(region[0],x)
+            self.assertGreaterEqual(region[0]+region[2],x+200)
+        self.assertLess(self.cache._size[0]*self.cache._size[1],2400*1600//2)
+
+    def test_depth_copy_rectangle_offsets_destination_only_and_empty_skips(self):
+        self.prepare()
+        self.cache.copy_depth(self.gl,rect=(10,20,30,40))
+        self.gl.glBlitFramebuffer.assert_called_with(10,20,40,60,18,32,48,72,4,0x2600)
+        self.gl.glBlitFramebuffer.reset_mock()
+        self.cache.copy_depth(self.gl,rect=(0,0,0,0))
+        self.gl.glBlitFramebuffer.assert_not_called()
+        self.cache.copy_depth(self.gl,rect=(float('nan'),0,2,3))
+        self.gl.glBlitFramebuffer.assert_called_with(0,0,800,600,8,12,808,612,4,0x2600)
+
     def test_light_frames_reuse_receivers_append_progress_and_rebuild_backwards(self):
         self.prepare()
         for _ in range(20): self.prepare()
@@ -124,6 +178,26 @@ class DeferredSurfaceTests(unittest.TestCase):
 
 
 class DeferredCropTests(unittest.TestCase):
+    def test_hemisphere_envelope_contains_every_lit_sample_and_raster_padding(self):
+        import numpy as np
+        from mpf.toolhead.ToolheadSurfaceCache import light_extent
+        rng = np.random.default_rng(9843)
+        samples = rng.normal(size=(30000,3))
+        samples /= np.linalg.norm(samples,axis=1)[:,None]
+        position = np.array([130.,10.,-50.])
+        for direction in ([0,-1,0],[1,0,0],[.1,.2,.97],[-.9,.1,.01]):
+            normal = np.asarray(direction)/np.linalg.norm(direction)
+            lit = position+samples[samples@normal >= 0]*40.
+            lo,hi = light_extent(position,40.,.7,direction)
+            self.assertTrue(np.all(lit-.7 >= lo))
+            self.assertTrue(np.all(lit+.7 <= hi))
+        lo,hi = light_extent(position,40.,.7,[0,-1,0])
+        self.assertLess(hi[1],11.)
+        for direction in ([0,0,0],[float('nan'),0,0],None):
+            lo,hi=light_extent(position,40.,.7,direction)
+            self.assertTrue(np.all(lo <= position-40.7))
+            self.assertTrue(np.all(hi >= position+40.7))
+
     def test_moving_spheres_retain_new_receivers_and_padding_expands_the_crop(self):
         import numpy as np
         from mpf.toolhead.ToolheadSurfaceCache import light_scissor

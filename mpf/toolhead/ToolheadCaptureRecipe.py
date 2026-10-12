@@ -103,6 +103,7 @@ class CaptureFrame:
         retired source cohorts too: a later capture can replace cached uploads
         while readers still retain their older CPU publication.
         """
+        # Central captures export colour only; no depth-search range maps.
         total = len(self.texture[2]) if self.texture is not None else 0
         for _key, mesh, _model, _normal, _uniforms, settings in self.plates:
             vertex = mesh.layout()[1]
@@ -246,7 +247,7 @@ class CaptureScene:
         for cache in (self._mesh_bounds, self._path_bounds, self._path_edges):
             for mesh in set(cache)-used: cache.pop(mesh)
         snapshot = EnvironmentSnapshot(self, frame.origin, thaw_uniform(frame.light), plates, paths,
-            {name: thaw_uniform(value) for name, value in frame.uniforms}, False, plate_renderer=self.plates.draw, projection=1)
+            {name: thaw_uniform(value) for name, value in frame.uniforms}, False, plate_renderer=self.plates.draw, projection=0)
         snapshot.lighting = {name: thaw_uniform(value) for name, value in frame.lighting}
         snapshot.light_effects, snapshot.path_top = frame.light_effects, tops
         return snapshot

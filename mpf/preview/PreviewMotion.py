@@ -155,8 +155,11 @@ class PreviewMotion(QObject):
         self._ramp_to = fraction
         self._obs_time = now
         self._target = fraction
-        self._last = now
-        if self._displayed < fraction:
+        if self._displayed < fraction and not self._timer.isActive():
+            # Observations update the target, not the animation clock. Restarting
+            # an active Qt timer postpones its deadline; resetting _last also
+            # discards elapsed motion whenever telemetry arrives between ticks.
+            self._last = now
             self._timer.start()
 
     def reset(self) -> None:
@@ -183,7 +186,9 @@ class PreviewMotion(QObject):
 
     def _tick(self) -> None:
         now = time.monotonic()
-        dt = min(0.25, max(0.0, now - self._last))
+        # A busy render loop may delay this callback. Account for the entire
+        # elapsed interval; the pure policy clamps to the observed target.
+        dt = max(0.0, now - self._last)
         self._last = now
         if self._displayed is None or self._target is None:
             self._timer.stop()

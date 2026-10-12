@@ -14,6 +14,7 @@ from .ToolheadCaptureRecipe import CaptureScene
 from .ToolheadEnvironment import CubeStorage, ToolheadEnvironment
 from .ToolheadEnvironmentMailbox import EnvironmentMailbox
 from .ToolheadGLState import GeometryUncertain, procedure
+from .ToolheadDepthHierarchy import DepthHierarchy
 
 
 class _Abandoned(RuntimeError):
@@ -44,6 +45,8 @@ class CaptureResult:
     input_fence: int = 0
     key: object = None
     geometry: object = None
+    hierarchy: int = 0
+    full_hierarchy: int = 0
 
 
 @dataclass
@@ -57,10 +60,22 @@ class _SourceReservation:
         return self.source_bytes+self.capture_bytes+(self.geometry.incremental_bytes if self.geometry is not None else 0)
 
 
+_uncertain_storage = []
+
+
 class WorkerStorage(CubeStorage):
-    def __init__(self, gl, context, depth_format, target=0):
+    def __init__(self, gl, context, depth_format, target=0, *, export_depth=True):
         super().__init__(gl, context, face_factory=lambda width, height, _format:
-            CaptureFace(gl, context, width, height, depth_format))
+            CaptureFace(gl, context, width, height, depth_format, samples=0 if export_depth else 4), export_depth=export_depth)
+        self._hierarchy = None
+        try: self._hierarchy = DepthHierarchy.optional(gl, context) if export_depth else None
+        except GeometryUncertain:
+            # Constructor has not returned to the environment owner yet.
+            # Retain its ordinary pair too when optional cleanup is uncertain.
+            _uncertain_storage.append(self)
+            raise
+        self.front_hierarchy = self.back_hierarchy = 0
+        self.front_full_hierarchy = self.back_full_hierarchy = 0
         self.select(target)
 
     def select(self, target):
@@ -68,9 +83,29 @@ class WorkerStorage(CubeStorage):
         # Mailbox owns physical pair admission. A cancelled capture may already
         # have called CubeStorage.publish; its private swap must never select
         # the next writer or overwrite the main's still-displayed front.
-        self.back, self.back_depth = self.names[target], self.names[target+2]
+        self.back = self.names[target]
+        self.back_depth = self.names[target+2] if len(self.names) == 4 else 0
+        self.back_hierarchy = self._hierarchy.names[target] if self._hierarchy is not None else 0
+        self.back_full_hierarchy = self._hierarchy.full_names[target] if self._hierarchy is not None else 0
+
+    def publish(self, gl):
+        hierarchy = self._hierarchy
+        completed = hierarchy is not None and hierarchy.build(gl, self.back_depth, self.back_hierarchy)
+        super().publish(gl)
+        # The same producer fence covers depth, colour mipmaps AND ranges.
+        self.front_hierarchy = self.back_hierarchy if completed else 0
+        self.front_full_hierarchy = self.back_full_hierarchy if completed else 0
 
     def close(self):
+        hierarchy = getattr(self, '_hierarchy', None)
+        if hierarchy is not None:
+            try: hierarchy.close()
+            except GeometryUncertain:
+                # The ordinary pair must survive alongside an uncertain range
+                # owner; environment shutdown may otherwise drop this wrapper.
+                if self not in _uncertain_storage: _uncertain_storage.append(self)
+                raise
+            self._hierarchy = None
         names, self.names = getattr(self, 'names', []), []
         if names:
             body = (ctypes.c_uint*len(names))(*names)
@@ -94,6 +129,9 @@ class EnvironmentWorker(QThread):
         self._released = deque()
         self.failure = ''
         self.timings = None
+        from ..diagnostics.GraphicsCensus import WorkerGraphicsCensus
+        self._graphics_census = WorkerGraphicsCensus()
+        self.graphics_census = None
         self.stopping = False
         self._accepting = True
         self.host_drained = Event()
@@ -224,7 +262,7 @@ class EnvironmentWorker(QThread):
                     self._checkpoint()
             scene = CaptureScene(gl, self.context, lambda image: CaptureTexture(gl, self.context, image))
             environment = ToolheadEnvironment(storage_factory=lambda bindings, context:
-                WorkerStorage(bindings, context, self.depth_format, token.index))
+                WorkerStorage(bindings, context, self.depth_format, token.index, export_depth=False))
             while True:
                 self._checkpoint()
                 with self._condition:
@@ -326,7 +364,8 @@ class EnvironmentWorker(QThread):
                     if self.mailbox.building_current(token) and environment.revision != previous_revision:
                         result = CaptureResult(environment._storage.front, environment._storage.front_depth,
                             environment.descriptor, active.soft, active.serial, active.frame,
-                            key=active.key, geometry=geometry)
+                            key=active.key, geometry=geometry, hierarchy=getattr(environment._storage, "front_hierarchy", 0),
+                            full_hierarchy=getattr(environment._storage, "front_full_hierarchy", 0))
                         producer = seal_gpu()
                         self.mailbox.complete(token, result, producer, gpu_complete=producer is None)
                         active_transferred = True
@@ -334,6 +373,8 @@ class EnvironmentWorker(QThread):
                         result = None
                         token = None
                         self.timings = (active.serial, (time.perf_counter()-started)*1000, turns)
+                        census = self._graphics_census.capture(active.serial, self.context, scene, environment)
+                        if census is not None: self.graphics_census = census
                         self.ready.emit()
                 finally:
                     self._checkpoint()
@@ -356,6 +397,7 @@ class EnvironmentWorker(QThread):
             self.mailbox.close()
             self.ready.emit()
         finally:
+            self.graphics_census = None
             with self._condition:
                 self._accepting = False
                 pending, self._pending = self._pending, None

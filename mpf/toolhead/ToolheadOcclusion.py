@@ -27,29 +27,27 @@ class ToolheadOcclusion:
         revision = revision_getter(camera, viewport) if callable(revision_getter) else None
         sample_getter = getattr(provider,'get_sample_depth_revision',None)
         sample_revision = sample_getter(camera,viewport) if callable(sample_getter) else None
-        items = []
+        items, signature, transparent, transparent_key = [], [], [], []
         for batch in self._batches:
             if batch.renderMode != RenderBatch.RenderMode.Triangles:
                 continue
-            for item in batch.items:
-                mesh = item["mesh"]
-                vertices = mesh.getVertices()
-                if vertices is None or len(vertices) < 3:
-                    continue
-                if batch.renderType == RenderBatch.RenderType.Solid:
+            if batch.renderType == RenderBatch.RenderType.Solid:
+                for item in batch.items:
+                    mesh = item["mesh"]
+                    vertices = mesh.getVertices()
+                    if vertices is None or len(vertices) < 3:
+                        continue
                     items.append(item)
-        # All visible transparent triangle surfaces participate, including
-        # the unprinted part of a sliced model. The head crop's depth and
-        # alpha mask keep printed paths opaque and prevent double blending
-        # outside the head; object type is not a compositing rule.
-        self._transparent = tuple(batch for batch in self._batches
-            if batch.renderMode == RenderBatch.RenderMode.Triangles
-            and batch.renderType == RenderBatch.RenderType.Transparent)
-        signature = tuple((id(item["mesh"]), np.asarray(item["transformation"].getData()).tobytes()) for item in items)
-
-        transparent_key = tuple((id(batch.shader), tuple((id(item["mesh"]),
-            np.asarray(item["transformation"].getData()).tobytes(), repr(item.get("uniforms")))
-            for item in batch.items)) for batch in self._transparent)
+                    signature.append((id(mesh), np.asarray(item["transformation"].getData()).tobytes()))
+            elif batch.renderType == RenderBatch.RenderType.Transparent:
+                # Foreground replay retains every native transparent triangle
+                # batch. It never needed the solid-depth vertex eligibility scan.
+                transparent.append(batch)
+                transparent_key.append((id(batch.shader), tuple((id(item["mesh"]),
+                    np.asarray(item["transformation"].getData()).tobytes(), repr(item.get("uniforms")))
+                    for item in batch.items)))
+        self._transparent = tuple(transparent)
+        signature, transparent_key = tuple(signature), tuple(transparent_key)
 
         def seed(bindings, output, original_camera, target_viewport, crop, cropped_camera=None):
             if isinstance(output,ToolheadSampleTarget):
@@ -70,12 +68,13 @@ class ToolheadOcclusion:
             return True
         return (revision, signature, transparent_key, sample_revision), seed
 
-    def overlay(self, gl, output, camera):
+    def overlay(self, gl, output, camera, *, clip=None):
         if not self._transparent: return True
         if self._transparency is None:
             from .ToolheadTransparency import ToolheadTransparency
             self._transparency = ToolheadTransparency()
-        return self._transparency.draw(gl, output, camera, self._transparent)
+        return self._transparency.draw(gl, output, camera, self._transparent,
+            **({'clip': clip} if clip is not None else {}))
 
     def _draw_bed(self, gl, camera, viewport, crop, items, cropped=None):
         if not items:

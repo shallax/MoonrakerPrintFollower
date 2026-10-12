@@ -8,6 +8,11 @@ fractional segment stays transient. Native view, pass and mesh stay unchanged.
 from __future__ import annotations
 
 import math
+import ast
+import hashlib
+import inspect
+import textwrap
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +20,44 @@ import numpy as np
 from ..toolhead.ToolheadPathGeometry import ToolheadPathGeometry
 from ..toolhead.ToolheadSimulationCache import ToolheadSimulationCache
 from ..toolhead.ToolheadInstancedShadow import ToolheadInstancedShadow
+
+
+_UPLOAD_DIGEST = '0aa0d36964cf4b7d1dde434cc8f62ed517eea5cbbb769ab6a8b9d31012e09a9e'
+_RENDER_DIGEST = 'b0bfdf9021823d0eb220dbc641e087347dfb6742218ebb97d618b2b999acf0a0'
+
+
+def _canonical_ast(value):
+    """Stable across Python AST dump defaults and added empty optional fields."""
+    if isinstance(value,ast.AST):
+        return (type(value).__name__,tuple((name,_canonical_ast(item))
+            for name,item in ast.iter_fields(value) if item is not None and item!=[]))
+    if isinstance(value,list):return tuple(_canonical_ast(item) for item in value)
+    return value
+
+
+def _writer_digest(function):
+    tree=ast.parse(textwrap.dedent(inspect.getsource(function)))
+    return hashlib.sha256(repr(_canonical_ast(tree.body[0])).encode()).hexdigest()
+
+
+@lru_cache(maxsize=8)
+def _known_native_writer(upload, render):
+    try:
+        return _writer_digest(upload)==_UPLOAD_DIGEST and _writer_digest(render)==_RENDER_DIGEST
+    except (OSError,TypeError,SyntaxError):return False
+
+
+def observe_native_upload(mesh, context, render):
+    """Qualify the exact host type and audited writers before generic admission."""
+    try:
+        from cura.LayerData import LayerData
+        from UM.View.GL.OpenGL import OpenGL
+        from ..toolhead.ToolheadPathGeometry import observe_native_upload as observe
+        if type(mesh) is not LayerData:return None
+        writer=OpenGL.createVertexBuffer
+        if not _known_native_writer(writer,render.__func__):return None
+        return observe(mesh,context,writer,source_type=LayerData)
+    except (ImportError,AttributeError,TypeError,ValueError):return None
 
 
 def value_key(value):
@@ -423,7 +466,7 @@ class ToolheadSimulationPass:
                 gl.glEnable(gl.GL_CULL_FACE)
                 if top > start:
                     instanced = self._shadow and self._instanced_shadow.render(self._geometry.vertex_mesh(context), self._shadow_source,
-                        camera, transform, start, top, self._view, gl)
+                        camera, transform, start, top, self._view, gl, index_owner=self._geometry)
                     if not instanced: self._geometry.render(shadow if self._shadow else normal, camera, transform, [(start, top)], gl)
                 completed(top, end)
             try:
@@ -580,7 +623,7 @@ class ToolheadSimulationPass:
             risk["colour_failure"] = "line colour alpha proof failed (%s: %s)" % (type(error).__name__, str(error)[:160])
         return risk["colour_opaque"]
 
-    def try_copy_completed_depth(self, gl, output, camera, paths, view):
+    def try_copy_completed_depth(self, gl, output, camera, paths, view, *, source_region=None):
         """Public, optional depth capability; stock/private FBOs are never read."""
         def rejected(reason):
             # Profiling diagnostics never issue GL calls or repeat a reason.
@@ -644,7 +687,8 @@ class ToolheadSimulationPass:
                     return rejected("hidden older prime tower remains in native shadow depth")
         except (AttributeError, IndexError, KeyError, TypeError, ValueError):
             return rejected("malformed geometry/view metadata")
-        copied = self._cache.try_copy_depth(gl, output, snapshot["key"], end)
+        options = {} if source_region is None else {"source_region": source_region}
+        copied = self._cache.try_copy_depth(gl, output, snapshot["key"], end, **options)
         if not copied: return rejected("completed depth cache/storage/destination unavailable")
         if copied and not self._depth_logged and getattr(self._timing, "enabled", False):
             self._depth_logged = True
@@ -708,7 +752,11 @@ class ToolheadSimulationPass:
                 Logger.log("w", "Cached simulation unavailable; using native rendering: %s", str(error))
             except Exception: pass
         self._owned_output = False
+        from ..toolhead.ToolheadPathGeometry import admit_native_upload
+        observation = observe_native_upload(source[1],context,self.original.render) if source is not None else None
         self.original.render()
+        if source is not None:
+            admit_native_upload(source[1],context,observation)
         if source is not None:
             # Stationary/re-sliced previews may never produce a transition.
             # Read the actual stock shader identity AFTER its successful draw;

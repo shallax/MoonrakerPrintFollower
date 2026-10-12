@@ -81,6 +81,12 @@ class EnvironmentWorkerTests(unittest.TestCase):
         def step(*args):
             nonlocal count
             count += 1
+            if count == 1:
+                # Production captures request no exported depth/hierarchy pair.
+                with patch.object(module,'WorkerStorage') as storage:
+                    factory.call_args.kwargs['storage_factory']('bindings','context')
+                    self.assertFalse(storage.call_args.kwargs['export_depth'])
+                    self.assertIn(storage.call_args.args[-1],(0,1))
             self.assertIs(args[-1](), scene.snapshot.return_value)
             if failure:
                 if queued: worker.submit(module.CaptureJob(2, 'next', 'immutable next scene', 92))
@@ -121,7 +127,7 @@ class EnvironmentWorkerTests(unittest.TestCase):
         with patch.object(module, 'procedure', side_effect=resolve), \
                 patch.object(module, 'RawBindings', return_value=driver), \
                 patch.object(module, 'CaptureScene', return_value=scene), \
-                patch.object(module, 'ToolheadEnvironment', return_value=environment):
+                patch.object(module, 'ToolheadEnvironment', return_value=environment) as factory:
             worker.run()
         self.assertTrue(worker.mailbox.drained)
         expected = ((1, 91 if unavailable or stale or query_cancelled else 0),)

@@ -12,10 +12,14 @@ class TransparencyTests(unittest.TestCase):
         self.gl.glGetError.return_value = 0
         self.head = Mock()
         self.head.format().samples.return_value = 0
+        self.head.format().attachment.return_value = 2
+        self.head.format().internalTextureFormat.return_value = 0x8058
+        self.head.format().mipmap.return_value = False
         self.head.size().width.return_value = 64
         self.head.size().height.return_value = 96
         self.front, self.merged = Mock(), Mock()
-        self.fbos = Mock(side_effect=[self.front, self.merged, self.front, self.merged])
+        self.front.format.return_value = self.head.format()
+        self.fbos = Mock(return_value=self.front)
         self.shader, self.vao = Mock(), Mock()
         self.shader_factory = Mock(return_value=self.shader)
         self.batch = Mock()
@@ -42,19 +46,69 @@ class TransparencyTests(unittest.TestCase):
 
     def test_native_surface_state_is_preserved_and_resources_reused_until_crop_resize(self):
         for _ in range(2): self.assertTrue(self.draw())
-        self.assertEqual(self.fbos.call_count, 2)
+        self.assertEqual(self.fbos.call_count, 1)
         self.shader_factory.assert_called_once()
         self.batch.addItem.assert_called_with('transform', mesh='mesh', uniforms={'opacity':.4}, normal_transformation='normal')
         self.assertEqual(self.batch_factory.call_args.kwargs['range'], (1,3))
         self.assertTrue(self.batch_factory.call_args.kwargs['backface_cull'])
-        self.gl.glBlendFuncSeparate.assert_called_with(self.gl.GL_SRC_ALPHA, self.gl.GL_ONE_MINUS_SRC_ALPHA,
+        self.gl.glBlendFuncSeparate.assert_any_call(self.gl.GL_SRC_ALPHA, self.gl.GL_ONE_MINUS_SRC_ALPHA,
             self.gl.GL_ONE, self.gl.GL_ONE_MINUS_SRC_ALPHA)
         self.fbos.blitFramebuffer.assert_any_call(self.front, self.head, self.gl.GL_DEPTH_BUFFER_BIT, 0x2600)
-        self.fbos.blitFramebuffer.assert_any_call(self.head, self.merged, self.gl.GL_COLOR_BUFFER_BIT, 0x2600)
+        self.assertEqual(self.fbos.blitFramebuffer.call_count, 2)
+        self.head.texture.assert_not_called()
+        self.assertIsNone(self.helper._merged)
+        self.gl.glBlendFuncSeparate.assert_any_call(0x0304, 0x0303, 0, 1)
         self.head.size().width.return_value = 128
         self.assertTrue(self.draw())
-        self.assertEqual(self.fbos.call_count, 4)
+        self.assertEqual(self.fbos.call_count, 2)
         self.gl.glViewport.assert_called_with(0,0,128,96)
+
+    def test_failed_destination_bind_never_samples_or_draws_into_foreground(self):
+        self.head.bind.return_value = False
+        with self.assertRaisesRegex(RuntimeError, 'destination could not bind'):
+            self.draw()
+        self.gl.glDrawArrays.assert_not_called()
+        self.shader.bind.assert_not_called()
+        self.gl.glBindTexture.assert_not_called()
+        self.head.texture.assert_not_called()
+        self.assertEqual(self.fbos.blitFramebuffer.call_count, 1)
+        self.head.bind.assert_called()
+
+    def test_clipped_foreground_restricts_every_stage_and_restores_scissor_on_failure(self):
+        previous = (3, 4, 10, 11)
+        self.gl.glGetIntegerv.side_effect = lambda key: previous if key == 0x0C10 else 1
+        self.gl.glIsEnabled.return_value = False
+        clip = (8, 12, 16, 24)
+        self.assertTrue(self.helper.draw(self.gl, self.head, self.camera, [self.source], clip=clip))
+        self.assertEqual([call.args for call in self.gl.glScissor.call_args_list],
+            [clip, clip, clip, previous])
+        self.gl.glDisable.assert_called_with(0x0C11)
+        self.gl.glIsEnabled.return_value = True
+        self.batch.render.side_effect = RuntimeError('foreground failed')
+        with self.assertRaisesRegex(RuntimeError, 'foreground failed'):
+            self.helper.draw(self.gl, self.head, self.camera, [self.source], clip=clip)
+        self.gl.glScissor.assert_called_with(*previous)
+        self.gl.glEnable.assert_called_with(0x0C11)
+
+    def test_clipped_foreground_rejects_invalid_rectangles_and_multisample_targets(self):
+        for clip in ((-1, 0, 10, 10), (0, 0, 0, 1), (0, 0, 65, 96), (0, 0, 1.), (0, 0, 1., 2)):
+            with self.subTest(clip=clip), self.assertRaisesRegex(ValueError, 'exact target'):
+                self.helper.draw(self.gl, self.head, self.camera, [self.source], clip=clip)
+        self.gl.glScissor.assert_not_called()
+        self.head.format().samples.return_value = 4
+        self.assertFalse(self.helper.draw(self.gl, self.head, self.camera, [self.source], clip=(0, 0, 64, 96)))
+
+    def test_direct_blend_restores_factors_equations_even_when_draw_fails(self):
+        values = {0x80C9: 0x0302, 0x80C8: 0x0303, 0x80CB: 1, 0x80CA: 0x0303,
+                  0x8009: 0x800A, 0x883D: 0x800B}
+        self.gl.glGetIntegerv.side_effect = values.__getitem__
+        self.gl.glDrawArrays.side_effect = RuntimeError('draw failed')
+        with self.assertRaisesRegex(RuntimeError, 'draw failed'): self.draw()
+        self.gl.glBlendFuncSeparate.assert_called_with(0x0302, 0x0303, 1, 0x0303)
+        self.gl.glBlendEquationSeparate.assert_called_with(0x800A, 0x800B)
+        self.gl.glDisable.assert_any_call(self.gl.GL_BLEND)
+        self.head.texture.assert_not_called()
+        self.head.bind.assert_called()
 
     def test_empty_surfaces_and_multisampling_do_not_allocate(self):
         self.assertTrue(self.helper.draw(self.gl, self.head, self.camera, []))
@@ -66,12 +120,98 @@ class TransparencyTests(unittest.TestCase):
         self.assertTrue(self.draw())
         self.head.size().width.return_value = 128
         def allocate(*args):
-            if self.fbos.call_count == 3:
+            if self.fbos.call_count == 2:
                 for name in ('_front', '_merged', '_size'):
                     self.assertIsNone(getattr(self.helper, name), name)
             return self.front if len(args) == 3 else self.merged
         self.fbos.side_effect = allocate
         self.assertTrue(self.draw())
+
+    def test_exact_foreground_targets_reuse_storage_but_clear_and_reseed_each_draw(self):
+        first, second = self.front, Mock()
+        second.format.return_value = self.head.format()
+        self.fbos.side_effect = [first, second]
+        self.assertTrue(self.draw())
+        self.helper.retire_for_ordinary(128, 96)
+        self.helper.retire_for_ordinary(128, 96)
+        self.assertEqual(self.helper._pool_bytes, 64*96*12)
+        self.head.size().width.return_value = 128
+        self.assertTrue(self.draw())
+        self.head.size().width.return_value = 64
+        self.assertTrue(self.draw())
+        self.assertIs(self.helper._front, first)
+        self.assertEqual(self.fbos.call_count, 2)
+        self.assertEqual(self.helper._pool_hits, 1)
+        self.assertEqual(self.helper._pool_bytes, 128*96*12)
+        self.assertEqual(self.fbos.blitFramebuffer.call_count, 3)
+        self.assertEqual(self.gl.glClear.call_count, 3)
+        self.helper.release_targets()
+        self.assertFalse(self.helper._pool)
+        self.assertEqual(self.helper._pool_bytes, 0)
+        self.assertIsNone(self.helper._front)
+
+    def test_foreground_pool_checks_full_format_and_rejects_invalid_storage(self):
+        self.assertTrue(self.draw())
+        original = self.helper._ordinary_key
+        self.head.format().attachment.return_value = 1
+        self.assertTrue(self.draw())
+        self.assertEqual(self.fbos.call_count, 2)
+        self.assertIn(original, self.helper._pool)
+        self.helper._pool[original][0].isValid.return_value = False
+        self.assertIsNone(self.helper._take_front(original))
+        self.assertEqual(self.helper._pool_bytes, 0)
+        self.front.isValid.return_value = True
+        self.head.format().attachment.return_value = 2
+        self.head.format().internalTextureFormat.return_value = 0x881A
+        self.assertTrue(self.draw())
+        self.assertEqual(self.fbos.call_count, 3)
+        self.head.format().mipmap.return_value = True
+        self.assertTrue(self.draw())
+        self.assertEqual(self.fbos.call_count, 4)
+
+    def test_foreground_pool_bounds_and_unknown_formats(self):
+        for width in (64, 65, 66, 67, 68, 69):
+            self.head.size().width.return_value = width
+            self.assertTrue(self.draw())
+        self.assertEqual(len(self.helper._pool), 4)
+        self.assertEqual(self.helper._pool_bytes, sum(w*96*12 for w in (65,66,67,68)))
+        self.helper._size = (4096, 4096)
+        self.helper._ordinary_key = (4096, 4096, 0, 2, 0x8058, False)
+        previous = self.helper._pool_bytes
+        self.helper._stash_front()
+        self.assertEqual(self.helper._pool_bytes, previous)
+        for internal, mipmap, samples in ((0x881A, False, 0), (0x8058, True, 0), (0x8058, False, 4)):
+            self.helper._front = Mock()
+            self.helper._ordinary_key = (64, 96, samples, 2, internal, mipmap)
+            self.helper._stash_front()
+            self.assertEqual(self.helper._pool_bytes, previous)
+
+    def test_failed_new_foreground_allocation_keeps_idle_storage_without_publishing_old_pixels(self):
+        self.assertTrue(self.draw())
+        self.head.size().width.return_value = 128
+        invalid = Mock()
+        invalid.isValid.return_value = False
+        self.fbos.return_value = invalid
+        self.gl.glDrawArrays.reset_mock()
+        with self.assertRaisesRegex(RuntimeError, 'composition unavailable'): self.draw()
+        self.assertIsNone(self.helper._front)
+        self.assertEqual(self.helper._pool_bytes, 64*96*12)
+        self.gl.glDrawArrays.assert_not_called()
+        self.head.size().width.return_value = 64
+        self.assertTrue(self.draw())
+        self.assertIs(self.helper._front, self.front)
+        self.assertEqual(self.fbos.call_count, 2)
+
+    def test_foreground_pool_byte_budget_evicts_and_sample_transition_drains_ordinary(self):
+        self.head.size().height.return_value = 1024
+        for width in (1024, 1025, 1026, 1027):
+            self.head.size().width.return_value = width
+            self.assertTrue(self.draw())
+            self.assertLessEqual(self.helper._pool_bytes, 24 << 20)
+        self.assertEqual(len(self.helper._pool), 1)
+        self.helper._clear_ordinary_targets()
+        self.assertEqual(self.helper._pool_bytes, 0)
+        self.assertIsNone(self.helper._ordinary_key)
 
     def test_sample_target_retirement_failure_retains_the_unretired_owner(self):
         first, second = Mock(), Mock()
@@ -109,7 +249,7 @@ class TransparencyTests(unittest.TestCase):
                 self.head.bind.assert_called()
                 method.return_value = True
 
-    def test_failed_surface_or_merge_draw_releases_resources_and_does_not_replace_head(self):
+    def test_failed_surface_or_composition_draw_releases_resources_and_rebinds_head(self):
         for method in (self.batch.render, self.gl.glDrawArrays):
             with self.subTest(method=method):
                 self.fbos.blitFramebuffer.reset_mock()
@@ -133,6 +273,88 @@ class SampledTransparencyGLTests(unittest.TestCase):
     def tearDownClass(cls):
         from tests.test_toolhead_environment_gl import EnvironmentGLTests
         EnvironmentGLTests.tearDownClass.__func__(cls)
+
+    def test_ordinary_clip_matches_full_foreground_inside_and_preserves_exterior_and_depth(self):
+        if not self.available: self.skipTest('Offscreen OpenGL unavailable')
+        import ctypes
+        import numpy as np
+        from PyQt6.QtOpenGL import QOpenGLShader, QOpenGLShaderProgram, QOpenGLVertexArrayObject, QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
+        from mpf.toolhead.ToolheadGLState import procedure
+        gl, context = self.gl, self.context
+        width, height = 19, 13
+        vertex = '#version 410\nvoid main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-1.,0.,1.);}'
+        class Shader:
+            def __init__(self): self.program = QOpenGLShaderProgram(); self.values = {}
+            def setVertexShader(self, text): return self.program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Vertex, text)
+            def setFragmentShader(self, text): return self.program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Fragment, text)
+            def build(self):
+                if not self.program.link(): raise RuntimeError(self.program.log())
+            def setUniformValue(self, name, value): self.values[name] = value
+            def bind(self):
+                if not self.program.bind(): raise RuntimeError(self.program.log())
+                for name, value in self.values.items(): self.program.setUniformValue(name, value)
+            def release(self): self.program.release()
+        front = Shader(); self.assertTrue(front.setVertexShader(vertex))
+        self.assertTrue(front.setFragmentShader('#version 410\nout vec4 colour;void main(){colour=vec4(.15,.3,.05,.5);gl_FragDepth=.4;}'))
+        front.build()
+        vao = QOpenGLVertexArrayObject(); self.assertTrue(vao.create())
+        class Batch:
+            RenderType = SimpleNamespace(Transparent=2)
+            def __init__(self, *args, **kwargs): self.options = kwargs
+            def addItem(self, *args, **kwargs): pass
+            def render(self, camera):
+                gl.glEnable(gl.GL_DEPTH_TEST); gl.glDepthMask(False); gl.glEnable(gl.GL_BLEND)
+                self.options['state_setup_callback'](gl)
+                front.bind(); vao.bind()
+                try: gl.glDrawArrays(4, 0, 3)
+                finally: vao.release(); front.release()
+        fmt = QOpenGLFramebufferObjectFormat(); fmt.setAttachment(QOpenGLFramebufferObject.Attachment.Depth)
+        targets = [QOpenGLFramebufferObject(width, height, fmt) for _ in range(3)]
+        def seed(target):
+            self.assertTrue(target.bind()); gl.glViewport(0, 0, width, height)
+            gl.glDisable(0x0C11); gl.glColorMask(True, True, True, True); gl.glDepthMask(True)
+            gl.glClearColor(.3, .2, .1, .7); gl.glClearDepth(.6)
+            gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+        read = procedure(context, 'glReadPixels', None, *([ctypes.c_int]*4), ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p)
+        def pixels(target, depth=False):
+            self.assertTrue(target.bind())
+            result = np.empty((height, width) if depth else (height, width, 4), np.float32 if depth else np.uint8)
+            read(0, 0, width, height, 0x1902 if depth else 0x1908, 0x1406 if depth else 0x1401, result.ctypes.data)
+            return result
+        batch = SimpleNamespace(shader=front, renderMode=4, backfaceCull=False, renderRange=None,
+            items=[dict(transformation=None, mesh=None)])
+        helper = ToolheadTransparency()
+        try:
+            for target in targets: seed(target)
+            original, original_depth = pixels(targets[0]), pixels(targets[0], True)
+            with patch.dict('sys.modules', {'UM.View.GL.ShaderProgram': SimpleNamespace(ShaderProgram=Shader),
+                    'UM.View.RenderBatch': SimpleNamespace(RenderBatch=Batch)}):
+                self.assertTrue(helper.draw(gl, targets[1], None, [batch]))
+                expected = pixels(targets[1])
+                first_front = helper._front
+                larger = QOpenGLFramebufferObject(width+3, height+2, fmt)
+                seed(larger)
+                self.assertTrue(helper.draw(gl, larger, None, [batch]))
+                self.assertEqual(helper._pool_bytes, width*height*12)
+                seed(targets[1])
+                self.assertTrue(helper.draw(gl, targets[1], None, [batch]))
+                self.assertIs(helper._front, first_front)
+                self.assertEqual(helper._pool_hits, 1)
+                np.testing.assert_array_equal(pixels(targets[1]), expected)
+                np.testing.assert_array_equal(pixels(targets[1], True).view(np.uint32), original_depth.view(np.uint32))
+                for clip in ((0, 0, 7, 5), (12, 8, 7, 5), (3, 2, 13, 9)):
+                    seed(targets[2]); gl.glEnable(0x0C11); gl.glScissor(1, 1, 2, 2)
+                    self.assertTrue(helper.draw(gl, targets[2], None, [batch], clip=clip))
+                    self.assertTrue(gl.glIsEnabled(0x0C11))
+                    self.assertEqual(tuple(gl.glGetIntegerv(0x0C10)), (1, 1, 2, 2))
+                    x, y, w, h = clip; reference = original.copy()
+                    reference[y:y+h, x:x+w] = expected[y:y+h, x:x+w]
+                    np.testing.assert_array_equal(pixels(targets[2]), reference)
+                    np.testing.assert_array_equal(pixels(targets[2], True).view(np.uint32), original_depth.view(np.uint32))
+            self.assertEqual(int(gl.glGetError()), 0)
+            helper.release_targets()
+        finally:
+            gl.glDisable(0x0C11); vao.destroy(); front.program.removeAllShaders()
 
     def test_each_foreground_depth_sample_precedes_shutter_resolve_and_average(self):
         if not self.available:self.skipTest('Offscreen OpenGL unavailable')
@@ -271,3 +493,60 @@ class SampledTransparencyGLTests(unittest.TestCase):
             for target in (helper._sample_front,helper._sample_merged,shutter._work):
                 if target is not None:target.close()
             scopes.stop();vao.destroy();front_shader.removeAllShaders();export.removeAllShaders()
+
+
+class OrdinaryTransparencyBlendGLTests(unittest.TestCase):
+    def test_direct_blend_matches_original_rgba_for_every_alpha_pair(self):
+        import ast
+        import inspect
+        import numpy as np
+        try:
+            import moderngl
+        except ImportError:
+            self.skipTest('The capture OpenGL runtime is required')
+        from tools.capture_toolhead import create_context
+        context, dll = create_context()
+        resources = []
+        try:
+            width = height = 512
+            rng = np.random.default_rng(7531)
+            head = rng.integers(0, 256, (height, width, 4), dtype=np.uint8)
+            front = rng.integers(0, 256, (height, width, 4), dtype=np.uint8)
+            head[:, :, 3] = np.tile(np.arange(256, dtype=np.uint8), 1024).reshape(height, width)
+            front[:, :, 3] = np.repeat(np.arange(256, dtype=np.uint8), 1024).reshape(height, width)
+            for values in (head, front):
+                values[:, :, :3] = np.rint(values[:, :, :3].astype(float) * values[:, :, 3:4] / 255).astype(np.uint8)
+            for unit, values in enumerate((head, front)):
+                texture = context.texture((width, height), 4, values.tobytes())
+                resources.append(texture); texture.use(unit)
+            tree = ast.parse(inspect.getsource(inspect.getmodule(ToolheadTransparency)))
+            fragment = next(call.args[0].value for call in ast.walk(tree)
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr == 'setFragmentShader')
+            vertex = '#version 410\nvoid main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-1.,0.,1.);}'
+            reference = '''#version 410
+uniform sampler2D u_head, u_front;
+out vec4 frag_color;
+void main(){ivec2 p=ivec2(gl_FragCoord.xy);vec4 h=texelFetch(u_head,p,0),f=texelFetch(u_front,p,0);
+frag_color=vec4(h.rgb*(1.-f.a)+f.rgb*h.a,h.a);}'''
+            outputs = []
+            for source in (reference, fragment):
+                program = context.program(vertex_shader=vertex, fragment_shader=source)
+                resources.append(program); program['u_front'] = 1
+                if 'u_head' in program: program['u_head'] = 0
+                texture = context.texture((width, height), 4, head.tobytes()); resources.append(texture)
+                target = context.framebuffer([texture]); resources.append(target)
+                target.use(); context.viewport = (0, 0, width, height)
+                context.disable(moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND)
+                if source == fragment:
+                    context.enable(moderngl.BLEND)
+                    context.blend_equation = moderngl.FUNC_ADD
+                    context.blend_func = (moderngl.DST_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA, moderngl.ZERO, moderngl.ONE)
+                vao = context.vertex_array(program, []); resources.append(vao)
+                vao.render(vertices=3)
+                outputs.append(np.frombuffer(target.read(components=4, alignment=1), np.uint8).copy())
+            np.testing.assert_array_equal(outputs[1], outputs[0])
+        finally:
+            for resource in reversed(resources): resource.release()
+            context.release()
+            if dll is not None: dll.close()

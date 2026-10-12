@@ -48,6 +48,134 @@ class AsyncEnvironmentTests(unittest.TestCase):
         owner._freezer = Mock()
         owner._freezer.freeze.return_value = ('frozen', ('retained-wrapper',))
 
+    def start_transition(self):
+        from mpf.toolhead.ToolheadEnvironment import ProbeDescriptor
+        owner=self.owner;clock=[10.];owner._clock=lambda:clock[0]
+        owner._hard='file';owner._gl.glGetIntegerv.return_value=0
+        old=self.publish();old.key=('file','old')
+        old.descriptor=ProbeDescriptor((0,10,0),(-20,-20,-20),(20,20,20),ground=(0,-20,-20,20,20))
+        owner._adopt();binding=owner._storage
+        new=self.publish(2);new.key=('file','new');new.descriptor=old.descriptor
+        owner._adopt()
+        return clock,binding
+
+    def test_transition_holds_old_pair_and_samples_one_weight_for_all_meshes(self):
+        owner=self.owner
+        with patch.object(owner,'_is_main_current',return_value=True):
+            clock,old=self.start_transition()
+            clock[0]=10.5  # Adoption elapsed time must not consume an unseen fade.
+            self.assertEqual(owner.transition_identity[1],0.)
+            self.assertIsNone(owner._transition[2])
+            self.assertEqual(owner.wake_delay,1./30)
+            weights=[]
+            for expected in (0.,1./3,2./3,1.):
+                identity=owner.begin_frame();weights.append(identity[1])
+                self.assertAlmostEqual(identity[1],expected)
+                shader=Mock();owner.apply(shader)
+                clock[0]+=.5
+                second=Mock();owner.apply(second)
+                shader.setUniformValue.assert_any_call('u_environmentBlend',identity[1])
+                second.setUniformValue.assert_any_call('u_environmentBlend',identity[1])
+                old.bind(3);old.release(3)
+                self.assertIsNotNone(old._use)
+                self.assertIsNone(owner._worker.mailbox.take_retirement())
+                if expected == 1.:
+                    self.assertIsNone(owner.transition_cache_identity)
+                    self.assertIsNotNone(owner.transition_identity)
+                owner.commit_frame(identity)
+            self.assertIsNone(owner.transition_cache_identity)
+            self.assertIsNone(owner.transition_identity)
+            self.assertIsNone(old._use)
+            self.assertIsNotNone(owner._worker.mailbox.take_retirement())
+            owner._fence.assert_called();owner._gl.glFlush.assert_called()
+
+    def test_failed_draw_and_maintenance_do_not_consume_fade(self):
+        owner=self.owner
+        with patch.object(owner,'_is_main_current',return_value=True):
+            clock,old=self.start_transition()
+            identity=owner.begin_frame()
+            clock[0]+=.5
+            self.assertEqual(owner.begin_frame(),identity)  # No successful commit.
+            owner._finish_main()
+            self.assertEqual(owner.transition_identity,identity)
+            self.assertTrue(old._held);self.assertIsNotNone(old._use)
+            owner._worker.host_drained.set.assert_not_called()
+            owner._worker.host_drained.clear.assert_called_once()
+            owner.commit_frame(identity)
+            self.assertAlmostEqual(owner.transition_identity[1],1./3)
+
+    def test_transition_release_unwinds_previous_after_current_binding_fault(self):
+        owner=self.owner
+        with patch.object(owner,'_is_main_current',return_value=True):
+            _clock,old=self.start_transition()
+            old.bind(3)
+            with patch.object(owner._storage,'release',side_effect=RuntimeError('current failed')):
+                with self.assertRaisesRegex(RuntimeError,'bindings could not'):
+                    owner.release_bindings()
+            self.assertEqual(old._bindings,{})
+            self.assertIsNotNone(old._use)
+            owner._end_transition()
+            self.assertIsNone(old._use)
+
+    def test_transition_main_cleanup_cancels_hold_and_noncurrent_close_schedules_it(self):
+        owner=self.owner
+        with patch.object(owner,'_is_main_current',return_value=True):
+            _clock,old=self.start_transition()
+        with patch.object(owner,'_is_main_current',return_value=False):
+            owner.close()
+            self.assertFalse(old._held);self.assertIsNotNone(old._use)
+            owner._window.scheduleRenderJob.assert_called()
+        with patch.object(owner,'_is_main_current',return_value=True):owner._finish_main()
+        self.assertIsNone(old._use);self.assertIsNone(owner._transition)
+
+    def test_transition_close_during_bound_draw_still_unwinds_previous_read(self):
+        owner=self.owner
+        with patch.object(owner,'_is_main_current',return_value=True):
+            _clock,old=self.start_transition()
+            old.bind(3)
+            owner.close()
+            self.assertIsNotNone(old._use)
+            owner.release_bindings()
+            self.assertEqual(old._bindings,{})
+            self.assertIsNone(old._use)
+
+    def test_new_generation_does_not_blend_previous_scene(self):
+        from mpf.toolhead.ToolheadEnvironment import ProbeDescriptor
+        owner=self.owner
+        old=self.publish();old.key=('old-file','pose')
+        old.descriptor=ProbeDescriptor((0,10,0),(-20,-20,-20),(20,20,20))
+        owner._hard='old-file';owner._adopt()
+        self.publish(2).descriptor=old.descriptor
+        owner._hard='new-file';owner._adopt()
+        self.assertIsNone(getattr(owner,'_transition',None))
+        self.assertEqual(owner._reads,set())
+
+    def test_transition_close_and_defer_release_hold_without_another_draw(self):
+        for operation in ('close','defer'):
+            with self.subTest(operation=operation):
+                self.setUp();owner=self.owner
+                with patch.object(owner,'_is_main_current',return_value=True):
+                    _clock,old=self.start_transition()
+                    getattr(owner,operation)()
+                    self.assertFalse(old._held);self.assertIsNone(old._use)
+                    self.assertIsNone(owner._transition)
+
+    def test_transition_cancelled_adoption_returns_temporary_read_ticket(self):
+        owner=self.owner
+        with patch.object(owner,'_is_main_current',return_value=True):
+            clock,old=self.start_transition()
+            owner._end_transition()
+            retired=owner._worker.mailbox.take_retirement();owner._worker.mailbox.retired(retired[0])
+            current=owner._storage
+            self.publish(3).key=('file','latest')
+            original=owner._worker.mailbox.end_poll
+            def cancel(use,complete):
+                owner._worker.mailbox.change_generation()
+                return original(use,complete)
+            with patch.object(owner._worker.mailbox,'end_poll',side_effect=cancel):owner._adopt()
+            self.assertFalse(current._held);self.assertIsNone(current._use)
+            self.assertIsNone(getattr(owner,'_transition',None))
+
     def test_held_source_stops_adoption_and_submission_until_key_changes(self):
         owner=self.owner
         owner._selected_key=('file','pose');owner._hard='file'
@@ -96,6 +224,21 @@ class AsyncEnvironmentTests(unittest.TestCase):
         snapshot.assert_called_once()
         owner._worker.submit.assert_called_once()
 
+    def test_unchanged_perspective_map_sleeps_until_scene_changes(self):
+        owner = self.owner
+        owner.available = True
+        owner.descriptor = NS(projection=0)
+        owner._hard, owner._published = 'file', 'pose'
+        owner._selected_key = owner._submitted = ('file', 'pose')
+        owner._next = 0  # Even long after the old periodic refresh deadline.
+        snapshot = Mock(return_value='snapshot')
+        self.assertFalse(owner.step(owner._gl, owner._main_context, 'file', 'pose', snapshot))
+        snapshot.assert_not_called()
+        self.assertIsNone(owner.wake_delay)
+        self.assertTrue(owner.step(owner._gl, owner._main_context, 'file', 'changed pose', snapshot))
+        snapshot.assert_called_once()
+        owner._worker.submit.assert_called_once()
+
     def test_new_geometry_generation_rebuilds_unchanged_directional_pose(self):
         owner = self.owner
         owner.available = True
@@ -131,6 +274,88 @@ class AsyncEnvironmentTests(unittest.TestCase):
         self.owner._adopt()
         self.owner._worker.wake.reset_mock()
         return self.owner._storage, payload, geometry
+
+    def test_frame_read_scope_is_lazy_and_batches_all_material_units(self):
+        owner = self.owner
+        binding, payload, _geometry = self.query_binding()
+        payload.hierarchy = 5
+        payload.full_hierarchy = 45
+        owner._gl.glGetIntegerv.return_value = 0
+        with patch.object(owner, '_is_main_current', return_value=True):
+            with owner.read_scope(): pass
+            owner._fence.assert_not_called()
+            self.assertEqual(owner._reads, set())
+            with owner.read_scope():
+                for _ in range(7):
+                    with binding.read_scope():
+                        binding.bind(7); binding.depth.bind(6); binding.hierarchy.bind(5)
+                        binding.full_hierarchy.bind(4)
+                        owner._gl.glBindTexture.assert_called_with(0x0DE1, 45)
+                        binding.release(7); binding.depth.release(6); binding.hierarchy.release(5)
+                        binding.full_hierarchy.release(4)
+                        owner._gl.glBindTexture.assert_called_with(0x0DE1, 0)
+                    self.assertIsNotNone(binding._use)
+                    owner._fence.assert_not_called()
+            owner._fence.assert_called_once()
+            owner._gl.glFlush.assert_called_once()
+            self.assertEqual(owner._reads, set())
+            self.assertEqual(binding._queries, 0)
+
+    def test_frame_scope_finishes_pinned_old_pair_on_close_and_draw_failure(self):
+        owner = self.owner
+        binding, _payload, _geometry = self.query_binding()
+        owner._gl.glGetIntegerv.return_value = 0
+        with patch.object(owner, '_is_main_current', return_value=True):
+            with self.assertRaisesRegex(RuntimeError, 'draw failed'):
+                with owner.read_scope():
+                    binding.bind(7); binding.release(7)
+                    owner.close()
+                    owner._worker.mailbox.close()
+                    self.assertIsNone(owner._worker.mailbox.take_retirement())
+                    raise RuntimeError('draw failed')
+        self.assertTrue(owner._closed)
+        owner._fence.assert_called_once()
+        self.assertIsNone(binding._use)
+        self.assertIsNotNone(owner._worker.mailbox.take_retirement())
+
+    def test_frame_scope_captures_binding_and_quarantines_foreign_context(self):
+        owner = self.owner
+        binding, _payload, _geometry = self.query_binding()
+        owner._gl.glGetIntegerv.return_value = 0
+        scope = owner.read_scope()
+        owner._storage = object()
+        self.addCleanup(module._quarantined.discard, owner)
+        with patch.object(owner, '_is_main_current', return_value=False):
+            with self.assertRaisesRegex(RuntimeError, 'original context'):
+                with scope:
+                    binding.bind(7); binding.release(7)
+        self.assertEqual(binding._queries, 0)
+        self.assertIsNotNone(binding._use)
+        self.assertTrue(owner._quarantine)
+        owner._fence.assert_not_called()
+        owner._gl.glFlush.assert_not_called()
+        owner._worker.abandon.assert_called_once()
+
+    def test_frame_scope_bind_failure_still_completes_its_acquired_ticket(self):
+        owner = self.owner
+        binding, _payload, _geometry = self.query_binding()
+        owner._gl.glGetIntegerv.return_value = 0
+        owner._gl.glBindTexture.side_effect = [RuntimeError('bind failed'), None]
+        with patch.object(owner, '_is_main_current', return_value=True):
+            with self.assertRaisesRegex(RuntimeError, 'bind failed'):
+                with owner.read_scope(): binding.bind(7)
+        self.assertEqual(binding._bindings, {})
+        self.assertEqual(binding._queries, 0)
+        self.assertIsNone(binding._use)
+        owner._fence.assert_called_once()
+
+    def test_frame_scope_fallback_has_no_read_or_context_requirement(self):
+        owner = self.owner
+        owner._storage = object()
+        owner.available = True
+        with owner.read_scope(): pass
+        owner._fence.assert_not_called()
+        self.assertEqual(owner._reads, set())
 
     def test_runtime_scope_requires_selected_completed_cohort_and_always_withdraws_enabled_flag(self):
         owner = self.owner
@@ -359,7 +584,7 @@ class AsyncEnvironmentTests(unittest.TestCase):
         shader.setTexture.side_effect = [RuntimeError('first slot retired'), None]
         owner._shaders.add(shader)
         owner.close(); owner.close()
-        self.assertEqual([call.args for call in shader.setTexture.call_args_list], [(7, None), (6, None)])
+        self.assertEqual([call.args for call in shader.setTexture.call_args_list], [(7, None), (6, None), (5, None), (4, None), (3, None)])
         owner._worker.stop.assert_called_once()
         owner._fallback.close.assert_called_once()
 
@@ -534,6 +759,58 @@ class AsyncEnvironmentTests(unittest.TestCase):
         owner._freezer.freeze.assert_called_once_with('latest scene', owner._main_context)
         job = owner._worker.submit.call_args.args[0]
         self.assertEqual(job.key, ('file', 'latest'))
+
+    def test_capture_cooldown_retains_only_latest_scene_and_wakes_after_motion_stops(self):
+        owner = self.owner
+        clock = [10.]
+        owner._clock = lambda: clock[0]
+        owner._hard, owner._busy, owner._serial = 'file', True, 1
+        owner._submitted = ('file', 'first')
+        owner._worker.timings = (1, 300., 12)
+        self.publish(soft='first')
+        snapshot = Mock(return_value='latest scene')
+        for pose in range(20):
+            self.assertFalse(owner.step(owner._gl, owner._main_context, 'file', pose, snapshot))
+        snapshot.assert_not_called()
+        self.assertAlmostEqual(owner.wake_delay, .6)
+        self.assertEqual(owner._capture_not_before, 10.6)
+        clock[0] = 10.59
+        self.assertFalse(owner.step(owner._gl, owner._main_context, 'file', 'penultimate', snapshot))
+        snapshot.assert_not_called()
+        clock[0] = 10.6
+        self.assertTrue(owner.step(owner._gl, owner._main_context, 'file', 'latest', snapshot))
+        snapshot.assert_called_once()
+        self.assertEqual(owner._worker.submit.call_args.args[0].key, ('file', 'latest'))
+
+    def test_capture_cooldown_uses_matching_finite_duration_and_caps_stalls(self):
+        for timing, duration in ((None, .15), ((2, 900., 3), .15), ((1, float('nan'), 2), .15),
+                ((1, float('inf'), 2), .15), ((1, -1., 2), .15), ((1, 'bad', 2), .15),
+                ((1, 30., 2), .15), ((1, 300., 2), .6), ((1, 9000., 2), 2.), ((1, 1.e300, 2), 2.)):
+            with self.subTest(timing=timing):
+                self.setUp()
+                self.owner._worker.timings = timing
+                self.publish(); self.owner._adopt()
+                self.assertAlmostEqual(self.owner._capture_not_before, 10.+duration)
+
+    def test_perspective_capture_refreshes_sooner_but_keeps_duration_backpressure(self):
+        for elapsed, duration in ((0., .05), (30., .06), (150., .3), (500., 1.), (9000., 2.), (1.e300, 2.)):
+            with self.subTest(elapsed=elapsed):
+                self.setUp()
+                self.owner._worker.timings = (1, elapsed, 6)
+                payload = self.publish()
+                payload.descriptor = NS(projection=0)
+                self.owner._adopt()
+                self.assertAlmostEqual(self.owner._changed_next, 10.05)
+                self.assertAlmostEqual(self.owner._capture_not_before, 10.+duration)
+                self.assertAlmostEqual(self.owner._next, 11.)
+
+    def test_new_generation_bypasses_capture_cooldown(self):
+        owner = self.owner
+        owner._hard = 'file'; owner._capture_not_before = 99.
+        snapshot = Mock(return_value='scene')
+        self.assertTrue(owner.step(owner._gl, owner._main_context, 'new file', 'pose', snapshot))
+        snapshot.assert_called_once()
+        self.assertEqual(owner._capture_not_before, 0.)
 
     def test_early_completion_preserves_changed_scene_deadline(self):
         owner = self.owner

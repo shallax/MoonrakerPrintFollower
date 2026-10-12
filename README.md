@@ -101,6 +101,9 @@ the current printer's Following settings at the upload controls.
 the perimeter lights. It preserves the bed/model choices and disables their
 controls while off; the model remains visible in its base colours.
 **Enable reflections** independently switches bed/model reflections on or off.
+A complete colour environment map captures the surroundings from the toolhead
+centre and uses mipmaps for rough surfaces. Single-probe reflections approximate
+parallax and only include surfaces visible from that capture point.
 Both switches retain their saved Preview choices across restarts.
 Unavailable live positions show a reason; estimated positioning requires a toolpath.
 

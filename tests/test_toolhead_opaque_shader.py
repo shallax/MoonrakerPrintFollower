@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from mpf.toolhead.ToolheadOpaqueShader import create_opaque_shader
+from mpf.toolhead.ToolheadOpaqueShader import create_opaque_shader, create_hierarchy_shader
 
 
 class OpaqueShaderTests(unittest.TestCase):
@@ -33,3 +33,33 @@ class OpaqueShaderTests(unittest.TestCase):
                 self.assertNotIn("discard", recorded["fragment"])
                 self.assertTrue(shader.setFragmentShader("unchanged"))
                 self.assertEqual(recorded["fragment"], "unchanged")
+
+    def test_hierarchy_variants_specialize_only_requested_traversal_and_opacity(self):
+        for opaque in (False, True):
+            recorded = {}
+            class Shader:
+                def load(self, path, version, recorded=recorded):
+                    source = configparser.ConfigParser(interpolation=None, comment_prefixes=(";",))
+                    source.read(path)
+                    recorded.update(version=version, source=source)
+                    self.setFragmentShader(source["shaders"]["fragment" + version])
+                def setFragmentShader(self, source, recorded=recorded):
+                    recorded["fragment"] = source
+                    return "compiler-result"
+            with self.subTest(opaque=opaque), patch.dict(sys.modules, {
+                "UM.View.GL.OpenGLContext": SimpleNamespace(OpenGLContext=SimpleNamespace(isLegacyOpenGL=lambda: False)),
+                "UM.View.GL.ShaderProgram": SimpleNamespace(ShaderProgram=Shader),
+            }):
+                shader = create_hierarchy_shader(opaque=opaque)
+                original = recorded["source"]["shaders"]["fragment41core"]
+                expected = original.replace("#define MPF_USE_FULL_HIERARCHY 0", "#define MPF_USE_FULL_HIERARCHY 1")
+                if opaque: expected = expected.replace("if (v_color.a <= 0.0) discard;", "")
+                self.assertEqual(recorded["version"], "41core")
+                self.assertEqual(recorded["fragment"], expected)
+                self.assertNotIn("#define MPF_USE_FULL_HIERARCHY 0", expected)
+                self.assertEqual("if (v_color.a <= 0.0) discard;" in expected, not opaque)
+                # Shader reload/recompile must retain the selected specialization.
+                self.assertEqual(shader.setFragmentShader(original), "compiler-result")
+                self.assertEqual(recorded["fragment"], expected)
+                self.assertEqual(recorded["source"]["defaults"]["u_fullhierarchy"], "4")
+                self.assertEqual(recorded["source"]["defaults"]["u_fullhierarchyenabled"], "0")

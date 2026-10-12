@@ -75,6 +75,20 @@ def rotation(centre, axis, angle):
     return result
 
 
+def swept_bounds(points, centre, axis):
+    """Bound every rotation angle without inflating axial thickness to a sphere."""
+    points, centre, axis = (np.asarray(value, dtype=float) for value in (points, centre, axis))
+    offset = points-centre
+    axial = np.outer(offset @ axis, axis)
+    extent = np.hypot(offset-axial, np.cross(axis, offset))
+    fixed = centre+axial
+    # Match Rodrigues rotation, with room for float32 vertex arithmetic.
+    scale = max(1., np.abs(points).sum(axis=1).max()+np.abs(centre).sum())
+    pad = 32*np.finfo(np.float32).eps*scale
+    return (np.nextafter((fixed-extent).min(axis=0)-pad, -np.inf),
+            np.nextafter((fixed+extent).max(axis=0)+pad, np.inf))
+
+
 class RotorMotion:
     def __init__(self, *, clock=time.monotonic):
         self.clock = clock; self.last = None; self.phases = {}; self.rows = []; self.readings = {}
