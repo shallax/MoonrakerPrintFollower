@@ -276,6 +276,23 @@ class DetectionAssetsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "no longer matches"):
                 AssetInstaller.wheel_source_url(wheel)
 
+    def test_pypi_fallback_refuses_a_different_index_host_or_missing_wheel(self):
+        wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 123)
+        index = "https://pypi.org/pypi/onnxruntime/1.23.2/json"
+        with patch.object(AssetInstaller, "_open_download",
+                          return_value=Response(b'{"urls": []}', "https://other.example/index")):
+            with self.assertRaisesRegex(ValueError, "index host"):
+                AssetInstaller.wheel_source_url(wheel)
+        body = json.dumps({"urls": [{"filename": "different.whl"}]}).encode()
+        with patch.object(AssetInstaller, "_open_download", return_value=Response(body, index)):
+            with self.assertRaisesRegex(ValueError, "not found on PyPI"):
+                AssetInstaller.wheel_source_url(wheel)
+        cancelled = threading.Event()
+        cancelled.set()
+        with patch.object(AssetInstaller, "_open_download", side_effect=AssertionError("index fetched")):
+            with self.assertRaises(AssetInstaller.DownloadCancelled):
+                AssetInstaller.wheel_source_url(wheel, cancelled)
+
     def test_model_accepts_any_https_cdn_only_if_the_payload_matches_its_pin(self):
         data = b"pinned model"
         digest = hashlib.sha256(data).hexdigest()

@@ -29,6 +29,11 @@ class RuntimeMirrorTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 asset_url(name)
 
+    def test_release_url_refuses_an_invalid_tag(self):
+        for tag in ("main", "v5.4.0/other", "v5.4.0-beta"):
+            with self.subTest(tag=tag), self.assertRaisesRegex(ValueError, "release tag"):
+                release_asset_url(tag, "model.onnx")
+
 
 if __name__ == "__main__":
     unittest.main()
