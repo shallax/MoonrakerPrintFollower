@@ -9,8 +9,11 @@ confirmed one shared full index buffer and a smaller output while following the
 large print; these are storage estimates, not FPS or driver-residency claims.
 The final measured `make all JOBS=2` passed 5,973 tests, 97.8% total statement
 coverage, every required file above 95%, nine lint steps, screenshot determinism
-and verified packages. The canonical Linux screenshot refresh and cross-platform
-CI confirmation remain the final branch checks. Both package manifests and the current What's New entry use 5.3.0.
+and verified packages. CI run `38248913949` regenerated all 29 canonical Linux
+PNGs from commit `48fdc0f1`; its 25 capture scenes were byte-identical across
+two runs. Only the What's New image changed, and it was visually inspected
+before promotion. Cross-platform CI confirmation remains the final branch
+check. Both package manifests and the current What's New entry use 5.3.0.
 
 Cross-driver GL checks distinguish storage/coverage failures from numerical
 rounding. Depth, material category, alpha and pixels outside foreground clips
