@@ -17,7 +17,7 @@ from urllib.request import Request
 import zipfile
 
 from mpf.toolhead import CadRuntime
-from mpf.toolhead.WindowsRuntimeWithoutRedist import strip_cad_wheel
+from mpf.toolhead.WindowsRuntimeWithoutRedist import strip_cad_wheel, strip_python_helper
 from mpf.resources.RuntimeMirror import asset_url
 
 
@@ -127,6 +127,39 @@ class ToolheadCadRuntimeTests(unittest.TestCase):
             self.assertNotIn(hashed, archive.read("OCP/native.pyd"))
             self.assertNotIn(openmp, archive.read("OCP/native.pyd"))
             self.assertEqual(len(archive.namelist()), 2)
+
+    def test_windows_derivative_rejects_an_unexpected_dll_inventory(self):
+        source, destination = self.root / "source.whl", self.root / "derived.whl"
+        source.write_bytes(wheel_bytes([
+            ("OCP/native.pyd", b"unmodified binary"),
+            ("wheel.dist-info/RECORD", b"old record"),
+        ]))
+        with self.assertRaisesRegex(ValueError, "redistributable inventory"):
+            strip_cad_wheel(source, destination)
+        self.assertFalse(destination.exists())
+
+    def test_windows_python_helper_removes_only_the_bundled_runtime_dlls(self):
+        source, destination = self.root / "source.tar.gz", self.root / "derived.tar"
+        source.write_bytes(helper_bytes([
+            tar_member("python", kind=tarfile.DIRTYPE),
+            tar_member("python/python.exe", b"interpreter"),
+            tar_member("python/vcruntime140.dll", b"Microsoft DLL"),
+            tar_member("python/vcruntime140_1.dll", b"Microsoft DLL"),
+        ]))
+        strip_python_helper(source, destination)
+        with tarfile.open(destination) as archive:
+            self.assertEqual([entry.name for entry in archive], ["python", "python/python.exe"])
+            self.assertEqual(archive.extractfile("python/python.exe").read(), b"interpreter")
+
+    def test_windows_python_helper_rejects_a_changed_dll_inventory(self):
+        source, destination = self.root / "source.tar.gz", self.root / "derived.tar"
+        source.write_bytes(helper_bytes([
+            tar_member("python/python.exe", b"interpreter"),
+            tar_member("python/vcruntime140.dll", b"Microsoft DLL"),
+        ]))
+        with self.assertRaisesRegex(ValueError, "redistributable inventory"):
+            strip_python_helper(source, destination)
+        self.assertFalse(destination.exists())
 
     def test_five_platforms_always_select_the_independent_cp312_helper(self):
         platforms = (("Darwin", "arm64", "aarch64-apple-darwin"),
