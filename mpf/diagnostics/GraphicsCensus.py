@@ -104,6 +104,7 @@ def snapshot(node, context):
     surface = getattr(lighting, '_surface_cache', None)
     rows.append(dict(owner='lighting.coverage', kind='region',
         requested=getattr(lighting, '_composition_rect', None), retained=getattr(surface, '_region', None),
+        output=getattr(lighting, '_output_region', None),
         view_size=getattr(surface, '_view_size', None), key_identity=id(getattr(surface, '_key', None))))
     get_mesh = getattr(node, 'getMeshData', None)
     if callable(get_mesh): mesh('head.opaque', get_mesh())
@@ -189,7 +190,8 @@ def worker_snapshot(scene, environment):
     def add(label, kind, name, size=None, ownership='owned'):
         if name: rows.append((label, kind, int(name), None if size is None else int(size), ownership))
     for index, path in enumerate(scene.paths.values()):
-        add(f'worker.path.{index}.index', 'buffer', path.index.name, path.index.size)
+        add(f'worker.path.{index}.index', 'buffer', path.index.name, path.index.size,
+            'borrowed' if getattr(path.lease, 'index', None) is not None else 'owned')
         add(f'worker.path.{index}.vertex', 'buffer', path.lease.name, path.lease.size, 'borrowed')
         for vao in path.arrays.values(): add(f'worker.path.{index}', 'vao', vao.name)
     for index, buffers in enumerate(scene.plates.buffers.values()):

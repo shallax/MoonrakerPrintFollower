@@ -2,11 +2,32 @@
 
 ## 5.3.0 — current validation
 
+The final 12 October rendering round shares full immutable path indices across
+main passes and fenced worker captures, and moves cropped lighting outputs at
+full pixel density with the original projection. Live allocation receipts
+confirmed one shared full index buffer and a smaller output while following the
+large print; these are storage estimates, not FPS or driver-residency claims.
+The final measured `make all JOBS=2` passed 5,973 tests, 97.8% total statement
+coverage, every required file above 95%, nine lint steps, screenshot determinism
+and verified packages. The canonical Linux screenshot refresh and cross-platform
+CI confirmation remain the final branch checks. Both package manifests and the current What's New entry use 5.3.0.
+
+Cross-driver GL checks distinguish storage/coverage failures from numerical
+rounding. Depth, material category, alpha and pixels outside foreground clips
+remain exact. Arbitrary-gradient surface fixtures retain a declared empirical
+interpolation bound and a real-lighting output bound of one RGB8 step; a separate
+dyadic fixture checks exact coordinates. Exhaustive foreground-alpha pairs also
+compare float32 reference arithmetic and preserve exact alpha. These fixtures
+do not establish universal CAD silhouette equality. Required-GL runs fail when
+the context is unavailable; optional contexts report counted per-test skips.
+
 The `release/v5.3.0` branch adds Preview Toolhead controls, a shared physical
 position-move guard, boxed Preview headers, multi-day layer ETA clocks and a
 narrower webcam zoom face. Z-offset nudges/reset are operator calibration
 controls: they bypass client geometry/homing checks and remain available while
-printing. Jog and Move-to retain fresh-state physical travel checks.
+printing. Jog and Move-to require fresh firmware inputs, allow G-code zero on each axis,
+reject negative targets and check upper travel limits. Firmware handles bed-mesh
+compensation.
 
 **Never operate printer controls in the developer's live Cura session.** The
 printer is running a multi-day print. This includes Z-offset, homing, jogging,
@@ -33,7 +54,8 @@ Refresh committed screenshots with `make BACKEND=docker generate_screenshots`;
 only the pinned amd64 container defines their pixels.
 
 Regression checks cover queued-position freshness, G92/base-coordinate changes,
-bed-mesh/fade bounds, unknown transforms, missing limits, finite inputs,
+inclusive G-code zero, negative targets, firmware compensation ownership,
+unknown transforms, missing limits, finite inputs,
 three-second query expiry and invalidated owner/revision/queue-head replies.
 Separate calibration tests prove both Z-offset directions/reset work without
 homing or geometric telemetry, remain serialized behind prior commands, and

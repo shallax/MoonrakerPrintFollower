@@ -47,6 +47,46 @@ class FrameCacheTests(unittest.TestCase):
         self.cache.draw(self.gl, self.camera, self.bounds, self.transform, state, self.render)
 
 
+    def test_native_projection_output_moves_without_reprojection_or_idle_storage(self):
+        self.cache._depth_only = True
+        render = Mock()
+        def seed(gl, target, camera, viewport, crop, cropped_camera):
+            self.assertIs(camera, self.camera);self.assertIs(cropped_camera,self.camera)
+            return True
+        for crop in ((96,128,384,256),(320,128,384,256)):
+            self.cache.draw(self.gl,self.camera,None,self.transform,'pose',render,
+                additive=True,_crop=crop,preserve_projection=True,depth_seed=seed)
+            self.gl.glViewport.assert_any_call(-crop[0],-crop[1],800,600)
+            self.assertEqual(self.cache._pool_bytes,0)
+            self.assertIs(render.call_args.args[0],self.camera)
+        self.assertEqual(render.call_count,2)
+        self.factory.assert_called_once()
+        self.assertEqual(self.cache._size,(384,256,0))
+        self.cache.draw(self.gl,self.camera,None,self.transform,'pose',render,
+            additive=True,_crop=(320,128,384,256),preserve_projection=True,depth_seed=seed)
+        self.assertEqual(render.call_count,2)
+
+    def test_native_projection_rejects_hooks_with_attachment_size_contracts(self):
+        for options in ({'additive':False},{'animate':Mock()},{'post_render':Mock()},
+                {'receiver_step':Mock()},{'receiver_prepare':Mock()},{'requested_samples':4}):
+            with self.assertRaisesRegex(ValueError,'plain additive'):
+                self.cache.draw(self.gl,self.camera,None,self.transform,'pose',self.render,
+                    preserve_projection=True,**dict({'additive':True},**options))
+        self.factory.assert_not_called()
+
+    def test_lighting_envelope_moves_without_retaining_entire_motion_trail(self):
+        from mpf.toolhead.ToolheadFrameCache import lighting_region
+        region=None
+        for x in range(256,1800,64):
+            rect=(x,400,200,200);region=lighting_region(rect,2400,1600,region)
+            self.assertLessEqual(region[0],x);self.assertGreaterEqual(region[0]+region[2],x+200)
+            self.assertLessEqual(region[1],400);self.assertGreaterEqual(region[1]+region[3],600)
+            self.assertEqual(region[2:],(512,512))
+        self.assertGreater(region[0],1024)
+        self.assertEqual(lighting_region(None,2400,1600),(0,0,2400,1600))
+        for rect in ((1,2,0,3),(1,2,-3,4),(5000,5000,20,20),(1,2,3),('a',2,3,4)):
+            self.assertEqual(lighting_region(rect,2400,1600),(0,0,2400,1600))
+
     def test_composition_rectangle_changes_only_final_quad_and_intersects_host_scissor(self):
         self.viewport = (20,30,800,600)
         self.gl.glGetIntegerv.side_effect = lambda name: self.viewport if name==0x0BA2 else (40,50,40,60) if name==0x0C10 else 0 if name==0x80A9 else 17

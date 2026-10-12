@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+from itertools import count
 from contextlib import contextmanager
 from weakref import WeakKeyDictionary, WeakValueDictionary, WeakSet
 import numpy as np
@@ -157,6 +158,18 @@ def _first_native_upload(mesh,context):
         gl.glBindBuffer(0x8892,saved)
 
 
+_index_allocations = WeakValueDictionary()
+_index_generations = count(1)
+
+
+class IndexAllocation:
+    """Main-thread ownership of one immutable source/share-group EBO."""
+    def __init__(self, source, indices, group, buffer, generation):
+        self.source, self.indices, self.group = source, indices, group
+        self.buffer, self.generation = buffer, generation
+        self.name, self.size = int(buffer.bufferId()), int(indices.nbytes)
+
+
 class UploadArray(np.ndarray):
     # Bundled Uranium still calls this removed NumPy spelling.
     def tostring(self): return self.tobytes()
@@ -218,7 +231,9 @@ class ToolheadPathGeometry:
         self._index_chunk = index_chunk
         self._full_indices = indices is None
         self._index_bytes = self._index_generation = 0
-        source_indices = np.asarray(mesh.getIndices() if indices is None else indices).reshape(-1)
+        self._index_source = mesh.getIndices() if indices is None else indices
+        source_indices = np.asarray(self._index_source).reshape(-1)
+        self._index_allocation = None
         # Native signed 32-bit indices already have the exact EBO bit layout.
         # Viewing those bytes avoids a second whole-print CPU allocation.
         self._indices = (source_indices if index_chunk else source_indices.view(np.uint32)
@@ -339,6 +354,7 @@ class ToolheadPathGeometry:
                 # context's VAO or buffer names in its replacement context.
                 self._context = context
                 self._index_buffer = self._draw_elements = None
+                self._index_allocation = None
                 self._vaos.clear()
             if self._draw_elements is None:
                 address = context.getProcAddress(b"glDrawElements")
@@ -350,6 +366,13 @@ class ToolheadPathGeometry:
             vertex_buffer = OpenGL.getInstance().createVertexBuffer(self._vertex_mesh)
             if vertex_buffer is None or int(vertex_buffer.bufferId()) <= 0:
                 raise RuntimeError("Lighting vertex buffer unavailable")
+            allocation = self.shared_index_allocation(context)
+            if allocation is not None:
+                if self._index_buffer is not allocation.buffer: self._vaos.clear()
+                self._index_allocation = allocation
+                self._index_buffer = allocation.buffer
+                self._index_bytes = allocation.size
+                self._index_generation = allocation.generation
             vao_key = (shader, id(vertex_buffer), vertex_buffer.bufferId())
             cached = self._vaos.get(vao_key)
             vao = cached[0] if cached is not None else QOpenGLVertexArrayObject()
@@ -396,6 +419,12 @@ class ToolheadPathGeometry:
                     self._index_buffer = index_buffer
                     self._index_bytes = len(body)
                     self._index_generation += 1
+                    key = self._shared_index_key(context)
+                    if key is not None:
+                        allocation = IndexAllocation(self.mesh, self._index_source, context.shareGroup(),
+                            index_buffer, next(_index_generations))
+                        _index_allocations[key] = self._index_allocation = allocation
+                        self._index_generation = allocation.generation
                 for start, end in ranges:
                     shader.setUniformValue("u_drawElementStart", start)
                     self._draw_range(gl, start, end)
@@ -415,6 +444,34 @@ class ToolheadPathGeometry:
             self._vaos.clear()
             self._index_buffer = None
             raise RuntimeError("Lighting path draw failed: " + str(failure)) from failure
+
+    def _full_source_index_key(self, context):
+        if (not self._full_indices or not isinstance(self._index_source, np.ndarray)
+                or self._index_source.dtype not in (np.dtype('int32'), np.dtype('uint32'))
+                or not self._index_source.flags.c_contiguous or self._index_source.flags.writeable
+                or self.mesh.getIndices() is not self._index_source):
+            return None
+        return id(self.mesh), id(context.shareGroup()), id(self._index_source)
+
+    def _shared_index_key(self, context):
+        if self._index_chunk or self._element_base != 0: return None
+        return self._full_source_index_key(context)
+
+    def full_source_index_allocation(self, context):
+        """Read only the registered full source; never expose a chunk's own EBO."""
+        key = self._full_source_index_key(context)
+        allocation = _index_allocations.get(key) if key is not None else None
+        if (allocation is not None and allocation.source is self.mesh
+                and allocation.indices is self._index_source and allocation.group is context.shareGroup()
+                and allocation.name > 0 and allocation.generation > 0
+                and allocation.size == self._index_source.size*4
+                and int(allocation.buffer.bufferId()) == allocation.name):
+            return allocation
+        return None
+
+    def shared_index_allocation(self, context):
+        if self._index_chunk or self._element_base != 0: return None
+        return self.full_source_index_allocation(context)
 
     def shared_index_buffer(self, context, upload):
         """Borrow only this context's complete immutable native index allocation."""

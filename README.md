@@ -28,14 +28,22 @@ CAD colours with any explicit colour overrides. Automatic and Imported reset eac
 parts remain selectable through the body list. See [appearance controls and defaults](docs/TOOLHEAD_MATERIALS.md).
 
 In normal Cura Preview, reflective parts show a cached approximation of the actual
-bed and visible G-code through six exterior views. Complete depth searches retain
-thin reflected features, while opposite views share their traversal work.
-Unchanged maps sleep instead of rebuilding periodically. Layer progress and
-lighting changes refresh the map without
-recursively rendering Cura. Legacy compatibility mode keeps ordinary shading.
-Glass retains its imported alpha without refraction.
-Capture matrices are reused, and fan rotations avoid repeated general matrix
-solves to reduce CPU work.
+bed and visible G-code through six perspective views from the toolhead housing
+centre. Complete colour faces and roughness mipmaps are published together;
+short transitions soften replacement as the head moves. Capture antialiasing
+stabilizes thin paths, and detected flat beds use bounded reprojection between
+captures. A single capture point cannot reveal geometry hidden behind other
+surfaces, so visibility and parallax remain approximate. Unchanged maps sleep.
+Legacy compatibility mode keeps ordinary shading. Glass retains its imported
+alpha without refraction.
+
+Qualified native vertex buffers and immutable full print-path indices are shared
+by the main rendering passes and fenced reflection captures. Lighting retains
+full pixel density while cropping its surface and output targets when coverage
+permits; output crops keep the original camera projection. Intermediate targets
+have bounded caches, and inactive rendering storage is released. Capture matrices,
+material values and fan rotations avoid redundant CPU work. Memory savings depend
+on the model, view and illuminated coverage.
 
 The model editor's **Fans** section lets you pick a whole rotor body, inspect or
 override its centre and axis, and use **Update preview** before confirming rotation.

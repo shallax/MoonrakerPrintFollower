@@ -58,18 +58,20 @@ independent of both controls. See [Khronos BRDF](https://registry.khronos.org/gl
 
 ## Safe demonstration captures
 
-The October 2026 development demo imports the pinned screenshot assembly through
-the production STEP reader. Its annotations identify ABS, steel, aluminium,
-brass and nylon. The synthetic Voron cube contours and bed are rendered into a
-512px six-face colour/depth environment map; the toolhead samples that map with
-the production shader's bounded local-depth lookup. A flat mirror reference and
-moving-toolhead diagnostic make reflection angles visible. In Cura, visible bed-height
-meshes also supply their native geometry and colours. During re-slicing or layer
-changes, the last complete map remains visible until its replacement is ready;
-the first map still requires a complete capture. Conservative cube-face culling
-skips invisible path chunks without reducing their geometry. A single probe cannot
-reconstruct hidden surfaces, and finite sampling can miss thin geometry.
-No live Cura profile, printer connection or machine command is involved.
+The development demonstration imports the pinned screenshot assembly through the
+production STEP reader. Its annotations identify ABS, steel, aluminium, brass
+and nylon. Fixed synthetic Voron contours and bed geometry exercise the production
+head and scene-lighting shaders under reproducible cameras and lights. This is a
+material and lighting demonstration, with no live Cura profile, printer
+connection or machine command.
+
+Live Cura reflections use six 512px perspective colour faces captured from the
+housing centre, with local depth testing. Complete faces and roughness mipmaps
+are published together, and transitions soften replacement while moving. Detected
+flat beds use bounded reprojection between captures. The capture point cannot see
+surfaces hidden behind other geometry, so visibility and parallax are approximate;
+finite sampling can still miss very thin features. The previous complete map
+remains visible during re-slicing or capture preparation.
 
 ## Display memory and large prints
 
@@ -85,7 +87,10 @@ Large-print capture reuses visibility tests and batches frozen path state within
 bounded turns, without lowering map resolution or simplifying visible paths.
 Supported graphics contexts build replacement maps in a dedicated shared-context
 worker, keeping the previous complete map visible until all six new faces finish.
-The worker reuses existing path vertex storage and bounds outstanding GPU work.
+The worker reuses existing path vertex storage and qualified immutable full
+index allocations through fenced input leases, and bounds outstanding GPU work.
+Lighting output crops preserve the original camera projection and pixel density;
+storage savings depend on illuminated coverage.
 Preparation and an initial vertex upload still depend on print size. Isolated
 pixel parity and submission measurements are not promises of live frame rate
 or capture latency on a particular loaded print.

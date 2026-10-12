@@ -125,10 +125,19 @@ void main() {
             gl.glColorMask(True, True, True, True)
             gl.glClearColor(0, 0, 0, 0)
             gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-            QOpenGLFramebufferObject.blitFramebuffer(self._front, head, gl.GL_DEPTH_BUFFER_BIT, 0x2600)
+            if clip is None:
+                QOpenGLFramebufferObject.blitFramebuffer(self._front, head, gl.GL_DEPTH_BUFFER_BIT, 0x2600)
+            else:
+                from PyQt6.QtCore import QRect
+                # Explicit matching rectangles avoid relying on inherited
+                # scissor state during Qt's framebuffer binding operations.
+                rect = QRect(*clip)
+                gl.glDisable(0x0C11)
+                QOpenGLFramebufferObject.blitFramebuffer(self._front, rect, head, rect, gl.GL_DEPTH_BUFFER_BIT, 0x2600)
             if gl.glGetError():
                 return False
             self._front.bind()
+            constrain(gl)
             for source in batches:
                 batch = RenderBatch(source.shader, type=RenderBatch.RenderType.Transparent,
                     mode=source.renderMode, backface_cull=source.backfaceCull, range=source.renderRange,

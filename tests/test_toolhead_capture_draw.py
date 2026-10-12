@@ -179,4 +179,30 @@ class CaptureDrawTests(unittest.TestCase):
         plates.close()
 
 
-if __name__ == '__main__': unittest.main()
+
+    def test_borrowed_indices_validate_group_and_bytes_without_private_upload_or_delete(self):
+        from mpf.toolhead.ToolheadCaptureValues import IndexLease
+        mesh=self.mesh();mesh.indices.flags.writeable=False;group=object()
+        context=NS(shareGroup=lambda:group)
+        lease=BufferLease(31,48,mesh.layout()[0],IndexLease(73,16,4,id(group),1))
+        original=module.procedure
+        def procedure(ctx,name,*types):
+            if name=='glGetBufferParameteriv':
+                return lambda target,parameter,out:setattr(out._obj,'value',48 if target==0x8892 else 16)
+            return original(ctx,name,*types)
+        with patch.object(module,'procedure',side_effect=procedure), patch.object(module,'CaptureBuffer') as allocation:
+            paths=module.CapturePaths(mesh,lease,self.gl,context)
+            with paths.draw_session(self.shader,self.camera,Matrix(),self.gl) as draw:draw([(0,4)])
+            paths.close();allocation.assert_not_called()
+            self.gl.glBindBuffer.assert_any_call(0x8893,73)
+            self.gl.glDeleteBuffers.assert_not_called()
+        with self.assertRaisesRegex(RuntimeError,'foreign'):
+            module.CapturePaths(mesh,lease,self.gl,NS(shareGroup=lambda:object()))
+
+    def test_borrowed_index_size_change_aborts_before_draw(self):
+        from mpf.toolhead.ToolheadCaptureValues import IndexLease
+        mesh=self.mesh();mesh.indices.flags.writeable=False;group=object();context=NS(shareGroup=lambda:group)
+        paths=module.CapturePaths(mesh,BufferLease(31,48,mesh.layout()[0],IndexLease(73,16,4,id(group),1)),self.gl,context)
+        with self.assertRaisesRegex(RuntimeError,'index buffer changed'):
+            with paths.draw_session(self.shader,self.camera,Matrix(),self.gl) as draw:draw([(0,4)])
+        self.assertEqual(self.draws,[]);paths.close();self.gl.glDeleteBuffers.assert_not_called()

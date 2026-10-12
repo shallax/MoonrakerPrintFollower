@@ -10,7 +10,7 @@ Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
-## Current release and next plans — update (7 October 2026)
+## Current release and next plans — update (12 October 2026)
 
 The `release/v5.3.0` branch starts from the 5.2.0 merge at
 `5683a1f081dfd79f56e417c5c4b2192abaffcbcc`. The author approved the design and
@@ -83,24 +83,30 @@ map cannot reveal surfaces hidden from its capture point; opaque occlusion can
 therefore create dark gaps and incomplete reflected extrusion silhouettes.
 This limitation remains documented in the checkpoint.
 
-The author has selected the six-directional-view environment map as the
-reflection renderer and removed ray tracing from scope. The Metal bridge,
-worker, build scripts and packaged binaries are removed, along with both
-renderer radio buttons, environment-fallback checkbox and displayed-backend
-label. Enable reflections controls the environment map directly. Saved ray and
-fallback preferences are ignored. The final optimisation pass retains complete
-texel traversal with opposite-view pairing, single-search mip roughness, immutable
-index uploads, uniform reuse and idle sleeping. Coarse depth-range skipping and
-axis-specialised search were rejected after slower or changed-image benchmarks;
-additional preparation/target-binding caches were rejected without a reliable CPU
-gain. Thin-surface coverage and original materials remain the acceptance criteria.
-Independent shadows remain a separate, unfinished feature.
+The final rendering implementation uses complete six-face central colour maps
+with local depth testing, capture antialiasing, sharper roughness mip selection,
+bounded flat-bed reprojection and transitions between completed maps. Enable
+reflections controls it directly. The live optimisation rounds share qualified
+native path vertex buffers, full immutable index allocations and fenced worker
+leases; they reuse bounded intermediate targets, cache delivered uniforms and
+retain full-resolution lighting attributes. Cropped lighting outputs preserve the
+original camera projection while moving with the illuminated region. Storage
+savings are conditional on scene coverage; benchmark timing is reported separately
+from live responsiveness.
+
+The author reported substantially improved responsiveness after the pushed
+`0701dcb1` baseline and requested one final round: finish index sharing and lighting
+storage work, reconcile documentation and package versions, and regenerate the
+canonical screenshots. All active release fields remain 5.3.0. Local validation,
+cross-platform CI repairs and canonical screenshot reconciliation are the final
+release-branch gates; no additional rendering feature work is planned in this
+round. No PR, merge, tag or publication has been authorized.
 
 Existing direct-light values remain centralized in `ToolheadShadowValues.py`.
 Unused shadow-map and geometry-query/receiver-layer prototypes are excluded from
 the release and preserved at commit `80c4b263`. Independent shadows remain
-unfinished and deferred; the normal directional renderer uses none of those
-prototype implementations.
+unfinished and deferred. Directional depth-search helpers remain reference
+fixtures and are not used by the production central colour lookup.
 
 ### 5.3.0 — Toolhead controls in Preview (final planned 5.x feature release)
 

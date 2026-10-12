@@ -308,6 +308,24 @@ class PathGeometryTests(unittest.TestCase):
         geometry._indices=geometry._indices.copy()
         self.assertIsNone(geometry.shared_index_buffer(context,upload))
 
+    def test_main_index_cache_uses_exact_source_array_and_share_group_and_is_weak(self):
+        import gc
+        import weakref
+        from mpf.toolhead import ToolheadPathGeometry as module
+        mesh=self.mesh([[0,0,0],[1,0,0]])
+        indices=np.array([0,1],np.int32);indices.flags.writeable=False;mesh.getIndices=lambda:indices
+        group=object();context=SimpleNamespace(shareGroup=lambda:group)
+        first=ToolheadPathGeometry(mesh);second=ToolheadPathGeometry(mesh)
+        buffer=Mock(bufferId=Mock(return_value=23))
+        allocation=module.IndexAllocation(mesh,indices,group,buffer,12)
+        module._index_allocations[first._shared_index_key(context)]=allocation
+        self.assertIs(second.shared_index_allocation(context),allocation)
+        self.assertIsNone(second.shared_index_allocation(SimpleNamespace(shareGroup=lambda:object())))
+        replacement=indices.copy();replacement.flags.writeable=False;mesh.getIndices=lambda:replacement
+        self.assertIsNone(first.shared_index_allocation(context))
+        self.assertIsNone(ToolheadPathGeometry(mesh).shared_index_allocation(context))
+        reference=weakref.ref(allocation);del allocation;gc.collect();self.assertIsNone(reference())
+
 class PathRenderContracts(unittest.TestCase):
     def test_same_turn_session_reuses_frozen_bindings_but_uploads_each_chunk(self):
         self.geometry._index_chunk=2

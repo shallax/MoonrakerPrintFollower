@@ -29,15 +29,28 @@ def camera_bindings(shader, camera, transform, mesh, normal=None):
         view_position=camera.getWorldPosition(), light_0_position=camera.getCameraLightPosition())
 
 
+class BorrowedIndex:
+    """Worker-local raw view; retirement never deletes main-owned storage."""
+    def __init__(self, lease, gl):
+        self.name, self.size, self.gl = lease.name, lease.size, gl
+    def bind(self): self.gl.glBindBuffer(0x8893, self.name)
+    def close(self): pass
+
+
 class CapturePaths(ToolheadPathGeometry):
     def __init__(self, mesh, lease, gl, context):
         super().__init__(mesh, build_bounds=False, index_chunk=32768)
         lease.validate(mesh)
         self.lease, self.gl, self.context = lease, gl, context
-        self.index = CaptureBuffer(context, 0x8893)
+        if lease.index is not None:
+            lease.index.validate(mesh, id(context.shareGroup()))
+            self.index = BorrowedIndex(lease.index, gl)
+        else:
+            self.index = CaptureBuffer(context, 0x8893)
+            self.index.create()
         self.arrays = {}
-        self.index.create()
-        self._index_uploaded = False
+        self._index_uploaded = lease.index is not None
+        self._index_checked = lease.index is None
 
     @contextmanager
     def draw_session(self, shader, camera, transform, gl):
@@ -59,6 +72,12 @@ class CapturePaths(ToolheadPathGeometry):
             else:
                 vao.bind(); gl.glBindBuffer(0x8892, self.lease.name); shader.bind()
             self.index.bind()
+            if not self._index_checked:
+                size = ctypes.c_int()
+                procedure(self.context, 'glGetBufferParameteriv', None, ctypes.c_uint, ctypes.c_uint,
+                    ctypes.POINTER(ctypes.c_int))(0x8893, 0x8764, ctypes.byref(size))
+                if size.value != self.lease.index.size: raise RuntimeError('Reflection borrowed index buffer changed')
+                self._index_checked = True
             if not self._index_uploaded:
                 # Frozen indices are shared by every face/pass and later capture.
                 # The capture receipt already admits the complete index storage.

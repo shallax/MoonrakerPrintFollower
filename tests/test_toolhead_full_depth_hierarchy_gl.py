@@ -8,8 +8,7 @@ import unittest
 from unittest.mock import patch
 import numpy as np
 os.environ['QT_QPA_PLATFORM']='cocoa' if sys.platform=='darwin' else 'offscreen'
-from PyQt6.QtGui import QGuiApplication,QOpenGLContext,QOffscreenSurface,QSurfaceFormat
-from PyQt6.QtOpenGL import QOpenGLVersionFunctionsFactory,QOpenGLVersionProfile
+from tests import test_toolhead_environment_gl as gl_fixture
 from mpf.toolhead.ToolheadDepthHierarchy import DepthHierarchy, SIZE, TILE_SIZE
 from mpf.toolhead.ToolheadGLState import procedure
 
@@ -17,17 +16,16 @@ from mpf.toolhead.ToolheadGLState import procedure
 class FullDepthHierarchyGLTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app=QGuiApplication.instance() or QGuiApplication([])
-        fmt=QSurfaceFormat();fmt.setVersion(4,1);fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
-        cls.context=QOpenGLContext();cls.context.setFormat(fmt)
-        if not cls.context.create():raise unittest.SkipTest('Core4 context unavailable')
-        cls.surface=QOffscreenSurface();cls.surface.setFormat(cls.context.format());cls.surface.create()
-        if not cls.context.makeCurrent(cls.surface):raise unittest.SkipTest('Core4 context unavailable')
-        profile=QOpenGLVersionProfile();profile.setVersion(4,1);profile.setProfile(fmt.profile())
-        cls.gl=QOpenGLVersionFunctionsFactory.get(profile,cls.context);cls.gl.initializeOpenGLFunctions()
+        # The common fixture raises when required GL is unavailable, otherwise
+        # records availability so each test is honestly counted as skipped.
+        gl_fixture.EnvironmentGLTests.setUpClass.__func__(cls)
 
     @classmethod
-    def tearDownClass(cls):cls.context.doneCurrent()
+    def tearDownClass(cls):
+        gl_fixture.EnvironmentGLTests.tearDownClass.__func__(cls)
+
+    def setUp(self):
+        if not self.available: self.skipTest('Core4 context unavailable')
 
     def test_all_levels_exact_words_and_pair_publication(self):
         gl,context=self.gl,self.context

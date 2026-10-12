@@ -4,6 +4,10 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 5.3.0
 
+- Share immutable full print-path index storage across main rendering passes
+  and fenced reflection captures. Crop lighting output at full pixel density
+  while preserving the original camera projection.
+
 - Keep full-resolution lighting surface storage within a padded illuminated
   region, reuse compatible cropped depth, and release inactive rendering caches.
 

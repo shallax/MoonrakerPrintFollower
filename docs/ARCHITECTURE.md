@@ -1901,7 +1901,17 @@ destroyed through plugin-owned cleanup. Simulation shadow instancing also borrow
 the ordinary simulation owner's complete immutable index buffer once available;
 its texture view retains the owner and never destroys the borrowed buffer.
 Context, buffer identity and allocation generation select the cached view;
-chunked and exterior-only indices are ineligible.
+mutable chunk uploads and exterior-only indices are ineligible. A chunked
+capture descriptor may look up the registered full original source allocation;
+that lookup never exposes its own chunk EBO or changes chunk drawing.
+Main geometry owners share that full
+immutable EBO through a weak source-array/share-group cache. The capture freezer
+retains its allocation owner in the input cohort and exports only an index-name,
+byte-count, generation and share-group receipt. The worker waits for the existing
+input fence before using that raw name in its private VAO; it never receives a
+Qt wrapper or destroys borrowed storage. Unavailable certificates keep private
+worker indices. Borrowed index bytes are charged once per source receipt, while
+private index upload copies remain in the capture allocation receipt.
 If a qualified native draw exposes an existing untracked VBO before any private
 allocation, the first upload may recreate the native buffer through Uranium's
 supported uploader and certify that new generation. This replaces the otherwise
@@ -2028,12 +2038,14 @@ Idle workers wait for notifications rather than polling. A wake revision guards
 the scan-to-sleep race, and scene-generation changes explicitly wake retirement
 even when no successor job exists. GPU fence waits and shutdown retain their
 bounded polling; no resource retirement depends on a later render frame.
-Worker path captures retain one complete immutable index buffer per borrowed
-vertex-buffer identity. Every bounded draw still validates its original element
+Worker path captures use a certified full-source `IndexLease` when the main
+renderer has already uploaded that immutable stream. Its fenced source cohort
+retains the allocation. Otherwise they retain a private complete index buffer
+per borrowed vertex-buffer identity. Every bounded draw still validates its original element
 range and publishes its original element start, using a byte offset into that
 buffer. Later faces, passes and captures reuse the same upload; failed uploads
-must succeed before any draw. Existing capture storage receipts include the
-complete index buffer and temporary upload copies. A 200,000-path comparison
+must succeed before any draw. Source receipts charge borrowed index storage; capture storage receipts charge
+private complete index buffers and their temporary upload copies. A 200,000-path comparison
 kept all six colour/depth faces byte-identical while eliminating 84 repeated
 index uploads (9.6 MB) per warmed capture.
 The default draw uses the complete central colour map at the current head pose.
@@ -2180,6 +2192,13 @@ margins are not padded again, avoiding growth on unrelated axes. Camera, scene o
 An explicit cropped depth-copy capability can seed compatible regions from the
 owned simulation cache. Valid empty light coverage skips drawing and allocation.
 Successful deferred rendering releases inactive forward-only depth caches.
+The additive lighting output also uses a moving padded crop at full pixel density.
+It keeps the original camera projection and renders through an integer-offset
+full-size viewport, so its crop can move without invalidating the surface cache.
+Its dimensions grow only to accommodate current coverage, not the travelled path,
+and reset with camera, scene or layer changes. This output does not pool idle
+targets. Hooks that depend on matching viewport and attachment dimensions are
+excluded from this projection-preserving mode.
 Clears cover each owned target; incoming scissor state is restored
 even when drawing fails. Common head receiver uniforms are
 reused only within a synchronous draw, keyed by exact camera identity. The scope

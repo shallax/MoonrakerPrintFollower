@@ -142,12 +142,32 @@ class CaptureMesh:
 
 
 @dataclass(frozen=True)
+class IndexLease:
+    """Plain fenced receipt; its main-thread owner retains the actual buffer."""
+    name: int
+    size: int
+    count: int
+    group: int
+    generation: int
+
+    def validate(self, mesh, group=None):
+        indices = mesh.indices
+        if (self.name <= 0 or self.generation <= 0 or self.group <= 0
+                or indices is None or indices.dtype not in (np.dtype('int32'), np.dtype('uint32'))
+                or not indices.flags.c_contiguous or indices.flags.writeable or self.count != indices.size
+                or self.size != self.count*4 or (group is not None and group != self.group)):
+            raise RuntimeError('Reflection borrowed index buffer is incomplete or foreign')
+
+
+@dataclass(frozen=True)
 class BufferLease:
     name: int
     size: int
     layout: tuple
+    index: IndexLease | None = None
 
     def validate(self, mesh):
         layout, size = mesh.layout()
         if self.name <= 0 or self.size != size or self.layout != layout:
             raise RuntimeError('Reflection borrowed vertex buffer is incomplete')
+        if self.index is not None: self.index.validate(mesh)

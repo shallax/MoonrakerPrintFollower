@@ -57,10 +57,19 @@ class CaptureMemoryReceiptTests(unittest.TestCase):
         self.assertEqual(frame.capture_storage_bytes(), 376)
         frame = module.CaptureFrame((), None, (entry,), (), (), (), (True, False), (), None)
         self.assertEqual(frame.capture_storage_bytes(), 216)
-        path = (mesh, None, None, None, None, None, None)
+        path = (mesh, module.BufferLease(7, mesh.layout()[1], mesh.layout()[0]), None, None, None, None, None)
         frame = module.CaptureFrame((), None, (entry, entry), (path,), (), (('light', UniformValue('scalar', 1)),), (True, False), (), None)
         self.assertEqual(frame.capture_storage_bytes(), 720+36)
 
+
+    def test_borrowed_index_storage_charged_once_without_private_upload_copies(self):
+        indices=np.array([0,1],np.int32);indices.flags.writeable=False
+        mesh=module.CaptureMesh(1,np.zeros((2,3),np.float32),indices,None,None,None,())
+        lease=module.BufferLease(7,24,mesh.layout()[0],module.IndexLease(8,8,2,1,1))
+        paths=((mesh,lease,None,(0,2),None,0,0),)*2
+        frame=module.CaptureFrame((),None,(),paths,(),(),(False,False),(),None)
+        self.assertEqual(frame.retained_source_bytes(),2*(mesh.retained_bytes()+24)+8)
+        self.assertEqual(frame.capture_storage_bytes(),0)
 
 class CaptureRecipeTests(unittest.TestCase):
     def setUp(self):
@@ -233,4 +242,54 @@ class CaptureRecipeTests(unittest.TestCase):
         self.assertEqual(values, {'value': 5})
 
 
-if __name__ == '__main__': unittest.main()
+
+    def test_freezer_exports_plain_index_receipt_and_retains_main_allocation(self):
+        source=self.mesh();source.buffer=Mock(bufferId=Mock(return_value=31))
+        indices=source.getIndices();indices.flags.writeable=False
+        group=object();context=NS(shareGroup=lambda:group)
+        allocation=module.IndexAllocation(source,indices,group,Mock(bufferId=Mock(return_value=39)),17)
+        geometry=Mock(vertex_mesh=Mock(return_value=source),full_source_index_allocation=Mock(return_value=allocation))
+        self.snapshot.paths=[(geometry,Matrix(),(0,2),None,0)]
+        def size(target,parameter,out):out._obj.value=24
+        with patch.object(module,'procedure',return_value=size),patch.object(module,'recipe_for',return_value=module.ShaderRecipe((),(),())):
+            frame,owners=module.CaptureFreezer().freeze(self.snapshot,context)
+        self.assertIs(owners[0],allocation)
+        self.assertEqual(frame.paths[0][1].index,module.IndexLease(39,8,2,id(group),17))
+        self.assertEqual(frame.capture_storage_bytes(),0)
+        self.assertEqual(frame.retained_source_bytes(),32+24+8)
+
+    def test_production_chunk_descriptor_freezes_registered_full_source_not_its_chunk(self):
+        from mpf.toolhead import ToolheadPathGeometry as paths
+        source=self.mesh();source.buffer=Mock(bufferId=Mock(return_value=31))
+        indices=source.getIndices();indices.flags.writeable=False
+        group=object();context=NS(shareGroup=lambda:group)
+        main=paths.ToolheadPathGeometry(source,build_bounds=False)
+        allocation=module.IndexAllocation(source,indices,group,Mock(bufferId=Mock(return_value=39)),17)
+        paths._index_allocations[main._shared_index_key(context)]=allocation
+        geometry=paths.ToolheadPathGeometry(source,build_bounds=False,index_chunk=32768)
+        geometry.vertex_mesh=Mock(return_value=source)
+        geometry._index_buffer=Mock(bufferId=Mock(return_value=77))
+        geometry._element_base=2;geometry._index_bytes=4
+        self.assertIsNone(geometry.shared_index_allocation(context))
+        self.assertIs(geometry.full_source_index_allocation(context),allocation)
+        self.snapshot.paths=[(geometry,Matrix(),(0,2),None,0)]
+        def size(target,parameter,out):out._obj.value=24
+        with patch.object(module,'procedure',return_value=size),patch.object(module,'recipe_for',return_value=module.ShaderRecipe((),(),())):
+            frame,owners=module.CaptureFreezer().freeze(self.snapshot,context)
+        self.assertEqual(frame.paths[0][1].index,module.IndexLease(39,8,2,id(group),17))
+        self.assertIs(owners[0],allocation)
+        self.assertEqual(geometry._index_buffer.bufferId(),77)
+        self.assertEqual(geometry._element_base,2)
+        self.assertIsNone(geometry.full_source_index_allocation(NS(shareGroup=lambda:object())))
+        exterior=paths.ToolheadPathGeometry(source,indices=indices,build_bounds=False)
+        self.assertIsNone(exterior.full_source_index_allocation(context))
+        # Same-shaped frozen indices from another stream cannot certify this EBO.
+        detached=module.CaptureMesh.freeze(source)
+        from dataclasses import replace
+        detached=replace(detached,indices=indices.copy())
+        detached.indices.flags.writeable=False
+        freezer=module.CaptureFreezer();freezer.meshes[source]=detached
+        with patch.object(module,'procedure',return_value=size),patch.object(module,'recipe_for',return_value=module.ShaderRecipe((),(),())):
+            frame,owners=freezer.freeze(self.snapshot,context)
+        self.assertIsNone(frame.paths[0][1].index)
+        self.assertNotIn(allocation,owners)

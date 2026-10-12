@@ -185,7 +185,7 @@ class SourceContractTests(unittest.TestCase):
             'ToolheadCaptureBuffers': {'ToolheadGLState'},
             'ToolheadDepthHierarchy': {'ToolheadCaptureBuffers', 'ToolheadCaptureGL', 'ToolheadGLState'},
             'ToolheadCaptureDraw': {'ToolheadCaptureBuffers', 'ToolheadPathGeometry', 'ToolheadGLState'},
-            'ToolheadCaptureRecipe': {'ToolheadDepthHierarchy', 'ToolheadCaptureValues', 'ToolheadCaptureGL', 'ToolheadCaptureDraw', 'ToolheadEnvironmentScene', 'ToolheadGLState', 'ToolheadSceneLighting', 'PluginPaths'},
+            'ToolheadCaptureRecipe': {'ToolheadPathGeometry', 'ToolheadDepthHierarchy', 'ToolheadCaptureValues', 'ToolheadCaptureGL', 'ToolheadCaptureDraw', 'ToolheadEnvironmentScene', 'ToolheadGLState', 'ToolheadSceneLighting', 'PluginPaths'},
             'ToolheadEnvironmentMailbox': set(),
             'ToolheadEnvironmentWorker': {'ToolheadDepthHierarchy', 'ToolheadCaptureGL', 'ToolheadCaptureBuffers', 'ToolheadCaptureRecipe', 'ToolheadEnvironment', 'ToolheadEnvironmentMailbox', 'ToolheadGLState', 'GraphicsCensus'},
             'ToolheadAsyncEnvironment': {'ToolheadEnvironment', 'ToolheadEnvironmentWorker', 'ToolheadCaptureRecipe', 'ToolheadGLState'},

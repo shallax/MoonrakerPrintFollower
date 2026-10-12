@@ -130,4 +130,14 @@ class CaptureValueTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'Unknown'): thaw_uniform(UniformValue('invalid', None))
 
 
-if __name__ == '__main__': unittest.main()
+
+    def test_index_receipt_rejects_mutability_wrong_group_count_and_size(self):
+        from mpf.toolhead.ToolheadCaptureValues import IndexLease
+        from dataclasses import replace
+        mesh=CaptureMesh(91,np.zeros((2,3),np.float32),np.array([0,1],np.int32),None,None,None,())
+        receipt=IndexLease(7,8,2,99,1)
+        with self.assertRaises(RuntimeError):receipt.validate(mesh,99)
+        mesh.indices.flags.writeable=False;receipt.validate(mesh,99)
+        for changed in (replace(receipt,name=0),replace(receipt,size=12),replace(receipt,count=3),
+                replace(receipt,generation=0),replace(receipt,group=100)):
+            with self.assertRaises(RuntimeError):changed.validate(mesh,99)

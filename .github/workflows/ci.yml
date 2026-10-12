@@ -282,7 +282,9 @@ jobs:
           sudo apt-get install -y libegl1 libxkbcommon0 libgl1 libglx-mesa0 xvfb xauth
           # Match the native and pinned-container suites: without NumPy,
           # the bed-mesh tests skip and GPU packing takes only its fallback.
-          python -m pip install PyQt6==6.11.0 numpy
+          # The central-reflection GL tests use the same capture runtime as
+          # native builds; keep these versions aligned with PYPI_PINS.
+          python -m pip install PyQt6==6.11.0 numpy moderngl==5.12.0 glcontext==3.0.0
 
       - name: Run all discovered tests with the real Qt runtime
         if: matrix.python-version != '3.12'
@@ -428,8 +430,8 @@ jobs:
         run: |
           DOCKER_DEFAULT_PLATFORM=linux/amd64 tools/docker_dev.sh python3 tools/compare_screenshots.py screenshots dist/screenshots
 
-      - name: Preserve failed screenshot comparisons
-        if: failure()
+      - name: Preserve canonical screenshots and comparison evidence
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: screenshot-comparison

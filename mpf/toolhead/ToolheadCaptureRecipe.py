@@ -9,8 +9,9 @@ from pathlib import Path
 from types import SimpleNamespace
 import numpy as np
 
-from .ToolheadCaptureValues import CaptureMesh, BufferLease, freeze_uniform, thaw_uniform
+from .ToolheadCaptureValues import CaptureMesh, BufferLease, IndexLease, freeze_uniform, thaw_uniform
 from .ToolheadCaptureGL import RawShaderProgram
+from .ToolheadPathGeometry import IndexAllocation
 from .ToolheadCaptureDraw import CapturePaths, CapturePlates
 from .ToolheadEnvironmentScene import EnvironmentSnapshot
 from .ToolheadGLState import procedure
@@ -93,6 +94,8 @@ class CaptureFrame:
         Duplicate publications are conservatively counted without packing.
         """
         paths = sum(mesh.retained_bytes()+lease.size for mesh, lease, *_ in self.paths)
+        indices = {lease.index for _mesh, lease, *_ in self.paths if lease.index is not None}
+        paths += sum(index.size for index in indices)
         plates = sum(mesh.retained_bytes() for _recipe, mesh, *_ in self.plates)
         return paths+plates+(len(self.texture[2]) if self.texture is not None else 0)
 
@@ -116,8 +119,8 @@ class CaptureFrame:
                 retained += receiver+index+count*12
                 temporary = max(temporary, count*36, 2*receiver+2*index)
             total += retained+temporary
-        for mesh, _lease, *_rest in self.paths:
-            total += (mesh.indices.size*4*3 if mesh.indices is not None else 0)
+        for mesh, lease, *_rest in self.paths:
+            if lease.index is None: total += (mesh.indices.size*4*3 if mesh.indices is not None else 0)
         return total
 
 
@@ -153,7 +156,17 @@ class CaptureFreezer:
                 procedure(context, 'glGetBufferParameteriv', None, ctypes.c_uint, ctypes.c_uint,
                     ctypes.POINTER(ctypes.c_int))(0x8892, 0x8764, ctypes.byref(recorded))
             finally: gl.glBindBuffer(0x8892, previous)
-            lease = BufferLease(name, int(recorded.value), layout)
+            allocation = geometry.full_source_index_allocation(context)
+            index = None
+            if (isinstance(allocation, IndexAllocation) and mesh.indices is not None
+                    and mesh.indices.dtype == allocation.indices.dtype
+                    and mesh.indices.nbytes == allocation.size
+                    and mesh.indices.ctypes.data == allocation.indices.ctypes.data):
+                index = IndexLease(allocation.name, allocation.size, int(mesh.indices.size),
+                    id(allocation.group), allocation.generation)
+                index.validate(mesh, id(context.shareGroup()))
+                leases.append(allocation)
+            lease = BufferLease(name, int(recorded.value), layout, index)
             lease.validate(mesh)
             leases.extend((buffer, upload)); used.add(upload)
             paths.append((mesh, lease, freeze_uniform(transform), tuple(map(int, bounds)),
@@ -232,7 +245,7 @@ class CaptureScene:
             used.add(mesh)
         live_paths = set()
         for mesh, lease, transform, bounds, partial, shadow, top in frame.paths:
-            key = mesh.identity, lease.name, lease.size
+            key = mesh.identity, lease.name, lease.size, lease.index
             geometry = self.paths.get(key)
             if geometry is None: geometry = self.paths[key] = CapturePaths(mesh, lease, self.gl, self.context)
             live_paths.add(key); used.add(mesh)

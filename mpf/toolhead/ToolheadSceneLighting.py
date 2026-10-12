@@ -177,6 +177,7 @@ class ToolheadSceneLighting:
         self._surface_failed = False
         self._surface_padding_key = None
         self._surface_padding = 0.0
+        self._output_region = self._output_region_key = None
 
     def _batch(self, shader, transform, mesh, bounds=None, lines=False):
         options = dict(type=RenderBatch.RenderType.Solid, backface_cull=True)
@@ -331,10 +332,8 @@ class ToolheadSceneLighting:
                 for batch in native_depth + batches for item in batch.items),
             tuple((id(geometry), transform.getData().tobytes(), bounds, repr(uniforms), current_start)
                 for geometry, transform, bounds, _lit, uniforms, current_start in paths))
-        # Keep a fixed viewport for illumination: moving crop projections would
-        # invalidate the static depth every time the head moved. Colour is
-        # already additive/premultiplied, so its retained image adds once.
-        # Keep storage/projection unchanged; constrain only the final additive quad.
+        # Keep the original projection while moving a smaller output target.
+        # Integer viewport offsets leave retained surface geometry unchanged.
         try:
             padding_key = tuple((id(geometry), transform.getData().tobytes()) for geometry, transform, *_ in paths)
             if padding_key != getattr(self, '_composition_padding_key', None):
@@ -357,6 +356,14 @@ class ToolheadSceneLighting:
         # No illuminated pixels: keep existing allocations asleep. In
         # particular, an empty ROI must not expand to a full-window target.
         if rectangle is not None and (rectangle[2] <= 0 or rectangle[3] <= 0): return
+        from .ToolheadFrameCache import lighting_region
+        viewport = tuple(map(int, gl.glGetIntegerv(0x0BA2)))
+        output_key = (scene_identity, viewport[2:], camera.getInverseWorldTransformation().getData().tobytes(),
+            camera.getProjectionMatrix().getData().tobytes(),
+            tuple((id(geometry), current_start) for geometry, *_rest, current_start in paths))
+        previous = getattr(self, '_output_region', None) if output_key == getattr(self, '_output_region_key', None) else None
+        self._output_region = lighting_region(rectangle, *viewport[2:], previous)
+        self._output_region_key = output_key
         def redraw(cached_camera):
             for target in (self._mesh_shader, shader) if shader is not None else (self._mesh_shader,):
                 for name, value in light_values.items(): target.setUniformValue(name, value)
@@ -368,7 +375,8 @@ class ToolheadSceneLighting:
                 batches, surface_batches, paths, shader if paths else None, scene_identity, path_settings,
                 copy_completed_depth)
         self._frame_cache.draw(gl, camera, None, Matrix(), state,
-            redraw, additive=True, composition_rect=rectangle)
+            redraw, additive=True, composition_rect=rectangle,
+            _crop=self._output_region, preserve_projection=True)
 
     def _draw_with_surfaces(self, gl, camera, node, view, native_depth, batches, surface_batches,
             paths, shader, scene_identity, path_settings, copy_completed_depth=None):

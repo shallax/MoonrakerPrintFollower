@@ -31,7 +31,10 @@ artist roughness mip curve and optional detected-flat-bed reprojection, avoiding
 exported depth and search-hierarchy work. This is a
 single-probe approximation, with incomplete visibility behind captured surfaces
 and approximate parallax. Original CAD shading, opacity and depth remain in the
-raster path. Enable reflections directly controls the map; removed renderer and
+raster path. Full immutable path indices may be shared through the existing
+fenced worker input leases. Lighting outputs use integer viewport offsets to
+crop storage without changing the original camera projection; moving output
+crops do not retain a growing motion trail. Enable reflections directly controls the map; removed renderer and
 fallback preferences are ignored.
 
 The unused split receiver/query and shadow-map prototypes are excluded from the

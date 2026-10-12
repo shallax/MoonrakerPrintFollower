@@ -79,9 +79,15 @@ class TransparencyTests(unittest.TestCase):
         self.gl.glGetIntegerv.side_effect = lambda key: previous if key == 0x0C10 else 1
         self.gl.glIsEnabled.return_value = False
         clip = (8, 12, 16, 24)
+        def copied(destination, destination_rect, source, source_rect, buffers, filter_):
+            self.assertIs(destination,self.front);self.assertIs(source,self.head)
+            self.assertEqual(destination_rect.getRect(),clip);self.assertEqual(source_rect.getRect(),clip)
+            self.assertEqual((buffers,filter_),(self.gl.GL_DEPTH_BUFFER_BIT,0x2600))
+            self.gl.glDisable.assert_called_with(0x0C11)
+        self.fbos.blitFramebuffer.side_effect=copied
         self.assertTrue(self.helper.draw(self.gl, self.head, self.camera, [self.source], clip=clip))
         self.assertEqual([call.args for call in self.gl.glScissor.call_args_list],
-            [clip, clip, clip, previous])
+            [clip, clip, clip, clip, previous])
         self.gl.glDisable.assert_called_with(0x0C11)
         self.gl.glIsEnabled.return_value = True
         self.batch.render.side_effect = RuntimeError('foreground failed')
@@ -298,11 +304,13 @@ class SampledTransparencyGLTests(unittest.TestCase):
         self.assertTrue(front.setFragmentShader('#version 410\nout vec4 colour;void main(){colour=vec4(.15,.3,.05,.5);gl_FragDepth=.4;}'))
         front.build()
         vao = QOpenGLVertexArrayObject(); self.assertTrue(vao.create())
+        depth_before_draw=[]
         class Batch:
             RenderType = SimpleNamespace(Transparent=2)
             def __init__(self, *args, **kwargs): self.options = kwargs
             def addItem(self, *args, **kwargs): pass
             def render(self, camera):
+                depth_before_draw.append(pixels(helper._front,True))
                 gl.glEnable(gl.GL_DEPTH_TEST); gl.glDepthMask(False); gl.glEnable(gl.GL_BLEND)
                 self.options['state_setup_callback'](gl)
                 front.bind(); vao.bind()
@@ -343,11 +351,17 @@ class SampledTransparencyGLTests(unittest.TestCase):
                 np.testing.assert_array_equal(pixels(targets[1]), expected)
                 np.testing.assert_array_equal(pixels(targets[1], True).view(np.uint32), original_depth.view(np.uint32))
                 for clip in ((0, 0, 7, 5), (12, 8, 7, 5), (3, 2, 13, 9)):
+                    # Poison every previous foreground depth cell. A failed or
+                    # wrongly positioned copy must not pass through stale depth.
+                    helper._front.bind();gl.glDisable(0x0C11);gl.glDepthMask(True)
+                    gl.glClearDepth(.1);gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
                     seed(targets[2]); gl.glEnable(0x0C11); gl.glScissor(1, 1, 2, 2)
                     self.assertTrue(helper.draw(gl, targets[2], None, [batch], clip=clip))
                     self.assertTrue(gl.glIsEnabled(0x0C11))
                     self.assertEqual(tuple(gl.glGetIntegerv(0x0C10)), (1, 1, 2, 2))
                     x, y, w, h = clip; reference = original.copy()
+                    np.testing.assert_array_equal(depth_before_draw[-1][y:y+h,x:x+w].view(np.uint32),
+                        original_depth[y:y+h,x:x+w].view(np.uint32))
                     reference[y:y+h, x:x+w] = expected[y:y+h, x:x+w]
                     np.testing.assert_array_equal(pixels(targets[2]), reference)
                     np.testing.assert_array_equal(pixels(targets[2], True).view(np.uint32), original_depth.view(np.uint32))
@@ -516,9 +530,6 @@ class OrdinaryTransparencyBlendGLTests(unittest.TestCase):
             front[:, :, 3] = np.repeat(np.arange(256, dtype=np.uint8), 1024).reshape(height, width)
             for values in (head, front):
                 values[:, :, :3] = np.rint(values[:, :, :3].astype(float) * values[:, :, 3:4] / 255).astype(np.uint8)
-            for unit, values in enumerate((head, front)):
-                texture = context.texture((width, height), 4, values.tobytes())
-                resources.append(texture); texture.use(unit)
             tree = ast.parse(inspect.getsource(inspect.getmodule(ToolheadTransparency)))
             fragment = next(call.args[0].value for call in ast.walk(tree)
                 if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
@@ -529,23 +540,43 @@ uniform sampler2D u_head, u_front;
 out vec4 frag_color;
 void main(){ivec2 p=ivec2(gl_FragCoord.xy);vec4 h=texelFetch(u_head,p,0),f=texelFetch(u_front,p,0);
 frag_color=vec4(h.rgb*(1.-f.a)+f.rgb*h.a,h.a);}'''
-            outputs = []
-            for source in (reference, fragment):
-                program = context.program(vertex_shader=vertex, fragment_shader=source)
-                resources.append(program); program['u_front'] = 1
-                if 'u_head' in program: program['u_head'] = 0
-                texture = context.texture((width, height), 4, head.tobytes()); resources.append(texture)
-                target = context.framebuffer([texture]); resources.append(target)
-                target.use(); context.viewport = (0, 0, width, height)
-                context.disable(moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND)
-                if source == fragment:
-                    context.enable(moderngl.BLEND)
-                    context.blend_equation = moderngl.FUNC_ADD
-                    context.blend_func = (moderngl.DST_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA, moderngl.ZERO, moderngl.ONE)
-                vao = context.vertex_array(program, []); resources.append(vao)
-                vao.render(vertices=3)
-                outputs.append(np.frombuffer(target.read(components=4, alignment=1), np.uint8).copy())
-            np.testing.assert_array_equal(outputs[1], outputs[0])
+            # Dithering may deliberately perturb normalized integer storage.
+            # This isolated context is destroyed below, so no host flag changes.
+            context.disable_direct(0x0BD0)
+            for dtype in ('f1','f4'):
+                values = (head,front) if dtype=='f1' else tuple(v.astype(np.float32)/255 for v in (head,front))
+                inputs=[]
+                for value in values:
+                    texture=context.texture((width,height),4,value.tobytes(),dtype=dtype)
+                    resources.append(texture);inputs.append(texture)
+                outputs=[]
+                for source in (reference,fragment):
+                    program=context.program(vertex_shader=vertex,fragment_shader=source)
+                    resources.append(program);program['u_front']=1
+                    if 'u_head' in program:program['u_head']=0
+                    texture=context.texture((width,height),4,values[0].tobytes(),dtype=dtype);resources.append(texture)
+                    target=context.framebuffer([texture]);resources.append(target)
+                    target.use();context.viewport=(0,0,width,height)
+                    context.disable(moderngl.DEPTH_TEST|moderngl.CULL_FACE|moderngl.BLEND)
+                    for unit,texture in enumerate(inputs):texture.use(unit)
+                    if source==fragment:
+                        context.enable(moderngl.BLEND);context.blend_equation=moderngl.FUNC_ADD
+                        context.blend_func=(moderngl.DST_ALPHA,moderngl.ONE_MINUS_SRC_ALPHA,moderngl.ZERO,moderngl.ONE)
+                    vao=context.vertex_array(program,[]);resources.append(vao);vao.render(vertices=3)
+                    outputs.append(np.frombuffer(target.read(components=4,alignment=1,dtype=dtype),
+                        np.uint8 if dtype=='f1' else np.float32).reshape(height,width,4).copy())
+                np.testing.assert_array_equal(outputs[0][...,3],outputs[1][...,3])
+                np.testing.assert_array_equal(outputs[1][...,3],values[0][...,3])
+                if dtype=='f1':
+                    delta=np.abs(outputs[1][...,:3].astype(int)-outputs[0][...,:3].astype(int))
+                    self.assertLessEqual(int(delta.max()),1,'RGBA8 RGB may differ by only one quantization step')
+                    np.testing.assert_array_equal(outputs[1][head[...,3]==0],0)
+                    print('Direct blend RGB8 max LSB:',int(delta.max()))
+                else:
+                    h,f=values;expected=h[...,:3].astype(float)*(1-f[...,3:4])+f[...,:3].astype(float)*h[...,3:4]
+                    for output in outputs:np.testing.assert_allclose(output[...,:3],expected,rtol=0,atol=1e-6)
+                    np.testing.assert_allclose(outputs[0],outputs[1],rtol=0,atol=1e-6)
+                    print('Direct blend RGBA32F max:',float(np.max(np.abs(outputs[0]-outputs[1]))))
         finally:
             for resource in reversed(resources): resource.release()
             context.release()

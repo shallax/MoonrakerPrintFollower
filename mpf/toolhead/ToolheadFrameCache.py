@@ -55,6 +55,27 @@ def projected_bounds(bounds, transform, view, projection, width, height):
     return left, bottom, right - left, top - bottom
 
 
+def lighting_region(rect, width, height, previous=None):
+    """Move a padded full-resolution target without growing its motion trail."""
+    full = (0, 0, width, height)
+    if rect is None: return full
+    try:
+        if len(rect) != 4 or any(type(value) is not int for value in rect): return full
+        x, y, w, h = rect
+        right, top = min(width, x+w), min(height, y+h)
+        x, y = max(0, x), max(0, y)
+        if right <= x or top <= y: return full
+    except (TypeError, ValueError): return full
+    cw, ch = min(width, (right-x+383)//128*128), min(height, (top-y+383)//128*128)
+    if previous is not None:
+        px, py, pw, ph = previous
+        if px <= x and py <= y and px+pw >= right and py+ph >= top: return previous
+        cw, ch = max(cw, pw), max(ch, ph)
+    left = max(right-cw, min(x, max(0, min(width-cw, (x+right-cw)//2//32*32))))
+    bottom = max(top-ch, min(y, max(0, min(height-ch, (y+top-ch)//2//32*32))))
+    return left, bottom, cw, ch
+
+
 class ToolheadFrameCache:
     def __init__(self, *, depth_only=False):
         self._depth_only = bool(depth_only)
@@ -103,6 +124,8 @@ class ToolheadFrameCache:
 
 
     def draw(self, *args, requested_samples=None, **kwargs):
+        if kwargs.get('preserve_projection') and requested_samples is not None:
+            raise ValueError('Native-projection crops require plain additive rendering')
         if requested_samples not in (None,4):
             raise ValueError('Head crop supports only an explicit four-sample override')
         if requested_samples is None:
@@ -122,7 +145,11 @@ class ToolheadFrameCache:
              depth_seed=None, depth_revision=None, post_render=None, animate=None,
              fallback_backend="Ordinary shading", requested_samples=None,
              retire_graphics=None, composition_rect=None,
-             receiver_step=None, receiver_prepare=None, _crop=None, _compose=True):
+             receiver_step=None, receiver_prepare=None, _crop=None, _compose=True,
+             preserve_projection=False):
+        if preserve_projection and (not additive or requested_samples is not None or animate is not None
+                or post_render is not None or receiver_step is not None or receiver_prepare is not None):
+            raise ValueError("Native-projection crops require plain additive rendering")
         from PyQt6.QtCore import QRect, QRectF
         from PyQt6.QtGui import QOpenGLContext
         from PyQt6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat, QOpenGLTextureBlitter
@@ -170,7 +197,7 @@ class ToolheadFrameCache:
             requested_samples=None
             fallback_backend += self._sample_refusal[1]
         samples = 4 if requested_samples == 4 else host_samples
-        pool_allowed = (self._depth_only and requested_samples != 4
+        pool_allowed = (not preserve_projection and self._depth_only and requested_samples != 4
                         and receiver_step is None and receiver_prepare is None)
         if not pool_allowed:
             self._clear_pool()
@@ -233,6 +260,7 @@ class ToolheadFrameCache:
                 self._blitter = QOpenGLTextureBlitter()
                 if not self._blitter.create(): raise RuntimeError("Toolhead texture composition unavailable")
             key = state, model.tobytes(), view.tobytes(), projection.tobytes(), crop, viewport, depth_revision
+            if preserve_projection: key += ('native-projection',)
             if isinstance(self._fbo,ToolheadSampleTarget):key += (self._size,self._fbo.positions)
             receiver_key=key
             if receiver_step is not None:
@@ -245,13 +273,14 @@ class ToolheadFrameCache:
             if self._key != key:
                 seeded = depth_seed is None
                 if not self._fbo.bind(): raise RuntimeError("Toolhead framebuffer could not be bound")
-                gl.glViewport(0, 0, cw, ch)
+                render_viewport = (-left, -bottom, width, height) if preserve_projection else (0, 0, cw, ch)
+                gl.glViewport(*render_viewport)
                 gl.glDisable(0x0C11)  # Scissor: own crop is the complete target.
                 gl.glColorMask(True, True, True, True)
                 gl.glDepthMask(True)
                 gl.glClearColor(0, 0, 0, 0)
                 gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
-                if crop == (0, 0, width, height):
+                if preserve_projection or crop == (0, 0, width, height):
                     # Shared depth requires exactly the native projection.
                     # Even identity multiplication can change signed zeros or
                     # promote its dtype; a full-viewport image needs no proxy.
@@ -275,7 +304,7 @@ class ToolheadFrameCache:
                         seeded = False
                     # A failed partial copy must not leave stale occluders.
                     self._fbo.bind()
-                    gl.glViewport(0, 0, cw, ch)
+                    gl.glViewport(*render_viewport)
                     gl.glColorMask(True, True, True, True)
                     gl.glDepthMask(True)
                     if not seeded: gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
