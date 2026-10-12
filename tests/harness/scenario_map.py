@@ -1109,6 +1109,15 @@ for _name in (
         "recheck": "a consented local-setup scenario is available in real Cura",
     }
 
+for _name in ("MoonrakerFollowerMachineAction.clearCadDownloads",
+              "clearCadDownloadsButton"):
+    EXCLUSIONS[_name] = {
+        "reason": "the local CAD runtime cache is outside the simulator's isolated printer scenarios",
+        "evidence": "test_machine_action_coverage and test_toolhead_models; Diagnostics QML capture",
+        "date": "2026-10-12",
+        "recheck": "a native Cura scenario provisions and clears a CAD runtime cache",
+    }
+
 for _name in ("detectionFirstRunOffer", "detectionOfferDismiss"):
     EXCLUSIONS[_name] = {
         "reason": "the first-install two-boot mode verifies offer ordering and decline without downloading assets",

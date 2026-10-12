@@ -171,6 +171,7 @@ correct package ownership.
 | `ToolheadImport.py` | Local bounded STL parsing and isolated STEP process ownership, source snapshot, stage progress, cancellation and mesh validation | Cura scene or configuration writes |
 | `StepWorker.py` | Stdlib-only isolated native STEP process, flattened millimetre triangles and colours | Cura, Qt, NumPy or parent-process configuration |
 | `CadRuntime.py` | Optional platform-pinned CAD and CPython 3.12 helper downloads, safe extraction and verification of every cached runtime file against retained pinned archives | Printer credentials, model upload or pip |
+| `WindowsRuntimeWithoutRedist.py` | Deterministic removal of bundled Microsoft runtime DLLs from the Windows CAD wheel and Python helper, with CAD import names repaired for the system runtime | Network access, installation or licence decisions |
 | `ToolheadModels.py` | One CAD worker and per-active-printer settings draft; retired results never adopt after Cancel or rebind | Live scene rendering |
 | `ToolheadModelPreview.py` | Preview camera, immutable background mesh packing, nearest-surface picking and software-only capture fallback | Printer scene or settings commit |
 | `ToolheadPreviewGL.py` | Qt Quick framebuffer renderer, current-context shader/buffers and depth-tested CAD lighting; camera-only updates reuse uploaded geometry | Cura OpenGL singleton, settings draft writes or imports |

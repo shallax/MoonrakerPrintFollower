@@ -17,6 +17,7 @@ from urllib.request import Request
 import zipfile
 
 from mpf.toolhead import CadRuntime
+from mpf.toolhead.WindowsRuntimeWithoutRedist import strip_cad_wheel
 from mpf.resources.RuntimeMirror import asset_url
 
 
@@ -107,6 +108,25 @@ class ToolheadCadRuntimeTests(unittest.TestCase):
                 self.install()
             (system32 / "vcomp140.dll").write_bytes(b"installed")
             self.assertEqual(CadRuntime.missing_windows_runtime(), ())
+
+    def test_windows_derivative_record_has_platform_independent_zip_metadata(self):
+        source, destination = self.root / "source.whl", self.root / "derived.whl"
+        hashed = b"msvcp140-" + b"a" * 32 + b".dll\0"
+        openmp = b"vcomp140-" + b"b" * 32 + b".dll\0"
+        source.write_bytes(wheel_bytes([
+            ("wheel.libs/" + hashed[:-1].decode(), b"redistributable"),
+            ("wheel.libs/" + openmp[:-1].decode(), b"redistributable"),
+            ("OCP/native.pyd", hashed + openmp),
+            ("wheel.dist-info/RECORD", b"old record"),
+        ]))
+        strip_cad_wheel(source, destination)
+        with zipfile.ZipFile(destination) as archive:
+            record = archive.getinfo("wheel.dist-info/RECORD")
+            self.assertEqual(record.create_system, 3)
+            self.assertEqual(archive.read("OCP/native.pyd").count(b".dll\0"), 2)
+            self.assertNotIn(hashed, archive.read("OCP/native.pyd"))
+            self.assertNotIn(openmp, archive.read("OCP/native.pyd"))
+            self.assertEqual(len(archive.namelist()), 2)
 
     def test_five_platforms_always_select_the_independent_cp312_helper(self):
         platforms = (("Darwin", "arm64", "aarch64-apple-darwin"),
