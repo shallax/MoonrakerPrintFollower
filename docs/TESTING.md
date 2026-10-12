@@ -7,7 +7,7 @@ main passes and fenced worker captures, and moves cropped lighting outputs at
 full pixel density with the original projection. Live allocation receipts
 confirmed one shared full index buffer and a smaller output while following the
 large print; these are storage estimates, not FPS or driver-residency claims.
-The final measured `make all JOBS=2` passed 5,976 tests in 256 isolated processes,
+The final measured `make all JOBS=2` passed 5,982 tests in 257 isolated processes,
 97.8% total statement
 coverage, every required file above 95%, nine lint steps, screenshot determinism
 and verified packages. CI run `38248913949` regenerated all 29 canonical Linux
@@ -26,6 +26,10 @@ do not establish universal CAD silhouette equality. Required-GL runs fail when
 the context is unavailable; optional contexts report counted per-test skips.
 The exhaustive standalone blend fixture has its own test module/process so
 Mesa EGL and Qt GLX do not require a context handoff on the same test thread.
+Portable native-buffer transaction tests cover admission, replacement, rollback
+and retained generations without requiring installed Cura sources. The native
+adapter/GL fixtures remain separate integration evidence; their absence cannot
+leave those ownership rules below the per-file coverage gate.
 Apple Software Renderer reproductions exposed dropped draws under small scissors.
 Foreground fragment clipping, lighting viewport bounds and texture-intersection
 composition have exact image/depth proofs. Software-only pixel-derived fixtures
