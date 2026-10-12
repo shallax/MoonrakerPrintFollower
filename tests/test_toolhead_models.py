@@ -54,6 +54,23 @@ class ToolheadModelsTests(unittest.TestCase):
         self.model.close()
         self.until(lambda: not self.model.busy)
 
+    def test_cad_download_clear_preserves_saved_models_and_refuses_active_import(self):
+        root = self.model.runtime_root
+        archives = os.path.join(root, "7.9.3.1.1-old", ".archives")
+        os.makedirs(archives)
+        with open(os.path.join(archives, "reader.whl"), "wb") as output:
+            output.write(b"cached archive")
+        self.blocked_import()
+        with self.assertRaisesRegex(ValueError, "Wait for the STEP import"):
+            self.model.clear_runtime_downloads()
+        self.assertTrue(os.path.exists(root))
+        self.release.set()
+        self.until(lambda: not self.model.busy)
+        self.assertTrue(self.model.clear_runtime_downloads())
+        self.assertFalse(os.path.exists(root))
+        self.assertFalse(self.model.clear_runtime_downloads())
+        self.assertIsNotNone(self.store.load(self.saved_key))
+
     def import_replacement(self):
         filename = os.path.join(self.temporary.name, "replacement.stl")
         with open(filename, "wb") as target:

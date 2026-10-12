@@ -1,6 +1,15 @@
 # TESTING.md — the real-Cura UI test harness
 
-## 5.3.0 — current validation
+## 5.4.0 — current validation
+
+Run `make all` and the platform CAD smoke matrix on `release/v5.4.0`. The
+release workflow stages all 27 optional assets, verifies their hashes against
+the committed pins, and checks the GitHub draft release asset digests. After
+publication, `tools/verify_runtime_release.py v5.4.0 --public-downloads`
+checks the actual direct download URLs. The Windows CAD smoke uses the derived
+DLL-free archives and the system Microsoft Visual C++ x64 runtime.
+
+## 5.3.0 — historical validation
 
 The final 12 October rendering round shares full immutable path indices across
 main passes and fenced worker captures, and moves cropped lighting outputs at

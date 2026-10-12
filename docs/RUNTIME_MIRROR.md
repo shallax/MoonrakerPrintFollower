@@ -1,6 +1,6 @@
 # Optional runtime mirror
 
-The `v5.3.0` release hosts every optional download selected by the plugin.
+The `v5.4.0` release hosts every optional download selected by the plugin.
 The tag workflow stages the pinned bytes, uploads them to a draft release and
 checks GitHub's stored size and digest before publication. The public release
 requires the corresponding-source and notices companion plus a full direct-URL
@@ -9,8 +9,8 @@ history.
 
 ## Inventory
 
-The current pinned matrices contain 27 selectable assets (889,966,348 bytes,
-about 849 MiB) before source archives and notices. The earlier CAD manifest
+The current pinned matrices contain 27 selectable assets (1,045,150,482 bytes,
+about 997 MiB) before source archives and notices. The earlier CAD manifest
 also carried 20 wheels for Python ABIs the STEP helper never selects; those
 entries have been removed.
 An individual installation only downloads its selected platform's optional
@@ -20,8 +20,8 @@ assets.
 | --- | ---: | ---: | ---: |
 | Obico ONNX model | 1 | 192.9 | 192.9 |
 | ONNX Runtime 1.23.2 | 15 | 235.8 | 18.3 |
-| CAD reader and proxy 7.9.3.1.1 | 6 | 291.1 | 64.3 |
-| Standalone CPython 3.12.15 helper | 5 | 129.0 | 32.7 |
+| CAD reader and proxy 7.9.3.1.1 | 6 | 397.5 | 150.6 |
+| Standalone CPython 3.12.15 helper | 5 | 170.6 | 62.6 |
 
 Pins live in `mpf/detection/DetectionAssets.py`,
 `mpf/toolhead/cad-runtime.json` and `mpf/toolhead/helper-runtime.json`.
@@ -38,7 +38,7 @@ The active set's staging is reproducible with `python3 tools/stage_runtime_mirro
 index against all 15 ONNX Runtime wheel hashes, downloads the original 27
 payloads, verifies every byte and writes `manifest.json`. `--verify-only`
 rechecks an existing staging directory without contacting upstream hosts.
-For later releases, `--source-release v5.3.0` copies and verifies the exact
+For later releases, `--source-release v5.4.0` copies and verifies the exact
 bytes from this plugin's release rather than fetching them from upstream.
 
 On 12 October 2026 the full 47-pin matrix was reverified; the publication set
@@ -48,17 +48,23 @@ archives for Obico (release commit `6f938964`), ONNX Runtime v1.23.2, OCP
 python-build-standalone 20261003 were retrieved for the companion audit.
 These archives do not yet form a complete corresponding-source bundle: the CAD
 wheels contain bundled native libraries without their licence files or exact
-source/build records, and the Windows archives contain Microsoft C++ runtime
-DLLs whose redistribution rights need to be established. Do not make the draft
-release public until these issues are resolved and the companion is attached.
+source/build records. The Windows release assets are derived from upstream
+archives by removing Microsoft's bundled C++ runtime DLLs and repairing the
+CAD import names to use the system runtime. The original source sizes and hashes,
+derived output pins and transformation script are committed. The release needs
+the completed CAD source/notice companion before publication.
 
 ## Hosting and migration
 
-Use assets attached to the public `v5.3.0` plugin release in
+Use assets attached to the public `v5.4.0` plugin release in
 `shallax/MoonrakerPrintFollower`. The plugin constructs direct URLs from its
-packaged version; no GitHub API or PyPI index request occurs at install time.
-Keep payloads outside Git history and retain the exact upstream bytes,
-filenames, sizes and SHA-256 pins. Each later plugin release that retains these
+packaged version; the normal install path uses neither the GitHub API nor the
+PyPI index. If a release download fails, the plugin tries the original pinned
+source. ONNX Runtime resolves its original file through PyPI's version index
+only during that fallback and verifies the index size and SHA-256 before
+downloading. If both hosts fail, installation reports an error.
+Keep payloads outside Git history and retain pinned filenames, sizes and SHA-256
+hashes. Windows outputs are documented DLL-free derivatives. Each later plugin release that retains these
 optional features must attach the same pinned assets to its own version tag.
 
 [GitHub's Release limits](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
@@ -69,18 +75,22 @@ Workflow artifacts expire and require repository access; they are unsuitable
 as the persistent runtime download endpoint.
 
 Before publishing the draft release, attach the source/notices companion and
-run `python tools/verify_runtime_release.py v5.3.0 --require-companion`.
+run `python tools/verify_runtime_release.py v5.4.0 --require-companion`.
 After publication, run the same command with `--public-downloads` to GET and
 hash every direct URL, including encoded `+` in Python helper names. The plugin
-resolves each pinned ONNX wheel directly, without a PyPI index request.
+resolves each pinned ONNX wheel directly on the normal release path.
 HTTPS-only redirects,
 cancellation, archive checks and exact content checks remain. The detection
 cache version is unchanged. The CAD cache hashes the recorded source URL for
 identity only, preserving existing verified installations without a redownload;
-network downloads use the release URL.
+network downloads try the release URL first. On Windows, an original-source
+fallback removes the Microsoft DLLs and verifies the resulting derivative
+against the published pin before extraction. The Windows STEP path checks the system
+Visual C++ x64 runtime and links to Microsoft's official installer if needed;
+Microsoft DLLs are absent from the release assets.
 
-Users retain optional, platform-specific downloads and local caching. This
-removes reliance on several upstream hosts. Measure redirects, cancellation and
+Users retain optional, platform-specific downloads and local caching. Normal
+installs no longer depend on the original hosts. Measure redirects, cancellation and
 installation on each supported platform during release validation.
 
 ## Redistribution bundle
@@ -101,6 +111,6 @@ The Obico bundle needs its applicable model/source and conversion material;
 the CAD bundle needs the exact OCCT and included copyleft-library sources;
 the Python helper needs its pinned build recipe, component sources and retained
 notices. Preserve permissive-library notices too. Microsoft runtime components
-have separate redistribution terms and must be checked against those terms.
+are obtained from Microsoft when missing.
 Do not mark the bundle complete until these materials match the actual pinned
 distribution contents.

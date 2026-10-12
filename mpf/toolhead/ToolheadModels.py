@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import threading
 import time
 import numpy as np
@@ -14,7 +15,7 @@ from ..geometry.ToolheadMaterials import (material_profile, surface_detail, MATE
 from ..geometry.ToolheadOpacity import opacity_overrides, opacity_colours, selection_mask, MAX_OPACITY_ENTRIES, colour_value, colour_overrides
 from ..geometry.ToolheadRotors import rotors, body_axis, MAX_ROTORS, speed
 from ..geometry.ToolheadLighting import MAX_LIGHTS, validated_lights
-from .CadRuntime import install_runtime, runtime_assets, runtime_directory
+from .CadRuntime import install_runtime, missing_windows_runtime, runtime_assets, runtime_directory
 from .ToolheadImport import read_step, read_stl
 
 
@@ -598,8 +599,22 @@ class ToolheadModels(QObject):
     @pyqtProperty(bool, notify=changed)
     def busy(self): return self._worker is not None
 
+    def clear_runtime_downloads(self):
+        """Remove only the STEP reader/helper cache, never saved model assets."""
+        if self.busy:
+            raise ValueError("Wait for the STEP import to finish or cancel it first.")
+        if not os.path.lexists(self.runtime_root):
+            return False
+        if os.path.islink(self.runtime_root) or not os.path.isdir(self.runtime_root):
+            raise ValueError("CAD runtime cache is not a directory.")
+        shutil.rmtree(self.runtime_root)
+        return True
+
     @pyqtProperty(bool, notify=changed)
     def needsDownload(self): return bool(self._pending)
+
+    @pyqtProperty(bool, notify=changed)
+    def needsMicrosoftRuntime(self): return bool(self._pending and missing_windows_runtime())
 
     @pyqtProperty(bool, notify=changed)
     def valid(self): return not self.busy and self.tip is not None and not self._pending
@@ -712,7 +727,10 @@ class ToolheadModels(QObject):
                 marker = os.path.join(runtime_directory(self.runtime_root, assets), "verified.json")
                 if not os.path.isfile(marker):
                     self._pending = path
-                    self._status = f"STEP needs a local CAD reader and isolated helper ({size / 1048576:.0f} MiB from PyPI and GitHub). Your model stays on this computer."
+                    if missing_windows_runtime():
+                        self._status = "STEP needs the Microsoft Visual C++ x64 runtime. Install it from Microsoft, then return here to download the CAD reader."
+                    else:
+                        self._status = f"STEP needs a local CAD reader and isolated helper ({size / 1048576:.0f} MiB from this plugin release). Your model stays on this computer."
                     self.changed.emit()
                     return
             except ValueError as error:
@@ -728,6 +746,10 @@ class ToolheadModels(QObject):
     @pyqtSlot()
     def downloadAndImport(self):
         if self._pending and not self.busy:
+            if missing_windows_runtime():
+                self._status = "STEP needs the Microsoft Visual C++ x64 runtime. Install it from Microsoft, then retry."
+                self.changed.emit()
+                return
             path, self._pending = self._pending, ""
             self._start(path, True)
 

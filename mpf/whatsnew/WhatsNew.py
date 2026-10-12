@@ -26,6 +26,15 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "5.4.0",
+        "headline": "Version 5.4.0 keeps optional detection and STEP downloads with the matching plugin release.",
+        "items": (
+            "After you opt in, the Obico model, ONNX Runtime and STEP reader download from this version's GitHub release. Existing verified downloads remain cached.",
+            "Windows STEP import uses your installed Microsoft Visual C++ x64 runtime. If it is missing, Following settings links to Microsoft's official installer.",
+            "Middle drag pans the webcam. Middle or right drag pans Print Follower; left drag continues to work on both.",
+        ),
+    },
+    {
         "version": "5.3.0",
         "headline": "Version 5.3.0 adds Preview toolhead controls, material finishes, reflections and animated fan bodies.",
         "items": (

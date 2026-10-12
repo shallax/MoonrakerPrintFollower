@@ -2,12 +2,23 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
-## 5.3.0
+## 5.4.0
 
 - Download optional Obico detection, ONNX Runtime and STEP/CAD assets from
   this plugin version's GitHub release after consent, with existing byte pins
-  and verified caches preserved. The release carries the selectable assets;
-  later releases copy and verify them from this release.
+  and verified caches preserved. If the release download fails, retry the
+  original pinned source; fail if both sources fail. The release carries the
+  selectable assets; later releases copy and verify them from this release.
+- Ship Windows STEP archives without Microsoft C++ runtime DLLs. If the system
+  runtime is missing, link to Microsoft's official Visual C++ x64 installer.
+- Add a Diagnostics action to remove cached CAD reader and STEP helper downloads
+  while preserving saved toolhead models.
+- Pan the webcam with a middle drag and the Print Follower with either a
+  middle or right drag, alongside their existing left-drag pan.
+- Add a hidden three-colour penguin G-code playback to Print Follower; it
+  restores the live layer after the illustration.
+
+## 5.3.0
 
 - Preserve foreground clipping and cropped lighting on Apple's software OpenGL
   renderer with exact clipping fallbacks; accelerated rendering keeps its existing path.

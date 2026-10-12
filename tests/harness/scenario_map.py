@@ -1283,6 +1283,12 @@ for _name in ("toolheadImportElapsed", "toolheadCancelImport"):
         "date": "2026-10-06",
         "recheck": "native settings journeys include cancellable CAD conversion fixtures",
     }
+EXCLUSIONS["toolheadGetMicrosoftRuntime"] = {
+    "reason": "the native simulator cannot emulate a Windows system missing the Visual C++ runtime",
+    "evidence": "test_toolhead_cad_runtime checks the missing-runtime gate before any download; the QML engine validates the official Microsoft link control",
+    "date": "2026-10-12",
+    "recheck": "Windows CAD CI exercises the DLL-free archives with the installed system runtime",
+}
 EXCLUSIONS["moonrakerEnableLighting"] = {
     "reason": "native simulator journeys do not yet exercise the new lighting master and retained receiver choices",
     "evidence": "test_preview_presentation tests persistence and signal delivery; test_toolhead_presenter and test_toolhead_scene verify renderer propagation and bypass; test_toolhead_shader pins unlit paint/alpha; live Cura verified disabled receiver controls on 2026-10-06",

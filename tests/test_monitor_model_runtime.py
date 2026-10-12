@@ -3634,6 +3634,8 @@ Item {
             "visible: gpuFollower.visible",
             'visible: gpuFollower.visible && (modelData === "ghost" ? root.showBase : (modelData === "prev" ? root.showPrevious || root._handoffOpacity > 0 : root.showNext))',
             "visible: root.available()",
+            # The penguin is a transient drawing inside the fixed face.
+            "visible: root._penguinActive || opacity > 0",
             # The objects list's current-row bar: a highlight behind
             # the text, never a layout shift.
             "visible: modelData.current",
@@ -3898,6 +3900,7 @@ Item {
             "visible: section.currentIndex === 1",
             "visible: section.currentIndex === 2",
             "visible: root.model && root.model.needsDownload",
+            "visible: root.model && root.model.needsMicrosoftRuntime",
             "visible: root.model && (root.model.busy || root.model.needsDownload)",
             "visible: root.printerModel != null && root.activeRows.length === 0",
             "visible: root.printerModel != null && (root.walkErrorText() !== \"\" || (root.printerModel.fileManagerRefreshedAt !== \"Not yet refreshed\" && root.printerModel.fileManagerEmptyKind === \"over_filtered\"))",

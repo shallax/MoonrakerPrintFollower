@@ -159,6 +159,29 @@ Item {
 
             UM.Label {
                 width: parent.width
+                text: "Remove the downloaded CAD reader and isolated Python helper used for STEP imports. Saved toolhead models stay available; the next STEP import downloads the runtime again."
+                wrapMode: Text.WordWrap
+                color: UM.Theme.getColor("text_inactive")
+            }
+            RowLayout {
+                width: parent.width
+                spacing: UM.Theme.getSize("default_margin").width
+                Cura.SecondaryButton {
+                    objectName: "clearCadDownloadsButton"
+                    text: "Remove local CAD downloads"
+                    enabled: settings.toolheadModel && !settings.toolheadModel.busy
+                    onClicked: settings.clearCadDownloads()
+                }
+                UM.Label {
+                    Layout.fillWidth: true
+                    text: settings && settings.cadResetStatus !== undefined ? settings.cadResetStatus : ""
+                    wrapMode: Text.WordWrap
+                    color: UM.Theme.getColor("text_inactive")
+                }
+            }
+
+            UM.Label {
+                width: parent.width
                 text: settings && settings.detectionBenchmarkMs > 0 ? "Local inference measured " + settings.detectionBenchmarkMs + " ms per frame when this computer was checked (the check refuses anything slower than 5000 ms). Every alert's triggering frame and each print's score timeline are kept in the evidence folder, bounded to the newest few." : "Local inference has not been measured yet: run the setup or restart Cura with detection installed. Every alert's triggering frame and each print's score timeline are kept in the evidence folder once it runs."
                 wrapMode: Text.WordWrap
                 color: UM.Theme.getColor("text_inactive")

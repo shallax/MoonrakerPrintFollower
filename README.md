@@ -8,8 +8,19 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 5.3.0
+- **Release:** 5.4.0
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 5.4.0
+
+Optional Obico model, ONNX Runtime and STEP/CAD downloads now come from assets
+on this plugin version's GitHub release. The plugin checks the downloaded bytes
+against pinned sizes and SHA-256 hashes and keeps existing verified caches. If
+GitHub fails, it retries the original source under the same integrity checks.
+Windows STEP import uses the system's Microsoft Visual C++ x64 runtime; if it
+is missing, Following settings links to Microsoft's official installer.
+Middle drag pans the webcam; middle or right drag pans Print Follower.
+Diagnostics can remove cached CAD downloads without removing saved models.
 
 ## What changed in 5.3.0
 
@@ -1019,6 +1030,9 @@ computer. The weights are Obico's, licensed AGPL-3.0; the plugin is
 GPL-3.0, and the licences combine under GPL-3.0 section 13.
 Diagnostics can remove the shared downloads; that also clears saved monitored
 regions on every printer.
+Diagnostics can separately remove the CAD reader and STEP helper downloads.
+Saved toolhead models remain available, and the next STEP import downloads the
+runtime again.
 
 ![Failure Detection controls](screenshots/12-detection-controls.png)
 

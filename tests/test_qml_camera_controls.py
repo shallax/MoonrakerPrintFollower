@@ -1283,6 +1283,24 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
         self.assertEqual(self._view(pane).property("cameraZoom"), 1.25,
                          "and never returns the fit")
 
+    def test_middle_drag_pans_the_webcam_without_changing_fps(self):
+        from PyQt6.QtCore import QEvent, Qt
+        pane, window, model, _image, frame = self._fps_pane(700, 700)
+        area = self.find(pane, "cameraGestureArea")
+        self._wheel(window, frame)
+        self._pump_ms(300)
+        cx, cy = area.width() / 2, area.height() / 2
+        self._mouse(window, area, QEvent.Type.MouseButtonPress, cx, cy,
+                    Qt.MouseButton.MiddleButton, Qt.MouseButton.MiddleButton)
+        self._mouse(window, area, QEvent.Type.MouseMove, cx + 30, cy - 20,
+                    Qt.MouseButton.MiddleButton)
+        self._mouse(window, area, QEvent.Type.MouseButtonRelease, cx + 30, cy - 20,
+                    Qt.MouseButton.NoButton, Qt.MouseButton.MiddleButton)
+        self.pump(20)
+        self.assertAlmostEqual(self._view(pane).property("cameraPanX"), 30, delta=1.5)
+        self.assertAlmostEqual(self._view(pane).property("cameraPanY"), -20, delta=1.5)
+        self.assertEqual(model.fps_calls, [])
+
     def test_a_right_double_click_never_returns_the_fit(self):
         # The left double click is the fit; the right button's second
         # press must not steal it, or a rate drag doubled by a nervous

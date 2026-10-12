@@ -3,6 +3,7 @@
 import ctypes
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -38,7 +39,7 @@ class CancelAfter:
 class DetectionAssetsTests(unittest.TestCase):
     def test_model_and_inference_wheel_use_this_plugin_releases_assets(self):
         wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 100)
-        self.assertTrue(RELEASE_BASE.endswith("/releases/download/v5.3.0/"))
+        self.assertTrue(RELEASE_BASE.endswith("/releases/download/v5.4.0/"))
         self.assertEqual(DetectionAssets.MODEL_URL,
                          RELEASE_BASE + "model-weights-5a6b1be1fa.onnx")
         self.assertEqual(AssetInstaller.wheel_url(wheel), asset_url(wheel.filename))
@@ -226,6 +227,54 @@ class DetectionAssetsTests(unittest.TestCase):
                                             lambda *_: None)
             self.assertFalse(os.path.exists(other))
             self.assertFalse(list(Path(directory).glob("*.part")))
+
+    def test_github_failure_retries_original_and_still_checks_the_pin(self):
+        data = b"pinned inference asset"
+        digest = hashlib.sha256(data).hexdigest()
+        source = "https://www.obico.io/static_pub/ml-models/source.onnx"
+        for release_body in (None, b"x" * len(data)):
+            with self.subTest(release_body=release_body):
+                requested = []
+
+                def open_download(url, requested=requested, release_body=release_body):
+                    requested.append(url)
+                    if url == DetectionAssets.MODEL_URL:
+                        if release_body is None:
+                            raise OSError("GitHub unavailable")
+                        return Response(release_body, url)
+                    return Response(data, url)
+
+                with tempfile.TemporaryDirectory() as directory, \
+                        patch.object(AssetInstaller, "_open_download", side_effect=open_download):
+                    path = os.path.join(directory, "model.onnx")
+                    AssetInstaller.download_with_fallback(
+                        DetectionAssets.MODEL_URL, source, path, len(data), digest,
+                        threading.Event(), lambda *_: None)
+                    self.assertEqual(Path(path).read_bytes(), data)
+                    self.assertEqual(requested, [DetectionAssets.MODEL_URL, source])
+
+    def test_both_detection_sources_failing_report_error_without_cache(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(AssetInstaller, "_open_download", side_effect=OSError("offline")):
+            path = os.path.join(directory, "model.onnx")
+            with self.assertRaisesRegex(ValueError, "GitHub and its original source"):
+                AssetInstaller.download_with_fallback(
+                    DetectionAssets.MODEL_URL, DetectionAssets.MODEL_SOURCE_URL,
+                    path, 10, "a" * 64, threading.Event(), lambda *_: None)
+            self.assertFalse(os.path.exists(path))
+
+    def test_pypi_fallback_selects_only_the_exact_pinned_wheel(self):
+        wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 123)
+        source = "https://files.pythonhosted.org/packages/onnxruntime-test.whl"
+        record = {"filename": wheel.filename, "size": wheel.size,
+                  "digests": {"sha256": wheel.sha256}, "url": source}
+        index = "https://pypi.org/pypi/onnxruntime/1.23.2/json"
+        with patch.object(AssetInstaller, "_open_download",
+                          side_effect=lambda _url: Response(json.dumps({"urls": [record]}).encode(), index)):
+            self.assertEqual(AssetInstaller.wheel_source_url(wheel), source)
+            record["digests"]["sha256"] = "b" * 64
+            with self.assertRaisesRegex(ValueError, "no longer matches"):
+                AssetInstaller.wheel_source_url(wheel)
 
     def test_model_accepts_any_https_cdn_only_if_the_payload_matches_its_pin(self):
         data = b"pinned model"

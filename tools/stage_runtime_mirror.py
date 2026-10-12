@@ -19,10 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from mpf.detection.DetectionAssets import (  # noqa: E402
-    MODEL_SHA256, MODEL_SIZE, RUNTIME_VERSION, _WHEELS,
+    MODEL_SHA256, MODEL_SIZE, MODEL_SOURCE_URL, RUNTIME_VERSION, _WHEELS,
 )
-
-MODEL_SOURCE_URL = "https://www.obico.io/static_pub/ml-models/model-weights-5a6b1be1fa.onnx"
 
 
 class HTTPSOnly(HTTPRedirectHandler):

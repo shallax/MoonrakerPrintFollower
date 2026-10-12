@@ -1,6 +1,7 @@
 """Consent-only, integrity-checked installation of the local CPU assets."""
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -12,8 +13,8 @@ import zipfile
 
 from .DetectionDownloadTransport import AbortHTTPSHandler, transfer_abort
 from .DetectionAssets import (
-    MODEL_SHA256, MODEL_SIZE, MODEL_URL,
-    RuntimeWheel, installed_paths,
+    MODEL_SHA256, MODEL_SIZE, MODEL_SOURCE_URL, MODEL_URL,
+    RUNTIME_VERSION, RuntimeWheel, installed_paths,
 )
 from ..resources.RuntimeMirror import asset_url
 
@@ -61,6 +62,29 @@ def wheel_url(wheel: RuntimeWheel, cancel=None) -> str:
     if cancel is not None:
         _check_cancelled(cancel)
     return asset_url(wheel.filename)
+
+
+def wheel_source_url(wheel: RuntimeWheel, cancel=None) -> str:
+    """Resolve the exact pinned PyPI file only after the release download fails."""
+    if cancel is not None:
+        _check_cancelled(cancel)
+    index_url = f"https://pypi.org/pypi/onnxruntime/{RUNTIME_VERSION}/json"
+    with _open_download(index_url) as response:
+        if urlsplit(response.geturl()).hostname != "pypi.org":
+            raise ValueError("Unexpected inference runtime index host")
+        body = response.read(2 * 1024 * 1024 + 1)
+    if len(body) > 2 * 1024 * 1024:
+        raise ValueError("Inference runtime index exceeded its size limit")
+    records = json.loads(body)["urls"]
+    for record in records:
+        if record.get("filename") != wheel.filename:
+            continue
+        url = record.get("url", "")
+        if record.get("size") != wheel.size or record.get("digests", {}).get("sha256") != wheel.sha256 \
+                or urlsplit(url).scheme != "https" or urlsplit(url).hostname != "files.pythonhosted.org":
+            raise ValueError("Original inference runtime no longer matches its pin")
+        return url
+    raise ValueError("Pinned inference runtime was not found on PyPI")
 
 
 def download(url: str, path: str, size: int, digest: str, cancel, progress) -> None:
@@ -115,6 +139,22 @@ def download(url: str, path: str, size: int, digest: str, cancel, progress) -> N
     finally:
         if temporary is not None and os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def download_with_fallback(url, source_url, path, size, digest, cancel, progress):
+    try:
+        download(url, path, size, digest, cancel, progress)
+    except (OSError, ValueError) as primary:
+        if cancel.is_set() or os.path.exists(path):
+            raise
+        try:
+            _check_cancelled(cancel)
+            fallback = source_url() if callable(source_url) else source_url
+            download(fallback, path, size, digest, cancel, progress)
+        except (OSError, ValueError) as secondary:
+            if cancel.is_set():
+                raise DownloadCancelled("Local detection setup cancelled") from secondary
+            raise ValueError(f"Local detection download failed from GitHub and its original source: {primary}; {secondary}") from secondary
 
 
 def extract_runtime(archive: str, destination: str, cancel) -> None:
@@ -209,10 +249,13 @@ def install(root: str, wheel: RuntimeWheel, cancel, progress) -> tuple[str, str]
     if verify_file(archive, wheel.size, wheel.sha256):
         progress("runtime", wheel.size, wheel.size)
     else:
-        download(wheel_url(wheel, cancel), archive, wheel.size, wheel.sha256, cancel,
-                 lambda received, total: progress("runtime", received, total))
+        download_with_fallback(wheel_url(wheel, cancel),
+                               lambda: wheel_source_url(wheel, cancel), archive,
+                               wheel.size, wheel.sha256, cancel,
+                               lambda received, total: progress("runtime", received, total))
     extract_runtime(archive, runtime, cancel)
     progress("model", 0, MODEL_SIZE)
-    download(MODEL_URL, model, MODEL_SIZE, MODEL_SHA256, cancel,
-             lambda received, total: progress("model", received, total))
+    download_with_fallback(MODEL_URL, MODEL_SOURCE_URL, model, MODEL_SIZE,
+                           MODEL_SHA256, cancel,
+                           lambda received, total: progress("model", received, total))
     return runtime, model

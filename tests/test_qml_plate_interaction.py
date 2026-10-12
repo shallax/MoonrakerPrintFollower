@@ -2,6 +2,82 @@
 from tests import qml_engine_support as harness
 
 class PlateFaceRenderTests(harness.PlateFaceRenderTests):
+    def test_penguin_sequence_counts_a_real_double_click_and_rejects_wrong_order(self):
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtTest import QTest
+        _monitor, window, face, _baseline = self._mount_empty()
+        centre = face.mapToItem(window.contentItem(), QPointF(face.width() / 2, face.height() / 2))
+        point = QPoint(int(centre.x()), int(centre.y()))
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
+        QTest.mouseDClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
+        self.assertEqual(face.property("_penguinClickCount"), 3)
+        QTest.mouseClick(window, Qt.MouseButton.MiddleButton, Qt.KeyboardModifier.NoModifier, point)
+        self.assertEqual(face.property("_penguinClickCount"), 0)
+        self.assertFalse(face.property("_penguinActive"))
+
+    def test_penguin_click_sequence_draws_colours_and_restores_live_face(self):
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtTest import QTest
+        _monitor, window, face, _baseline = self._mount_empty()
+        face.setProperty("colourScheme", {"mode": 5, "materials": ["#ff0000"]})
+        face.setProperty("trueThickness", True)
+        centre = face.mapToItem(window.contentItem(), QPointF(face.width() / 2, face.height() / 2))
+        point = QPoint(int(centre.x()), int(centre.y()))
+        for button in (Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
+            for _ in range(5):
+                QTest.mouseClick(window, button, Qt.KeyboardModifier.NoModifier, point)
+        self.assertTrue(face.property("_penguinActive"))
+        self.assertEqual(face.property("_penguinClickCount"), 0)
+        deadline = harness.time.monotonic() + 4.0
+        while face.property("_penguinProgress") < 1.0 and harness.time.monotonic() < deadline:
+            self._pump_ms(30)
+        self.assertEqual(face.property("_penguinProgress"), 1.0)
+        image = window.grabWindow()
+        origin = face.mapToItem(window.contentItem(), QPointF(0, 0))
+        colours = {"#20252b": 0, "#f4f4f4": 0, "#e9ad20": 0}
+        for y in range(int(face.height())):
+            for x in range(int(face.width())):
+                colour = image.pixelColor(int(origin.x()) + x, int(origin.y()) + y).name()
+                if colour in colours:
+                    colours[colour] += 1
+        self.assertTrue(all(count > 10 for count in colours.values()), colours)
+        deadline = harness.time.monotonic() + 4.0
+        while face.property("_penguinActive") and harness.time.monotonic() < deadline:
+            self._pump_ms(30)
+        self.assertFalse(face.property("_penguinActive"))
+        for button in (Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
+            for _ in range(5):
+                QTest.mouseClick(window, button, Qt.KeyboardModifier.NoModifier, point)
+        self.assertTrue(face.property("_penguinActive"), "the completed penguin did not rearm")
+        self.assertEqual(face.property("_penguinClickCount"), 0)
+        self.assertEqual(face.property("_penguinProgress"), 0.0)
+
+    def test_middle_and_right_drag_pan_the_print_follower(self):
+        from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+        from PyQt6.QtGui import QGuiApplication, QMouseEvent
+        _monitor, window, face, _baseline = self._mount_empty()
+        face.setProperty("viewScale", 1.5)
+        face.setProperty("displayScale", 1.5)
+        self.pump(10)
+
+        def drag(button, dx):
+            cx, cy = face.width() / 2, face.height() / 2
+            for kind, x, held in ((QEvent.Type.MouseButtonPress, cx, button),
+                                  (QEvent.Type.MouseMove, cx + dx, button),
+                                  (QEvent.Type.MouseButtonRelease, cx + dx, Qt.MouseButton.NoButton)):
+                scene = face.mapToItem(window.contentItem(), QPointF(x, cy))
+                event = QMouseEvent(kind, QPointF(scene),
+                                    QPointF(window.mapToGlobal(QPoint(int(scene.x()), int(scene.y())))),
+                                    Qt.MouseButton.NoButton if kind == QEvent.Type.MouseMove else button,
+                                    held, Qt.KeyboardModifier.NoModifier)
+                QGuiApplication.sendEvent(window, event)
+            self.pump(20)
+
+        drag(Qt.MouseButton.MiddleButton, 25)
+        self.assertAlmostEqual(face.property("viewPanX"), 25, delta=1.5)
+        drag(Qt.MouseButton.RightButton, 20)
+        self.assertAlmostEqual(face.property("viewPanX"), 45, delta=1.5)
+
     def test_software_event_glyphs_only_draw_after_playback_reaches_them(self):
         _monitor, window, face, _baseline = self._mount_empty()
         face.setProperty("gpuRendering", False)
