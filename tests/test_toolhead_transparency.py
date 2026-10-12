@@ -96,6 +96,26 @@ class TransparencyTests(unittest.TestCase):
         self.gl.glScissor.assert_called_with(*previous)
         self.gl.glEnable.assert_called_with(0x0C11)
 
+    def test_software_scissor_fallback_keeps_full_source_and_clips_only_composition(self):
+        previous=(1,2,3,4);clip=(12,8,7,5)
+        self.gl.glGetString.return_value=b'Apple Software Renderer'
+        self.gl.glGetIntegerv.side_effect=lambda key:previous if key==0x0C10 else 1
+        self.gl.glIsEnabled.return_value=True
+        for _ in range(2):
+            self.assertTrue(self.helper.draw(self.gl,self.head,self.camera,[self.source],clip=clip))
+        self.gl.glGetString.assert_called_once_with(0x1F01)
+        self.assertTrue(all(call.args==previous for call in self.gl.glScissor.call_args_list))
+        self.fbos.blitFramebuffer.assert_called_with(self.front,self.head,self.gl.GL_DEPTH_BUFFER_BIT,0x2600)
+        self.shader.setUniformValue.assert_any_call('u_clipEnabled',1)
+        self.shader.setUniformValue.assert_any_call('u_clipRect',[12.,8.,19.,13.])
+        self.assertTrue(self.draw())
+        self.shader.setUniformValue.assert_any_call('u_clipEnabled',0)
+        self.helper.release_targets()
+        self.gl.glGetString.return_value='ordinary hardware'
+        self.assertTrue(self.draw())
+        self.assertEqual(self.gl.glGetString.call_count,2)
+        self.assertFalse(self.helper._software_scissor)
+
     def test_clipped_foreground_rejects_invalid_rectangles_and_multisample_targets(self):
         for clip in ((-1, 0, 10, 10), (0, 0, 0, 1), (0, 0, 65, 96), (0, 0, 1.), (0, 0, 1., 2)):
             with self.subTest(clip=clip), self.assertRaisesRegex(ValueError, 'exact target'):
@@ -288,7 +308,9 @@ class SampledTransparencyGLTests(unittest.TestCase):
         from mpf.toolhead.ToolheadGLState import procedure
         gl, context = self.gl, self.context
         width, height = 19, 13
-        vertex = '#version 410\nvoid main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-1.,0.,1.);}'
+        # Independent bounded geometry avoids the Apple software giant-triangle
+        # scissor clipping defect; the production merge is tested separately.
+        vertex = '#version 410\nvoid main(){vec2 p[6]=vec2[6](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(-1,1),vec2(1,-1),vec2(1,1));gl_Position=vec4(p[gl_VertexID],0,1);}'
         class Shader:
             def __init__(self): self.program = QOpenGLShaderProgram(); self.values = {}
             def setVertexShader(self, text): return self.program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Vertex, text)
@@ -298,7 +320,9 @@ class SampledTransparencyGLTests(unittest.TestCase):
             def setUniformValue(self, name, value): self.values[name] = value
             def bind(self):
                 if not self.program.bind(): raise RuntimeError(self.program.log())
-                for name, value in self.values.items(): self.program.setUniformValue(name, value)
+                for name, value in self.values.items():
+                    if isinstance(value,(list,tuple)):self.program.setUniformValue(name,*value)
+                    else:self.program.setUniformValue(name,value)
             def release(self): self.program.release()
         front = Shader(); self.assertTrue(front.setVertexShader(vertex))
         self.assertTrue(front.setFragmentShader('#version 410\nout vec4 colour;void main(){colour=vec4(.15,.3,.05,.5);gl_FragDepth=.4;}'))
@@ -314,7 +338,7 @@ class SampledTransparencyGLTests(unittest.TestCase):
                 gl.glEnable(gl.GL_DEPTH_TEST); gl.glDepthMask(False); gl.glEnable(gl.GL_BLEND)
                 self.options['state_setup_callback'](gl)
                 front.bind(); vao.bind()
-                try: gl.glDrawArrays(4, 0, 3)
+                try: gl.glDrawArrays(4, 0, 6)
                 finally: vao.release(); front.release()
         fmt = QOpenGLFramebufferObjectFormat(); fmt.setAttachment(QOpenGLFramebufferObject.Attachment.Depth)
         targets = [QOpenGLFramebufferObject(width, height, fmt) for _ in range(3)]
@@ -355,7 +379,8 @@ class SampledTransparencyGLTests(unittest.TestCase):
                     # wrongly positioned copy must not pass through stale depth.
                     helper._front.bind();gl.glDisable(0x0C11);gl.glDepthMask(True)
                     gl.glClearDepth(.1);gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
-                    seed(targets[2]); gl.glEnable(0x0C11); gl.glScissor(1, 1, 2, 2)
+                    seed(targets[2]); gl.glViewport(8, 12, width, height)
+                    gl.glEnable(0x0C11); gl.glScissor(1, 1, 2, 2)
                     self.assertTrue(helper.draw(gl, targets[2], None, [batch], clip=clip))
                     self.assertTrue(gl.glIsEnabled(0x0C11))
                     self.assertEqual(tuple(gl.glGetIntegerv(0x0C10)), (1, 1, 2, 2))
@@ -507,77 +532,3 @@ class SampledTransparencyGLTests(unittest.TestCase):
             for target in (helper._sample_front,helper._sample_merged,shutter._work):
                 if target is not None:target.close()
             scopes.stop();vao.destroy();front_shader.removeAllShaders();export.removeAllShaders()
-
-
-class OrdinaryTransparencyBlendGLTests(unittest.TestCase):
-    def test_direct_blend_matches_original_rgba_for_every_alpha_pair(self):
-        import ast
-        import inspect
-        import numpy as np
-        try:
-            import moderngl
-        except ImportError:
-            self.skipTest('The capture OpenGL runtime is required')
-        from tools.capture_toolhead import create_context
-        context, dll = create_context()
-        resources = []
-        try:
-            width = height = 512
-            rng = np.random.default_rng(7531)
-            head = rng.integers(0, 256, (height, width, 4), dtype=np.uint8)
-            front = rng.integers(0, 256, (height, width, 4), dtype=np.uint8)
-            head[:, :, 3] = np.tile(np.arange(256, dtype=np.uint8), 1024).reshape(height, width)
-            front[:, :, 3] = np.repeat(np.arange(256, dtype=np.uint8), 1024).reshape(height, width)
-            for values in (head, front):
-                values[:, :, :3] = np.rint(values[:, :, :3].astype(float) * values[:, :, 3:4] / 255).astype(np.uint8)
-            tree = ast.parse(inspect.getsource(inspect.getmodule(ToolheadTransparency)))
-            fragment = next(call.args[0].value for call in ast.walk(tree)
-                if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
-                and call.func.attr == 'setFragmentShader')
-            vertex = '#version 410\nvoid main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-1.,0.,1.);}'
-            reference = '''#version 410
-uniform sampler2D u_head, u_front;
-out vec4 frag_color;
-void main(){ivec2 p=ivec2(gl_FragCoord.xy);vec4 h=texelFetch(u_head,p,0),f=texelFetch(u_front,p,0);
-frag_color=vec4(h.rgb*(1.-f.a)+f.rgb*h.a,h.a);}'''
-            # Dithering may deliberately perturb normalized integer storage.
-            # This isolated context is destroyed below, so no host flag changes.
-            context.disable_direct(0x0BD0)
-            for dtype in ('f1','f4'):
-                values = (head,front) if dtype=='f1' else tuple(v.astype(np.float32)/255 for v in (head,front))
-                inputs=[]
-                for value in values:
-                    texture=context.texture((width,height),4,value.tobytes(),dtype=dtype)
-                    resources.append(texture);inputs.append(texture)
-                outputs=[]
-                for source in (reference,fragment):
-                    program=context.program(vertex_shader=vertex,fragment_shader=source)
-                    resources.append(program);program['u_front']=1
-                    if 'u_head' in program:program['u_head']=0
-                    texture=context.texture((width,height),4,values[0].tobytes(),dtype=dtype);resources.append(texture)
-                    target=context.framebuffer([texture]);resources.append(target)
-                    target.use();context.viewport=(0,0,width,height)
-                    context.disable(moderngl.DEPTH_TEST|moderngl.CULL_FACE|moderngl.BLEND)
-                    for unit,texture in enumerate(inputs):texture.use(unit)
-                    if source==fragment:
-                        context.enable(moderngl.BLEND);context.blend_equation=moderngl.FUNC_ADD
-                        context.blend_func=(moderngl.DST_ALPHA,moderngl.ONE_MINUS_SRC_ALPHA,moderngl.ZERO,moderngl.ONE)
-                    vao=context.vertex_array(program,[]);resources.append(vao);vao.render(vertices=3)
-                    outputs.append(np.frombuffer(target.read(components=4,alignment=1,dtype=dtype),
-                        np.uint8 if dtype=='f1' else np.float32).reshape(height,width,4).copy())
-                np.testing.assert_array_equal(outputs[0][...,3],outputs[1][...,3])
-                np.testing.assert_array_equal(outputs[1][...,3],values[0][...,3])
-                if dtype=='f1':
-                    delta=np.abs(outputs[1][...,:3].astype(int)-outputs[0][...,:3].astype(int))
-                    self.assertLessEqual(int(delta.max()),1,'RGBA8 RGB may differ by only one quantization step')
-                    np.testing.assert_array_equal(outputs[1][head[...,3]==0],0)
-                    print('Direct blend RGB8 max LSB:',int(delta.max()))
-                else:
-                    h,f=values;expected=h[...,:3].astype(float)*(1-f[...,3:4])+f[...,:3].astype(float)*h[...,3:4]
-                    for output in outputs:np.testing.assert_allclose(output[...,:3],expected,rtol=0,atol=1e-6)
-                    np.testing.assert_allclose(outputs[0],outputs[1],rtol=0,atol=1e-6)
-                    print('Direct blend RGBA32F max:',float(np.max(np.abs(outputs[0]-outputs[1]))))
-        finally:
-            for resource in reversed(resources): resource.release()
-            context.release()
-            if dll is not None: dll.close()

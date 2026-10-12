@@ -37,6 +37,13 @@ crop storage without changing the original camera projection; moving output
 crops do not retain a growing motion trail. Enable reflections directly controls the map; removed renderer and
 fallback preferences are ignored.
 
+Apple's software OpenGL renderer can drop textured draws under a small scissor.
+Context-qualified fallbacks render ordinary foreground fully and clip the final
+fragment, shade window-coordinate lighting within a smaller viewport, and compose
+the exact texture intersection. Accelerated rendering retains its existing path.
+Software fixture proofs separate native varying precision from exact pixel mapping;
+they retain strict coverage, category, alpha, depth and composed-image assertions.
+
 The unused split receiver/query and shadow-map prototypes are excluded from the
 release. Their source is preserved at commit `80c4b263`; the old combined
 geometry-query/CAD-PBR variant caused a Metal GPU hang and must not be rerun.

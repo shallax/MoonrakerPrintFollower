@@ -89,6 +89,7 @@ class ToolheadFrameCache:
         self._pool = OrderedDict()
         self._pool_bytes = self._pool_hits = 0
         self._pool_active = False
+        self._software_scissor = False
 
     def _clear_pool(self):
         self._pool.clear()
@@ -150,7 +151,7 @@ class ToolheadFrameCache:
         if preserve_projection and (not additive or requested_samples is not None or animate is not None
                 or post_render is not None or receiver_step is not None or receiver_prepare is not None):
             raise ValueError("Native-projection crops require plain additive rendering")
-        from PyQt6.QtCore import QRect, QRectF
+        from PyQt6.QtCore import QRect, QRectF, QSize
         from PyQt6.QtGui import QOpenGLContext
         from PyQt6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat, QOpenGLTextureBlitter
         from UM.Math.Matrix import Matrix
@@ -162,6 +163,7 @@ class ToolheadFrameCache:
             self._sample_refusal = None
             self._clear_pool()
         if self._context is not context:
+            self._software_scissor = gl.glGetString(0x1F01) in ('Apple Software Renderer', b'Apple Software Renderer')
             self._generation=object()
             token=self._generation;owner=ref(self)
             def retired():
@@ -370,7 +372,21 @@ class ToolheadFrameCache:
             self._blitter.setOpacity(opacity)
             destination = QRectF(vx + left, vy + height - bottom - ch, cw, ch)
             matrix = QOpenGLTextureBlitter.targetTransform(destination, QRect(vx, vy, width, height))
-            self._blitter.blit(texture.texture(), matrix, QOpenGLTextureBlitter.Origin.OriginBottomLeft)
+            if composition_rect is not None and self._software_scissor:
+                # Apple's software rasterizer can drop a textured quad under
+                # a small scissor. Draw only the same intersection instead.
+                x0, y0 = max(x0, vx+left), max(y0, vy+bottom)
+                x1, y1 = min(x1, vx+left+cw), min(y1, vy+bottom+ch)
+                if x1 <= x0 or y1 <= y0: return self._backend
+                destination = QRectF(x0, vy+height-(y1-vy), x1-x0, y1-y0)
+                matrix = QOpenGLTextureBlitter.targetTransform(destination, QRect(vx,vy,width,height))
+                source = QOpenGLTextureBlitter.sourceTransform(
+                    QRectF(x0-vx-left, y0-vy-bottom, x1-x0, y1-y0), QSize(cw,ch),
+                    QOpenGLTextureBlitter.Origin.OriginBottomLeft)
+                gl.glDisable(0x0C11)
+                self._blitter.blit(texture.texture(), matrix, source)
+            else:
+                self._blitter.blit(texture.texture(), matrix, QOpenGLTextureBlitter.Origin.OriginBottomLeft)
         finally:
             try:
                 if self._blitter is not None: self._blitter.release()

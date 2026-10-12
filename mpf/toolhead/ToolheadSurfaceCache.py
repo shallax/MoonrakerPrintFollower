@@ -79,6 +79,7 @@ class ToolheadSurfaceCache:
         self._programs = {}
         self._vao = None
         self._copy_checked = False
+        self._software_scissor = False
         self._fragment_source = fragment_source
 
     def _select_region(self, width, height, rect, key):
@@ -113,6 +114,7 @@ class ToolheadSurfaceCache:
         if context is None or context.format().majorVersion() < 4:
             raise RuntimeError("Deferred lighting requires OpenGL 4.1")
         if context is not self._context:
+            self._software_scissor = gl.glGetString(0x1F01) in ('Apple Software Renderer', b'Apple Software Renderer')
             self._context = context
             self._fbo = self._size = self._key = self._completed = self._vao = None
             self._region = self._view_size = self._region_key = None
@@ -286,7 +288,8 @@ void main() {
         bed, models = node.scene_lighting_effects()
         shader.setUniformValue("u_lightBed", int(bed))
         shader.setUniformValue("u_lightModels", int(models))
-        origin = tuple(map(int, gl.glGetIntegerv(0x0BA2)))[:2]
+        viewport = tuple(map(int, gl.glGetIntegerv(0x0BA2)))
+        origin = viewport[:2]
         shader.setUniformValue("u_surfaceOrigin", [float(origin[0]+rx), float(origin[1]+ry)])
         texture_target = 0x0DE1
         textures = self._fbo.textures()
@@ -300,6 +303,11 @@ void main() {
             gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE)
             gl.glEnable(0x0C11)
             gl.glScissor(origin[0] + crop[0], origin[1] + crop[1], crop[2], crop[3])
+            if self._software_scissor:
+                # The shader samples in window coordinates, so a smaller
+                # viewport preserves its inputs while avoiding broken scissoring.
+                gl.glDisable(0x0C11)
+                gl.glViewport(origin[0]+crop[0], origin[1]+crop[1], crop[2], crop[3])
             for index, texture in enumerate(textures):
                 gl.glActiveTexture(0x84C0 + index)
                 gl.glBindTexture(texture_target, texture)
@@ -317,3 +325,4 @@ void main() {
                 gl.glBindTexture(texture_target, 0)
             gl.glActiveTexture(active)
             gl.glDisable(0x0C11)
+            if self._software_scissor: gl.glViewport(*viewport)

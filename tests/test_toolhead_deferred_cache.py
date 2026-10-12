@@ -251,10 +251,16 @@ class DeferredShadeTests(unittest.TestCase):
             shader.setUniformValue.assert_any_call('u_lightBed', 1)
             shader.setUniformValue.assert_any_call('u_lightModels', 0)
             gl.glScissor.assert_called_with(18, 32, 30, 40)
+            cache._software_scissor = True
+            cache.shade(gl,camera,node)
+            gl.glViewport.assert_any_call(18,32,30,40)
+            gl.glViewport.assert_called_with(8,12,800,600)
+            shader.setUniformValue.assert_any_call('u_surfaceOrigin',[8.,12.])
             shader.bind.return_value = False
             with self.assertRaisesRegex(RuntimeError, 'bound'): cache.shade(gl, camera, node)
-            self.assertEqual(shader.release.call_count, 3)
-            self.assertEqual(vao.release.call_count, 3)
+            gl.glViewport.assert_called_with(8,12,800,600)
+            self.assertEqual(shader.release.call_count, 4)
+            self.assertEqual(vao.release.call_count, 4)
             gl.glActiveTexture.assert_called_with(0x84C5)
             for index in range(3): gl.glActiveTexture.assert_any_call(0x84C0 + index)
             gl.glBindTexture.assert_any_call(0x0DE1, 0)

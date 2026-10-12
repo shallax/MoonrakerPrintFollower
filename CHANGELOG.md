@@ -4,6 +4,9 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 5.3.0
 
+- Preserve foreground clipping and cropped lighting on Apple's software OpenGL
+  renderer with exact clipping fallbacks; accelerated rendering keeps its existing path.
+
 - Share immutable full print-path index storage across main rendering passes
   and fenced reflection captures. Crop lighting output at full pixel density
   while preserving the original camera projection.

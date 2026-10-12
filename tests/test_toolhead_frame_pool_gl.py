@@ -68,6 +68,7 @@ class FramePoolGLTests(unittest.TestCase):
         from PyQt6.QtGui import QVector3D
         from mpf.toolhead.ToolheadSurfaceCache import light_scissor
         gl=self.gl; width,height=256,192
+        software='Apple Software Renderer' in str(gl.glGetString(0x1F01))
         fmt=QOpenGLFramebufferObjectFormat();fmt.setInternalTextureFormat(0x8814)
         hosts=(QOpenGLFramebufferObject(width,height),QOpenGLFramebufferObject(width,height,fmt))
         dither=bool(gl.glIsEnabled(0x0BD0));gl.glDisable(0x0BD0)
@@ -75,6 +76,10 @@ class FramePoolGLTests(unittest.TestCase):
         config=configparser.ConfigParser(interpolation=None)
         config.read(Path(__file__).parents[1]/'mpf/toolhead/scene-lighting.shader')
         source='#version 410\n'+config['shaders']['fragment41core']
+        if software:
+            source=source.replace('void main()', 'uniform float plane;\nvoid main()').replace(
+                'lightSurface(f_vertex, f_normal, f_color.rgb)',
+                'lightSurface(vec3(gl_FragCoord.xy/vec2(256,192)*2.-1.,plane),vec3(0,0,1),vec3(.5,.6,.7))')
         program=QOpenGLShaderProgram();vao=QOpenGLVertexArrayObject()
         self.assertTrue(program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Vertex,
             '#version 410\nuniform float plane;out vec3 f_vertex;out vec3 f_normal;out vec4 f_color;'
@@ -109,8 +114,10 @@ class FramePoolGLTests(unittest.TestCase):
                             dtype=np.uint8 if index==0 else np.float32
                             values=np.empty((height,width,4),dtype=dtype)
                             for cropped in (False,True):
-                                gl.glDisable(gl.GL_SCISSOR_TEST);gl.glClearColor(0,0,0,0);gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-                                if cropped:gl.glEnable(gl.GL_SCISSOR_TEST);gl.glScissor(*rect)
+                                gl.glViewport(0,0,width,height);gl.glDisable(gl.GL_SCISSOR_TEST);gl.glClearColor(0,0,0,0);gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+                                if cropped:
+                                    if software:gl.glViewport(*rect)
+                                    else:gl.glEnable(gl.GL_SCISSOR_TEST);gl.glScissor(*rect)
                                 gl.glDrawArrays(gl.GL_TRIANGLES,0,3)
                                 read(0,0,width,height,0x1908,0x1401 if index==0 else 0x1406,values.ctypes.data)
                                 images.append(values.copy())
@@ -180,6 +187,8 @@ class FramePoolGLTests(unittest.TestCase):
                 gl.glEnable(gl.GL_DEPTH_TEST);gl.glDepthFunc(gl.GL_LEQUAL);gl.glDepthMask(False)
                 gl.glDisable(gl.GL_BLEND);gl.glEnable(gl.GL_SCISSOR_TEST)
                 gl.glScissor(int(ox)+rect[0],int(oy)+rect[1],rect[2],rect[3])
+                if cache._software_scissor:
+                    gl.glDisable(gl.GL_SCISSOR_TEST);gl.glViewport(int(ox)+rect[0],int(oy)+rect[1],rect[2],rect[3])
                 programs[1].bind();programs[1].setUniformValue('origin',float(ox+sx),float(oy+sy))
                 for unit,index,name in ((0,0,'ptex'),(1,2,'ctex')):
                     gl.glActiveTexture(0x84C0+unit);gl.glBindTexture(0x0DE1,surface._fbo.textures()[index])
@@ -187,6 +196,7 @@ class FramePoolGLTests(unittest.TestCase):
                 vao.bind();gl.glDrawArrays(gl.GL_TRIANGLES,0,3);vao.release();programs[1].release()
                 for unit in (0,1):gl.glActiveTexture(0x84C0+unit);gl.glBindTexture(0x0DE1,0)
                 gl.glActiveTexture(0x84C0);gl.glDisable(gl.GL_SCISSOR_TEST)
+                gl.glViewport(int(ox),int(oy),width,height)
             cache.draw(gl,camera,None,identity,object(),render,additive=True,composition_rect=rect,
                 _crop=crop,preserve_projection=True)
             self.assertEqual(tuple(gl.glGetIntegerv(0x0BA2)),(8,12,width,height))
@@ -206,6 +216,12 @@ class FramePoolGLTests(unittest.TestCase):
             cache.release_targets();vao.destroy()
             for program in programs:program.removeAllShaders()
 
+    def test_software_composition_keeps_asymmetric_native_pixels_and_depth(self):
+        if not self.available: self.skipTest('Offscreen OpenGL unavailable')
+        with patch.object(self.gl,'glGetString',return_value='Apple Software Renderer'):
+            self.test_native_projection_output_matches_full_nested_surface_colour_and_depth()
+            self.test_additive_composition_rectangle_matches_full_quad_exactly()
+
     def test_surface_region_preserves_full_resolution_attributes_and_depth_on_escape(self):
         if not self.available: self.skipTest('Offscreen OpenGL unavailable')
         from mpf.toolhead.ToolheadSurfaceCache import ToolheadSurfaceCache, surface_fragment
@@ -213,6 +229,7 @@ class FramePoolGLTests(unittest.TestCase):
         from pathlib import Path
         from PyQt6.QtGui import QVector3D
         gl = self.gl
+        software='Apple Software Renderer' in str(gl.glGetString(0x1F01))
         dither=bool(gl.glIsEnabled(0x0BD0));gl.glDisable(0x0BD0)
         config=configparser.ConfigParser(interpolation=None)
         config.read(Path(__file__).parents[1]/'mpf/toolhead/scene-lighting.shader')
@@ -237,7 +254,19 @@ class FramePoolGLTests(unittest.TestCase):
             'f_vertex=vec3(p*(exactFixture==1?vec2(128,96):vec2(123)),phase);f_normal=exactFixture==1?vec3(0,0,1):vec3(.2,.3,1.);'
             'f_color=exactFixture==1?vec4(p*vec2(.125,.09375)+.5,.75,1):vec4(p*.12+.4,.7,1.);'
             'gl_Position=vec4(p, .5-phase*.1,1.);}'))
-        self.assertTrue(program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Fragment,surface_fragment()))
+        fragment=surface_fragment()
+        if software:
+            # Exact pixel mapping/storage proof, independent of this driver's
+            # native varying interpolation. The arbitrary-gradient leg stays native.
+            fragment=fragment.replace('void main()', 'uniform int exactFixture;uniform float phase;uniform vec2 fixtureOrigin;\nvoid main()')
+            fragment=fragment.replace('surface_colour = f_color;', '''surface_colour = f_color;
+    if (exactFixture == 1) {
+        vec2 pixel=gl_FragCoord.xy+fixtureOrigin;
+        surface_position=vec4(pixel*.25-vec2(128,96),phase,gl_FragCoord.z);
+        surface_normal=vec4(0,0,1,float(u_surfaceKind));
+        surface_colour=vec4(pixel/4096.+vec2(.375,.40625),.75,1);
+    }''')
+        self.assertTrue(program.addShaderFromSourceCode(QOpenGLShader.ShaderTypeBit.Fragment,fragment))
         self.assertTrue(program.link())
         vao=QOpenGLVertexArrayObject();self.assertTrue(vao.create())
         read=procedure(self.context,'glReadPixels',None,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_uint,ctypes.c_uint,ctypes.c_void_p)
@@ -247,6 +276,7 @@ class FramePoolGLTests(unittest.TestCase):
             calls[id(owner)]+=1
             gl.glEnable(gl.GL_DEPTH_TEST);gl.glDepthFunc(gl.GL_LESS);gl.glDisable(gl.GL_CULL_FACE)
             program.bind();program.setUniformValue('exactFixture',int(dyadic));program.setUniformValue('phase',float(phase));program.setUniformValue('u_surfaceKind',2)
+            if software:program.setUniformValue('fixtureOrigin',float(owner._region[0]),float(owner._region[1]))
             vao.bind();gl.glDrawArrays(gl.GL_TRIANGLES,0,3);vao.release();program.release()
         def image(owner,rect,attachment):
             x,y,w,h=rect;rx,ry,_,_=owner._region
@@ -269,6 +299,8 @@ class FramePoolGLTests(unittest.TestCase):
             for unit,name in enumerate(('posTex','normTex','colTex')):
                 gl.glActiveTexture(0x84C0+unit);gl.glBindTexture(0x0DE1,owner._fbo.textures()[unit]);light.setUniformValue(name,unit)
             x,y,w,h=rect;gl.glEnable(0x0C11);gl.glScissor(x+8,y+12,w,h)
+            if 'Apple Software Renderer' in str(gl.glGetString(0x1F01)):
+                gl.glDisable(0x0C11);gl.glViewport(x+8,y+12,w,h)
             vao.bind();gl.glDrawArrays(4,0,3);vao.release();light.release()
             result=np.empty((h,w,4),np.uint8);read(x+8,y+12,w,h,0x1908,0x1401,result.ctypes.data)
             for unit in range(3):gl.glActiveTexture(0x84C0+unit);gl.glBindTexture(0x0DE1,0)
@@ -300,7 +332,7 @@ class FramePoolGLTests(unittest.TestCase):
                             half_max=max(half_max,int(steps.max()))
                             self.assertLessEqual(int(steps.max()),1,'At most one FP16 storage step per attribute')
                     first,second=lit(full,rect),lit(cropped,rect)
-                    self.assertTrue(np.any(first[...,:3]>0),'Production lighting proof must contain illuminated pixels')
+                    self.assertTrue(np.any(first[...,:3]>0),f'Production lighting proof must contain illuminated pixels: dyadic={dyadic}, phase={phase}, rect={rect}')
                     np.testing.assert_array_equal(first[...,3],second[...,3])
                     final_max=max(final_max,int(np.abs(first[...,:3].astype(int)-second[...,:3].astype(int)).max()))
                     self.assertLessEqual(final_max,1)

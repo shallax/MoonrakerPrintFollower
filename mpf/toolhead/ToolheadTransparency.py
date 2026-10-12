@@ -14,6 +14,8 @@ class ToolheadTransparency:
         self._size = self._ordinary_key = None
         self._pool = OrderedDict()
         self._pool_bytes = self._pool_hits = 0
+        self._renderer_gl = None
+        self._software_scissor = False
         self._sample_context = self._sample_shader = self._sample_vao = None
         self._sample_front = self._sample_merged = self._sample_size = None
         self._sample_generation = self._sample_retirement = None
@@ -57,6 +59,7 @@ class ToolheadTransparency:
     def release_targets(self):
         self._retire_sample_targets()
         self._clear_ordinary_targets()
+        self._renderer_gl = None
 
     def retire_for_ordinary(self, width, height):
         """Retain bounded exact-format foreground storage across crop changes."""
@@ -73,9 +76,16 @@ class ToolheadTransparency:
         if head.format().samples():
             if clip is not None: return False
             return self._draw_sampled(gl,head,camera,batches)
+        if self._renderer_gl is not gl:
+            renderer = gl.glGetString(0x1F01)
+            self._software_scissor = renderer in ("Apple Software Renderer", b"Apple Software Renderer")
+            self._renderer_gl = gl
+        software_clip = clip is not None and self._software_scissor
         scissor = None
         def constrain(bindings):
-            if clip is not None:
+            if software_clip:
+                bindings.glDisable(0x0C11)
+            elif clip is not None:
                 bindings.glEnable(0x0C11)
                 bindings.glScissor(*clip)
         try:
@@ -102,8 +112,12 @@ class ToolheadTransparency:
                     raise RuntimeError("Transparent composition vertex shader unavailable")
                 if not shader.setFragmentShader("""#version 410
 uniform sampler2D u_front;
+uniform int u_clipEnabled;
+uniform vec4 u_clipRect;
 out vec4 frag_color;
 void main() {
+    if (u_clipEnabled != 0 && (gl_FragCoord.x < u_clipRect.x || gl_FragCoord.y < u_clipRect.y
+            || gl_FragCoord.x >= u_clipRect.z || gl_FragCoord.y >= u_clipRect.w)) discard;
     ivec2 p = ivec2(gl_FragCoord.xy);
     // Fixed-function blending reads the destination without texture feedback.
     frag_color = texelFetch(u_front, p, 0);
@@ -125,7 +139,7 @@ void main() {
             gl.glColorMask(True, True, True, True)
             gl.glClearColor(0, 0, 0, 0)
             gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-            if clip is None:
+            if clip is None or software_clip:
                 QOpenGLFramebufferObject.blitFramebuffer(self._front, head, gl.GL_DEPTH_BUFFER_BIT, 0x2600)
             else:
                 from PyQt6.QtCore import QRect
@@ -161,6 +175,13 @@ void main() {
                 gl.glEnable(gl.GL_BLEND)
                 gl.glBlendEquationSeparate(0x8006, 0x8006)
                 gl.glBlendFuncSeparate(0x0304, 0x0303, 0, 1)
+                # Apple's software scissor can omit whole small rectangles.
+                # Render the native foreground fully, then clip only composition
+                # in fragment coordinates; destination exterior stays untouched.
+                self._shader.setUniformValue("u_clipEnabled", int(software_clip))
+                if software_clip:
+                    x, y, w, h = clip
+                    self._shader.setUniformValue("u_clipRect", [float(x), float(y), float(x+w), float(y+h)])
                 self._shader.bind()
                 self._vao.bind()
                 gl.glActiveTexture(gl.GL_TEXTURE0 + 1)

@@ -2199,6 +2199,13 @@ Its dimensions grow only to accommodate current coverage, not the travelled path
 and reset with camera, scene or layer changes. This output does not pool idle
 targets. Hooks that depend on matching viewport and attachment dimensions are
 excluded from this projection-preserving mode.
+Apple Software Renderer is identified once per context generation. Its broken
+small-scissor draws use ordinary foreground rendering followed by fragment
+clipping, window-coordinate lighting through a smaller viewport, and a blitter
+quad restricted to the exact source/destination intersection. The lighting
+shader retains its original surface origin; viewport and incoming scissor state
+are restored. Accelerated rendering retains the original scissor path. This is
+a compatibility fallback, with additional foreground work on software rendering.
 Clears cover each owned target; incoming scissor state is restored
 even when drawing fails. Common head receiver uniforms are
 reused only within a synchronous draw, keyed by exact camera identity. The scope

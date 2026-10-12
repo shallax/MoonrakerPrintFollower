@@ -101,6 +101,9 @@ canonical screenshots. All active release fields remain 5.3.0. Local validation,
 cross-platform CI repairs and canonical screenshot reconciliation are the final
 release-branch gates; no additional rendering feature work is planned in this
 round. No PR, merge, tag or publication has been authorized.
+The final platform checks reproduced Apple's software-renderer small-scissor
+coverage defect locally. Narrow context-qualified fallbacks preserve foreground
+and lighting pixels; EGL and Qt GLX fixtures run in separate test processes.
 
 Existing direct-light values remain centralized in `ToolheadShadowValues.py`.
 Unused shadow-map and geometry-query/receiver-layer prototypes are excluded from

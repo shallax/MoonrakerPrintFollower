@@ -7,7 +7,8 @@ main passes and fenced worker captures, and moves cropped lighting outputs at
 full pixel density with the original projection. Live allocation receipts
 confirmed one shared full index buffer and a smaller output while following the
 large print; these are storage estimates, not FPS or driver-residency claims.
-The final measured `make all JOBS=2` passed 5,973 tests, 97.8% total statement
+The final measured `make all JOBS=2` passed 5,976 tests in 256 isolated processes,
+97.8% total statement
 coverage, every required file above 95%, nine lint steps, screenshot determinism
 and verified packages. CI run `38248913949` regenerated all 29 canonical Linux
 PNGs from commit `48fdc0f1`; its 25 capture scenes were byte-identical across
@@ -23,6 +24,13 @@ dyadic fixture checks exact coordinates. Exhaustive foreground-alpha pairs also
 compare float32 reference arithmetic and preserve exact alpha. These fixtures
 do not establish universal CAD silhouette equality. Required-GL runs fail when
 the context is unavailable; optional contexts report counted per-test skips.
+The exhaustive standalone blend fixture has its own test module/process so
+Mesa EGL and Qt GLX do not require a context handoff on the same test thread.
+Apple Software Renderer reproductions exposed dropped draws under small scissors.
+Foreground fragment clipping, lighting viewport bounds and texture-intersection
+composition have exact image/depth proofs. Software-only pixel-derived fixtures
+test exact mapping independently of native varying interpolation; the original
+arbitrary-gradient fixture retains its empirical precision and final-lighting bounds.
 
 The `release/v5.3.0` branch adds Preview Toolhead controls, a shared physical
 position-move guard, boxed Preview headers, multi-day layer ETA clocks and a
