@@ -10,7 +10,17 @@ Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
-## Current release and next plans — update (12 October 2026)
+## Current release — 6.0.0 (13 October 2026)
+
+The `release/v6.0.0` branch starts from the latest main after 5.4.0. This
+release implements interrupted-print recovery within Print Follower: exact
+indexed replay boundaries, manual and sensor runout markers, optional extrusion
+lead-in, configurable per-printer sensor and macro contracts, read-only source
+planning, temperature waits and optional priming, and guarded active, paused,
+and unloaded-file handovers. The older 5.x plans below are
+historical.
+
+## Historical release plans — update (12 October 2026)
 
 The `release/v5.4.0` branch starts from the merged 5.3.0 release at
 `77c815fd790d0051abe1bb640846ca7dbfab71eb`. Its scope is to mirror every

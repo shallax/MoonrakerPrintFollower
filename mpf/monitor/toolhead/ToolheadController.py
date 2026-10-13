@@ -25,7 +25,7 @@ from dataclasses import replace
 import math
 
 from ..MonitorPermissions import R_UNKNOWN, Verdict, can_jog, can_z_offset, can_restart
-from .PhysicalMotion import UnsafeMotion, finite, prepare, target_fields, telemetry_object
+from ...geometry.PhysicalMotion import UnsafeMotion, finite, prepare, target_fields, telemetry_object
 from .ToolheadPolicy import (
     EXTRUDE_DISTANCE_DEFAULT,
     EXTRUDE_SPEED_DEFAULT,

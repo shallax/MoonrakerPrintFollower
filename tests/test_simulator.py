@@ -59,7 +59,7 @@ if tornado is not None:
             self.io_loop.run_sync(exercise)
 
         def test_fresh_motion_query_has_safe_complete_firmware_coordinates(self):
-            from mpf.monitor.toolhead.PhysicalMotion import envelope, prepare, UnsafeMotion
+            from mpf.geometry.PhysicalMotion import envelope, prepare, UnsafeMotion
             from mpf.monitor.toolhead.ToolheadPolicy import JogOp
 
             async def exercise():

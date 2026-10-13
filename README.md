@@ -8,8 +8,33 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 5.4.0
+- **Release:** 6.0.0
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 6.0.0
+
+Print Follower can recover a printing or paused virtual-SD job from an exact,
+selected motion boundary. It can also select an unloaded root G-code file and
+start it at that boundary after power loss, without running the file's print-start
+macro. Scrub to the suspected stop, mark it manually or choose a filament
+sensor marker, then use **Recover interrupted print from selected point…**
+beneath the follower sliders. An optional lead-in rewinds through a contiguous
+extrusion run. The review shows the actual replay start, nozzle XYZ, file byte
+and reconstructed E value, including accumulated absolute extrusion. Checking
+the G-code sends no printer commands. A separate, explicit confirmation starts
+the guarded handover. Ordinary Resume remains a distinct control.
+
+The Recovery settings tab discovers filament sensors and macros from the printer
+configuration. Selected sensors with `pause_on_runout: true` remain owned by
+Klipper; the follower may request PAUSE after a confirmed runout transition only
+for selected sensors with that option disabled. Sensors are optional: manual stop
+markers and selection work without them. Source macros, pause state, lead-in,
+clearance, return speeds, command/status/heat timeouts, and optional nozzle priming
+at a configured XYZ position, extrusion amount and speed are configurable.
+The plugin waits for the latest nozzle and bed targets before moving; if it
+cannot derive a target from the file, it asks for one. For unloaded recovery,
+confirm the existing object's highest Z and safely home XYZ away from it first.
+Recovery refuses unsupported G-code, printer state or motion geometry before seeking.
 
 ## What changed in 5.4.0
 

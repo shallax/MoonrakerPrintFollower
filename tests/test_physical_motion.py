@@ -1,7 +1,7 @@
 """Physical guard boundaries using invented Klipper status, never a printer."""
 import unittest
 
-from mpf.monitor.toolhead.PhysicalMotion import envelope, prepare, target_fields, UnsafeMotion
+from mpf.geometry.PhysicalMotion import envelope, prepare, target_fields, UnsafeMotion
 from mpf.monitor.toolhead.ToolheadPolicy import JogOp
 
 

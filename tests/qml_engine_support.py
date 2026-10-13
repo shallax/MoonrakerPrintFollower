@@ -3607,7 +3607,7 @@ class SettingsPageCase(RealEngineTestCase):
     """The settings pane mounted offscreen against the real machine
     action, in a real window (a windowless mount never lays out twice)."""
 
-    DIAGNOSTICS_TAB = 4
+    DIAGNOSTICS_TAB = 5
 
     def setUp(self):
         super().setUp()

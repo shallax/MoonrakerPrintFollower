@@ -12,6 +12,8 @@ Cura.MachineAction {
         tabBar.currentIndex = initialTab;
         if (initialTab === 1)
             Qt.callLater(followingSettings.showToolhead);
+        if (initialTab === 4)
+            Qt.callLater(manager.refreshRecoveryConfiguration);
     }
 
     property alias validUrl: connectionSettings.validUrl
@@ -25,7 +27,7 @@ Cura.MachineAction {
     property alias validRetryInterval: uploadSettings.validRetryInterval
     property alias validTranslation: uploadSettings.validTranslation
     property alias validCacheMax: diagnosticsSettings.validCacheMax
-    property bool canSave: followingSettings.validToolhead && validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validCacheMax && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
+    property bool canSave: followingSettings.validToolhead && recoverySettings.valid && validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validCacheMax && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
     // A refused save must be visible: the dialog accepted nothing and
     // said nothing, so the change seemed to revert (the live report).
     // Two refusal causes share the slot with distinct copy: the
@@ -40,7 +42,7 @@ Cura.MachineAction {
             saveRefusalText = "Settings were not saved — fix the highlighted fields and save again.";
             return;
         }
-        var saved = manager.saveConfig(Object.assign({}, connectionSettings.values, followingSettings.values, uploadSettings.values, detectionSettings.values, diagnosticsSettings.values));
+        var saved = manager.saveConfig(Object.assign({}, connectionSettings.values, followingSettings.values, uploadSettings.values, detectionSettings.values, recoverySettings.values, diagnosticsSettings.values));
         saveRefused = !saved;
         saveRefusalText = saved ? "" : (manager.detectionRefusal || "Settings were not saved — check the fields or the disk and try again.");
         if (saved && closeDialog)
@@ -141,6 +143,8 @@ Cura.MachineAction {
 
     UM.TabRow {
         id: tabBar
+        onCurrentIndexChanged: if (currentIndex === 4)
+            manager.refreshRecoveryConfiguration()
         z: 5
         anchors.top: migrationNotice.visible ? migrationNotice.bottom : (saveRefusedLabel.visible ? saveRefusedLabel.bottom : machineLabel.bottom)
         anchors.topMargin: UM.Theme.getSize("default_margin").height
@@ -158,6 +162,9 @@ Cura.MachineAction {
         }
         UM.TabRowButton {
             text: "Detection"
+        }
+        UM.TabRowButton {
+            text: "Recovery"
         }
         UM.TabRowButton {
             text: "Diagnostics"
@@ -199,6 +206,10 @@ Cura.MachineAction {
             }
             DetectionSettings {
                 id: detectionSettings
+                settings: manager
+            }
+            RecoverySettings {
+                id: recoverySettings
                 settings: manager
             }
             DiagnosticsSettings {

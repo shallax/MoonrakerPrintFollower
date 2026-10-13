@@ -39,7 +39,7 @@ class CancelAfter:
 class DetectionAssetsTests(unittest.TestCase):
     def test_model_and_inference_wheel_use_this_plugin_releases_assets(self):
         wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 100)
-        self.assertTrue(RELEASE_BASE.endswith("/releases/download/v5.4.0/"))
+        self.assertTrue(RELEASE_BASE.endswith("/releases/download/v6.0.0/"))
         self.assertEqual(DetectionAssets.MODEL_URL,
                          RELEASE_BASE + "model-weights-5a6b1be1fa.onnx")
         self.assertEqual(AssetInstaller.wheel_url(wheel), asset_url(wheel.filename))

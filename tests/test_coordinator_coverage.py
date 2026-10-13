@@ -4,6 +4,44 @@ from unittest.mock import Mock
 from tests import control_owner_support as harness
 
 class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
+    def test_unloaded_recovery_lists_and_indexes_a_root_gcode_without_starting_it(self):
+        from mpf.gcode.GCodeIndex import build_index_from_file
+        from mpf.gcode.IndexView import IndexView
+        from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
+
+        parts = self._make()
+        parts.files.MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
+        parts.client.statusReceived.emit(harness._status("standby", filename=""))
+        self.assertTrue(parts.coordinator.refresh_recovery_files())
+        parts.client.reply({"result": {"files": [
+            {"filename": "cube.gcode", "size": 31},
+            {"filename": "other.stl", "size": 100},
+            {"filename": "bad;name.gcode", "size": 20}]}}, None)
+        self.assertEqual([row["name"] for row in parts.coordinator.recovery_files_state["options"]],
+                         ["cube.gcode"])
+        self.assertTrue(parts.coordinator.select_recovery_file("cube.gcode"))
+        self.assertEqual(parts.index.bound, ("cube.gcode", 31, 0))
+        self.assertEqual(parts.index.requests, 1)
+        with harness.tempfile.TemporaryDirectory() as directory:
+            data = b";LAYER:0\nG1 X1 Y1 E0.1\nG1 X2 Y1 E0.2\n"
+            path = harness.os.path.join(directory, "cube.gcode")
+            with open(path, "wb") as handle:
+                handle.write(data)
+            job = ("cube.gcode", len(data), 0)
+            parts.coordinator._offline_recovery_job = job
+            parts.files.bind(job)
+            parts.files.path = path
+            parts.files.identity = RemoteFileIdentity("cube.gcode", len(data), 123.0)
+            parts.index.view = IndexView(job, build_index_from_file(path))
+            parts.coordinator.refresh()
+            parts.coordinator.set_plate_anchor(0)
+            parts.coordinator.set_plate_split(1)
+            boundary = parts.coordinator.selected_recovery_boundary()
+            self.assertEqual(boundary.next_motion_offset, data.index(b"G1 X2"))
+            context = parts.coordinator._recovery_context()
+            self.assertEqual(context.observed_offset, boundary.next_motion_offset)
+            self.assertEqual(context.printed_top_z, boundary.position[2])
+
     def test_recovery_selection_requires_the_current_job_and_downloaded_source(self):
         from mpf.application.PrintCoordinator import PrintCoordinator
         from mpf.gcode.GCodeIndex import build_index_from_file

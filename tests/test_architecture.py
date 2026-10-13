@@ -263,13 +263,13 @@ class SourceContractTests(unittest.TestCase):
             'MonitorTemperatureHistory': {'MonitorFormatting'},
             'MonitorTuning': set(),
             'MoonrakerClient': {'CameraTiming', 'MoonrakerProtocol', 'MoonrakerSession'},
-            'MoonrakerFollowerMachineAction': {'CacheNamespaces', 'DetectionAssets', 'FollowController', 'MigrationPresentation', 'MoonrakerProtocol', 'MoonrakerSession', 'MoonrakerTransport', 'PrinterConfig'},
+            'MoonrakerFollowerMachineAction': {'CacheNamespaces', 'DetectionAssets', 'FollowController', 'MigrationPresentation', 'MoonrakerProtocol', 'MoonrakerSession', 'MoonrakerTransport', 'PrinterConfig', 'RunoutEvents'},
             'MoonrakerMJPGImage': {'FrameDecoder', 'CameraStatistics', 'MJPEGParser'},
             'FrameDecoder': set(),
             'CameraRecovery': {'CameraTiming', 'CameraSourceIdentity'},
             'CameraStatistics': set(),
             'MJPEGParser': set(),
-            'MoonrakerMonitorModel': {'MonitorDetection', 'FileBrowserPresentation', 'TemperaturePresentation', 'CameraRecovery', 'CameraTiming', 'ConsoleController', 'FileManager', 'FileManagerPolicy', 'FilesViewModel', 'MigrationPresentation', 'PauseAtLayerPresentation', 'MonitorCamera', 'MonitorCommands', 'MonitorControls', 'MonitorData', 'MonitorFormatting', 'MonitorPermissions', 'MonitorPublication', 'MonitorTemperatureHistory', 'MonitorTuning', 'PlateQt', 'PlateRenderController', 'PlateSceneIdentity', 'PrintStartOwner', 'PrinterConfig', 'SectionLayoutPolicy', 'StateStore', 'ToolheadController', 'ToolheadPolicy', 'UiStateStore', 'WhatsNew'},
+            'MoonrakerMonitorModel': {'MonitorDetection', 'FileBrowserPresentation', 'TemperaturePresentation', 'CameraRecovery', 'CameraTiming', 'ConsoleController', 'FileManager', 'FileManagerPolicy', 'FilesViewModel', 'MigrationPresentation', 'PauseAtLayerPresentation', 'MonitorCamera', 'MonitorCommands', 'MonitorControls', 'MonitorData', 'MonitorFormatting', 'MonitorPermissions', 'MonitorPublication', 'MonitorTemperatureHistory', 'MonitorTuning', 'PlateQt', 'PlateRenderController', 'PlateSceneIdentity', 'PrintStartOwner', 'PrinterConfig', 'RunoutEvents', 'SectionLayoutPolicy', 'StateStore', 'ToolheadController', 'ToolheadPolicy', 'UiStateStore', 'WhatsNew'},
             'MoonrakerOutputDevice': {'CuraOutputWriter', 'MonitorPermissions', 'PluginPaths', 'UploadController'},
             'MoonrakerOutputDevicePlugin': {'FollowerColourScheme', 'MoonrakerMonitorModel', 'MoonrakerOutputDevice', 'PluginPaths'},
             'MoonrakerPrintFollower': {'FollowerRuntime', 'LeakProbe', 'WhatsNewOverlay'},
@@ -308,7 +308,7 @@ class SourceContractTests(unittest.TestCase):
             'ToolheadReadout': set(),
             'ObjectNameProjection': {'Polygons'},
             'PreviewSmoothing': set(),
-            'PrintCoordinator': {'LoadStateTracker', 'MonitorFormatting', 'MoonrakerProtocol', 'NextPausePipeline', 'PreviewFormatting', 'PrintIdentity', 'PrintState', 'RemoteJobService'},
+            'PrintCoordinator': {'FileManagerPolicy', 'LoadStateTracker', 'MonitorFormatting', 'MoonrakerProtocol', 'NextPausePipeline', 'PreviewFormatting', 'PrintIdentity', 'PrintState', 'RemoteJobService', 'RecoveryController', 'RecoveryPlanning'},
             'PrintIdentity': set(),
             'PrintStartOwner': set(),
             'PrintState': {'RemoteJobService'},
@@ -316,6 +316,11 @@ class SourceContractTests(unittest.TestCase):
             'PrinterConfig': {'ToolheadOpacity', 'ToolheadRotors', 'DetectionRegions', 'ToolheadLighting', 'ToolheadMaterials'},
             'RemoteFileService': {'DownloadStream', 'MoonrakerProtocol'},
             'RemoteJobService': set(),
+            'RecoveryPlanning': {'ArcGeometry', 'GCodeParser', 'IndexLimits'},
+            'RecoveryHandover': {'PhysicalMotion'},
+            'RecoveryExecution': {'RecoveryHandover'},
+            'RecoveryController': {'MoonrakerProtocol', 'RecoveryExecution', 'RecoveryPlanning'},
+            'RunoutEvents': set(),
             'RenderSurface': set(),
             'SectionLayoutPolicy': set(),
             'SocketFraming': set(),
@@ -683,7 +688,7 @@ class CompositionStructureTests(unittest.TestCase):
         facade = (PLUGINS / "MoonrakerPrintFollower.py").read_text(encoding="utf-8")
         root = (PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8")
         coordinator = (PLUGINS / "PrintCoordinator.py").read_text(encoding="utf-8")
-        self.assertLess(len(facade.splitlines()), 70)
+        self.assertLess(len(facade.splitlines()), 85)
         self.assertIn("class MoonrakerPrintFollower(QObject, Extension)", facade)
         for token in (
             "RemoteFileService", "GCodeIndexService", "PreviewFollower", "PauseController", "CuraIntegration",

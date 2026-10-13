@@ -194,6 +194,70 @@ class MonitorModelCase(unittest.TestCase):
         return [{"relative_path": f".thumbs/{name}-32x32.png", "width": 32, "height": 32}]
 
 
+class RecoveryModelTests(MonitorModelCase):
+    def test_runout_pause_respects_live_klipper_owner(self):
+        name = "filament_switch_sensor upper"
+        snapshot_type = self.qt.load("PrintState")
+        observation_type = self.qt.load("RemoteJobService")
+        self.print_state = snapshot_type.PrintSnapshot(
+            job_key=("part.gcode", 100, 1),
+            observation=observation_type.PrintObservation("printing", "part.gcode", 100, 50, 10))
+        self.model = self.build(config=self.printer_config(recovery_sensor_names=[name]))
+        self.connect()
+        self.model._runout_events.observe(self.print_state.job_key,
+            {name: {"filament_detected": True, "enabled": True}}, at=time.time(), selected=(name,))
+        event = self.model._runout_events.observe(self.print_state.job_key,
+            {name: {"filament_detected": False, "enabled": True}}, at=time.time(), selected=(name,))[0]
+        self.model._pause_for_runout(event, self.print_state)
+        request = self.sent("printer/objects/query")[-1]
+        self.assertEqual(request.options["body"]["objects"][name], ["filament_detected", "enabled"])
+        status = {"print_stats": {"state": "printing", "filename": "part.gcode"},
+                  "virtual_sdcard": {"file_size": 100}, "pause_resume": {"is_paused": False},
+                  name: {"filament_detected": False, "enabled": True},
+                  "configfile": {"config": {name: {"pause_on_runout": "true"}}}}
+        request.callback({"result": {"status": status}}, None)
+        self.assertFalse(self.sent("printer/gcode/script"))
+        status["configfile"]["config"][name]["pause_on_runout"] = "false"
+        self.model._pause_for_runout(event, self.print_state)
+        self.sent("printer/objects/query")[-1].callback({"result": {"status": status}}, None)
+        self.assertEqual(self.sent("printer/gcode/script")[-1].options["body"]["script"], "PAUSE")
+
+    def test_recovery_slots_forward_only_selected_user_intents(self):
+        calls = []
+        self.model = self.build(
+            recovery_plan=lambda: calls.append("prepare"),
+            recovery_start=lambda: calls.append("start"),
+            recovery_cancel=lambda: calls.append("cancel"),
+            recovery_suggest=lambda: calls.append("lead-in"))
+        self.model.suggestRecoveryLeadIn()
+        self.model.prepareRecovery()
+        self.model.startRecovery()
+        self.model.cancelRecovery()
+        self.assertEqual(calls, ["lead-in", "prepare", "start", "cancel"])
+
+    def test_manual_marker_survives_model_restart_for_confirmed_history_job(self):
+        store = self.persistence()
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(
+            job_key=("part.gcode", 100, 1), history_job_id="job-001")
+        self.model = self.build(persistence=store)
+        self.model._follower_attached = False
+        self.model._follower_layer_anchor = 0
+        self.model._follower_layer_split = 2
+        self.model.markRecoveryStop()
+        rows = store.get_machine_state("A")["recoveryEvents"]["events"]
+        self.assertEqual((rows[0]["kind"], rows[0]["layer"], rows[0]["split"]),
+                         ("manual", 0, 2))
+        store.set_machine_state("A", {"recoveryAttempt": {
+            "jobId": "job-001", "filename": "part.gcode", "size": 100,
+            "offset": 25, "phase": "uncertain", "detail": "Inspect printer"}})
+
+        restored = self.build(persistence=store)
+        restored._sync_recovery_history(self.print_state)
+        self.assertEqual(len(restored._runout_events.events), 1)
+        self.assertEqual(restored._runout_events.events[0].split, 2)
+        self.assertEqual(restored._recovery_previous_attempt["phase"], "uncertain")
+
+
 class PublishSentinelTests(MonitorModelCase):
     """The typed-coercion helper (the 4.5.0 debt pack): every Optional
     snapshot field must reach its typed property as the sentinel."""

@@ -226,7 +226,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         document, window = self.open_settings(height=240)
         pages = self.pages(document)
         for index, name in enumerate(("ConnectionSettings", "FollowingSettings",
-                                      "UploadSettings", "DetectionSettings", "DiagnosticsSettings")):
+                                      "UploadSettings", "DetectionSettings", "RecoverySettings", "DiagnosticsSettings")):
             with self.subTest(tab=name):
                 self.show_tab(document, index)
                 scrollbar = pages[name].findChild(harness.QQuickItem, "settingsScrollbar")
@@ -237,7 +237,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
                 self.assertTrue(scrollbar.property("visible"))
 
     def pages(self, document):
-        types = ("ConnectionSettings", "FollowingSettings", "UploadSettings", "DiagnosticsSettings", "DetectionSettings")
+        types = ("ConnectionSettings", "FollowingSettings", "UploadSettings", "DiagnosticsSettings", "DetectionSettings", "RecoverySettings")
         result = {}
         for item in document.findChildren(harness.QQuickItem):
             name = item.metaObject().className()
@@ -257,6 +257,15 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
             "UploadSettings": {"frontend_url", "output_format", "upload_dialog", "upload_path", "upload_start_print", "upload_remember_state", "upload_autohide_message", "power_devices", "ready_retry_interval_s", "filename_translate_input", "filename_translate_output", "filename_translate_remove"},
             "DiagnosticsSettings": {"cache_max_mb", "trace_layer", "trace_http", "seek_trace", "memory_diagnostics_log", "memory_diagnostics_trace", "camera_disabled", "software_follower_renderer"},
             "DetectionSettings": set(),
+            "RecoverySettings": {"recovery_sensor_names", "recovery_auto_pause", "recovery_saved_state",
+                                 "recovery_prepare_macro", "recovery_setup_macros", "recovery_transparent_macros",
+                                 "recovery_nozzle_parameter", "recovery_bed_parameter", "recovery_lead_in_mm",
+                                 "recovery_lead_in_mode", "recovery_lead_in_moves", "recovery_clearance_mm",
+                                 "recovery_xy_speed_mm_s", "recovery_z_speed_mm_s", "recovery_prime_enabled",
+                                 "recovery_prime_x", "recovery_prime_y", "recovery_prime_z",
+                                 "recovery_prime_amount_mm", "recovery_prime_speed_mm_s",
+                                 "recovery_command_timeout_s", "recovery_heating_timeout_s",
+                                 "recovery_status_timeout_s"},
         }
         seen = set()
         for name, page in pages.items():
@@ -264,8 +273,8 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
             self.assertEqual(set(values), expected[name])
             self.assertFalse(seen.intersection(values), "two tabs own the same setting")
             seen.update(values)
-        self.assertEqual(len(seen), 35)
-        for index in (4, 3, 1, 2, 0):
+        self.assertEqual(len(seen), 58)
+        for index in (5, 4, 3, 1, 2, 0):
             self.show_tab(document, index)
             self.assertEqual(self.pages(document), pages, "a tab switch recreated a draft owner")
 

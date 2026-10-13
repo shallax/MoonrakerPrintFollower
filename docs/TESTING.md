@@ -1,6 +1,19 @@
 # TESTING.md — the real-Cura UI test harness
 
-## 5.4.0 — current validation
+## 6.0.0 — current validation
+
+Run `make lint`, `make run_tests`, `make coverage` and `make package` on
+`release/v6.0.0`. Recovery fixtures cover exact byte boundaries, accumulated
+and relative E, lead-in, sensor pause ownership, printer config discovery,
+paused-state preflight, unloaded-file selection, temperature waits, optional
+nozzle priming and sequential command handover. The QML engine and
+follower contract checks cover the distinct recovery review and confirmation.
+Read-only queries of a live Moonraker printer may verify configuration and
+source shape; **do not send printer commands during a live print**. A disposable
+paused virtual-SD printer is still required before claiming physical recovery
+validation.
+
+## 5.4.0 — historical validation
 
 Run `make all` and the platform CAD smoke matrix on `release/v5.4.0`. The
 release workflow stages all 27 optional assets, verifies their hashes against

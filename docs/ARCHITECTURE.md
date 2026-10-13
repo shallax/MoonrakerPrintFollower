@@ -131,6 +131,11 @@ correct package ownership.
 | `SocketFraming.py` | Pure RFC 6455 framing: handshake build/verify, frame codec, extended lengths, size caps, close codes | Qt, sockets, policy |
 | `RemoteJobService.py` | Print observation and same-filename run identity | Preview selection |
 | `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer`/`MotionProgress` and the single `LayerResolver` | QML/Cura writes |
+| `RecoveryPlanning.py` | Read-only scrub lead-in and exact source-modal reconstruction for a supported recovery point | Printer commands or inferred macro state |
+| `RecoveryHandover.py` | Pure paused-print, temperature and travel preflight plus staged return script rendering | Network transport, printer mutation or unverified clearance |
+| `RecoveryExecution.py` | Sequential one-attempt recovery handover over injected fresh-query and script-send capabilities, with ambiguous results terminal | Blind retries or direct transport ownership |
+| `RecoveryController.py` | Qt owner for asynchronous plan and file validation, live metadata check, and one transport-backed recovery attempt | G-code parsing policy or Cura view state |
+| `RunoutEvents.py` | Print-bound selected-sensor transitions and manual stop estimates with explicit observation precision | Printer commands or inferring an exact extrusion-stop location |
 | `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` — the identity-neutral `request_metadata_only` (4.2.0) included | Index algorithms or Cura loading |
 | `DownloadStream.py` | Bounded streaming G-code downloads to disk and the `DownloadOperation` lifecycle | Networking policy or Cura |
 | `GCodeIndexService.py` | Index lifecycle, bounded worker execution, `IndexView`, and the shared live-motion observation service | Networking or UI |

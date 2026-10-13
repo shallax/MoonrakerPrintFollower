@@ -51,7 +51,7 @@ def underneath(module, package):
 # Moonraker package here would let a core service acquire a screen/transport.
 RULES = {
     "mpf.geometry": (("mpf.geometry",), ()),
-    "mpf.printing": (("mpf.printing",), ()),
+    "mpf.printing": (("mpf.printing", "mpf.geometry"), ()),
     "mpf.gcode": (("mpf.gcode", "mpf.geometry", "mpf.printing"),
                   ("mpf.moonraker.MoonrakerProtocol",)),
     "mpf.settings": (("mpf.settings",), ("mpf.geometry.DetectionRegions", "mpf.geometry.ToolheadLighting", "mpf.geometry.ToolheadMaterials", "mpf.geometry.ToolheadOpacity", "mpf.geometry.ToolheadRotors")),

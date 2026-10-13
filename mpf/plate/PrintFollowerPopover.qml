@@ -1,5 +1,6 @@
 import QtQuick 2.15
 import QtQuick.Layouts 1.3
+import QtQuick.Controls 2.15
 import QtQuick.Window 2.15
 import UM 1.5 as UM
 import Cura 1.1 as Cura
@@ -32,6 +33,10 @@ MonitorPopOver {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: UM.Theme.getSize("default_margin").width
+            Component.onCompleted: {
+                if (root.printerModel != null && root.printerModel.recoveryFiles !== undefined && root.printerModel.recoveryFiles.available === true)
+                    root.printerModel.refreshRecoveryFiles();
+            }
 
             // The slider functions live on the COMPONENT ROOT: a
             // function declared on a nested item is invisible to its
@@ -108,6 +113,39 @@ MonitorPopOver {
                 // on open, so the arrows drive it immediately (the
                 // live request).
                 Component.onCompleted: layerSlider.forceActiveFocus()
+                UM.Label {
+                    Layout.fillWidth: true
+                    visible: root.printerModel != null && root.printerModel.recoveryFiles !== undefined && root.printerModel.recoveryFiles.available === true
+                    text: "Recover an unloaded print: choose its G-code, then select a restart point below."
+                    wrapMode: Text.WordWrap
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.printerModel != null && root.printerModel.recoveryFiles !== undefined && root.printerModel.recoveryFiles.available === true
+                    ComboBox {
+                        id: unloadedFileBox
+                        objectName: "moonrakerRecoveryUnloadedFileDropdown"
+                        Layout.fillWidth: true
+                        model: root.printerModel != null && root.printerModel.recoveryFiles !== undefined ? root.printerModel.recoveryFiles.options || [] : []
+                        textRole: "name"
+                    }
+                    Cura.SecondaryButton {
+                        text: "Use file"
+                        enabled: unloadedFileBox.currentIndex >= 0 && unloadedFileBox.model.length > 0
+                        onClicked: root.printerModel.selectRecoveryFile(unloadedFileBox.model[unloadedFileBox.currentIndex].name)
+                    }
+                    Cura.SecondaryButton {
+                        text: "Refresh"
+                        onClicked: root.printerModel.refreshRecoveryFiles()
+                    }
+                }
+                UM.Label {
+                    Layout.fillWidth: true
+                    visible: root.printerModel != null && root.printerModel.recoveryFiles !== undefined && root.printerModel.recoveryFiles.available === true
+                    text: root.printerModel != null && root.printerModel.recoveryFiles !== undefined ? (root.printerModel.recoveryFiles.loading ? "Reading printer files…" : root.printerModel.recoveryFiles.error || (root.printerModel.recoveryFiles.selected ? "Selected: " + root.printerModel.recoveryFiles.selected : "Choose a root G-code file.")) : ""
+                    wrapMode: Text.WordWrap
+                    color: UM.Theme.getColor("text_inactive")
+                }
                 Connections {
                     target: progressFace
                     // The settle owns the native-render feed: the
@@ -535,6 +573,33 @@ MonitorPopOver {
                             }
                         }
                     }
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 16 * screenScaleFactor
+                        Repeater {
+                            model: root.printerModel != null && root.printerModel.recoveryEvents != null ? root.printerModel.recoveryEvents.filter(function (event) {
+                                return event.layer === root.printerModel.plateProgressAnchor && event.split !== null && event.split !== undefined;
+                            }) : []
+                            delegate: UM.Label {
+                                text: "▲"
+                                color: UM.Theme.getColor("warning")
+                                font: UM.Theme.getFont("small")
+                                x: (100 * screenScaleFactor + UM.Theme.getSize("thin_margin").width) + modelData.split / Math.max(1, root.printerModel.plateLayerMotionCount) * Math.max(0, parent.width - 164 * screenScaleFactor - 2 * UM.Theme.getSize("thin_margin").width) - width / 2
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: root.printerModel.setFollowerLayerProgress(modelData.split)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Cura.SecondaryButton {
+                    objectName: "moonrakerFollowerOpenRecovery"
+                    Layout.fillWidth: true
+                    text: "Recover interrupted print from selected point…"
+                    enabled: root.printerModel != null && root.printerModel.recoverySelection.offset !== undefined
+                    onClicked: recoveryDialog.open()
                 }
 
                 UM.Label {
@@ -596,8 +661,37 @@ MonitorPopOver {
             // own column (the live report): stacked under the plate
             // the list squeezed the face and ran onto the card's
             // clipped bottom edge, so the width pays for it instead.
-            PauseScheduleView {
-                printerModel: root.printerModel
+            ColumnLayout {
+                Layout.preferredWidth: 340 * screenScaleFactor
+                Layout.minimumWidth: 0
+                Layout.fillHeight: true
+                spacing: UM.Theme.getSize("thin_margin").height
+                PauseScheduleView {
+                    printerModel: root.printerModel
+                }
+            }
+
+            Popup {
+                id: recoveryDialog
+                parent: root
+                x: Math.max(0, (root.width - width) / 2)
+                y: Math.max(0, (root.height - height) / 2)
+                width: Math.min(560 * screenScaleFactor, root.width - 2 * UM.Theme.getSize("default_margin").width)
+                height: Math.min(700 * screenScaleFactor, root.height - 2 * UM.Theme.getSize("default_margin").height)
+                padding: UM.Theme.getSize("default_margin").width
+                modal: true
+                focus: true
+                closePolicy: Popup.CloseOnEscape
+                background: Rectangle {
+                    color: UM.Theme.getColor("main_background")
+                    border.color: UM.Theme.getColor("lining")
+                    border.width: UM.Theme.getSize("default_lining").width
+                    radius: UM.Theme.getSize("default_radius").width
+                }
+                contentItem: RecoveryControls {
+                    printerModel: root.printerModel
+                    onCloseRequested: recoveryDialog.close()
+                }
             }
         }
     }

@@ -251,6 +251,16 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 request_monitor_download=self._follower.confirmDownloadForMonitor,
                 request_plate_anchor=self._follower.setPlateAnchor,
                 request_plate_split=self._follower.setPlateSplit,
+                recovery_selection=getattr(self._follower, "recoverySelection", None),
+                recovery_state=getattr(self._follower, "recoveryState", None),
+                recovery_plan=getattr(self._follower, "recoveryPlan", None),
+                recovery_start=getattr(self._follower, "recoveryStart", None),
+                recovery_cancel=getattr(self._follower, "recoveryCancel", None),
+                recovery_suggest=getattr(self._follower, "recoverySuggest", None),
+                recovery_files=getattr(self._follower, "recoveryFiles", None),
+                recovery_list_files=getattr(self._follower, "recoveryListFiles", None),
+                recovery_select_file=getattr(self._follower, "recoverySelectFile", None),
+                recovery_changed=getattr(self._follower, "recoveryChanged", None),
                 request_follower_popover_open=getattr(self._follower, "setFollowerPopoverOpen", None),
                 # The popover's pause block and its three intents (the
                 # capability-guarded form, like the demand gate above:

@@ -26,6 +26,15 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "6.0.0",
+        "headline": "Version 6.0.0 adds reviewed interrupted-print recovery to Print Follower.",
+        "items": (
+            "Scrub the follower to a suspected runout, mark it or choose a sensor marker, and review an optional extrusion lead-in. The actual restart position and extrusion value are shown before confirmation.",
+            "Recovery checks G-code without moving the printer, then separately confirms an active, paused or unloaded-file restart. It waits for temperatures and can prime the nozzle at a configured coordinate.",
+            "Select sensors and macros discovered from your printer in Recovery settings. Klipper keeps control of sensors that already pause on runout; recovery also works without sensors.",
+        ),
+    },
+    {
         "version": "5.4.0",
         "headline": "Version 5.4.0 keeps optional detection and STEP downloads with the matching plugin release.",
         "items": (

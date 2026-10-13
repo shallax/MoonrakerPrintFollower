@@ -213,7 +213,8 @@ class FollowerRuntime:
                                          persistence=self.persistence)
         self.coordinator = PrintCoordinator(client=self.client, binding=self.binding,
             files=self.files, index=self.index, cura=self.cura, preview=self.preview,
-            pauses=self.pauses, presentation=self.presentation, bed_mesh=self.bed_mesh, parent=parent)
+            pauses=self.pauses, presentation=self.presentation, bed_mesh=self.bed_mesh,
+            parent=parent, persistence=self.persistence)
         self.presentation.reportedPositionRequested.connect(lambda _reported: self.motion.reset())
         self.presentation.reportedPositionRequested.connect(lambda _reported: self.coordinator.refresh())
         self._closed = False

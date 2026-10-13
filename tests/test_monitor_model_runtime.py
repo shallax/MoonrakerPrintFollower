@@ -3519,8 +3519,8 @@ Item {
         # Monitor files must never be exempt, and the set must not
         # grow silently (round-2 security F13). Inside the popup the
         # chrome still uses enabled/opacity, never visible:.
-        exempt_files = {"MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml", "DetectionSettings.qml", "DetectionOffer.qml", "MoonrakerUploadDialog.qml"}
-        self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml", "DetectionSettings.qml", "DetectionOffer.qml", "MoonrakerUploadDialog.qml"})
+        exempt_files = {"MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml", "DetectionSettings.qml", "RecoverySettings.qml", "RecoveryControls.qml", "DetectionOffer.qml", "MoonrakerUploadDialog.qml"}
+        self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml", "DetectionSettings.qml", "RecoverySettings.qml", "RecoveryControls.qml", "DetectionOffer.qml", "MoonrakerUploadDialog.qml"})
         for monitor_file in ("MoonrakerMonitor.qml", "MoonrakerMonitorDashboard.qml", "MoonrakerPreviewCard.qml"):
             self.assertNotIn(monitor_file, exempt_files)
         # The camera's configured gate moved into CameraPane as
@@ -3922,6 +3922,11 @@ Item {
             # MODE of the follower popover — attaching again is the
             # user's own act, and the two rows above it never move.
             "visible: root.printerModel != null && !root.printerModel.followerAttached",
+            # Recovery is an explicit tab choice in the expanded follower.
+            "visible: !recoveryPanel.visible",
+            # File selection is available only while there is no active
+            # print to rewind; it is the unloaded-recovery mode.
+            "visible: root.printerModel != null && root.printerModel.recoveryFiles !== undefined && root.printerModel.recoveryFiles.available === true",
         }
         for path in sorted(harness.PLUGINS.rglob("*.qml")):
             if path.name in exempt_files:

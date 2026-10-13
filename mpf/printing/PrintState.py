@@ -113,6 +113,9 @@ class PrintSnapshot:
     # polygon visits, read back from the layer's start (the live
     # ruling: the DEFINE order is not the print order everywhere).
     plate_visited: frozenset = field(default_factory=frozenset)
+    # Moonraker history identity, confirmed against the current newest job.
+    # Kept separate from the session-only RemoteJobService serial.
+    history_job_id: str = ""
 
     @property
     def active(self) -> bool:

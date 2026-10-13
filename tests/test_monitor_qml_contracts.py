@@ -415,6 +415,14 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
             self.assertEqual(len(harness.re.findall(cadence, qml)), 2,
                              "the hourglass must flip, rest, flip and rest")
         follower = (harness.PLUGINS / "PrintFollowerPopover.qml").read_text(encoding="utf-8")
+        recovery = (harness.PLUGINS / "RecoveryControls.qml").read_text(encoding="utf-8")
+        self.assertIn('objectName: "moonrakerFollowerOpenRecovery"', follower)
+        self.assertIn('text: "Recover interrupted print from selected point…"', follower)
+        self.assertNotIn('text: "Recovery"', follower)
+        self.assertIn('"Review printer rewind…"', recovery)
+        self.assertIn('"Rewind and restart print"', recovery)
+        self.assertIn('"Load and restart from point"', recovery)
+        self.assertIn('root.temperaturesReady && root.heightReady && root.selection.offset === root.plan.offset', recovery)
         for surface in (follower, harness.JOB_SECTION_QML):
             self.assertIn("LoadProgressIndicator {", surface)
             self.assertIn("root.printerModel.plateSourceStatus", surface)

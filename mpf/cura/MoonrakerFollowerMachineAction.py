@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from dataclasses import asdict, replace
 from typing import Any, Dict, Optional
@@ -45,6 +46,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
     detectionEvidenceStatusChanged = pyqtSignal()
     migrationChanged = pyqtSignal()
     detectionChanged = pyqtSignal()
+    recoveryDiscoveryChanged = pyqtSignal()
 
     def __init__(self, application: Any, follower: Any, output_plugin: Any = None) -> None:
         super().__init__(self.KEY, self.LABEL)
@@ -54,6 +56,11 @@ class MoonrakerFollowerMachineAction(MachineAction):
         self._toolhead_models = getattr(follower, "toolhead_models", None)
         self._detection = getattr(follower, "detection", None)
         self._detection_refusal = ""
+        self._recovery_sensors = []
+        self._recovery_saved_states = ["PAUSE_STATE"]
+        self._recovery_prepare_macros = []
+        self._recovery_sensor_pause = {}
+        self._recovery_discovery_status = "Open this tab to read the printer configuration."
         if self._detection is not None:
             self._detection.stateChanged.connect(self.detectionChanged.emit)
         self._qml_url = "settings/MoonrakerFollowerConfiguration.qml"
@@ -184,6 +191,157 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtProperty(bool, notify=settingsChanged)
     def settingsEnabled(self) -> bool:
         return self._config().enabled
+
+    @pyqtProperty(QVariant, notify=settingsChanged)
+    def settingsRecoverySensorNames(self):
+        return list(self._config().recovery_sensor_names)
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsRecoveryAutoPause(self):
+        return self._config().recovery_auto_pause
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRecoverySavedState(self):
+        return self._config().recovery_saved_state
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRecoveryPrepareMacro(self):
+        return self._config().recovery_prepare_macro
+
+    @pyqtProperty(QVariant, notify=settingsChanged)
+    def settingsRecoverySetupMacros(self):
+        return list(self._config().recovery_setup_macros)
+
+    @pyqtProperty(QVariant, notify=settingsChanged)
+    def settingsRecoveryTransparentMacros(self):
+        return list(self._config().recovery_transparent_macros)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRecoveryNozzleParameter(self):
+        return self._config().recovery_nozzle_parameter
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRecoveryBedParameter(self):
+        return self._config().recovery_bed_parameter
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryLeadIn(self):
+        return self._config().recovery_lead_in_mm
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRecoveryLeadInMode(self):
+        return self._config().recovery_lead_in_mode
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def settingsRecoveryLeadInMoves(self):
+        return self._config().recovery_lead_in_moves
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryClearance(self):
+        return self._config().recovery_clearance_mm
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryXySpeed(self):
+        return self._config().recovery_xy_speed_mm_s
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryZSpeed(self):
+        return self._config().recovery_z_speed_mm_s
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsRecoveryPrimeEnabled(self):
+        return self._config().recovery_prime_enabled
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeX(self):
+        return self._config().recovery_prime_x
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeY(self):
+        return self._config().recovery_prime_y
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeZ(self):
+        return self._config().recovery_prime_z
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeAmount(self):
+        return self._config().recovery_prime_amount_mm
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeSpeed(self):
+        return self._config().recovery_prime_speed_mm_s
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def settingsRecoveryCommandTimeout(self):
+        return self._config().recovery_command_timeout_s
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def settingsRecoveryHeatingTimeout(self):
+        return self._config().recovery_heating_timeout_s
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def settingsRecoveryStatusTimeout(self):
+        return self._config().recovery_status_timeout_s
+
+    @pyqtProperty(QVariant, notify=recoveryDiscoveryChanged)
+    def recoveryAvailableSensors(self):
+        return [{"name": name, "label": name + (" (Klipper pauses)" if self._recovery_sensor_pause.get(name) == "klipper"
+                                                   else " (follower pauses)" if self._recovery_sensor_pause.get(name) == "follower"
+                                                   else " (pause owner unknown)"),
+                 "pauseOwner": self._recovery_sensor_pause.get(name) or "unknown"}
+                for name in self._recovery_sensors]
+
+    @pyqtProperty(QVariant, notify=recoveryDiscoveryChanged)
+    def recoverySavedStates(self):
+        return list(self._recovery_saved_states)
+
+    @pyqtProperty(QVariant, notify=recoveryDiscoveryChanged)
+    def recoveryPrepareMacros(self):
+        return list(self._recovery_prepare_macros)
+
+    @pyqtProperty(str, notify=recoveryDiscoveryChanged)
+    def recoveryDiscoveryStatus(self):
+        return self._recovery_discovery_status
+
+    @pyqtSlot()
+    def refreshRecoveryConfiguration(self):
+        self._recovery_discovery_status = "Reading Klipper configuration…"
+        self.recoveryDiscoveryChanged.emit()
+        transport = getattr(self._follower, "transport", None)
+        if transport is None:
+            self._recovery_discovery_status = "Printer configuration is unavailable."
+            self.recoveryDiscoveryChanged.emit()
+            return
+
+        def received(payload, error):
+            configfile = ((payload or {}).get("result") or {}).get("status") or {}
+            config = (configfile.get("configfile") or {}).get("config") or {}
+            if error or not isinstance(config, dict):
+                self._recovery_discovery_status = "Printer configuration is unavailable."
+                self.recoveryDiscoveryChanged.emit()
+                return
+            self._recovery_sensors = sorted(name for name in config
+                if name.startswith(("filament_switch_sensor ", "filament_motion_sensor ")))
+            from ..printing.RunoutEvents import pause_owner
+            self._recovery_sensor_pause = {name: pause_owner(config, name) for name in self._recovery_sensors}
+            pause = config.get("gcode_macro PAUSE") or config.get("gcode_macro pause") or {}
+            body = str(pause.get("gcode") or "") if isinstance(pause, dict) else ""
+            states = re.findall(r"\bSAVE_GCODE_STATE\s+NAME=([A-Z][A-Z0-9_]*)", body, re.I)
+            self._recovery_saved_states = list(dict.fromkeys(["PAUSE_STATE"] + [s.upper() for s in states]))
+            self._recovery_prepare_macros = sorted(name.removeprefix("gcode_macro ").upper()
+                for name in config if name.startswith("gcode_macro "))
+            self._recovery_discovery_status = (f"Found {len(self._recovery_sensors)} filament sensor(s)."
+                                               if self._recovery_sensors else "No filament sensors reported by this printer.")
+            self.recoveryDiscoveryChanged.emit()
+
+        started = transport.send_json(
+            "recovery-settings", "config", "POST", "printer/objects/query", received,
+            body={"objects": {"configfile": ["config"]}}, replace=True,
+            category="discovery")
+        if not started:
+            self._recovery_discovery_status = "Could not request printer configuration."
+            self.recoveryDiscoveryChanged.emit()
 
     @pyqtProperty(str, notify=settingsChanged)
     def settingsUrl(self) -> str:
@@ -697,6 +855,95 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 mode = FollowMode.EXACT.value
 
             current = self._config()
+            recovery_sensors = raw.get("recovery_sensor_names", current.recovery_sensor_names)
+            if not isinstance(recovery_sensors, list) or any(
+                not isinstance(name, str) or
+                not name.startswith(("filament_switch_sensor ", "filament_motion_sensor "))
+                for name in recovery_sensors):
+                Logger.log("w", "Moonraker settings save refused: invalid recovery sensor selection")
+                return False
+            permitted_sensors = set(self._recovery_sensors) | set(current.recovery_sensor_names)
+            if not set(recovery_sensors) <= permitted_sensors:
+                Logger.log("w", "Moonraker settings save refused: recovery sensor was not discovered")
+                return False
+            recovery_state = str(raw.get("recovery_saved_state", current.recovery_saved_state)).strip().upper()
+            recovery_macro = str(raw.get("recovery_prepare_macro", current.recovery_prepare_macro)).strip().upper()
+            nozzle_parameter = str(raw.get("recovery_nozzle_parameter", current.recovery_nozzle_parameter)).strip().upper()
+            bed_parameter = str(raw.get("recovery_bed_parameter", current.recovery_bed_parameter)).strip().upper()
+            if (not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", nozzle_parameter)
+                    or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", bed_parameter)):
+                return False
+            setup_macros = raw.get("recovery_setup_macros", current.recovery_setup_macros)
+            transparent_macros = raw.get("recovery_transparent_macros", current.recovery_transparent_macros)
+            permitted_macros = set(self._recovery_prepare_macros) | set(current.recovery_setup_macros) | set(current.recovery_transparent_macros)
+            if (not isinstance(setup_macros, list) or not isinstance(transparent_macros, list)
+                    or len(setup_macros) > 32 or len(transparent_macros) > 32
+                    or any(not isinstance(name, str) or name not in permitted_macros
+                           for name in setup_macros + transparent_macros)
+                    or set(setup_macros) & set(transparent_macros)):
+                Logger.log("w", "Moonraker settings save refused: invalid source macro selection")
+                return False
+            if (not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", recovery_state)
+                    or recovery_state not in set(self._recovery_saved_states) | {current.recovery_saved_state}
+                    or (recovery_macro and
+                        (not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", recovery_macro)
+                         or recovery_macro not in set(self._recovery_prepare_macros) | {current.recovery_prepare_macro}))):
+                Logger.log("w", "Moonraker settings save refused: recovery macro or state was not discovered")
+                return False
+            recovery_numbers = {}
+            recovery_mode = raw.get("recovery_lead_in_mode", current.recovery_lead_in_mode)
+            if recovery_mode not in {"mm", "moves"}:
+                return False
+            try:
+                recovery_moves = int(raw.get("recovery_lead_in_moves", current.recovery_lead_in_moves))
+            except (TypeError, ValueError):
+                return False
+            if not 1 <= recovery_moves <= 100:
+                return False
+            if type(raw.get("recovery_auto_pause", current.recovery_auto_pause)) is not bool:
+                Logger.log("w", "Moonraker settings save refused: recovery auto-pause must be a checkbox value")
+                return False
+            if type(raw.get("recovery_prime_enabled", current.recovery_prime_enabled)) is not bool:
+                Logger.log("w", "Moonraker settings save refused: prime enable must be a checkbox value")
+                return False
+            for key, minimum, maximum in (("recovery_lead_in_mm", 0.1, 50.0),
+                                          ("recovery_clearance_mm", 1.0, 30.0),
+                                          ("recovery_xy_speed_mm_s", 1.0, 200.0),
+                                          ("recovery_z_speed_mm_s", 0.5, 20.0),
+                                          ("recovery_prime_x", 0.0, 1000.0),
+                                          ("recovery_prime_y", 0.0, 1000.0),
+                                          ("recovery_prime_z", 0.0, 1000.0),
+                                          ("recovery_prime_amount_mm", 0.1, 200.0),
+                                          ("recovery_prime_speed_mm_s", 0.1, 20.0)):
+                try:
+                    value = float(raw.get(key, getattr(current, key)))
+                except (TypeError, ValueError):
+                    return False
+                if not minimum <= value <= maximum:
+                    Logger.log("w", "Moonraker settings save refused: %s out of range", key)
+                    return False
+                recovery_numbers[key] = value
+            try:
+                recovery_timeout = int(raw.get("recovery_command_timeout_s", current.recovery_command_timeout_s))
+            except (TypeError, ValueError):
+                return False
+            if not 10 <= recovery_timeout <= 600:
+                Logger.log("w", "Moonraker settings save refused: recovery command timeout out of range")
+                return False
+            try:
+                recovery_heating_timeout = int(raw.get("recovery_heating_timeout_s", current.recovery_heating_timeout_s))
+            except (TypeError, ValueError, OverflowError):
+                return False
+            if not 60 <= recovery_heating_timeout <= 3600:
+                Logger.log("w", "Moonraker settings save refused: recovery heating timeout out of range")
+                return False
+            try:
+                recovery_status_timeout = int(raw.get("recovery_status_timeout_s", current.recovery_status_timeout_s))
+            except (TypeError, ValueError, OverflowError):
+                return False
+            if not 3 <= recovery_status_timeout <= 60:
+                Logger.log("w", "Moonraker settings save refused: recovery status timeout out of range")
+                return False
             warning_threshold = raw.get("detection_warning_threshold", current.detection_warning_threshold)
             failure_threshold = raw.get("detection_failure_threshold", current.detection_failure_threshold)
             if (type(warning_threshold) is not int or type(failure_threshold) is not int
@@ -748,6 +995,21 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "memory_diagnostics_trace": bool(raw.get("memory_diagnostics_trace", False)),
                 "camera_disabled": bool(raw.get("camera_disabled", False)),
                 "detection_enabled": detection_enabled,
+                "recovery_sensor_names": list(dict.fromkeys(recovery_sensors)),
+                "recovery_auto_pause": raw.get("recovery_auto_pause", current.recovery_auto_pause),
+                "recovery_prime_enabled": raw.get("recovery_prime_enabled", current.recovery_prime_enabled),
+                "recovery_saved_state": recovery_state,
+                "recovery_prepare_macro": recovery_macro,
+                "recovery_setup_macros": list(dict.fromkeys(setup_macros)),
+                "recovery_transparent_macros": list(dict.fromkeys(transparent_macros)),
+                "recovery_nozzle_parameter": nozzle_parameter,
+                "recovery_bed_parameter": bed_parameter,
+                "recovery_lead_in_mode": recovery_mode,
+                "recovery_lead_in_moves": recovery_moves,
+                **recovery_numbers,
+                "recovery_command_timeout_s": recovery_timeout,
+                "recovery_heating_timeout_s": recovery_heating_timeout,
+                "recovery_status_timeout_s": recovery_status_timeout,
                 "detection_warning_threshold": warning_threshold,
                 "detection_failure_threshold": failure_threshold,
                 "software_follower_renderer": bool(raw.get("software_follower_renderer", False)),

@@ -62,6 +62,8 @@ SIGNAL_GROUPS = (
                              "pauseAtLayerHasClearable")),
     ("plateScrubVectorChanged", ("plateScrubVector",)),
     ("plateLiveScrubVectorChanged", ("plateLiveScrubVector",)),
+    ("recoveryChanged", ("recoverySensorChoices", "recoveryEvents", "recoveryPreviousAttempt", "recoveryPrepareMacro",
+                         "recoveryPauseNote", "recoverySelection", "recoveryPlan", "recoveryFiles")),
     ("plateProgressChanged", ("plateLayers", "plateSplit", "platePartial", "plateProgressAnchor", "plateAnchorEta", "plateProgressAvailable", "plateTrackingAvailable", "plateProgressReason", "plateSourceStatus", "plateSourceBusy", "plateSourceResolving", "plateSourceProgress",
                               "plateLayerCount", "plateLayerMotionCount",
                               "plateLiveLayers", "plateLiveSplit", "plateLivePartial", "plateLiveAnchor", "plateLiveAvailable",

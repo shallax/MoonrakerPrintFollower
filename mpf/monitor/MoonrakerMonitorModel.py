@@ -54,6 +54,7 @@ from .PauseAtLayerPresentation import PauseAtLayerPresentation
 from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, can_z_offset, jog_caption, section_reason
 from ..files.browser.FileBrowserPresentation import FileBrowserPresentation
 from ..printing.PrintStartOwner import PrintStartOwner
+from ..printing.RunoutEvents import RunoutEvents, SENSOR_PREFIXES, pause_owner
 from .layout.UiStateStore import UiStateStore
 
 from ..files.browser.FileManager import FileManager
@@ -320,10 +321,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     # The popover's pause-at-layer block (the coordinator's schedule,
     # the popover's own candidate).
     pauseAtLayerChanged = pyqtSignal()
+    recoveryChanged = pyqtSignal()
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
                  request_load=None, request_monitor_download=None, request_file_download=None,
                  request_plate_anchor=None, request_plate_split=None,
+                 recovery_selection=None,
+                 recovery_state=None, recovery_plan=None, recovery_start=None,
+                 recovery_cancel=None, recovery_suggest=None, recovery_changed=None,
+                 recovery_files=None, recovery_list_files=None, recovery_select_file=None,
                  request_follower_popover_open=None,
                  pause_at_layer_block=None, request_pause_toggle=None,
                  request_pause_remove=None, request_pause_clear=None,
@@ -351,6 +357,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The split seam is the progress slider's scrub, same shape.
         self._request_plate_anchor = request_plate_anchor
         self._request_plate_split = request_plate_split
+        self._recovery_selection = recovery_selection
+        self._recovery_state = recovery_state
+        self._recovery_plan = recovery_plan
+        self._recovery_start = recovery_start
+        self._recovery_cancel = recovery_cancel
+        self._recovery_suggest = recovery_suggest
+        self._recovery_files = recovery_files
+        self._recovery_list_files = recovery_list_files
+        self._recovery_select_file = recovery_select_file
+        if recovery_changed is not None:
+            recovery_changed.connect(self._schedule_publish)
+        self._runout_events = RunoutEvents()
+        self._runout_pause_pending = False
+        self._runout_pause_note = ""
+        self._runout_job_key = None
+        self._runout_generation = 0
+        self._recovery_history_key = None
+        self._recovery_previous_attempt = {}
+        client.sessionInvalidated.connect(self._invalidate_recovery_observation)
         # The coordinator's explicit demand gate: the closed popover
         # stops the frozen window's per-poll serving (the reviewer's
         # C).
@@ -719,7 +744,152 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._data.set_console_expanded(expanded, stored)
 
     def _on_auxiliary(self):
+        snapshot = self._print_state()
+        self._bind_recovery_job(snapshot)
+        motion = getattr(snapshot, "motion_progress", None)
+        observation = getattr(snapshot, "observation", None)
+        new_events = self._runout_events.observe(
+            getattr(snapshot, "job_key", None), self._data.snapshot.auxiliary,
+            at=time.time(), selected=getattr(self._config(), "recovery_sensor_names", ()),
+            layer=getattr(motion, "layer", None), split=getattr(motion, "split", None),
+            file_position=getattr(observation, "file_position", None))
+        for event in new_events:
+            self._pause_for_runout(event, snapshot)
+        if new_events:
+            self._persist_recovery_events(snapshot)
         self._schedule_publish()
+
+    def _invalidate_recovery_observation(self, *_args):
+        self._runout_generation += 1
+        self._runout_pause_pending = False
+        self._runout_pause_note = "Connection changed; confirm the printer before another runout pause."
+
+    def _bind_recovery_job(self, snapshot):
+        job = getattr(snapshot, "job_key", None)
+        if job != self._runout_job_key:
+            self._runout_generation += 1
+            self._runout_job_key = job
+            self._runout_pause_pending = False
+            self._runout_pause_note = ""
+            self._recovery_previous_attempt = {}
+            self._recovery_history_key = None
+
+    def _recovery_key(self, snapshot):
+        job = getattr(snapshot, "job_key", None)
+        history_id = str(getattr(snapshot, "history_job_id", "") or "")
+        if not job or not history_id or not callable(self._identity):
+            return None
+        machine_id, _name = self._identity()
+        if not machine_id or machine_id == "unknown":
+            return None
+        return (machine_id, history_id, job[0], job[1])
+
+    def _sync_recovery_history(self, snapshot):
+        key = self._recovery_key(snapshot)
+        if key is None or key == self._recovery_history_key:
+            return
+        self._recovery_history_key = key
+        if not hasattr(self._store, "get_machine_state"):
+            return
+        document = self._store.get_machine_state(key[0]) or {}
+        record = document.get("recoveryEvents") or {}
+        attempt = document.get("recoveryAttempt") or {}
+        self._recovery_previous_attempt = (dict(attempt)
+            if isinstance(attempt, Mapping) and attempt.get("jobId") == key[1]
+            and attempt.get("filename") == key[2] and attempt.get("size") == key[3]
+            else {})
+        if (isinstance(record, Mapping) and record.get("jobId") == key[1]
+                and record.get("filename") == key[2] and record.get("size") == key[3]):
+            self._runout_events.restore(snapshot.job_key, record.get("events"))
+        if self._runout_events.events:
+            self._persist_recovery_events(snapshot)
+
+    def _persist_recovery_events(self, snapshot):
+        key = self._recovery_key(snapshot)
+        if key is None or not hasattr(self._store, "set_machine_state"):
+            return
+        record = {"jobId": key[1], "filename": key[2], "size": key[3],
+                  "events": [event.document() for event in self._runout_events.events]}
+        if not self._store.set_machine_state(key[0], {"recoveryEvents": record}):
+            self._runout_pause_note = "Recovery marker storage failed; keep Cura open for this print."
+
+    def _pause_for_runout(self, event, snapshot):
+        if not getattr(self._config(), "recovery_auto_pause", True):
+            self._runout_pause_note = "Runout recorded; automatic follower pause is off."
+            return
+        observation = getattr(snapshot, "observation", None)
+        if (not self._client.connected or self._runout_pause_pending
+                or getattr(observation, "state", None) != "printing"):
+            return
+        self._runout_pause_pending = True
+        self._runout_pause_note = "Checking the print before requesting PAUSE…"
+        job = event.job_key
+        generation = self._runout_generation
+
+        def checked(payload, error):
+            if generation != self._runout_generation:
+                return
+            self._runout_pause_pending = False
+            if error or not isinstance(payload, Mapping):
+                self._runout_pause_note = "Runout recorded; the pause check failed. Check the printer."
+                self._schedule_publish()
+                return
+            status = (payload.get("result") or {}).get("status") or {}
+            stats = status.get("print_stats") or {}
+            sd = status.get("virtual_sdcard") or {}
+            pause = status.get("pause_resume") or {}
+            fresh_configfile = status.get("configfile") or {}
+            fresh_config = fresh_configfile.get("config") or {}
+            fresh_owner = pause_owner(fresh_config, event.sensor)
+            if fresh_owner != "follower":
+                self._runout_pause_note = ("Klipper owns this sensor's runout pause."
+                                           if fresh_owner == "klipper" else
+                                           "Sensor pause setting is unavailable; check the printer.")
+                self._schedule_publish()
+                return
+            sensor_status = status.get(event.sensor) or {}
+            if (not isinstance(sensor_status, Mapping)
+                    or sensor_status.get("filament_detected") is not False
+                    or sensor_status.get("enabled") is not True):
+                self._runout_pause_note = "Runout changed before PAUSE; inspect the sensor and printer."
+                self._schedule_publish()
+                return
+            current = self._print_state()
+            if (getattr(current, "job_key", None) != job
+                    or stats.get("state") != "printing"
+                    or stats.get("filename") != job[0]
+                    or sd.get("file_size") != job[1]
+                    or pause.get("is_paused") is not False):
+                self._runout_pause_note = "Runout recorded; the print changed before PAUSE."
+                self._schedule_publish()
+                return
+
+            def paused(_payload, command_error):
+                if generation != self._runout_generation:
+                    return
+                self._runout_pause_pending = False
+                self._runout_pause_note = ("PAUSE requested for runout; waiting for Klipper confirmation."
+                                           if not command_error else
+                                           f"PAUSE request was uncertain: {command_error}")
+                self._schedule_publish()
+
+            self._runout_pause_pending = True
+            started = self._client.transport.send_json(
+                "recovery", "runout-pause", "POST", "printer/gcode/script", paused,
+                body={"script": "PAUSE"}, category="command")
+            if not started:
+                self._runout_pause_pending = False
+                self._runout_pause_note = "PAUSE could not be submitted; check the printer."
+            self._schedule_publish()
+
+        started = self._client.transport.send_json(
+            "recovery", "runout-check", "POST", "printer/objects/query", checked,
+            body={"objects": {"print_stats": None, "virtual_sdcard": None,
+                              "pause_resume": None, "configfile": ["config"],
+                              event.sensor: ["filament_detected", "enabled"]}}, category="command")
+        if not started:
+            self._runout_pause_pending = False
+            self._runout_pause_note = "Runout pause check could not start; check the printer."
 
     def _layer_index(self, snapshot):
         layer_info = getattr(snapshot, "layer", None)
@@ -1139,6 +1309,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         """The snapshot read and the transitions that precede the values
         built from it."""
         snapshot = self._print_state()
+        self._bind_recovery_job(snapshot)
+        self._runout_events.bind(getattr(snapshot, "job_key", None))
+        self._sync_recovery_history(snapshot)
         # The follower's attach state belongs to ONE print: a new file
         # re-attaches it before the value block reads the state.
         self._observe_follower_job(getattr(snapshot, "job_key", None))
@@ -1167,6 +1340,27 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         group; nothing here writes configuration or dispatches a
         command on a presenter's behalf."""
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
+        self._runout_events.bind(getattr(snapshot, "job_key", None))
+        selected_sensors = set(getattr(self._config(), "recovery_sensor_names", ()))
+        values["recoverySensorChoices"] = [
+            {"name": name, "selected": name in selected_sensors}
+            for name in sorted(self._data.snapshot.auxiliary)
+            if str(name).lower().startswith(SENSOR_PREFIXES)]
+        values["recoveryEvents"] = [event.document() for event in self._runout_events.events]
+        values["recoveryPreviousAttempt"] = self._recovery_previous_attempt
+        values["recoveryPrepareMacro"] = getattr(self._config(), "recovery_prepare_macro", "")
+        values["recoveryPauseNote"] = self._runout_pause_note
+        selection = self._recovery_selection() if self._follower_popover_open and self._recovery_selection else None
+        values["recoverySelection"] = ({
+            "layer": selection.selected_layer + 1,
+            "completedMotions": selection.completed_motions,
+            "nextMotion": selection.next_motion + 1,
+            "nextLayer": selection.next_layer + 1,
+            "offset": selection.next_motion_offset,
+            "x": selection.position[0], "y": selection.position[1], "z": selection.position[2]
+        } if selection is not None else {})
+        values["recoveryPlan"] = self._recovery_state() if self._recovery_state else {}
+        values["recoveryFiles"] = self._recovery_files() if self._recovery_files else {}
         # Connected with no auxiliary data landed yet: the pane's
         # loading state (the 2026-09-16 request — the empty grey page
         # on entry reads as dead, not as arriving).
@@ -1674,6 +1868,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     temperatureItems = value_property(QVariant, "temperatureItems", peripheralsChanged, [])
     fanItems = value_property(QVariant, "fanItems", peripheralsChanged, [])
     filamentSensorItems = value_property(QVariant, "filamentSensorItems", peripheralsChanged, [])
+    recoverySensorChoices = value_property(QVariant, "recoverySensorChoices", recoveryChanged, [])
+    recoveryEvents = value_property(QVariant, "recoveryEvents", recoveryChanged, [])
+    recoveryPreviousAttempt = value_property(QVariant, "recoveryPreviousAttempt", recoveryChanged, {})
+    recoveryPrepareMacro = value_property(str, "recoveryPrepareMacro", recoveryChanged, "")
+    recoveryPauseNote = value_property(str, "recoveryPauseNote", recoveryChanged, "")
+    recoverySelection = value_property(QVariant, "recoverySelection", recoveryChanged, {})
+    recoveryPlan = value_property(QVariant, "recoveryPlan", recoveryChanged, {})
+    recoveryFiles = value_property(QVariant, "recoveryFiles", recoveryChanged, {})
     plateObjects = value_property(QVariant, "plateObjects", plateObjectsChanged, {"objects": [], "truncated": 0, "excludedCount": 0})
     plateDot = value_property(QVariant, "plateDot", plateObjectsChanged, {"x": 0.0, "y": 0.0, "valid": False})
     plateHasObjects = value_property(bool, "plateHasObjects", plateObjectsChanged, False)
@@ -2950,6 +3152,62 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._follower_layer_split = motions
         self._plate_split_request(motions)
         self._publish()
+
+    @pyqtSlot()
+    def markRecoveryStop(self):
+        if self._follower_attached:
+            return
+        snapshot = self._print_state()
+        mark = self._runout_events.mark_manual(
+            getattr(snapshot, "job_key", None), at=time.time(),
+            layer=self._follower_layer_anchor, split=self._follower_layer_split)
+        if mark is not None:
+            self._runout_pause_note = "Manual stop estimate marked at the selected point."
+            self._persist_recovery_events(snapshot)
+            self._publish()
+
+    @pyqtSlot()
+    def suggestRecoveryLeadIn(self):
+        if self._recovery_suggest is not None:
+            self._recovery_suggest()
+            # The coordinator changed the selected split synchronously.
+            self._publish()
+
+    @pyqtSlot()
+    def refreshRecoveryFiles(self):
+        if self._recovery_list_files is not None:
+            self._recovery_list_files()
+            self._publish()
+
+    @pyqtSlot(str)
+    def selectRecoveryFile(self, filename):
+        if self._recovery_select_file is not None and self._recovery_select_file(filename):
+            self._follower_attached = False
+            self._follower_layer_anchor = 0
+            self._follower_layer_split = -1
+            self._publish()
+
+    @pyqtSlot()
+    def prepareRecovery(self):
+        if self._recovery_plan is not None:
+            self._recovery_plan()
+            self._publish()
+
+    @pyqtSlot()
+    @pyqtSlot(QVariant)
+    def startRecovery(self, temperatures=None):
+        if self._recovery_start is not None:
+            if temperatures is None:
+                self._recovery_start()
+            else:
+                self._recovery_start(temperatures)
+            self._publish()
+
+    @pyqtSlot()
+    def cancelRecovery(self):
+        if self._recovery_cancel is not None:
+            self._recovery_cancel()
+            self._publish()
 
     @pyqtSlot(int)
     def togglePauseAtLayer(self, layer):

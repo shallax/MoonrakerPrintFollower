@@ -57,6 +57,17 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     def setPlateAnchor(self, anchor): self._runtime.coordinator.set_plate_anchor(anchor)
     def setPlateSplit(self, motions): self._runtime.coordinator.set_plate_split(motions)
+    def recoverySelection(self): return self._runtime.coordinator.selected_recovery_boundary()
+    def recoveryState(self): return self._runtime.coordinator.recovery_state
+    def recoveryPlan(self): return self._runtime.coordinator.recovery.plan()
+    def recoveryStart(self, temperatures=None): return self._runtime.coordinator.recovery.start(temperatures)
+    def recoveryCancel(self): return self._runtime.coordinator.recovery.cancel()
+    def recoverySuggest(self): return self._runtime.coordinator.suggest_recovery_lead_in()
+    def recoveryFiles(self): return self._runtime.coordinator.recovery_files_state
+    def recoveryListFiles(self): return self._runtime.coordinator.refresh_recovery_files()
+    def recoverySelectFile(self, filename): return self._runtime.coordinator.select_recovery_file(filename)
+    @property
+    def recoveryChanged(self): return self._runtime.coordinator.recovery.changed
     def setFollowerPopoverOpen(self, popover_open): self._runtime.coordinator.set_popover_open(popover_open)
     # The popover's pause block: the one the Preview card just received.
     def pauseAtLayerBlock(self): return self._runtime.coordinator.pause_block

@@ -2,6 +2,26 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 6.0.0
+
+- Recover an interrupted active or paused virtual-SD print from a selected
+  exact Print Follower motion boundary. Select an unloaded root G-code file
+  for power-loss recovery without running its print-start macro. Review the
+  actual XYZ, G-code byte, E mode and accumulated extrusion before confirmation.
+- Capture selected filament sensor runout transitions and manual stop estimates
+  as follower markers. Leave Klipper in charge when `pause_on_runout` is enabled;
+  optionally request PAUSE for selected sensors where it is disabled.
+- Suggest a configurable extrusion lead-in without crossing a travel or
+  retraction. Reconstruct source modal state, verify source identity and fresh
+  paused printer state, stage a bounded nozzle return, and check each step before
+  resuming. Ambiguous command results stop the handover without automatic retry.
+- Discover selectable sensors, macros and saved pause states from printer config;
+  expose recovery settings per printer. Recovery can be planned with no sensor.
+  Wait for the latest G-code temperature targets, request missing targets, and
+  optionally prime at a configured XYZ with bounded amount and speed before
+  returning to the selected point. Unloaded recovery uses the confirmed height
+  of the existing object for a safe clearance lift.
+
 ## 5.4.0
 
 - Download optional Obico detection, ONNX Runtime and STEP/CAD assets from
