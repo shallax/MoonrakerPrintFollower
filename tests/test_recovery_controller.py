@@ -192,9 +192,17 @@ class RecoveryControllerTests(unittest.TestCase):
 
     def test_unloaded_print_uses_indexed_height_without_manual_entry(self):
         self.context = replace(self.context, unloaded=True, file_printed_top_z=12.0)
+        printer = self.transport.printer
+        printer.file_size = self.context.job[1]
+        printer.state["print_stats"].update(state="standby", filename="")
+        printer.state["virtual_sdcard"].update(file_size=0, file_position=0,
+                                                is_active=False)
+        printer.state["pause_resume"]["is_paused"] = False
         self.ready()
         self.assertEqual(self.controller.state["suggestedTopZ"], 12.0)
         self.assertTrue(self.controller.start())
+        self.wait_terminal()
+        self.assertEqual(self.controller.state["phase"], "complete", self.controller.state)
 
     def test_z_reference_must_not_put_restart_below_homed_surface(self):
         self.context = replace(self.context, unloaded=True, file_printed_top_z=12.0)

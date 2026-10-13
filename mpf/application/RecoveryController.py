@@ -35,9 +35,9 @@ class RecoveryContext:
     history_job_id: str = ""
     status_timeout_s: int = 10
     prime_enabled: bool = False
-    prime_xyz: tuple[float, float, float] = (5.0, 5.0, 5.0)
-    prime_amount_mm: float = 20.0
-    prime_speed_mm_s: float = 2.0
+    prime_xyz: tuple[float, float, float] = (0.0, 250.0, 100.0)
+    prime_amount_mm: float = 50.0
+    prime_speed_mm_s: float = 5.0
     nozzle_parameter: str = "EXTRUDER"
     bed_parameter: str = "BED"
     unloaded: bool = False
