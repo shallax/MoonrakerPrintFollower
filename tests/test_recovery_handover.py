@@ -1,7 +1,7 @@
 """Fail-closed paused-print return and modal handover policy."""
 import unittest
 
-from mpf.printing.RecoveryHandover import RecoveryRefused, prepare_return
+from mpf.printing.RecoveryHandover import RecoveryRefused, heating_script, prepare_return
 from mpf.application.RecoveryPlanning import RecoveryModalState, RecoverySourcePlan
 
 
@@ -112,6 +112,119 @@ class RecoveryHandoverTests(unittest.TestCase):
         with self.assertRaises(RecoveryRefused):
             prepare_return(fresh, source(), filename="part.gcode", printed_top_z=8,
                            prepare_macro="MPF_PREPARE")
+
+    def test_heater_targets_are_waited_for_and_bounded_by_printer_config(self):
+        self.assertEqual(heating_script(status(), source())[0],
+                         "M140 S60\nM104 S210\nM190 S60\nM109 S210")
+        self.assertEqual(heating_script(status(), source(), bed_target=0)[0],
+                         "M104 S210\nM109 S210")
+        for targets in ({"hotend_target": 100}, {"hotend_target": 300},
+                        {"bed_target": -1}, {"bed_target": 120}):
+            with self.subTest(targets=targets):
+                with self.assertRaises(RecoveryRefused):
+                    heating_script(status(), source(), **targets)
+        unavailable = status()
+        unavailable["configfile"].pop("config")
+        with self.assertRaises(RecoveryRefused):
+            heating_script(unavailable, source())
+
+    def test_recovery_refuses_unavailable_or_unstable_heater_status(self):
+        for change in (
+            lambda s: s["extruder"].update(temperature=None),
+            lambda s: s["extruder"].update(target=190),
+            lambda s: s["heater_bed"].update(temperature=40),
+            lambda s: s["configfile"]["config"]["extruder"].update(min_extrude_temp=None),
+        ):
+            with self.subTest(change=change):
+                fresh = status()
+                change(fresh)
+                with self.assertRaises(RecoveryRefused):
+                    prepare_return(fresh, source(), filename="part.gcode", printed_top_z=8)
+
+    def test_pause_macro_contract_and_cleanup_are_verified(self):
+        for macro, saved_state, extra in (
+            ("G1 X10", "PAUSE", {}),
+            ("SAVE_GCODE_STATE NAME=PAUSE", "PAUSE", {}),
+            ("BASE_PAUSE", "PAUSE", {}),
+            ("SAVE_GCODE_STATE NAME=PAUSE\nBASE_PAUSE\n"
+             "SET_FILAMENT_SENSOR SENSOR={name} ENABLE=0", "PAUSE", {}),
+            ("SAVE_GCODE_STATE NAME=PAUSE\nBASE_PAUSE\n"
+             "SET_IDLE_TIMEOUT TIMEOUT=9999", "PAUSE", {}),
+        ):
+            with self.subTest(macro=macro):
+                fresh = status()
+                fresh["configfile"]["config"]["gcode_macro PAUSE"] = {"gcode": macro}
+                fresh["configfile"]["config"].update(extra)
+                with self.assertRaises(RecoveryRefused):
+                    prepare_return(fresh, source(), filename="part.gcode",
+                                   printed_top_z=8, saved_state=saved_state)
+
+    def test_unloaded_handover_and_non_default_modal_state(self):
+        fresh = status()
+        fresh["print_stats"]["state"] = "standby"
+        fresh["pause_resume"]["is_paused"] = False
+        state = source().state
+        from dataclasses import replace
+        custom = replace(source(), state=replace(state, acceleration=700,
+                         fan_speed=0, absolute_xyz=False, force_relative_e=True))
+        plan = prepare_return(fresh, custom, filename="part.gcode", printed_top_z=8,
+                              idle=True)
+        self.assertEqual(plan.restore_script, "")
+        self.assertIn("M204 S700", plan.modal_script)
+        self.assertIn("M107", plan.modal_script)
+        self.assertIn("G91\nM83", plan.modal_script)
+        fresh["pause_resume"]["is_paused"] = True
+        with self.assertRaises(RecoveryRefused):
+            prepare_return(fresh, custom, filename="part.gcode", printed_top_z=8,
+                           idle=True)
+
+    def test_prime_amount_and_velocity_respect_extruder_limits(self):
+        for amount, speed, max_velocity in ((0, 2, None), (201, 2, None),
+                                            (20, 0, None), (20, 21, None),
+                                            (20, 3, 2)):
+            with self.subTest(amount=amount, speed=speed, max_velocity=max_velocity):
+                fresh = status()
+                if max_velocity is not None:
+                    fresh["configfile"]["config"]["extruder"]["max_extrude_only_velocity"] = max_velocity
+                with self.assertRaises(RecoveryRefused):
+                    prepare_return(fresh, source(), filename="part.gcode",
+                                   printed_top_z=8, prime_enabled=True,
+                                   prime_xyz=(10, 15, 3), prime_amount_mm=amount,
+                                   prime_speed_mm_s=speed)
+
+    def test_source_macro_and_saved_state_choices_are_bounded_by_config(self):
+        fresh = status()
+        for kwargs in ({"setup_macros": ("UNLISTED",)},
+                       {"saved_state": "invalid-state"},
+                       {"prepare_macro": "invalid-state"},
+                       {"prepare_macro": "UNLISTED"},
+                       {"saved_state": "CUSTOM"}):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(RecoveryRefused):
+                    prepare_return(fresh, source(), filename="part.gcode",
+                                   printed_top_z=8, **kwargs)
+        fresh["configfile"]["config"]["extruder1"] = {}
+        with self.assertRaises(RecoveryRefused):
+            prepare_return(fresh, source(), filename="part.gcode", printed_top_z=8)
+        fresh = status()
+        fresh["configfile"]["config"].pop("extruder")
+        with self.assertRaises(RecoveryRefused):
+            prepare_return(fresh, source(), filename="part.gcode", printed_top_z=8)
+
+    def test_invalid_clearance_and_unavailable_normal_idle_timeout_refuse(self):
+        for top, clearance in ((-1, 5), (8, 0)):
+            with self.subTest(top=top, clearance=clearance):
+                with self.assertRaises(RecoveryRefused):
+                    prepare_return(status(), source(), filename="part.gcode",
+                                   printed_top_z=top, clearance_mm=clearance)
+        fresh = status()
+        fresh["configfile"]["config"]["gcode_macro PAUSE"] = {
+            "gcode": "SAVE_GCODE_STATE NAME=PAUSE\nBASE_PAUSE\n"
+                     "SET_IDLE_TIMEOUT TIMEOUT=9999"}
+        fresh["configfile"]["config"]["idle_timeout"] = {"timeout": 0}
+        with self.assertRaises(RecoveryRefused):
+            prepare_return(fresh, source(), filename="part.gcode", printed_top_z=8,
+                           saved_state="PAUSE")
 
 
 if __name__ == "__main__":

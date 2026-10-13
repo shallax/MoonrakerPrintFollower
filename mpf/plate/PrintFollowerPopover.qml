@@ -661,14 +661,8 @@ MonitorPopOver {
             // own column (the live report): stacked under the plate
             // the list squeezed the face and ran onto the card's
             // clipped bottom edge, so the width pays for it instead.
-            ColumnLayout {
-                Layout.preferredWidth: 340 * screenScaleFactor
-                Layout.minimumWidth: 0
-                Layout.fillHeight: true
-                spacing: UM.Theme.getSize("thin_margin").height
-                PauseScheduleView {
-                    printerModel: root.printerModel
-                }
+            PauseScheduleView {
+                printerModel: root.printerModel
             }
 
             Popup {

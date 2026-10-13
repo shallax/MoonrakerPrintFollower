@@ -94,6 +94,36 @@ class RunoutEventsTests(unittest.TestCase):
         self.assertIsNone(pause_owner({name: {"pause_on_runout": "perhaps"}}, name))
         self.assertIsNone(pause_owner({name: []}, name))
 
+    def test_event_history_is_bounded_and_bad_observations_reset_baselines(self):
+        events = RunoutEvents()
+        job = ("x", 1)
+        name = "filament_switch_sensor inlet"
+        self.assertEqual(events.observe(None, {}, at=1), ())
+        self.assertEqual(events.observe(job, [], at=1), ())
+        self.assertEqual(events.observe(job, {}, at="bad"), ())
+        events.observe(job, {"temperature_sensor chamber": {}, name: {"filament_detected": True}},
+                       at=1, selected=[name])
+        events.observe(job, {name: {"filament_detected": "unknown"}}, at=2,
+                       selected=[name])
+        self.assertEqual(events.observe(job, {name: {"filament_detected": False}},
+                                        at=3, selected=[name]), ())
+        for i in range(70):
+            events.mark_manual(job, at=i + 10, layer=0, split=i)
+        self.assertEqual(len(events.events), 64)
+        self.assertEqual(events.events[0].split, 6)
+        self.assertIsNone(events.mark_manual(job, at="bad", layer=0, split=0))
+
+    def test_restored_history_filters_missing_fields_and_caps_records(self):
+        events = RunoutEvents()
+        base = {"kind": "manual", "precision": "estimate", "sensor": "",
+                "observed_at": 1, "layer": 0, "split": 0, "file_position": None}
+        bad = [None, dict(base, observed_at="bad"), dict(base, sensor="x" * 129)]
+        events.restore(None, [base])
+        self.assertEqual(events.events, ())
+        events.restore(("x", 1), bad + [dict(base, observed_at=i) for i in range(70)])
+        self.assertEqual(len(events.events), 64)
+        self.assertEqual(events.events[0].observed_at, 6)
+
 
 if __name__ == "__main__":
     unittest.main()

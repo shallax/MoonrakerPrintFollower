@@ -734,9 +734,15 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                            "the corner pan never left the clamp range")
         pan_before = face.property("viewPanX")
         scale_before = face.property("viewScale")
-        wheel(cx, cy, 120)
-        expected_pan = (cx - (cx - pan_before) / scale_before
+        # The recovery controls leave a shorter plate, which centres
+        # the square bed farther from its left edge. Use a focal point
+        # that stays within the soft margin so this checks focal math.
+        corner_wheel_x = cx + 40
+        wheel(corner_wheel_x, cy, 120)
+        expected_pan = (corner_wheel_x - (corner_wheel_x - pan_before) / scale_before
                         * face.property("viewScale"))
+        self.assertLess(expected_pan, face.width() - 100.0
+                        - float(plot_bed["offsetX"]) * face.property("viewScale"))
         self.assertAlmostEqual(face.property("viewPanX"), expected_pan,
                                delta=1e-3,
                                msg="the wheel clamped the corner-panned camera")

@@ -87,6 +87,9 @@ class RecoveryExecution:
             self._finish("cancelled", "Recovery preparation stopped; the print remains paused")
             return
         self._note(phase, phase.replace("_", " ").capitalize())
+        if self._cancelled:
+            self._finish("cancelled", "Recovery preparation stopped; inspect the paused print")
+            return
         if not self._query(callback):
             self._finish("uncertain", "Fresh printer status could not be requested; do not retry blindly")
 
@@ -118,6 +121,9 @@ class RecoveryExecution:
             self._finish("cancelled", "Recovery preparation stopped; inspect the paused print")
             return
         self._note(phase, phase.replace("_", " ").capitalize())
+        if self._cancelled:
+            self._finish("cancelled", "Recovery preparation stopped; inspect the paused print")
+            return
         if not self._send(script, callback):
             self._finish("uncertain", "A printer command could not be submitted; inspect before retrying")
 

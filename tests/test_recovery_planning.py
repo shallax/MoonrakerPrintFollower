@@ -1,5 +1,6 @@
 """Read-only reconstruction at a selected original motion command."""
 import hashlib
+from dataclasses import replace
 import os
 import tempfile
 import unittest
@@ -169,6 +170,64 @@ class RecoveryPlanningTests(unittest.TestCase):
             self.assertAlmostEqual(limited.extrusion_path_mm, 6.0)
             self.assertEqual(suggest_lead_in(view, suspect, 5.0, minimum_moves=1).replayed_motions, 1)
             self.assertIsNone(suggest_lead_in(view, view.recovery_boundary(0, 5), 5.0))
+
+    def test_invalid_modal_commands_refuse_before_a_rewind_boundary(self):
+        for command in (b"G1 F0", b"M220 S0", b"M221 S-2", b"M204",
+                        b"M106 P1", b"M106 S300", b"M104", b"M190 S-1"):
+            with self.subTest(command=command):
+                data = b";LAYER:0\nG1 X1 E0.1\n" + command + b"\nG1 X2 E0.2\n"
+                with self.assertRaises(RecoveryPlanError):
+                    self.plan(data, 0, 2 if command.startswith(b"G1") else 1)
+
+    def test_boundary_offsets_and_macro_contracts_are_checked(self):
+        data = b";LAYER:0\nG1 X1 E0.1\nG1 X2 E0.2\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "print.gcode")
+            with open(path, "wb") as handle:
+                handle.write(data)
+            view = IndexView(("print.gcode", len(data), 1), build_index_from_file(path))
+            boundary = view.recovery_boundary(0, 1)
+            for selected, observed, kwargs in (
+                (None, None, {}),
+                (replace(boundary, next_motion_offset=len(data)), None, {}),
+                (boundary, -1, {}),
+                (boundary, None, {"nozzle_parameter": "invalid-name"}),
+                (boundary, None, {"setup_macros": ("PRINT_START",),
+                                  "transparent_macros": ("PRINT_START",)}),
+                (replace(boundary, position=(99, 0, 0)), None, {}),
+            ):
+                with self.subTest(selected=selected, observed=observed, kwargs=kwargs):
+                    with self.assertRaises(RecoveryPlanError):
+                        scan_source(path, selected, observed, **kwargs)
+
+    def test_rewind_cannot_cross_setup_macro_after_printed_geometry(self):
+        data = (b";LAYER:0\nG1 X1 Y1 Z0.2 E0.1\n"
+                b"PRINT_START BED=60 EXTRUDER=210\nG1 X2 E0.2\n")
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "print.gcode")
+            with open(path, "wb") as handle:
+                handle.write(data)
+            view = IndexView(("print.gcode", len(data), 1), build_index_from_file(path))
+            with self.assertRaisesRegex(RecoveryPlanError, "setup macro cannot be crossed"):
+                scan_source(path, view.recovery_boundary(0, 1), len(data),
+                            setup_macros=("PRINT_START",))
+
+    def test_unit_and_tool_selection_are_reconstructed_without_changing_position(self):
+        data = b"G21\nT0\n;LAYER:0\nG1 X1 E0.1\nG1 X2 E0.2\n"
+        plan = self.plan(data, 0, 1)
+        self.assertEqual(plan.state.position, (1.0, 0.0, 0.0))
+        invalid = b";LAYER:0\nG1 X1 E0.1\n@UNKNOWN\nG1 X2 E0.2\n"
+        with self.assertRaises(RecoveryPlanError):
+            self.plan(invalid, 0, 1)
+
+    def test_no_lead_in_exists_before_first_motion(self):
+        data = b";LAYER:0\nG1 X1 E0.1\nG1 X2 E0.2\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "print.gcode")
+            with open(path, "wb") as handle:
+                handle.write(data)
+            view = IndexView(("print.gcode", len(data), 1), build_index_from_file(path))
+            self.assertIsNone(suggest_lead_in(view, view.recovery_boundary(0, 0), 5.0))
 
 
 if __name__ == "__main__":

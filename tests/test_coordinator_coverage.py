@@ -42,6 +42,23 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
             self.assertEqual(context.observed_offset, boundary.next_motion_offset)
             self.assertEqual(context.printed_top_z, boundary.position[2])
 
+    def test_unloaded_file_listing_rejects_malformed_rows_and_reports_errors(self):
+        parts = self._make()
+        parts.client.statusReceived.emit(harness._status("standby", filename=""))
+        self.assertTrue(parts.coordinator.refresh_recovery_files())
+        parts.client.reply({"result": {"files": [
+            None, {"filename": "missing-size.gcode"},
+            {"filename": "nested/file.gcode", "size": 40},
+            {"filename": "bad;name.gcode", "size": 50},
+            {"filename": "empty.gcode", "size": 0}]}}, None)
+        state = parts.coordinator.recovery_files_state
+        self.assertEqual(state["options"], [])
+        self.assertIn("No root G-code", state["error"])
+        self.assertFalse(parts.coordinator.select_recovery_file("missing-size.gcode"))
+        self.assertTrue(parts.coordinator.refresh_recovery_files())
+        parts.client.reply({}, "network lost")
+        self.assertIn("Could not list", parts.coordinator.recovery_files_state["error"])
+
     def test_recovery_selection_requires_the_current_job_and_downloaded_source(self):
         from mpf.application.PrintCoordinator import PrintCoordinator
         from mpf.gcode.GCodeIndex import build_index_from_file
