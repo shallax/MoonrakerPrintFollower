@@ -420,7 +420,7 @@ Item {
     property bool _scopeDocked: false
     Timer {
         id: scopeHideTimer
-        interval: 5000
+        interval: 2000
         onTriggered: root._scopeDocked = false
     }
     // The view-settle timer (the awful-zoom report): a zoom or line

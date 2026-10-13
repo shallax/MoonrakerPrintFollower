@@ -4,6 +4,7 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 6.0.0
 
+- Dismiss the Print Follower zoom bar after two idle seconds.
 - Clarify what source setup and transparent macro selections allow the recovery
   planner to read, and set the optional prime defaults to X0 Y250 Z100, 50 mm
   at 5 mm/s. Priming remains disabled until selected.
