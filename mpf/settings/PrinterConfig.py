@@ -232,11 +232,11 @@ class PrinterConfig:
     recovery_xy_speed_mm_s: float = 50.0
     recovery_z_speed_mm_s: float = 5.0
     recovery_prime_enabled: bool = False
-    recovery_prime_x: float = 5.0
-    recovery_prime_y: float = 5.0
-    recovery_prime_z: float = 5.0
-    recovery_prime_amount_mm: float = 20.0
-    recovery_prime_speed_mm_s: float = 2.0
+    recovery_prime_x: float = 0.0
+    recovery_prime_y: float = 250.0
+    recovery_prime_z: float = 100.0
+    recovery_prime_amount_mm: float = 50.0
+    recovery_prime_speed_mm_s: float = 5.0
     recovery_command_timeout_s: int = 120
     recovery_heating_timeout_s: int = 1800
     recovery_status_timeout_s: int = 10

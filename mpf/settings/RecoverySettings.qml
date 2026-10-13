@@ -26,11 +26,11 @@ Item {
             settingsRecoveryXySpeed: 50,
             settingsRecoveryZSpeed: 5,
             settingsRecoveryPrimeEnabled: false,
-            settingsRecoveryPrimeX: 5,
-            settingsRecoveryPrimeY: 5,
-            settingsRecoveryPrimeZ: 5,
-            settingsRecoveryPrimeAmount: 20,
-            settingsRecoveryPrimeSpeed: 2,
+            settingsRecoveryPrimeX: 0,
+            settingsRecoveryPrimeY: 250,
+            settingsRecoveryPrimeZ: 100,
+            settingsRecoveryPrimeAmount: 50,
+            settingsRecoveryPrimeSpeed: 5,
             settingsRecoveryCommandTimeout: 120,
             settingsRecoveryHeatingTimeout: 1800,
             settingsRecoveryStatusTimeout: 10,
@@ -186,7 +186,7 @@ Item {
             UM.Label {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: "Source G-code macros require an explicit contract. A setup macro may move the nozzle or change E, so a complete absolute XYZ move and G92 E must follow it before the restart point. A transparent macro must not change coordinates, E, modes, transforms, or print geometry. Only select macros whose behavior you have verified."
+                text: "These lists tell the planner how to read macros already called by the G-code before the chosen restart point. They do not run those macros during recovery. Leave both lists empty if the file calls no custom macros; an unlisted macro makes planning stop rather than guess its effects."
             }
             UM.Label {
                 width: parent.width
@@ -211,6 +211,11 @@ Item {
             }
             UM.Label {
                 text: "Setup macro in the G-code"
+            }
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Choose your slicer's start macro, for example PRINT_START, only if it runs before printed geometry. It may move the nozzle or change E. Before the restart point, the file must then contain a full absolute XYZ move and G92 E. Enter the macro's nozzle and bed parameter names above to recover its temperature targets."
             }
             RowLayout {
                 width: parent.width
@@ -248,6 +253,11 @@ Item {
             }
             UM.Label {
                 text: "Transparent macro in the G-code"
+            }
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Choose only a macro whose completed call leaves XYZ, E, motion modes, offsets, temperatures, fans and print geometry unchanged. A camera marker can qualify when it does not park or alter print state. If its behavior can change, leave it unlisted. Macros after the restart point still run from the file normally."
             }
             RowLayout {
                 width: parent.width

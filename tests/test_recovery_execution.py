@@ -224,7 +224,7 @@ class RecoveryExecutionTests(unittest.TestCase):
         # already acted. Every stage must stop instead of sending the next one.
         for phase, fragment in (("heating_and_waiting", "M109 S"),
                                 ("restore_state", "RESTORE_GCODE_STATE"),
-                                ("priming_nozzle", "G1 E20"),
+                                ("priming_nozzle", "G1 E50"),
                                 ("returning", "G1 X40 Y50"),
                                 ("seeking", "M26 S"),
                                 ("restoring_modal_state", "G92 E15.25"),

@@ -31,6 +31,15 @@ for selected sensors with that option disabled. Sensors are optional: manual sto
 markers and selection work without them. Source macros, pause state, lead-in,
 clearance, return speeds, command/status/heat timeouts, and optional nozzle priming
 at a configured XYZ position, extrusion amount and speed are configurable.
+The **Setup macro in the G-code** list is for an early slicer start command such
+as `PRINT_START`. It lets the planner read past that call after the file explicitly
+sets absolute XYZ and resets E with `G92 E`; it does not call the macro again.
+Set the nozzle and bed parameter names to match the slicer invocation (for example
+`HOTEND` and `BED`). The **Transparent macro in the G-code** list is for a command
+whose completed call leaves print state unchanged, such as a camera marker with
+parking disabled. Leave either list empty if the file does not contain a qualifying
+macro. An unlisted macro stops planning rather than letting the plugin guess what
+it did. Macros encountered after the restart point run as part of the file.
 The plugin waits for the latest nozzle and bed targets before moving; if it
 cannot derive a target from the file, it asks for one. For unloaded recovery,
 the indexed G-code supplies a conservative height bound for the clearance move.
@@ -39,6 +48,8 @@ the follower's recovery review; the plugin sets a temporary G-code Z origin
 with `G92` and confirms it before moving. Klipper restores its normal origin
 at the next Z homing. Home XYZ safely away from the object first.
 Recovery refuses unsupported G-code, printer state or motion geometry before seeking.
+Nozzle priming remains off by default. Its initial values are X0, Y250, Z100,
+50 mm of filament at 5 mm/s; change them for the printer before enabling it.
 
 ## What changed in 5.4.0
 

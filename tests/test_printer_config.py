@@ -23,6 +23,21 @@ class FakePreferences:
 
 
 class PrinterConfigTests(unittest.TestCase):
+    def test_recovery_prime_defaults_are_disabled_and_can_be_overridden(self):
+        defaults = PrinterConfig.from_dict({})
+        self.assertFalse(defaults.recovery_prime_enabled)
+        self.assertEqual((defaults.recovery_prime_x, defaults.recovery_prime_y,
+                          defaults.recovery_prime_z, defaults.recovery_prime_amount_mm,
+                          defaults.recovery_prime_speed_mm_s), (0, 250, 100, 50, 5))
+        custom = PrinterConfig.from_dict({"recovery_prime_x": 12,
+                                          "recovery_prime_y": 210,
+                                          "recovery_prime_z": 90,
+                                          "recovery_prime_amount_mm": 30,
+                                          "recovery_prime_speed_mm_s": 2.5})
+        self.assertEqual((custom.recovery_prime_x, custom.recovery_prime_y,
+                          custom.recovery_prime_z, custom.recovery_prime_amount_mm,
+                          custom.recovery_prime_speed_mm_s), (12, 210, 90, 30, 2.5))
+
     def test_toolhead_rgb_maps_roundtrip_per_printer_and_reject_alpha_colours(self):
         prefs = FakePreferences()
         active = ['machine-a', 'Printer A']

@@ -4,6 +4,9 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 6.0.0
 
+- Clarify what source setup and transparent macro selections allow the recovery
+  planner to read, and set the optional prime defaults to X0 Y250 Z100, 50 mm
+  at 5 mm/s. Priming remains disabled until selected.
 - Recover an interrupted active or paused virtual-SD print from a selected
   exact Print Follower motion boundary. Select an unloaded root G-code file
   for power-loss recovery without running its print-start macro. Review the

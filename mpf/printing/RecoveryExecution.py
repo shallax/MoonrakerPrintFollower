@@ -47,8 +47,8 @@ class RecoveryExecution:
               xy_speed_mm_s=50.0, z_speed_mm_s=5.0,
               setup_macros=(), transparent_macros=(),
               hotend_target=None, bed_target=None,
-              prime_enabled=False, prime_xyz=(5.0, 5.0, 5.0),
-              prime_amount_mm=20.0, prime_speed_mm_s=2.0,
+              prime_enabled=False, prime_xyz=(0.0, 250.0, 100.0),
+              prime_amount_mm=50.0, prime_speed_mm_s=5.0,
               z_reference_mm=0.0):
         if self._active:
             return False
