@@ -30,7 +30,7 @@ nothing in the repo tree is modified by this script:
     lifts the module version ceiling of the throwaway copy.
 
 One PNG is written per tab (05-settings-connection.png through
-05-settings-diagnostics.png), plus the post-setup detection render
+05-settings-diagnostics.png, including Recovery), plus the post-setup detection render
 (05-settings-detection-ready.png); each is fitted to its page's content
 height.  The output is deterministic for a given toolchain
 (the dev container pins the fonts), so captures can be diffed across
@@ -63,8 +63,9 @@ import capture_settle
 # already taller than the fixed 600-px frame (813 px fitted); a page
 # that outgrows this is a capture failure to look at, never a silently
 # cropped image.
-# Following now measures 1322 px natively with the toolhead alignment group.
-CAPTURE_HEIGHT_LIMIT = 1600
+# Recovery's complete configuration measures about 1860 px; keep the
+# fitted capture tall enough to inspect every control without clipping.
+CAPTURE_HEIGHT_LIMIT = 2100
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +299,12 @@ class SettingsManager(QObject):
     def set_detection_ready(self, ready):
         self._detection_ready = bool(ready)
         self.detectionChanged.emit()
+
+    @pyqtSlot()
+    def refreshRecoveryConfiguration(self):
+        # The capture fixture has no printer connection. RecoverySettings
+        # uses its explicit unavailable-config fallback for this page.
+        pass
 
     # --- Integrated Moonraker output settings ---
     @pyqtProperty(str, notify=settingsChanged)
@@ -685,7 +692,7 @@ def main():
         for _ in range(5):
             app.processEvents()
 
-        # The page has five tabs driven
+        # The page has six tabs driven
         # by a TabBar + StackLayout; capture every tab, each fitted to its
         # own content height (the Upload tab is taller than the real
         # dialog's fixed frame, so a shared height would clip it).
@@ -702,7 +709,7 @@ def main():
         if tab_bar is None:
             raise RuntimeError("settings tab bar not found in the rendered page")
 
-        tab_names = ("connection", "following", "upload", "detection", "diagnostics")
+        tab_names = ("connection", "following", "upload", "detection", "recovery", "diagnostics")
         if tab_bar.property("count") != len(tab_names):
             raise RuntimeError("settings page tab count changed: expected %d, got %s"
                                % (len(tab_names), tab_bar.property("count")))
@@ -766,7 +773,7 @@ def main():
             content_bottom = absolute_y + float(flickable.property("contentHeight"))
             return int(content_bottom) + 49 + 6  # margins + footer row + air
 
-        # The five canonical tabs, then the ready-state detection render
+        # The six canonical tabs, then the ready-state detection render
         # (the README needs the enabled surface): one pass, one filename
         # rule — the ready capture is "05-settings-detection-ready.png".
         passes = list(enumerate(tab_names))
