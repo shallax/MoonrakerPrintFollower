@@ -205,6 +205,7 @@ class FeatureCacheTests(unittest.TestCase):
             "compact": False,
             "hydrated": [0],
             "counts": [1],
+            "printed_top_z": 0.2,
         }
         header.update(overrides)
         return header

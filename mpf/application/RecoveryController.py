@@ -42,6 +42,7 @@ class RecoveryContext:
     bed_parameter: str = "BED"
     unloaded: bool = False
     heating_timeout_s: int = 1800
+    file_printed_top_z: float = 0.0
 
 
 def _source_still_matches(path, source):
@@ -82,7 +83,7 @@ class RecoveryController(QObject):
         self._source = None
         self._execution = None
         self._manual_targets = (None, None)
-        self._manual_printed_top_z = None
+        self._z_reference_mm = 0.0
         self._paused_replan_callback = None
         self._phase = "idle"
         self._detail = "Select a point in the follower to plan recovery."
@@ -107,7 +108,8 @@ class RecoveryController(QObject):
                                  if source is not None and source.state.hotend_target is not None
                                  and source.state.hotend_target > 0 else None),
                 "bedTarget": source.state.bed_target if source is not None else None,
-                "suggestedTopZ": (max(context.printed_top_z, source.printed_top_z)
+                "suggestedTopZ": (max(context.printed_top_z, context.file_printed_top_z,
+                                      source.printed_top_z)
                                   if source is not None and context is not None else 0.0),
                 "primeEnabled": context.prime_enabled if context is not None else False,
                 "primeX": context.prime_xyz[0] if context is not None else 0.0,
@@ -184,18 +186,17 @@ class RecoveryController(QObject):
         except (KeyError, TypeError, ValueError, OverflowError):
             self._set("refused", "Enter the nozzle and bed targets missing from the G-code.")
             return False
-        if context.unloaded:
-            try:
-                top = float(supplied["printedTopZ"])
-                if not math.isfinite(top) or top < self._source.state.position[2]:
-                    raise ValueError(top)
-            except (KeyError, TypeError, ValueError, OverflowError):
-                self._set("refused", "Enter the existing object's highest Z at or above the restart layer.")
-                return False
-            self._manual_printed_top_z = top
-        else:
-            self._manual_printed_top_z = None
+        try:
+            reference = float(supplied.get("zReference", 0.0))
+            if (not math.isfinite(reference) or reference < 0
+                    or reference > 0 and not context.unloaded
+                    or context.unloaded and reference > self._source.state.position[2]):
+                raise ValueError(reference)
+        except (TypeError, ValueError, OverflowError):
+            self._set("refused", "Enter a Z reference between 0 and the selected restart Z.")
+            return False
         self._manual_targets = (nozzle, bed)
+        self._z_reference_mm = reference
         self._generation += 1
         generation = self._generation
         source = self._source
@@ -305,8 +306,8 @@ class RecoveryController(QObject):
         self._execution = RecoveryExecution(query, send, changed,
                                             refresh_paused_source=replan_paused)
         self._execution.start(source=source, filename=context.filename,
-                              printed_top_z=max(context.printed_top_z, source.printed_top_z,
-                                                self._manual_printed_top_z or 0.0),
+                              printed_top_z=max(context.printed_top_z, context.file_printed_top_z,
+                                                source.printed_top_z),
                               saved_state=context.saved_state,
                               prepare_macro=context.prepare_macro,
                               setup_macros=context.setup_macros,
@@ -319,7 +320,8 @@ class RecoveryController(QObject):
                               prime_enabled=context.prime_enabled,
                               prime_xyz=context.prime_xyz,
                               prime_amount_mm=context.prime_amount_mm,
-                              prime_speed_mm_s=context.prime_speed_mm_s)
+                              prime_speed_mm_s=context.prime_speed_mm_s,
+                              z_reference_mm=self._z_reference_mm)
 
     def cancel(self):
         if self._phase == "planning":

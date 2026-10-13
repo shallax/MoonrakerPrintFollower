@@ -20,11 +20,7 @@ ColumnLayout {
     readonly property var previousAttempt: printerModel != null ? printerModel.recoveryPreviousAttempt : ({})
     property bool reviewed: false
     readonly property bool temperaturesReady: plan.ready === true && (plan.hotendTarget != null || (hotendField.text.trim() !== "" && isFinite(Number(hotendField.text)) && Number(hotendField.text) > 0)) && (plan.bedTarget != null || (bedField.text.trim() !== "" && isFinite(Number(bedField.text)) && Number(bedField.text) >= 0))
-    readonly property bool heightReady: plan.ready === true && (!plan.unloaded || (printedTopField.text.trim() !== "" && isFinite(Number(printedTopField.text)) && Number(printedTopField.text) >= Number(plan.z)))
-    onPlanChanged: {
-        if (plan.ready && plan.unloaded)
-            printedTopField.text = String(Number(plan.suggestedTopZ).toFixed(3));
-    }
+    readonly property bool zReferenceReady: !plan.unloaded || (zReferenceField.text.trim() !== "" && isFinite(Number(zReferenceField.text)) && Number(zReferenceField.text) >= 0 && Number(zReferenceField.text) <= Number(plan.z))
     function hotendTemperature() {
         return plan.hotendTarget != null ? Number(plan.hotendTarget) : Number(hotendField.text);
     }
@@ -93,23 +89,33 @@ ColumnLayout {
             text: ""
         }
     }
+    UM.Label {
+        Layout.fillWidth: true
+        visible: plan.ready === true && plan.unloaded
+        wrapMode: Text.WordWrap
+        text: "Clearance uses the highest extrusion Z in the indexed file (Z" + Number(plan.suggestedTopZ).toFixed(3) + " mm), including layers after the chosen restart. Home XYZ safely away from the object before recovery. The nozzle will lift above this bound before XY travel."
+    }
     RowLayout {
         Layout.fillWidth: true
         visible: plan.ready === true && plan.unloaded
         UM.Label {
-            text: "Existing object's highest Z (mm)"
+            text: "File Z at printer's homed Z0 (mm)"
         }
         Cura.TextField {
-            id: printedTopField
+            id: zReferenceField
             Layout.fillWidth: true
-            text: ""
+            text: "0"
+        }
+        Cura.SecondaryButton {
+            text: "Use restart Z"
+            onClicked: zReferenceField.text = Number(root.plan.z).toFixed(3)
         }
     }
     UM.Label {
         Layout.fillWidth: true
         visible: plan.ready === true && plan.unloaded
         wrapMode: Text.WordWrap
-        text: "Confirm the actual object's height, especially if you are rewinding below the last printed layer. Home XYZ safely away from the object before recovery. The nozzle will lift above this height before XY travel."
+        text: "Use 0 when Z was homed on the bed. If Z was homed on the existing print, enter that surface's original file Z. The reviewed restart at file Z" + Number(plan.z).toFixed(3) + " becomes printer Z" + (Number(plan.z) - Number(zReferenceField.text)).toFixed(3) + "."
     }
     RowLayout {
         Layout.fillWidth: true
@@ -220,7 +226,7 @@ ColumnLayout {
         Cura.PrimaryButton {
             Layout.fillWidth: true
             text: root.plan.unloaded ? "Review recovery start…" : "Review printer rewind…"
-            enabled: root.temperaturesReady && root.heightReady && root.selection.offset === root.plan.offset
+            enabled: root.temperaturesReady && root.zReferenceReady && root.selection.offset === root.plan.offset
             onClicked: {
                 root.reviewed = false;
                 finalConfirm.open();
@@ -255,7 +261,7 @@ ColumnLayout {
             UM.Label {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
-                text: "File: " + (root.plan.filename || "") + "\nReturn nozzle: X" + Number(root.plan.x).toFixed(3) + " Y" + Number(root.plan.y).toFixed(3) + " Z" + Number(root.plan.z).toFixed(3) + "\nReplay starts at byte " + root.plan.offset + " with E" + Number(root.plan.e).toFixed(4) + (root.plan.absoluteE ? " (absolute)" : " (relative)") + "."
+                text: "File: " + (root.plan.filename || "") + (root.plan.unloaded ? "\nFile-coordinate return nozzle: X" : "\nReturn nozzle: X") + Number(root.plan.x).toFixed(3) + " Y" + Number(root.plan.y).toFixed(3) + " Z" + Number(root.plan.z).toFixed(3) + "\nReplay starts at byte " + root.plan.offset + " with E" + Number(root.plan.e).toFixed(4) + (root.plan.absoluteE ? " (absolute)" : " (relative)") + "."
             }
             UM.Label {
                 Layout.fillWidth: true
@@ -269,7 +275,7 @@ ColumnLayout {
             UM.Label {
                 Layout.fillWidth: true
                 visible: root.plan.unloaded === true
-                text: "Existing object top: Z" + Number(printedTopField.text).toFixed(3) + " mm."
+                text: "Conservative printed-height bound: file Z" + Number(root.plan.suggestedTopZ).toFixed(3) + " mm. File Z" + Number(root.plan.z).toFixed(3) + " resumes at printer Z" + (Number(root.plan.z) - Number(zReferenceField.text)).toFixed(3) + " mm."
             }
             UM.Label {
                 Layout.fillWidth: true
@@ -291,14 +297,14 @@ ColumnLayout {
                 Cura.PrimaryButton {
                     Layout.fillWidth: true
                     text: root.plan.unloaded ? "Load and restart from point" : "Rewind and restart print"
-                    enabled: root.reviewed && root.temperaturesReady && root.heightReady && root.selection.offset === root.plan.offset
+                    enabled: root.reviewed && root.temperaturesReady && root.zReferenceReady && root.selection.offset === root.plan.offset
                     onClicked: {
                         finalConfirm.close();
                         root.reviewed = false;
                         root.printerModel.startRecovery({
                             "hotend": root.hotendTemperature(),
                             "bed": root.bedTemperature(),
-                            "printedTopZ": root.plan.unloaded ? Number(printedTopField.text) : 0
+                            "zReference": root.plan.unloaded ? Number(zReferenceField.text) : 0
                         });
                     }
                 }

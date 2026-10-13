@@ -203,6 +203,10 @@ class PersistentIndexCache:
                     "start_arc_plane", [ArcGeometry.PLANE_XY] * len(counts)))
 
                 heights = header.get("layer_heights", [])
+                printed_top_z = header.get("printed_top_z")
+                if (not isinstance(printed_top_z, (int, float)) or not math.isfinite(printed_top_z)
+                        or printed_top_z < 0):
+                    return None
                 diameter = header.get("filament_diameter", 1.75)
                 if not isinstance(heights, list) or (heights and len(heights) != len(counts)) or not all(isinstance(v, (int, float)) and math.isfinite(v) and 0.001 <= v <= 10 for v in heights):
                     return None
@@ -286,6 +290,7 @@ class PersistentIndexCache:
                 # array lengths (the evicted state) are the fallback.
                 motion_counts = list(counts)
             return LayerMotionIndex(
+                printed_top_z=printed_top_z,
                 ranges=ranges,
                 motion_offsets=offsets,
                 motion_x=xs,
@@ -343,6 +348,8 @@ class PersistentIndexCache:
         # header's own counts disagree with.
         with index.cache_lock:
             layer_count = len(index.ranges)
+            if not math.isfinite(index.printed_top_z) or index.printed_top_z < 0:
+                return
             if not (
                 len(index.motion_offsets) == layer_count
                 and len(index.motion_x) == layer_count
@@ -396,6 +403,7 @@ class PersistentIndexCache:
                 # first re-hydration.
                 "motion_counts": list(index.layer_motion_counts),
                 "object_work": index.object_work,
+                "printed_top_z": index.printed_top_z,
             }
             has_extrusions = len(index.motion_extrusion) == layer_count and all(len(index.motion_extrusion[i]) == counts[i] for i in range(layer_count))
             if index.motion_extrusion and not has_extrusions:

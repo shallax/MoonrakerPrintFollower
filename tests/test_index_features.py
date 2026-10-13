@@ -3,6 +3,23 @@ from mpf.gcode import IndexCodec as index_codec, IndexCache as index_cache
 from tests import index_plate_support as harness
 
 class FeatureTypeTests(harness.FeatureTypeTests):
+    def test_printed_height_bound_tracks_accumulated_extrusions_in_compact_cache(self):
+        data = (b"M82\nG92 E0\n;LAYER:0\nG1 X10 Z0.2 E1\n"
+                b"G0 Z12\nG0 X20\n;LAYER:1\nG1 X30 Z8 E1.5\n"
+                b"G92 E0\nG1 X40 Z9 E0.3\nG0 Z30\n")
+        with harness.tempfile.TemporaryDirectory() as directory:
+            path = harness.os.path.join(directory, "height.gcode")
+            with open(path, "wb") as handle:
+                handle.write(data)
+            full = harness.build_index_from_file(path, compact=False)
+            compact = harness.build_index_from_file(path, compact=True)
+            self.assertEqual(full.printed_top_z, 12)
+            self.assertEqual(compact.printed_top_z, 12)
+            identity = harness.RemoteFileIdentity("height.gcode", len(data), 1, "height")
+            store = harness.PersistentIndexCache(directory)
+            store.save(identity, compact)
+            self.assertEqual(store.load(identity).printed_top_z, 12)
+
     def test_bead_width_profile_is_per_motion_and_survives_compact_cache_and_preparation(self):
         from math import pi
         from mpf.gcode.PlateProgress import prepare_layer, encode_layer, decode_layer

@@ -1273,7 +1273,8 @@ class PrintCoordinator(QObject):
             (config.recovery_prime_x, config.recovery_prime_y, config.recovery_prime_z),
             config.recovery_prime_amount_mm, config.recovery_prime_speed_mm_s,
             config.recovery_nozzle_parameter, config.recovery_bed_parameter, offline,
-            config.recovery_heating_timeout_s)
+            config.recovery_heating_timeout_s,
+            self._index.view.printed_top_z if offline else 0.0)
 
     def _record_recovery_phase(self, context, phase, detail):
         if (self._persistence is None or not context.history_job_id

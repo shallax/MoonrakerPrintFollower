@@ -110,6 +110,7 @@ _SPLIT_EPSILON = 1e-9
 @dataclass
 class LayerMotionIndex:
     ranges: List[Tuple[int, int]] = field(default_factory=list)
+    printed_top_z: float = 0.0
     motion_offsets: List[array] = field(default_factory=list)
     motion_x: List[array] = field(default_factory=list)
     motion_y: List[array] = field(default_factory=list)

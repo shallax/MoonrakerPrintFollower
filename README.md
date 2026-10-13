@@ -33,7 +33,11 @@ clearance, return speeds, command/status/heat timeouts, and optional nozzle prim
 at a configured XYZ position, extrusion amount and speed are configurable.
 The plugin waits for the latest nozzle and bed targets before moving; if it
 cannot derive a target from the file, it asks for one. For unloaded recovery,
-confirm the existing object's highest Z and safely home XYZ away from it first.
+the indexed G-code supplies a conservative height bound for the clearance move.
+If Z was homed on the object, enter the original file Z of that homed surface in
+the follower's recovery review; the plugin sets a temporary G-code Z origin
+with `G92` and confirms it before moving. Klipper restores its normal origin
+at the next Z homing. Home XYZ safely away from the object first.
 Recovery refuses unsupported G-code, printer state or motion geometry before seeking.
 
 ## What changed in 5.4.0

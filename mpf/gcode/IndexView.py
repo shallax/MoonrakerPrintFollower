@@ -45,6 +45,8 @@ class IndexView:
     @property
     def compact(self): return self._index.compact
     @property
+    def printed_top_z(self): return self._index.printed_top_z
+    @property
     def pause_layers(self): return tuple(self._index.pauses)
 
     def recovery_boundary(self, layer, completed_motions):

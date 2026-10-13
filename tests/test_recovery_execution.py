@@ -40,14 +40,20 @@ class FakePrinter:
             self.state["extruder"]["temperature"] = 210
             self.state["heater_bed"]["target"] = 60
             self.state["heater_bed"]["temperature"] = 60
+        if script.startswith("G92 Z"):
+            self.state["gcode_move"]["gcode_position"][2] = float(script.removeprefix("G92 Z"))
         if "G1 X40 Y50" in script:
+            base_z = self.state["gcode_move"]["position"][2] - self.state["gcode_move"]["gcode_position"][2]
             self.state["gcode_move"]["gcode_position"] = [40, 50, 2, 0]
-            self.state["gcode_move"]["position"] = [40, 50, 2]
-            self.state["toolhead"]["position"] = [40, 50, 2]
+            physical_z = 2 + base_z
+            self.state["gcode_move"]["position"] = [40, 50, physical_z]
+            self.state["toolhead"]["position"] = [40, 50, physical_z]
         if "G1 X10 Y15" in script:
+            base_z = self.state["gcode_move"]["position"][2] - self.state["gcode_move"]["gcode_position"][2]
             self.state["gcode_move"]["gcode_position"] = [10, 15, 3, 0]
-            self.state["gcode_move"]["position"] = [10, 15, 3]
-            self.state["toolhead"]["position"] = [10, 15, 3]
+            physical_z = 3 + base_z
+            self.state["gcode_move"]["position"] = [10, 15, physical_z]
+            self.state["toolhead"]["position"] = [10, 15, physical_z]
         if script.startswith("M26 S"):
             self.state["virtual_sdcard"]["file_position"] = int(script[5:])
         if "G92 E15.25" in script:
@@ -154,6 +160,54 @@ class RecoveryExecutionTests(unittest.TestCase):
         self.assertEqual(printer.scripts[-1], "M24")
         self.assertLess(printer.scripts.index("M26 S300"), len(printer.scripts) - 1)
         self.assertNotIn("PRINT_START", "\n".join(printer.scripts))
+
+    def test_unloaded_object_top_reference_is_confirmed_before_return(self):
+        printer = FakePrinter()
+        printer.state["print_stats"].update(state="standby", filename="")
+        printer.state["virtual_sdcard"].update(file_size=0, file_position=0)
+        printer.state["pause_resume"]["is_paused"] = False
+        execution = RecoveryExecution(printer.query, printer.send, lambda _outcome: None)
+        execution.start(source=source(), filename="part.gcode", printed_top_z=12,
+                        z_reference_mm=2)
+        self.assertEqual(execution.phase, "complete")
+        self.assertEqual(printer.scripts[2], "G92 Z12")
+        self.assertIn("G1 Z17", printer.scripts[3])
+        self.assertEqual(printer.state["toolhead"]["position"][2], 0)
+        self.assertLess(printer.scripts.index("G92 Z12"),
+                        printer.scripts.index("M26 S300"))
+
+    def test_ambiguous_z_reference_stops_before_any_return_or_seek(self):
+        printer = FakePrinter()
+        printer.state["print_stats"].update(state="standby", filename="")
+        printer.state["virtual_sdcard"].update(file_size=0, file_position=0)
+        printer.state["pause_resume"]["is_paused"] = False
+        printer.fail_script = "G92 Z12"
+        execution = RecoveryExecution(printer.query, printer.send, lambda _outcome: None)
+        execution.start(source=source(), filename="part.gcode", printed_top_z=12,
+                        z_reference_mm=2)
+        self.assertEqual(execution.phase, "uncertain")
+        self.assertNotIn("M26 S", "\n".join(printer.scripts))
+
+    def test_unconfirmed_z_reference_refuses_before_return(self):
+        printer = FakePrinter()
+        printer.state["print_stats"].update(state="standby", filename="")
+        printer.state["virtual_sdcard"].update(file_size=0, file_position=0)
+        printer.state["pause_resume"]["is_paused"] = False
+        original = printer.send
+
+        def ignore_offset(script, callback):
+            if script.startswith("G92 Z"):
+                printer.scripts.append(script)
+                callback(None)
+                return True
+            return original(script, callback)
+
+        printer.send = ignore_offset
+        execution = RecoveryExecution(printer.query, printer.send, lambda _outcome: None)
+        execution.start(source=source(), filename="part.gcode", printed_top_z=12,
+                        z_reference_mm=2)
+        self.assertEqual(execution.phase, "refused")
+        self.assertNotIn("M26 S", "\n".join(printer.scripts))
 
     def test_unloaded_file_refuses_overridden_m23_before_selection(self):
         printer = FakePrinter()

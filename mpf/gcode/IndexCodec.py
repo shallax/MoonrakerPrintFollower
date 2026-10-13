@@ -45,7 +45,7 @@ _MAX_CACHE_ARC_ENTRIES = 200_000
 # counts may read zero for never-hydrated layers, which is exactly
 # the resumed-session dead-slider report; refusing them rebuilds.
 # Version 15 adds bounded per-object work checkpoints and XY bounds.
-_CACHE_VERSION = 15
+_CACHE_VERSION = 16
 
 
 def _read_exact(handle: BinaryIO, size: int) -> bytes:

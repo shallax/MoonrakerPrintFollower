@@ -48,14 +48,15 @@ class RecoveryExecution:
               setup_macros=(), transparent_macros=(),
               hotend_target=None, bed_target=None,
               prime_enabled=False, prime_xyz=(5.0, 5.0, 5.0),
-              prime_amount_mm=20.0, prime_speed_mm_s=2.0):
+              prime_amount_mm=20.0, prime_speed_mm_s=2.0,
+              z_reference_mm=0.0):
         if self._active:
             return False
         self._attempt = (source, filename, printed_top_z, saved_state, prepare_macro,
                          clearance_mm, xy_speed_mm_s, z_speed_mm_s,
                          tuple(setup_macros), tuple(transparent_macros),
                          hotend_target, bed_target, prime_enabled, prime_xyz,
-                         prime_amount_mm, prime_speed_mm_s)
+                         prime_amount_mm, prime_speed_mm_s, z_reference_mm)
         self._return = None
         self._active = True
         self._cancelled = False
@@ -105,7 +106,7 @@ class RecoveryExecution:
     def _prepare(self, status, *, check_temperature=True):
         (source, filename, top, saved_state, prepare_macro, clearance, xy_speed,
          z_speed, setup, transparent, nozzle, bed, prime_enabled, prime_xyz,
-         prime_amount, prime_speed) = self._attempt
+         prime_amount, prime_speed, z_reference) = self._attempt
         return prepare_return(status, source, filename=filename, printed_top_z=top,
                               saved_state=saved_state, prepare_macro=prepare_macro,
                               clearance_mm=clearance, xy_speed_mm_s=xy_speed,
@@ -114,7 +115,8 @@ class RecoveryExecution:
                               check_temperature=check_temperature,
                               hotend_target=nozzle, bed_target=bed,
                               prime_enabled=prime_enabled, prime_xyz=prime_xyz,
-                              prime_amount_mm=prime_amount, prime_speed_mm_s=prime_speed)
+                              prime_amount_mm=prime_amount, prime_speed_mm_s=prime_speed,
+                              z_reference_mm=z_reference)
 
     def _script(self, phase, script, callback):
         if self._cancelled:
@@ -268,10 +270,32 @@ class RecoveryExecution:
         self._begin_return()
 
     def _begin_return(self):
+        if self._idle and self._return.z_reference_script:
+            self._script("setting_z_reference", self._return.z_reference_script,
+                         self._z_reference_done)
+            return
         if self._return.prime_script and not self._primed:
             self._script("priming_nozzle", self._return.prime_script, self._prime_done)
         else:
             self._script("returning", self._return.return_script, self._returned)
+
+    def _z_reference_done(self, error):
+        if error:
+            self._finish("uncertain", f"Z reference adjustment did not confirm: {error}")
+            return
+        self._advance("checking_z_reference", self._z_reference_status)
+
+    def _z_reference_status(self, status, error):
+        if not self._status(status, error):
+            return
+        try:
+            self._return = self._prepare(status)
+            if self._return.z_reference_script:
+                raise RecoveryRefused("Printer did not confirm the Z reference adjustment")
+        except RecoveryRefused as reason:
+            self._finish("refused", str(reason))
+            return
+        self._begin_return()
 
     def _prime_done(self, error):
         if error:

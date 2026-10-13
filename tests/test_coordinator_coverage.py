@@ -23,7 +23,8 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
         self.assertEqual(parts.index.bound, ("cube.gcode", 31, 0))
         self.assertEqual(parts.index.requests, 1)
         with harness.tempfile.TemporaryDirectory() as directory:
-            data = b";LAYER:0\nG1 X1 Y1 E0.1\nG1 X2 Y1 E0.2\n"
+            data = (b";LAYER:0\nG1 X1 Y1 Z0.2 E0.1\nG1 X2 Y1 E0.2\n"
+                    b";LAYER:1\nG0 Z12\nG1 X3 E0.3\n")
             path = harness.os.path.join(directory, "cube.gcode")
             with open(path, "wb") as handle:
                 handle.write(data)
@@ -41,6 +42,7 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
             context = parts.coordinator._recovery_context()
             self.assertEqual(context.observed_offset, boundary.next_motion_offset)
             self.assertEqual(context.printed_top_z, boundary.position[2])
+            self.assertEqual(context.file_printed_top_z, 12)
 
     def test_unloaded_file_listing_rejects_malformed_rows_and_reports_errors(self):
         parts = self._make()

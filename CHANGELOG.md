@@ -19,8 +19,11 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
   expose recovery settings per printer. Recovery can be planned with no sensor.
   Wait for the latest G-code temperature targets, request missing targets, and
   optionally prime at a configured XYZ with bounded amount and speed before
-  returning to the selected point. Unloaded recovery uses the confirmed height
-  of the existing object for a safe clearance lift.
+  returning to the selected point. Unloaded recovery derives a conservative
+  printed-height bound from the indexed file for its clearance lift. A manual
+  Z reference in the follower supports homing on the existing object: the
+  adjusted file and physical restart heights are reviewed, and a temporary
+  G-code origin is verified before movement.
 
 ## 5.4.0
 

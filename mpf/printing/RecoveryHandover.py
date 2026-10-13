@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import re
 
@@ -17,6 +17,7 @@ COMMAND_OVERRIDES = frozenset({
     "clear_pause", "m23", "m24", "m26", "m104", "m109", "m140", "m190",
     "restore_gcode_state", "m82", "m83", "g92", "m220", "m221",
     "m204", "m106", "m107", "m400", "set_filament_sensor", "set_idle_timeout",
+    "set_gcode_offset",
 })
 
 
@@ -32,6 +33,7 @@ class ReturnPlan:
     clearance_z: float
     target: tuple[float, float, float]
     prime_target: tuple[float, float, float] | None
+    z_reference_script: str
     prime_script: str
     return_script: str
     modal_script: str
@@ -95,7 +97,8 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
                    setup_macros=(), transparent_macros=(), idle=False,
                    hotend_target=None, bed_target=None, check_temperature=True,
                    prime_enabled=False, prime_xyz=(5.0, 5.0, 5.0),
-                   prime_amount_mm=20.0, prime_speed_mm_s=2.0):
+                   prime_amount_mm=20.0, prime_speed_mm_s=2.0,
+                   z_reference_mm=0.0):
     """Check a fresh paused snapshot and render the staged return.
 
     The source planner already refused unmodelled G-code. This policy supports
@@ -158,6 +161,18 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
     extruder = _mapping(config, "extruder")
     try:
         bounds = envelope(status)
+        reference = finite(z_reference_mm)
+        if reference < 0 or reference > 0 and not idle:
+            raise UnsafeMotion("A Z reference adjustment is only available for unloaded recovery")
+        z_reference_script = ""
+        if idle:
+            # G92 changes the current G-code frame without changing Klipper's
+            # homing origin. A later G28 restores the printer's usual frame.
+            if abs(bounds.base[2] + reference) > 0.001:
+                z_reference_script = f"G92 Z{command_number(bounds.position[2] + reference)}"
+            bounds = replace(bounds,
+                             gcode=(bounds.gcode[0], bounds.gcode[1], bounds.position[2] + reference),
+                             base=(bounds.base[0], bounds.base[1], -reference))
         top = finite(printed_top_z)
         clearance = finite(clearance_mm)
         xy_speed = finite(xy_speed_mm_s)
@@ -165,13 +180,19 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
         if top < 0 or clearance <= 0 or xy_speed <= 0 or z_speed <= 0:
             raise UnsafeMotion("Invalid printed height or clearance")
         target = tuple(finite(value) for value in source_plan.state.position)
+        if idle and target[2] - reference < bounds.minimum[2] - 0.001:
+            raise UnsafeMotion("Restart Z is below the homed object-top reference")
         if prime_enabled and (not isinstance(prime_xyz, (tuple, list)) or len(prime_xyz) != 3):
             raise UnsafeMotion("Prime XYZ must contain three coordinates")
         prime_target = tuple(finite(value) for value in prime_xyz) if prime_enabled else None
         if prime_target is not None and prime_target[2] < target[2]:
             raise UnsafeMotion("Prime Z must be at or above the selected restart layer")
+        if prime_target is not None and idle and prime_target[2] - reference < bounds.minimum[2] - 0.001:
+            raise UnsafeMotion("Prime Z is below the homed object-top reference")
         clear_z = max(bounds.gcode[2], target[2], top,
                       prime_target[2] if prime_target else target[2]) + clearance
+        if idle and reference > 0 and clear_z > bounds.maximum[2]:
+            raise UnsafeMotion("Clearance exceeds the original file Z travel after object-top homing")
         bounds.check((bounds.gcode[0], bounds.gcode[1], clear_z))
         bounds.check((target[0], target[1], clear_z))
         bounds.check(target)
@@ -250,6 +271,6 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
             if timeout <= 0:
                 raise RecoveryRefused("The normal idle timeout is invalid")
             finish.append(f"SET_IDLE_TIMEOUT TIMEOUT={timeout}")
-    return ReturnPlan(clear_z, target, prime_target, prime_script,
+    return ReturnPlan(clear_z, target, prime_target, z_reference_script, prime_script,
                       return_script, "\n".join(modal),
                       restore_script, "\n".join(finish))

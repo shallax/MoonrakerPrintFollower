@@ -59,6 +59,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
     absolute_xyz = True
     units_scale = 1.0
     x = y = z = 0.0
+    printed_top_z = 0.0
     line_number = 0
     collect_motions = not compact
     # The feature walk runs for every build, compact included: the scan
@@ -336,6 +337,8 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 previous_e = features.e
                 length = ArcGeometry.path_length(arc, motion_start, (x, y, z), xy=True) if arc else math.hypot(x - motion_start[0], y - motion_start[1])
                 features.add(axes, collect_here, length)
+                if moved_xy and features.e > previous_e:
+                    printed_top_z = max(printed_top_z, motion_start[2], z)
                 if (current is not None and current["end"] is None
                         and moved_xy and features.e > previous_e):
                     object_work.add(offset, x, y, z, features.e - previous_e)
@@ -368,7 +371,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
 
     return assemble_index(
         blocks, file_end, stats_values, marker_values, pause_offsets, type_names, filament_diameter, filament_diameters, compact, cancel_event,
-        object_work.finish(),
+        object_work.finish(), printed_top_z,
     )
 
 

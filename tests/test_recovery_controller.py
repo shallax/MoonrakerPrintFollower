@@ -116,7 +116,7 @@ class RecoveryControllerTests(unittest.TestCase):
         self.assertIn("M109 S210", self.transport.scripts[2])
 
     def test_unloaded_recovery_selects_file_then_heats_and_skips_print_start(self):
-        self.context = replace(self.context, unloaded=True,
+        self.context = replace(self.context, unloaded=True, file_printed_top_z=12.0,
                                observed_offset=self.context.boundary.next_motion_offset)
         printer = self.transport.printer
         printer.file_size = self.context.job[1]
@@ -125,7 +125,8 @@ class RecoveryControllerTests(unittest.TestCase):
                                                 is_active=False)
         printer.state["pause_resume"]["is_paused"] = False
         self.ready()
-        self.assertTrue(self.controller.start({"printedTopZ": 12}))
+        self.assertEqual(self.controller.state["suggestedTopZ"], 12.0)
+        self.assertTrue(self.controller.start({"zReference": 2}))
         deadline = time.monotonic() + 5
         while self.controller.state["phase"] != "complete" and time.monotonic() < deadline:
             self.app.processEvents()
@@ -133,7 +134,8 @@ class RecoveryControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state["phase"], "complete", self.controller.state)
         self.assertEqual(self.transport.scripts[0], "M23 part.gcode")
         self.assertIn("M109 S210", self.transport.scripts[1])
-        self.assertIn("G1 Z17", self.transport.scripts[2])
+        self.assertEqual(self.transport.scripts[2], "G92 Z12")
+        self.assertIn("G1 Z17", self.transport.scripts[3])
         self.assertEqual(self.transport.scripts[-1], "M24")
         self.assertNotIn("PRINT_START", "\n".join(self.transport.scripts))
 
@@ -188,11 +190,17 @@ class RecoveryControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state["phase"], "complete")
         self.assertIn("M109 S210", "\n".join(self.transport.scripts))
 
-    def test_unloaded_print_requires_existing_height_at_or_above_restart(self):
-        self.context = replace(self.context, unloaded=True)
+    def test_unloaded_print_uses_indexed_height_without_manual_entry(self):
+        self.context = replace(self.context, unloaded=True, file_printed_top_z=12.0)
         self.ready()
-        self.assertFalse(self.controller.start({"printedTopZ": 1}))
-        self.assertIn("highest Z", self.controller.state["detail"])
+        self.assertEqual(self.controller.state["suggestedTopZ"], 12.0)
+        self.assertTrue(self.controller.start())
+
+    def test_z_reference_must_not_put_restart_below_homed_surface(self):
+        self.context = replace(self.context, unloaded=True, file_printed_top_z=12.0)
+        self.ready()
+        self.assertFalse(self.controller.start({"zReference": 3}))
+        self.assertIn("Z reference", self.controller.state["detail"])
         self.assertEqual(self.transport.scripts, [])
 
     def test_lost_session_invalidates_planning_and_execution(self):

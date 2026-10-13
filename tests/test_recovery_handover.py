@@ -29,6 +29,34 @@ def source():
 
 
 class RecoveryHandoverTests(unittest.TestCase):
+    def test_unloaded_object_top_reference_maps_file_z_to_physical_zero(self):
+        fresh = status()
+        fresh["print_stats"]["state"] = "standby"
+        fresh["pause_resume"]["is_paused"] = False
+        plan = prepare_return(fresh, source(), filename="part.gcode",
+                              printed_top_z=12, idle=True, z_reference_mm=2)
+        self.assertEqual(plan.z_reference_script, "G92 Z12")
+        self.assertEqual(plan.target[2], 2)
+        self.assertEqual(plan.clearance_z, 17)
+        self.assertIn("G1 Z17", plan.return_script)
+        with self.assertRaisesRegex(RecoveryRefused, "below the homed object-top"):
+            prepare_return(fresh, source(), filename="part.gcode",
+                           printed_top_z=12, idle=True, z_reference_mm=3)
+        fresh["toolhead"]["axis_maximum"][2] = 16
+        with self.assertRaisesRegex(RecoveryRefused, "original file Z travel"):
+            prepare_return(fresh, source(), filename="part.gcode",
+                           printed_top_z=12, idle=True, z_reference_mm=2)
+
+    def test_unloaded_z_reference_replaces_an_existing_g92_z_origin(self):
+        fresh = status()
+        fresh["print_stats"]["state"] = "standby"
+        fresh["pause_resume"]["is_paused"] = False
+        fresh["gcode_move"]["gcode_position"][2] = 8
+        fresh["gcode_move"]["homing_origin"][2] = 1
+        plan = prepare_return(fresh, source(), filename="part.gcode",
+                              printed_top_z=12, idle=True, z_reference_mm=2)
+        self.assertEqual(plan.z_reference_script, "G92 Z12")
+
     def test_staged_return_and_modal_state_are_explicit(self):
         plan = prepare_return(status(), source(), filename="part.gcode", printed_top_z=8)
         self.assertEqual(plan.clearance_z, 15)

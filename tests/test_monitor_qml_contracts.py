@@ -422,7 +422,9 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         self.assertIn('"Review printer rewind…"', recovery)
         self.assertIn('"Rewind and restart print"', recovery)
         self.assertIn('"Load and restart from point"', recovery)
-        self.assertIn('root.temperaturesReady && root.heightReady && root.selection.offset === root.plan.offset', recovery)
+        self.assertIn('root.temperaturesReady && root.zReferenceReady && root.selection.offset === root.plan.offset', recovery)
+        self.assertIn('"zReference": root.plan.unloaded ? Number(zReferenceField.text) : 0', recovery)
+        self.assertNotIn('printedTopField', recovery)
         for surface in (follower, harness.JOB_SECTION_QML):
             self.assertIn("LoadProgressIndicator {", surface)
             self.assertIn("root.printerModel.plateSourceStatus", surface)
