@@ -79,7 +79,7 @@ def pick_wheel(files: list[dict], abi3: bool) -> dict | None:
                 and "musllinux" not in name
                 and (("abi3" in name or "cp3" in name) if abi3
                      else "py3-none" in name))
-    wheels = sorted(f for f in files if good(f))
+    wheels = sorted((f for f in files if good(f)), key=lambda f: f["filename"])
     return wheels[0] if wheels else None
 
 

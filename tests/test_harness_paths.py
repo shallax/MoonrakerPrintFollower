@@ -77,6 +77,14 @@ def _container(work_dir, path):
 
 
 class CuraProfileVersionTests(unittest.TestCase):
+    def test_qt_wheel_selection_handles_rebuilt_wheels_without_comparing_dicts(self):
+        names = ["pyqt6-6.10.0-cp39-abi3-manylinux_2_34_x86_64.whl",
+                 "pyqt6-6.10.0-1-cp39-abi3-manylinux_2_34_x86_64.whl",
+                 "pyqt6-6.10.0-cp39-abi3-manylinux_2_34_aarch64.whl"]
+        files = [{"filename": name} for name in names]
+        for candidates in (files, list(reversed(files))):
+            self.assertEqual(fetch_cura.pick_wheel(candidates, True)["filename"], names[1])
+
     def test_stale_cached_wheels_are_replaced_using_separate_binding_and_qt_pins(self):
         version = "5.14.0-beta.1"
         with tempfile.TemporaryDirectory() as temp:
