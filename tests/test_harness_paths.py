@@ -10,11 +10,16 @@ ui_test.sh resolve through it; these tests pin the behaviour and the
 wiring.
 """
 
+import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from tools import fetch_cura
 
 ROOT = Path(__file__).resolve().parent.parent
 HELPER = ROOT / "tools" / "ui_test_paths.sh"
@@ -69,6 +74,32 @@ def _resolve(base, name):
 
 def _container(work_dir, path):
     return _helper("container", work_dir, path).stdout.strip()
+
+
+class CuraProfileVersionTests(unittest.TestCase):
+    def test_prepared_beta_uses_the_modern_boot_environment(self):
+        version = "5.14.0-beta.1"
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            manifest_path = base / version / "manifest.json"
+            manifest_path.parent.mkdir()
+            manifest_path.write_text(json.dumps({"launch": "loader", "env": "legacy"}),
+                                     encoding="utf-8")
+            with patch.object(fetch_cura, "BASE", base), patch("sys.argv", ["fetch_cura.py", version]):
+                self.assertEqual(fetch_cura.main(), 0)
+            self.assertEqual(json.loads(manifest_path.read_text(encoding="utf-8"))["env"], "modern")
+
+    @unittest.skipUnless(SHELL, NO_SHELL)
+    def test_beta_and_stable_releases_use_major_minor_profile_directories(self):
+        script = UI_TEST.read_text(encoding="utf-8")
+        assignment = next(line for line in script.splitlines() if line.startswith("SEED_VER="))
+        for version, expected in (("5.13.0", "5.13"), ("5.14.0-beta.1", "5.14")):
+            with self.subTest(version=version):
+                result = subprocess.run(
+                    [SHELL, "-c", assignment + '\nprintf "%s" "$SEED_VER"'],
+                    env={**os.environ, "CURA_VERSION": version},
+                    capture_output=True, text=True, check=True)
+                self.assertEqual(result.stdout, expected)
 
 
 class ContainerPathMappingTests(unittest.TestCase):

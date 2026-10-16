@@ -139,7 +139,7 @@ CONTAINER_RUN_DIR="$(container_path "$(tools/ui_test_paths.sh resolve "$CONTAINE
 
 # The pinned Cura for this run: any version can be selected; prepare
 # one with tools/fetch_cura.py (the manifest records the swap).
-CURA_VERSION="${CURA_VERSION:-5.13.0}"
+CURA_VERSION="${CURA_VERSION:-5.14.0-beta.1}"
 CURA_ROOT="$WORK_DIR/cura_versions/$CURA_VERSION/root"
 CURA_WHEELS="$WORK_DIR/cura_versions/$CURA_VERSION/wheels"
 # The fallback fetch extracts into THIS run's tree — never the shared
@@ -241,7 +241,7 @@ harvest_cura_log() {
     # guessed); a run that died before that line falls back to the same
     # derivation made from CURA_VERSION.
     _ver="${SEED_VER:-}"
-    [ -n "$_ver" ] || _ver="${CURA_VERSION%.*}"
+    [ -n "$_ver" ] || _ver="$(printf '%s' "$CURA_VERSION" | cut -d. -f1,2)"
     _bases="$WORK_DIR/xdg $WORK_DIR/fakehome/.local/share"
     for _base in $_bases; do
         if [ -d "$_base" ]; then
@@ -447,7 +447,7 @@ PY
 fi
 # The seed and plugin dirs live under Cura's per-version data dir;
 # the seed is written for 5.13, so carry it over for another version.
-SEED_VER="${CURA_VERSION%.*}"
+SEED_VER="$(printf '%s' "$CURA_VERSION" | cut -d. -f1,2)"
 if [ "$SEED_VER" != "5.13" ]; then
     cp -r "$WORK_DIR"/xdg/config/cura/5.13 "$WORK_DIR"/xdg/config/cura/"$SEED_VER"
     cp -r "$WORK_DIR"/xdg/cura/5.13 "$WORK_DIR"/xdg/cura/"$SEED_VER"

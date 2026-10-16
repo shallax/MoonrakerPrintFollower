@@ -242,7 +242,7 @@ endif
 ifneq ($(LEG),posix)
 # The desktop harness is explicit: neither target is part of make all.
 ui_test: package
-	$(DEV) ui_test --cura-version $(or $(CURA_VERSION),5.13.0) --mode $(or $(MODE),scenario)
+	$(DEV) ui_test --cura-version $(or $(CURA_VERSION),5.14.0-beta.1) --mode $(or $(MODE),scenario)
 
 ui_release_gate: package
 	$(DEV) ui_release_gate

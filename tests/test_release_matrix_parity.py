@@ -56,7 +56,7 @@ LOCAL_GROUPS = (
 EXPECTED_SWEEP_UNITS = ("smoke",) + LOCAL_GROUPS + ("firstinstall",)
 
 EXPECTED_SWEEP_VERSIONS = (
-    "5.7.0", "5.8.0", "5.9.0", "5.10.0", "5.11.0", "5.12.0", "5.13.0",
+    "5.7.0", "5.8.0", "5.9.0", "5.10.0", "5.11.0", "5.12.0", "5.13.0", "5.14.0-beta.1",
 )
 
 
@@ -190,8 +190,8 @@ class ReleaseMatrixParityTests(unittest.TestCase):
 
     def test_the_smokes_cover_both_pinned_versions(self):
         declared = workflow_units()
-        self.assertEqual(declared["smoke-primary"]["cura"], "5.13.0")
-        self.assertEqual(declared["smoke-secondary"]["cura"], "5.12.0")
+        self.assertEqual(declared["smoke-primary"]["cura"], "5.14.0-beta.1")
+        self.assertEqual(declared["smoke-secondary"]["cura"], "5.13.0")
         local = LOCAL
         self.assertIn("$SECONDARY smoke suite smoke", local)
 
@@ -226,7 +226,7 @@ class ReleaseMatrixParityTests(unittest.TestCase):
             self.assertEqual(declared["budget"], expected[canonical_name]["budget"], name)
 
     def test_the_sweep_covers_the_supported_version_range(self):
-        versions = tuple(re.findall(r'- "(\d+\.\d+\.\d+)"', SWEEP))
+        versions = tuple(re.findall(r'- "(\d+\.\d+\.\d+(?:-beta\.\d+)?)"', SWEEP))
         self.assertEqual(versions, EXPECTED_SWEEP_VERSIONS)
 
 

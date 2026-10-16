@@ -1,8 +1,8 @@
-# The 5.7-5.13 UI version sweep: every release unit — one smoke, all
+# The 5.7-5.14 UI version sweep: every release unit — one smoke, all
 # fourteen suite groups and the first-install leg (16 units, no
 # primary/secondary smoke split: each version gets the plain smoke
 # once) — on every supported Cura version, as an ON-DEMAND matrix:
-# one job per version/unit pair (7 x 16 = 112 jobs), so the whole
+# one job per version/unit pair (8 x 16 = 128 jobs), so the whole
 # sweep lands in the time of its slowest unit instead of the serial
 # local grind (TESTING.md §5's version sweep). The per-unit budget
 # mirrors the canonical release gate. Trigger it manually from the
@@ -40,6 +40,7 @@ jobs:
           - "5.11.0"
           - "5.12.0"
           - "5.13.0"
+          - "5.14.0-beta.1"
         unit:
           - {name: smoke, mode: suite, group: smoke, budget: 20}
           - {name: configure, mode: suite, group: configure, budget: 15}

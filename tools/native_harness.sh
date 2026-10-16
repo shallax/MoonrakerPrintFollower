@@ -7,7 +7,7 @@
 # Usage:
 #   tools/native_harness.sh macos <cura-version> <scenario> [options]
 #
-#   <cura-version>   5.7.0 and up (the asset names hold across 5.7-5.13)
+#   <cura-version>   5.7.0 and up (the asset names hold across 5.7-5.14)
 #   <scenario>       what the runner runs once this returns: a runner mode
 #                    (scenario | scenario1..11 | suite | firstinstall |
 #                    migration | discover) or a suite group name, which is
@@ -89,13 +89,13 @@ case "$ARCH_REQUEST" in
     auto|arm64|x64) ;;
     *) die "--arch must be auto, arm64 or x64 (got '$ARCH_REQUEST')" ;;
 esac
-printf '%s' "$CURA_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' ||
-    die "'$CURA_VERSION' is not a version like 5.13.0"
+printf '%s' "$CURA_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$' ||
+    die "'$CURA_VERSION' is not a version like 5.13.0 or 5.14.0-beta.1"
 REQ_MM="$(printf '%s' "$CURA_VERSION" | cut -d. -f1,2)"
 REQ_MAJOR="${REQ_MM%%.*}"
 REQ_MINOR="${REQ_MM##*.}"
-if [ "$REQ_MAJOR" -ne 5 ] || [ "$REQ_MINOR" -lt 7 ] || [ "$REQ_MINOR" -gt 13 ]; then
-    die "Cura $CURA_VERSION is outside the range this harness ranges over (5.7.0 to 5.13.0)"
+if [ "$REQ_MAJOR" -ne 5 ] || [ "$REQ_MINOR" -lt 7 ] || [ "$REQ_MINOR" -gt 14 ]; then
+    die "Cura $CURA_VERSION is outside the range this harness ranges over (5.7.0 to 5.14.0-beta.1)"
 fi
 if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${HARNESS_DISPOSABLE_HOST:-}" != "1" ]; then
     die "this harness replaces Cura and deletes/reseeds its user profile; use a disposable test host with HARNESS_DISPOSABLE_HOST=1"
@@ -596,7 +596,7 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # Cura cannot resolve makes ContainerStack.deserialize raise and
     # then there is no machine at all. Every file-format version is read
     # out of the installed build - the one thing that moves across
-    # 5.7-5.13 - and nothing is written when one cannot be read, since a
+    # 5.7-5.14 - and nothing is written when one cannot be read, since a
     # container file with the wrong version is rejected outright.
     # general/last_run_version is deliberately NOT written: empty means
     # "this version" to QtApplication, so What's New stays off.
@@ -703,7 +703,7 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # the running build's (CuraContainerRegistry.addContainer), and the
     # fixture is written for the 5.13 it lives under. Nothing is trusted
     # as shipped - stacks and instances carry different versions (6 and 4
-    # across 5.7-5.13), so each file gets the one its own type uses.
+    # across 5.7-5.14), so each file gets the one its own type uses.
     SEED_FILES=0
     for seed_path in "$CONFIG_DIR"/machine_instances/*.cfg "$CONFIG_DIR"/extruders/*.cfg \
                      "$CONFIG_DIR"/definition_changes/*.cfg "$CONFIG_DIR"/user/*.cfg; do

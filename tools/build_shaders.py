@@ -28,7 +28,7 @@ def main():
         subprocess.run([executable, '--qsbversion', '64', '--glsl', '100 es,120,150',
                         '--hlsl', '50', '--msl', '12', '-o', str(source) + '.qsb', str(source)],
                        check=True)
-    print('Built shader bundles for Cura 5.7-5.13 (Qt 6.4-compatible format; tested on Qt 6.6)')
+    print('Built shader bundles for Cura 5.7-5.14 beta 1 (Qt 6.4-compatible format; tested on Qt 6.6)')
 
 
 if __name__ == '__main__':

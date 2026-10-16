@@ -1007,8 +1007,8 @@ def cmd_ui_test(args) -> int:
 def cmd_ui_release_gate(args) -> int:
     if cmd_gates(args):
         return 1
-    primary = os.environ.get("CURA_PRIMARY", "5.13.0")
-    secondary = os.environ.get("CURA_SECONDARY", "5.12.0")
+    primary = os.environ.get("CURA_PRIMARY", "5.14.0-beta.1")
+    secondary = os.environ.get("CURA_SECONDARY", "5.13.0")
     groups = ("connection", "status", "temperatures", "console", "webcams",
               "files", "motion", "printing", "settings", "visual", "preview",
               "probe", "configure", "stress")
@@ -1219,7 +1219,7 @@ def main(argv=None) -> int:
     parser.add_argument("--to", default="", help="snapshot destination")
     parser.add_argument("--qsb", default="", help="Qt Shader Tools qsb executable")
     parser.add_argument("--mode", default="scenario", help="native UI harness mode")
-    parser.add_argument("--cura-version", default="5.13.0", help="native Cura harness version")
+    parser.add_argument("--cura-version", default="5.14.0-beta.1", help="native Cura harness version")
     parser.add_argument("--no-qmlformat", action="store_true",
                         help="bootstrap without the PySide6 wheel qmlformat comes in")
     parser.add_argument("--no-install", action="store_true",

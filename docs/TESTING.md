@@ -301,7 +301,11 @@ The existing 5.11 loaded-toolpath limitation applies to p8 too; b12 still
 exercises its 2D follower. Static README captures deliberately hold a
 complete layer and do not claim to test smoothing.
 
-For current local runs, `make ui_test MODE=suite CURA_VERSION=5.13.0`
+The current release gate uses Cura `5.14.0-beta.1` as primary and `5.13.0`
+as secondary. The UI Version Sweep includes every minor from 5.7 through
+5.13 plus 5.14 beta 1 (128 version/unit jobs).
+
+For current local runs, `make ui_test MODE=suite CURA_VERSION=5.14.0-beta.1`
 uses the real-Cura harness on every supported host. Linux stages Cura
 in its headless Docker harness; macOS and Windows stage and drive their
 native desktop Cura installations. `make ui_release_gate` runs the
@@ -338,7 +342,7 @@ the proof artifact.
    real UI being rendered, exactly as live testing does.
 2. Screenshots as the evidence of tests passing — video recordings
    are even better (in the style of Cypress or Browserstack).
-3. Cura 5.13 for now, with the version specifiable.
+3. Cura 5.14 beta 1 for now, with the version specifiable.
 4. Open enough to test everything end-to-end, eventually.
 5. Any single test must be runnable on its own, for fast iteration
    on one thing.
@@ -398,7 +402,7 @@ Hard rules, in order:
 ```
 ┌──────────────────────────── harness image (docker) ───────────────────────────┐
 │  Xvfb :99 (1920x1080, the one geometry) + ffmpeg (x11grab)                   │
-│   └─ real Cura AppImage (5.13.0 baseline; CURA_VERSION selects others)       │
+│   └─ real Cura AppImage (5.14.0-beta.1 baseline; CURA_VERSION selects others)       │
 │        └─ plugin (production code) ──┐  real TCP: websocket + HTTP           │
 │        └─ HarnessDriver (test-only   ├────────────►  Moonraker simulator     │
 │           plugin, never shipped)     │               (Tornado, scripted)     │

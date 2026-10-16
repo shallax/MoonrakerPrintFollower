@@ -8,7 +8,7 @@
 #   powershell -ExecutionPolicy Bypass -File tools/native_harness.ps1 `
 #       -CuraVersion 5.13.0 -Scenario scenario [options]
 #
-#   -CuraVersion VER  5.7.0 and up (the asset names hold across 5.7-5.13)
+#   -CuraVersion VER  5.7.0 and up (the asset names hold across 5.7-5.14)
 #   -Scenario NAME    what the runner runs once this returns: a runner mode
 #                     (scenario | scenario1..11 | suite | firstinstall |
 #                     migration | discover) or a suite group name, which is
@@ -34,7 +34,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$CuraVersion = '5.13.0',
+    [string]$CuraVersion = '5.14.0-beta.1',
     [string]$Scenario = '-',
     [string]$Arch = 'auto',
     [string]$WorkDir = '',
@@ -88,14 +88,14 @@ function Fail([string]$Message) {
 # --- arguments and the tree ----------------------------------------------
 # The argument checks come before the host check: a mistyped version is
 # wrong on every host, and reporting it as one is the useful answer.
-if ($CuraVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
-    Fail "'$CuraVersion' is not a version like 5.13.0"
+if ($CuraVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$') {
+    Fail "'$CuraVersion' is not a version like 5.13.0 or 5.14.0-beta.1"
 }
 $verParts = $CuraVersion.Split('.')
 $verMajor = [int]$verParts[0]
 $verMinor = [int]$verParts[1]
-if ($verMajor -ne 5 -or $verMinor -lt 7 -or $verMinor -gt 13) {
-    Fail "Cura $CuraVersion is outside the range this harness ranges over (5.7.0 to 5.13.0)"
+if ($verMajor -ne 5 -or $verMinor -lt 7 -or $verMinor -gt 14) {
+    Fail "Cura $CuraVersion is outside the range this harness ranges over (5.7.0 to 5.14.0-beta.1)"
 }
 $mm = "$verMajor.$verMinor"
 switch ($Arch) {

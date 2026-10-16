@@ -32,7 +32,7 @@ on:
         description: "the Cura version to install and run"
         type: string
         required: true
-        default: "5.13.0"
+        default: "5.14.0-beta.1"
       mode:
         description: "the runner mode: suite, firstinstall, migration..."
         type: string

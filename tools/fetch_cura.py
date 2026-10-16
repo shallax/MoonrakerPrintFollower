@@ -102,8 +102,8 @@ def discover(root: pathlib.Path) -> tuple[str, str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("version", nargs="?", default="5.13.0",
-                    help="Cura version, e.g. 5.13.0 (default) or 5.12.0")
+    ap.add_argument("version", nargs="?", default="5.14.0-beta.1",
+                    help="Cura version, e.g. 5.14.0-beta.1 (default) or 5.13.0")
     ap.add_argument("--force", action="store_true",
                     help="re-fetch even if a manifest exists")
     args = ap.parse_args()
@@ -147,7 +147,7 @@ def main() -> int:
         # (the display and the harness user live in the container),
         # so the boundary is the semver gate those probes measured.
         try:
-            parts = tuple(int(p) for p in version.split("."))
+            parts = tuple(int(p) for p in version.split("-", 1)[0].split("."))
         except ValueError:
             parts = (0, 0, 0)
         return "legacy" if parts < (5, 6, 0) else "modern"

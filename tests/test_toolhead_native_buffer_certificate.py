@@ -8,6 +8,22 @@ from mpf.cura import ToolheadSimulationPass as module
 
 
 class NativeBufferCertificateTests(unittest.TestCase):
+    def test_only_audited_upload_and_render_pairs_are_admitted(self):
+        upload = lambda: None
+        render = lambda: None
+        for pair in module._NATIVE_WRITER_DIGESTS:
+            with self.subTest(pair=pair):
+                module._known_native_writer.cache_clear()
+                with patch.object(module, '_writer_digest', side_effect=pair):
+                    self.assertTrue(module._known_native_writer(upload, render))
+                module._known_native_writer.cache_clear()
+                with patch.object(module, '_writer_digest', side_effect=(pair[0], 'changed-render')):
+                    self.assertFalse(module._known_native_writer(upload, render))
+                module._known_native_writer.cache_clear()
+                with patch.object(module, '_writer_digest', side_effect=('changed-upload', pair[1])):
+                    self.assertFalse(module._known_native_writer(upload, render))
+        module._known_native_writer.cache_clear()
+
     def test_empty_optional_fields_do_not_depend_on_interpreter_ast_shape(self):
         original=ast.parse('def upload(mesh):\n    return mesh.cache\n').body[0]
         older=copy.deepcopy(original)

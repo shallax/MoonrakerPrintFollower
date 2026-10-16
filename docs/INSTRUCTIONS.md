@@ -988,7 +988,7 @@ transcription drift):
   pop-over path the capture harness does not exercise).
 - Escape-dismiss hand-test on the pop-overs.
 - Multi-hour Canvas/CPU sanity while printing.
-- One old + one current Cura (the README claims Cura 5.7-5.13 /
+- One old + one current Cura (the README claims Cura 5.7-5.14 beta 1 /
   SDK 8.7-8.12).
 Once the workflow's tag-built artifacts exist, unpack the curapackage and
 grep the shipped QML/Python for the verification markers — no `BISECT`,
@@ -1031,7 +1031,7 @@ it links the Qt graphics runtime even for offline shader compilation. CI
 installs the capture runtime before this build step for that reason.
 `tools/build_shaders.py` requests shader-bundle format 64 and embeds GLSL,
 HLSL and Metal translations. Format 64 is readable by Qt 6.4 and later;
-Cura 5.7 already pins Qt 6.6, so the format covers Cura 5.7 through 5.13.
+Cura 5.7 already pins Qt 6.6, so the format covers the supported Cura 5.7 through 5.14 beta 1 range.
 The bundles have been exercised on Cura 5.13's Qt 6.6 OpenGL backend;
 this is not a claim that every Cura/platform combination was tested locally.
 The graphics driver compiles the packaged target shader when first used;

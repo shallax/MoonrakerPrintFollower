@@ -60,12 +60,12 @@ class SdkCompatibilityTests(unittest.TestCase):
     def test_plugin_declares_complete_cura_5_sdk_8_line(self):
         self.assertEqual(
             PLUGIN_META["supported_sdk_versions"],
-            ["8.7.0", "8.8.0", "8.9.0", "8.10.0", "8.11.0", "8.12.0"],
+            ["8.7.0", "8.8.0", "8.9.0", "8.10.0", "8.11.0", "8.12.0", "8.13.0"],
         )
         self.assertEqual(PLUGIN_META["api"], 8)
 
     def test_readme_states_cura_5_compatibility_boundary(self):
-        self.assertIn("Cura 5.7–5.13 / SDK 8.7–8.12", README)
+        self.assertIn("Cura 5.7–5.14 beta 1 / SDK 8.7–8.13", README)
         self.assertIn("Cura 4.x / SDK 7.x is not supported", README)
         self.assertIn("5.7 floor", README)
 

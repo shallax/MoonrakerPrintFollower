@@ -9,7 +9,7 @@ cd "$root"
 
 HARNESS_DIR="${HARNESS_DIR:-/tmp/mpf}"
 CONTAINER="${HARNESS_CONTAINER:-mpf-cura-ci}"
-PRIMARY="${CURA_PRIMARY:-5.13.0}"
+PRIMARY="${CURA_PRIMARY:-5.14.0-beta.1}"
 RUN_ROOT="$HARNESS_DIR/ui-artifacts/runs/$(date +%Y-%m-%d-%H%M%S)"
 
 mkdir -p "$HARNESS_DIR" "$RUN_ROOT"

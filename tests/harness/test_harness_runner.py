@@ -1536,11 +1536,13 @@ class CaptureGateTests(unittest.TestCase):
         import subprocess
         env = {key: value for key, value in os.environ.items()
                if key not in ("GITHUB_ACTIONS", "HARNESS_DISPOSABLE_HOST")}
-        proc = subprocess.run(["bash", str(ROOT / "tools/native_harness.sh"),
-                               "macos", "5.13.0", "preview"], env=env,
-                              capture_output=True, text=True, timeout=10)
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("deletes/reseeds its user profile", proc.stderr)
+        for version in ("5.13.0", "5.14.0-beta.1"):
+            with self.subTest(version=version):
+                proc = subprocess.run(["bash", str(ROOT / "tools/native_harness.sh"),
+                                       "macos", version, "preview"], env=env,
+                                      capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn("deletes/reseeds its user profile", proc.stderr)
         script = (ROOT / "tools/native_harness.sh").read_text(encoding="utf-8")
         self.assertLess(script.index('if [ "${GITHUB_ACTIONS:-}"'), script.index('sudo rm -rf "$APP"'))
 

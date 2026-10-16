@@ -9,9 +9,12 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
 - **Release:** 6.0.0
-- **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+- **Target:** Cura 5.7–5.14 beta 1 / SDK 8.7–8.13
 
 ## What changed in 6.0.0
+
+- Add Cura 5.14 beta 1 / SDK 8.13 support, with 5.14 beta 1 as the primary
+  CI version, 5.13 as secondary, and the beta included in the UI Version Sweep.
 
 Print Follower can recover a printing or paused virtual-SD job from an exact,
 selected motion boundary. It can also select an unloaded root G-code file and
@@ -749,9 +752,9 @@ After verifying the integrated plugin with your printers, the separate Moonraker
 
 ## Cura / SDK compatibility
 
-The plugin targets **Cura 5.7 / SDK 8.7** through **Cura 5.13 / SDK 8.12**. The package declares SDK 8.7 as its minimum package SDK, and `plugin.json` records the SDKs 8.7 through 8.12 — a deliberate product boundary; the 5.7 floor is not an API dependency.
+The plugin targets **Cura 5.7 / SDK 8.7** through **Cura 5.14 beta 1 / SDK 8.13**. The package declares SDK 8.7 as its minimum package SDK, and `plugin.json` records the SDKs 8.7 through 8.13 — a deliberate product boundary; the 5.7 floor is not an API dependency.
 
-The implementation stays on APIs present across Cura 5.7–5.13: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
+The implementation stays on APIs present across Cura 5.7–5.14 beta 1: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
 
 Cura 4.x / SDK 7.x is not supported, and neither is Cura 5.6 or older. On Cura 5.11 alone the preview integration is limited by a 5.11 SimulationView bug: that version rebuilds its view layers only when the Preview stage is re-entered, and the plugin's load lands while Preview is already open — so the live print does not appear in the view and the layer slider stays hidden after a load until you switch tabs and come back (the follower's card, state and pause scheduling still work throughout).
 
