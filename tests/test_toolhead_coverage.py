@@ -255,7 +255,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         controller.z_to_zero()
         commands.complete()
         scripts = self._scripts(commands)
-        self.assertEqual(scripts, ["G28", "G28 Y", "M18", 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 X100 Y50 Z50 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0',
+        self.assertEqual(scripts, ["G28", "G28 Y", "M18", 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 X100 Y50 Z50 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0',
                                    'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 Z0 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
     def test_centre_is_refused_without_usable_axis_limits(self):

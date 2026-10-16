@@ -150,7 +150,7 @@ def prepare(op, status):
         axes = range(3) if op.kind == "center" else (2,) if op.kind == "z0" else \
             [i for i, v in enumerate(op.targets) if v is not None]
         coordinates = " ".join(f"{'XYZ'[i]}{command_number(target[i])}" for i in axes)
-        line = f"G90\nG1 {coordinates} F600"
+        line = f"G90\nG1 {coordinates} F{600 if op.kind == 'z0' else 3000}"
     # Save the ACTUAL mode/feedrate inside the script, not a polling guess.
     return "SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\n" + line \
         + "\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0"

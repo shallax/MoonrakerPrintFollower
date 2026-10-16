@@ -201,7 +201,7 @@ class GuardedDispatchTests(unittest.TestCase):
         for task in list(self.data.delayed): task()
         self.assertEqual(self.data.requests[-1].path, 'printer/objects/query')
         self.query()
-        self.assertIn('G1 X150 F600', self.scripts()[-1])
+        self.assertIn('G1 X150 F3000', self.scripts()[-1])
 
     def test_bad_input_lock_disconnect_and_unknown_state_still_refuse_offsets(self):
         for amount in (float('nan'), float('inf'), True, 0, 6):

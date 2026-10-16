@@ -166,7 +166,7 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
     def test_center_and_z0_moves(self):
         self.data.set_state("paused")
         self.controller.center_toolhead()
-        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 X100 Y100 Z50 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 X100 Y100 Z50 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.commands.complete()
         self.controller.z_to_zero()
         self.assertEqual(self.scripts()[-1], 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 Z0 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0')
