@@ -77,6 +77,53 @@ def _container(work_dir, path):
 
 
 class CuraProfileVersionTests(unittest.TestCase):
+    def test_stale_cached_wheels_are_replaced_using_separate_binding_and_qt_pins(self):
+        version = "5.14.0-beta.1"
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            prepared = base / version
+            (prepared / "root").mkdir(parents=True)
+            (prepared / "UltiMaker-Cura.AppImage").write_bytes(b"cached-appimage")
+            wheels = prepared / "wheels"
+            wheels.mkdir()
+            (wheels / "stale-file").write_bytes(b"old wheel")
+            (prepared / "manifest.json").write_text(json.dumps({
+                "launch": "loader", "env": "modern", "bundled_python": "3.11",
+                "bundled_pyqt6": "6.6.0"}), encoding="utf-8")
+            def fetch(package, pin, abi3, destination):
+                name = f"{package}-{pin}.whl"
+                (destination / name).write_bytes(b"wheel")
+                return name
+            def unpack(*args, **kwargs):
+                binding = wheels / "PyQt6"
+                binding.mkdir(exist_ok=True)
+                (binding / "QtTest.abi3.so").write_bytes(b"test binding")
+            with patch.object(fetch_cura, "BASE", base), patch("sys.argv", ["fetch_cura.py", version]), \
+                    patch.object(fetch_cura, "discover", return_value=("3.11", "6.10.0", "6.10.1")), \
+                    patch.object(fetch_cura, "fetch_wheel", side_effect=fetch) as downloads, \
+                    patch.object(fetch_cura, "sh", side_effect=unpack):
+                self.assertEqual(fetch_cura.main(), 0)
+            self.assertEqual([(call.args[0], call.args[1]) for call in downloads.call_args_list],
+                             [("PyQt6", "6.10.0"), ("PyQt6-Qt6", "6.10.1")])
+            self.assertFalse((wheels / "stale-file").exists())
+            manifest = json.loads((prepared / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["bundled_pyqt6"], "6.10.0")
+            self.assertEqual(manifest["bundled_qt6"], "6.10.1")
+
+    def test_runtime_pins_come_from_embedded_metadata_in_flat_appimages(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "cura").mkdir()
+            metadata = root / "cura/CuraVersion.py"
+            metadata.write_text("PythonInstalls = {'PyQt6': {'version': '6.10.0'}, "
+                                "'PyQt6-Qt6': {'version': '6.10.1'}}\n"
+                                "ConanInstalls = {'cpython': {'version': '3.11.9'}}\n",
+                                encoding="utf-8")
+            self.assertEqual(fetch_cura.discover(root), ("3.11", "6.10.0", "6.10.1"))
+            metadata.unlink()
+            with self.assertRaisesRegex(RuntimeError, "refusing guessed QtTest"):
+                fetch_cura.discover(root)
+
     @unittest.skipIf(os.name == "nt", "POSIX access modes")
     def test_extracted_tools_are_readable_across_uids_without_world_writes(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -111,9 +158,11 @@ class CuraProfileVersionTests(unittest.TestCase):
             root.mkdir(mode=0o700)
             wheels = manifest_path.parent / "wheels"
             wheels.mkdir(mode=0o700)
-            manifest_path.write_text(json.dumps({"launch": "loader", "env": "legacy"}),
+            manifest_path.write_text(json.dumps({"launch": "loader", "env": "legacy",
+                "bundled_python": "3.11", "bundled_pyqt6": "6.10.0", "bundled_qt6": "6.10.0"}),
                                      encoding="utf-8")
-            with patch.object(fetch_cura, "BASE", base), patch("sys.argv", ["fetch_cura.py", version]):
+            with patch.object(fetch_cura, "BASE", base), patch("sys.argv", ["fetch_cura.py", version]), \
+                    patch.object(fetch_cura, "discover", return_value=("3.11", "6.10.0", "6.10.0")):
                 self.assertEqual(fetch_cura.main(), 0)
             self.assertEqual(json.loads(manifest_path.read_text(encoding="utf-8"))["env"], "modern")
             if os.name != "nt":

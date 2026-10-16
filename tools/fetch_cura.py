@@ -18,6 +18,7 @@ always match the bundle exactly.
 from __future__ import annotations
 
 import argparse
+import ast
 import datetime
 import glob
 import hashlib
@@ -96,24 +97,38 @@ def fetch_wheel(pkg: str, version: str, abi3: bool, dest: pathlib.Path) -> str:
     return wheel["filename"]
 
 
-def discover(root: pathlib.Path) -> tuple[str, str]:
-    """Read the bundled python and PyQt6 versions from the extraction."""
-    python = find_one(str(root / "usr/bin/python3.*"))
-    if not python:
-        python = find_one(str(root / "bin/python3.*"))
-    pyv = re.search(r"python(\d\.\d+)", python).group(1) if python else "3.11"
-    dist = find_one(str(root / "**/PyQt6-*.dist-info")) or \
-        find_one(str(root / "**/PyQt6_Qt6-*.dist-info"))
-    if dist:
-        m = re.search(r"PyQt6(?:_Qt6)?-([\d.]+)\.dist-info", dist)
-        qt6 = m.group(1) if m else "6.6.0"
-    else:
-        # The Qt6 library version stands in for the wheel pin (the
-        # PyQt6 and PyQt6-Qt6 wheels always share one version).
-        lib = find_one(str(root / "**/Qt6/lib/libQt6Core.so.6*"))
-        m = re.search(r"libQt6Core\.so\.6\.([\d.]+)", lib) if lib else None
-        qt6 = m.group(1) if m else "6.6.0"
-    return pyv, qt6
+def discover(root: pathlib.Path) -> tuple[str, str, str]:
+    """Read exact Python, binding and Qt pins without executing bundled code."""
+    metadata = find_one(str(root / "**/cura/CuraVersion.py"))
+    values = {}
+    if metadata:
+        for node in ast.parse(pathlib.Path(metadata).read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in {"PythonInstalls", "ConanInstalls"}:
+                        values[target.id] = ast.literal_eval(node.value)
+    installs = values.get("PythonInstalls", {})
+    binding = installs.get("PyQt6", {}).get("version")
+    qt = installs.get("PyQt6-Qt6", {}).get("version")
+    python = find_one(str(root / "usr/bin/python3.*")) or find_one(str(root / "bin/python3.*"))
+    match = re.search(r"python(\d\.\d+)", python or "")
+    pyv = match.group(1) if match else values.get("ConanInstalls", {}).get("cpython", {}).get("version")
+    if pyv:
+        pyv = ".".join(pyv.split(".")[:2])
+    # Older bundles may retain wheel metadata instead of build metadata.
+    for package, current in (("PyQt6", binding), ("PyQt6_Qt6", qt)):
+        if current:
+            continue
+        dist = find_one(str(root / f"**/{package}-*.dist-info"))
+        match = re.search(r"-([\d.]+)\.dist-info$", dist or "")
+        if match:
+            if package == "PyQt6":
+                binding = match.group(1)
+            else:
+                qt = match.group(1)
+    if not all((pyv, binding, qt)):
+        raise RuntimeError(f"Cannot determine bundled Python/PyQt6/Qt versions from {root}; refusing guessed QtTest wheels")
+    return pyv, binding, qt
 
 
 def main() -> int:
@@ -192,8 +207,12 @@ def main() -> int:
                                      encoding="utf-8")
             print(f"{version}: updated the boot verdicts to {launch}/{env}")
     if manifest_path.exists() and not args.force:
-        print(f"{version}: already prepared at {vdir}")
-        return 0
+        pyv, binding, qt = discover(vdir / "root")
+        if (manifest.get("bundled_python"), manifest.get("bundled_pyqt6"),
+                manifest.get("bundled_qt6", manifest.get("bundled_pyqt6"))) == (pyv, binding, qt):
+            print(f"{version}: already prepared at {vdir}")
+            return 0
+        print(f"{version}: cached QtTest wheels do not match the bundle; refreshing them")
     vdir.mkdir(parents=True, exist_ok=True)
 
     appimage = vdir / "UltiMaker-Cura.AppImage"
@@ -244,20 +263,21 @@ def main() -> int:
         interp.parent.mkdir(parents=True, exist_ok=True)
         interp.symlink_to("/lib64/ld-linux-x86-64.so.2")
 
-    pyv, qt6 = discover(root)
-    print(f"bundled python {pyv}, PyQt6 {qt6}")
+    pyv, qt6, qt_runtime = discover(root)
+    print(f"bundled python {pyv}, PyQt6 {qt6}, Qt {qt_runtime}")
 
     wheels = vdir / "wheels"
+    shutil.rmtree(wheels, ignore_errors=True)
     wheels.mkdir(exist_ok=True)
     wheels_dl = vdir / "downloads"
     wheels_dl.mkdir(exist_ok=True)
     print(f"downloading PyQt6=={qt6} wheels (the bundled python is {pyv}; "
           "the wheels are abi3)")
     wheel_files = []
-    for pkg, abi3 in (("PyQt6", True), ("PyQt6-Qt6", False)):
-        wheel_files.append(fetch_wheel(pkg, qt6, abi3, wheels_dl))
-    for whl in wheels_dl.glob("*.whl"):
-        sh("unzip", "-o", "-q", str(whl), "-d", str(wheels))
+    for pkg, pin, abi3 in (("PyQt6", qt6, True), ("PyQt6-Qt6", qt_runtime, False)):
+        wheel_files.append(fetch_wheel(pkg, pin, abi3, wheels_dl))
+    for name in wheel_files:
+        sh("unzip", "-o", "-q", str(wheels_dl / name), "-d", str(wheels))
 
     make_host_tools_readable(wheels)
 
@@ -275,6 +295,7 @@ def main() -> int:
         "env": env,
         "bundled_python": pyv,
         "bundled_pyqt6": qt6,
+        "bundled_qt6": qt_runtime,
         "wheels": [
             {"filename": name,
              "sha256": hashlib.sha256(
