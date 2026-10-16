@@ -77,17 +77,48 @@ def _container(work_dir, path):
 
 
 class CuraProfileVersionTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX access modes")
+    def test_extracted_tools_are_readable_across_uids_without_world_writes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "root"
+            root.mkdir(mode=0o700)
+            nested = root / "lib"
+            nested.mkdir(mode=0o700)
+            data = nested / "library.so"
+            data.write_bytes(b"fixture")
+            data.chmod(0o600)
+            binary = root / "UltiMaker-Cura"
+            binary.write_bytes(b"fixture")
+            binary.chmod(0o700)
+            outside = Path(temp) / "outside"
+            outside.write_bytes(b"untouched")
+            outside.chmod(0o600)
+            (root / "external-link").symlink_to(outside)
+            fetch_cura.make_host_tools_readable(root)
+            self.assertEqual(root.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(nested.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(data.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(binary.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(outside.stat().st_mode & 0o777, 0o600)
+
     def test_prepared_beta_uses_the_modern_boot_environment(self):
         version = "5.14.0-beta.1"
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
             manifest_path = base / version / "manifest.json"
             manifest_path.parent.mkdir()
+            root = manifest_path.parent / "root"
+            root.mkdir(mode=0o700)
+            wheels = manifest_path.parent / "wheels"
+            wheels.mkdir(mode=0o700)
             manifest_path.write_text(json.dumps({"launch": "loader", "env": "legacy"}),
                                      encoding="utf-8")
             with patch.object(fetch_cura, "BASE", base), patch("sys.argv", ["fetch_cura.py", version]):
                 self.assertEqual(fetch_cura.main(), 0)
             self.assertEqual(json.loads(manifest_path.read_text(encoding="utf-8"))["env"], "modern")
+            if os.name != "nt":
+                self.assertEqual(root.stat().st_mode & 0o555, 0o555)
+                self.assertEqual(wheels.stat().st_mode & 0o555, 0o555)
 
     @unittest.skipUnless(SHELL, NO_SHELL)
     def test_beta_and_stable_releases_use_major_minor_profile_directories(self):

@@ -45,6 +45,22 @@ def download(url: str, dest: pathlib.Path) -> None:
     sh("curl", "-fL", "--retry", "3", "-C", "-", "-o", str(dest), url)
 
 
+def make_host_tools_readable(root: pathlib.Path) -> None:
+    """Extracted AppImages may contain owner-only modes; Cura runs as another UID.
+
+    Grant read/traverse access, preserving executable files and owner writes.
+    Do not follow symlinks outside the prepared toolchain.
+    """
+    if not root.exists() or root.is_symlink():
+        return
+    for path in (root, *root.rglob("*")):
+        if path.is_symlink():
+            continue
+        mode = path.stat().st_mode & 0o7777
+        access = 0o555 if path.is_dir() or mode & 0o111 else 0o444
+        path.chmod(mode | access)
+
+
 def find_one(pattern: str) -> str | None:
     hits = sorted(glob.glob(pattern, recursive=True))
     return hits[0] if hits else None
@@ -154,6 +170,13 @@ def main() -> int:
 
     # Idempotent and cheap: a tree prepared before this fix still
     # gets the link (the version sweep fetched ahead of it).
+    # Cached trees need the same repair as fresh extractions. Older
+    # manifests can predate the cross-UID permissions fix.
+    for path in (BASE, vdir):
+        if path.exists():
+            path.chmod(path.stat().st_mode | 0o555)
+    make_host_tools_readable(vdir / "root")
+    make_host_tools_readable(vdir / "wheels")
     normalise_binary(vdir / "root")
     launch = probe_launch(vdir / "root")
     env = probe_env(vdir / "root")
@@ -209,6 +232,7 @@ def main() -> int:
         appimage.chmod(0o755)
         sh(str(appimage), "--appimage-extract", cwd=vdir)
         shutil.move(str(vdir / "squashfs-root"), str(root))
+    make_host_tools_readable(root)
     normalise_binary(root)
     # CuraEngine's ELF carries a RELATIVE interpreter path
     # ("lib64/ld-linux-x86-64.so.2") — the kernel resolves it from the
@@ -234,6 +258,8 @@ def main() -> int:
         wheel_files.append(fetch_wheel(pkg, qt6, abi3, wheels_dl))
     for whl in wheels_dl.glob("*.whl"):
         sh("unzip", "-o", "-q", str(whl), "-d", str(wheels))
+
+    make_host_tools_readable(wheels)
 
     qt_test = wheels / "PyQt6" / "QtTest.abi3.so"
     if not qt_test.exists():
