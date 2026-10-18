@@ -464,7 +464,9 @@ change together:
    keep older release plans as history
 7. `docs/TESTING.md` — keep the current-release testing commands and evidence
    at the top; label older harness audits as historical
-8. At release time, Git tag — `v<version>`; the release workflow validates the
+8. Source headers — complete the end-of-cycle history review below, including
+   fixes made after the first release candidate, before building final archives.
+9. At release time, Git tag — `v<version>`; the release workflow validates the
    tag against both version fields and fails on mismatch
 
 The version test asserts `package_version` and `plugin` `version` stay in
@@ -916,13 +918,27 @@ an SPDX licence identifier. The project licence is GNU GPLv3, version 3 only
 (`GPL-3.0-only`); the full text is in `LICENSE`. Preserve upstream attribution
 and licence terms in derived camera modules and vendored fixtures.
 
-Each source header also records a brief Git-history snapshot: the earliest commit
-and two latest content changes, following renames, in newest-first order. Pure
-renames with no content change are omitted from the recent entries.
-Entries use Git author dates, abbreviated commit hashes and commit subjects;
-subjects describe the containing commit and can cover more than that one file.
-Git remains the complete history. Keep future entries brief and accurate rather
-than copying the full log into each file. Shebangs, encoding declarations and
+The initial 6.0.0 source headers record the earliest commit and two latest content
+changes, following renames, in newest-first order. Those snapshot entries use Git
+author dates, abbreviated hashes and commit subjects; subjects can describe a
+larger change than that file alone.
+
+At the end of **every release cycle**, review every project-owned source header
+against the Git history since the preceding release tag (or the recorded cycle
+base when no tag exists). **Update each changed file's header with its pertinent
+changes before building the final release archives and tagging.** This also
+applies when finalizing another candidate without changing the version number.
+
+Use brief, file-specific summaries of meaningful behaviour changes, fixes or
+structural changes, with `YYYY-MM-DD` dates from the relevant Git commits and the
+release version. Include commit references where available and follow renames
+when finding earlier history. Add new entries newest first, retain the original
+provenance, and keep only a short selection of recent pertinent entries: Git is
+the complete history. Do not manufacture entries for unchanged files, pure
+renames or edits confined to notices. Recheck late release fixes so their entries
+are included in the final packaged sources.
+
+Shebangs, encoding declarations and
 format directives retain their required positions before the header. Do not add
 comments to JSON, binary/generated assets or byte-sensitive G-code fixtures.
 Vendored Cura/Uranium files retain their original notices without project headers.
