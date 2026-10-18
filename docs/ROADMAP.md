@@ -35,9 +35,17 @@ The whole-product audit also corrects file-manager races and sorting, decoded
 camera freshness, heater command ordering and recovery modal-state restoration.
 G-code indexing and CPU geometry now have supported library entry points without
 Cura or Qt, with optional Qt renderers and an independently installed wheel proof.
-The library and Cura plugin share the same implementations and version.
+The `moonraker_toolpath` distribution contains only the shared dependency closure
+and renderer shaders, with an immutable document API and explicit advanced compact
+indexing. The library and Cura plugin share source implementations and version.
 
-Remaining work is validation rather than a claim of automatic failure detection:
+Further modularity remains possible: `PlateQt` still combines raster painting with
+QObject asset publication and worker/checkpoint ownership. Separating that lifecycle
+from painting would allow a smaller raster-only import. The compact index also
+retains plugin-oriented retention fields. These are architectural follow-ups, not
+claims that all useful boundaries have already been extracted.
+
+Release qualification still needs validation:
 continue exercising paused/unloaded recovery on real printers and across supported
 Cura versions. Runout markers, parser position and recorded toolpaths cannot prove
 where extrusion physically stopped after a jam. Reliable missing-material detection

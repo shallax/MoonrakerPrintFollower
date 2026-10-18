@@ -3,13 +3,14 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
-# 2026-10-18 — 6.0.0: Exercise public components in an isolated stdlib-only consumer.
+# 2026-10-18 — 6.0.0: Exercise the selective namespace in an isolated stdlib-only consumer.
 
 """The documented core API must remain independent of optional runtimes."""
 from pathlib import Path
 import tempfile
 import unittest
 from tools.check_library import CORE_PROBE, ROOT, SAMPLE, run_probe
+from tools.library_manifest import source_files
 
 
 class LibraryApiTests(unittest.TestCase):
@@ -17,4 +18,9 @@ class LibraryApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             sample = Path(directory) / "part.gcode"
             sample.write_bytes(SAMPLE)
-            run_probe(CORE_PROBE, ROOT, sample, pure=True, cwd=directory)
+            installation = Path(directory) / "installed"
+            for member, source in source_files().items():
+                target = installation / member
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / source).read_bytes())
+            run_probe(CORE_PROBE, installation, sample, pure=True, cwd=directory)

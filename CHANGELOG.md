@@ -6,7 +6,12 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 - Package reusable G-code indexing and toolpath geometry as a dependency-free
   Python library, with optional Qt raster/scene-graph rendering, documented public
-  entry points and an installed-wheel example checked in CI.
+  entry points and an installed-wheel example checked in CI. The separate
+  `moonraker_toolpath` package excludes application services and provides immutable
+  document/layer snapshots alongside the advanced compact index API.
+- Ignore malformed optional per-extruder filament diameter comments while indexing.
+  Synchronise the shared layer cache across independent documents, and convert
+  empty immutable geometry safely when publishing it to Qt.
 - Fix descending file-name sorts, incomplete or superseded directory walks,
   stale print-start acknowledgements and upload confirmations after a printer or
   directory change. Protect the active print and its containing directories.

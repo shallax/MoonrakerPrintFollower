@@ -10,9 +10,9 @@ wheel into a temporary directory and exercises it outside the checkout.
 Install the resulting wheel in your own project's environment:
 
 ```sh
-python -m pip install dist/library/moonraker_print_follower-6.0.0-py3-none-any.whl
+python -m pip install dist/library/moonraker_toolpath-6.0.0-py3-none-any.whl
 # Optional raster and scene-graph rendering:
-python -m pip install 'dist/library/moonraker_print_follower-6.0.0-py3-none-any.whl[qt]'
+python -m pip install 'dist/library/moonraker_toolpath-6.0.0-py3-none-any.whl[qt]'
 ```
 
 CI includes this wheel in its package artifacts. The release workflow also
@@ -24,47 +24,78 @@ dependencies. The `qt` extra uses PyQt6 6.11 or newer within major version 6;
 the `fast` extra adds optional NumPy acceleration. The standard-library vertex
 packer remains available without NumPy. Install these into a separate project
 environment; Cura continues to use its bundled dependencies. The distribution
-name is `moonraker-print-follower`, and its Python package is `mpf`.
+name is `moonraker-toolpath`, and its Python package is `moonraker_toolpath`.
 
 ## Public modules
 
 | Module | Supported exports | Dependencies |
 | --- | --- | --- |
-| `mpf.gcode` | `build_index_from_file`, `build_index_from_bytes`, `hydrate_layer_from_file`, `LayerMotionIndex`, `IndexView`, `RecoveryBoundary`, `prepare_layer`, `motion_edges`, `split_index` | Standard library |
-| `mpf.plate` | `prepare`, `stroke_geometry`, `marker_counts`, `marker_geometry`, `pack_shader` | Standard library; optional NumPy |
-| `mpf.plate.qt` | `GpuFollower`, `PlateLayer`, `render_layer_raster`, `render_layer_prefix`, `render_navigation_layer` | PyQt6 |
-| `mpf.geometry.Polygons` | `point_in_polygon`, `polygon_bounds`, `segment_in_polygon` | Standard library |
+| `moonraker_toolpath` | `GCodeDocument`, `LayerInfo` | Standard library |
+| `moonraker_toolpath.gcode` (advanced) | `build_index_from_file`, `build_index_from_bytes`, `hydrate_layer_from_file`, `LayerMotionIndex`, `IndexView`, `RecoveryBoundary`, `prepare_layer`, `motion_edges`, `split_index` | Standard library |
+| `moonraker_toolpath.plate` | `prepare`, `stroke_geometry`, `marker_counts`, `marker_geometry`, `pack_shader` | Standard library; optional NumPy |
+| `moonraker_toolpath.plate.qt` | `GpuFollower`, `PlateLayer`, `render_layer_raster`, `render_layer_prefix`, `render_navigation_layer` | PyQt6 |
+| `moonraker_toolpath.geometry.Polygons` | `point_in_polygon`, `polygon_bounds`, `segment_in_polygon` | Standard library |
 
 These entry points are the supported reuse surface. Internal modules,
 underscore-prefixed names, Cura adapters and workflow controllers may change.
 The library makes no network requests and loads no Cura services when these
-entry points are imported. The wheel includes the remaining plugin modules
-and resources, but importing Cura adapters still requires Cura.
+entry points are imported. The wheel contains only the shared parser/geometry/rendering dependency closure
+and its stroke shaders. Cura registration, networking, cameras, runtime installers
+and application workflows are excluded. The build maps these modules directly
+from their production source files; there is no copied implementation or alias layer.
 
 ## Index and inspect a layer
 
 ```python
-from mpf.gcode import build_index_from_file, hydrate_layer_from_file, prepare_layer
-from mpf.plate import prepare, pack_shader
+from moonraker_toolpath import GCodeDocument
+from moonraker_toolpath.plate import prepare, pack_shader
 
-index = build_index_from_file("part.gcode", compact=True)
-layer = 0
-if not hydrate_layer_from_file(index, "part.gcode", layer):
-    raise RuntimeError("Layer could not be loaded")
-payload = prepare_layer(index, layer)
-if payload is None:
-    raise RuntimeError("Layer is unavailable")
-geometry = prepare((("current", payload),))
-vertices = pack_shader(geometry)
-print(index.layer_count(), payload["motions"], len(vertices))
+document = GCodeDocument.from_file("part.gcode")
+info = document.layer_info(0)
+payload = document.geometry(0)
+vertices = pack_shader(prepare((("current", payload),)))
+print(document.layer_count, info.motion_count, len(vertices))
+print(document.boundary(0, completed_motions=2))
 ```
 
-`build_index_from_bytes(data)` is convenient for small files and keeps the
-motion arrays in memory. File indexing supports a compact index: hydrate a
-layer before asking for its geometry or exact motion boundary. Keep the file
-unchanged between indexing and hydration. A cancellation event can be supplied
-to the index and vertex builders; do not treat cancelled or unavailable
-geometry as a completed result.
+`GCodeDocument.from_bytes(data)` accepts bytes. Both constructors retain the full
+index in memory; memory use grows with file complexity. Keep the source unchanged
+while loading it. Once loading finishes, it may be changed or deleted: the document
+never reopens it. Loading is synchronous; applications should call it on their own
+worker for large inputs. A supplied `cancel_event` causes `CancelledError` instead
+of returning a partial document.
+
+`layer_info(i)` returns frozen metadata: original byte range, total motion count,
+retained motion count, completeness and deposited `layer_height_mm` (thickness,
+not absolute nozzle Z). The scanner retains at most 200,000 motions per layer;
+`geometry(i)` raises `ValueError` for an incomplete layer. Invalid layer inputs
+raise `IndexError`; invalid completed-motion counts raise `ValueError`.
+`boundary(i, count)` returns a frozen exact boundary or `None` when there is no
+complete next motion, including the end of the document.
+
+`geometry(i)` returns a deeply immutable renderer mapping. It copies mutable
+containers while reusing immutable point/polyline tuples. Snapshots remain valid
+after another layer is queried or the internal prepared cache evicts an entry.
+Document reads are safe across threads. The private index and its cache/retention
+state are not part of this interface.
+
+### Advanced compact indexing
+
+For files too large to retain in memory, `moonraker_toolpath.gcode` exposes the
+lower-level mutable index API. Its caller owns file identity, cancellation,
+hydration, locking and retention. Keep the file unchanged from initial indexing
+through the last hydration; the API does not enforce source identity for you.
+
+```python
+from moonraker_toolpath.gcode import build_index_from_file, hydrate_layer_from_file, prepare_layer
+
+index = build_index_from_file("part.gcode", compact=True)
+if not hydrate_layer_from_file(index, "part.gcode", 0):
+    raise RuntimeError("Layer could not be loaded")
+payload = prepare_layer(index, 0)
+if payload is None:
+    raise RuntimeError("Layer is unavailable")
+```
 
 Coordinates use millimetres with Z upward. Layer indices are zero-based.
 Motion counts represent original motion commands, including non-extruding
@@ -74,7 +105,7 @@ completed motions. `IndexView.recovery_boundary(layer, completed_motions)`
 returns an exact indexed inspection boundary, or `None` when unavailable.
 That boundary alone is not an executable printer recovery plan.
 
-Prepared payloads are borrowed, cached values. Treat them as immutable and
+Advanced `prepare_layer` payloads are borrowed, cached values. Treat them as immutable and
 keep them alive while another thread renders them. The `classes` and `travels`
 paths carry XY and original motion indices. Display geometry may be simplified;
 use the index and exact boundary APIs for command positions. The indexer is
@@ -83,8 +114,8 @@ coordinate modes, not arbitrary CNC dialects or execution of custom macros.
 
 ### Geometry return values
 
-All packed coordinate arrays use native float32 bytes. Keep payloads and returned
-rows immutable. `sx`/`sy` rendering scales must be finite and nonzero.
+All packed coordinate arrays use native float32 bytes. Do not mutate advanced payloads or returned
+rows. `sx`/`sy` rendering scales must be finite and nonzero.
 
 | Function | Input and returned rows |
 | --- | --- |
@@ -119,8 +150,8 @@ let Qt invoke scene-graph painting on its render thread. The GPU renderer
 requires OpenGL; use the raster API when that backend is unavailable. Raw
 payload dictionaries do not replace `PlateLayer` objects in this interface.
 
-The core imports, installed-wheel resources, raster pixels and retained
-geometry are checked by `make library`; the normal test suite additionally
+The exact distribution boundary, shared-source parity, installed imports,
+raster pixels and retained geometry are checked by `make library`; the normal test suite additionally
 covers geometry parity, cancellation, cache reuse and Qt scene-graph behaviour.
 
 ## Licence
@@ -128,4 +159,5 @@ covers geometry parity, cancellation, cache reuse and Qt scene-graph behaviour.
 Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>.
 The library and plugin are GPLv3-only; see [LICENSE](../LICENSE). Reusing or
 redistributing them remains subject to that licence. Upstream notices are
-retained on the camera components that incorporate LGPLv3-or-later code.
+retained in the repository’s third-party notice file; camera components are not
+part of this standalone distribution.

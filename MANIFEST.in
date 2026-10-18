@@ -1,0 +1,9 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Release history:
+# 2026-10-18 — 6.0.0: Retain the shared-source build manifest in source distributions.
+
+include tools/library_build.py tools/library_manifest.py
+prune tests

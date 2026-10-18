@@ -3,14 +3,14 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
-# 2026-10-18 — 6.0.0: Package reusable G-code and rendering components with optional Qt.
+# 2026-10-18 — 6.0.0: Package a standalone toolpath distribution with optional Qt.
 
 [build-system]
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "moonraker-print-follower"
+name = "moonraker-toolpath"
 version = "6.0.0"
 description = "Reusable G-code indexing, toolpath geometry and optional Qt rendering from MoonrakerPrintFollower"
 readme = "docs/LIBRARY.md"
@@ -28,11 +28,8 @@ fast = ["numpy>=1.26"]
 Repository = "https://github.com/shallax/MoonrakerPrintFollower"
 Documentation = "https://github.com/shallax/MoonrakerPrintFollower/blob/release/v6.0.0/docs/LIBRARY.md"
 
-[tool.setuptools.packages.find]
-include = ["mpf", "mpf.*"]
-
-[tool.setuptools.package-data]
-mpf = ["**/*.qml", "**/*.json", "**/*.svg", "**/*.png", "**/*.qsb", "**/*.vert", "**/*.frag", "**/*.shader", "**/*.js", "**/qmldir", "qmldir"]
+[tool.setuptools]
+include-package-data = false
 
 [tool.setuptools.exclude-package-data]
 "*" = ["**/__pycache__/*", "**/.*", "**/*.pyc", "**/*.pyo", "**/*.orig", "**/*.rej", "**/*.swp", "**/*.swo", "**/*.tmp", "**/*.bak", "**/*~"]

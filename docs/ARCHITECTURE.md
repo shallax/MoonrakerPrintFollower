@@ -142,6 +142,7 @@ correct package ownership.
 | `GCodeIndexService.py` | Index lifecycle, bounded worker execution, `IndexView`, and the shared live-motion observation service | Networking or UI |
 | `PlateSplitTracker.py` | Pure shared live-motion boundary policy: accepted floor, below-floor evidence, layer/print reset and adaptive compact search window | Qt, geometry matching, rendering |
 | `LoadStateTracker.py` | The refresh-side load state: the pending flags and their age-out windows, the busy term, the monitor request's terminal conditions and the lease handoff | Snapshot semantics or Cura loading |
+| `GCodeDocument.py` | Standalone in-memory document; immutable layer metadata, geometry snapshots and exact boundaries | Printer jobs, source reopening, Qt, network and application state |
 | `GCodeIndex.py` | One bounded G-code scan, delegating header parsing and completed-record assembly | Cache files, hydration or application orchestration |
 | `FollowController.py` | Follow-mode decisions and state precedence | Preview writes or networking |
 | `CuraIntegration.py` | Scene/view/file lifecycle, guarded callbacks and Preview API access | Printer protocol |
@@ -2395,15 +2396,26 @@ capture generation, text contrast auditing and deterministic capture comparison.
 
 ## Reusable library and whole-product lifecycle contracts
 
-`mpf.gcode` exports the index, hydration, boundary and layer-payload APIs.
-`mpf.plate` exports CPU geometry from `ToolpathGeometry`; it imports no Qt or Cura.
-`mpf.plate.qt` explicitly opts into the existing Qt renderers. Production plugin
-consumers import those same owners. The wheel includes shader/QML resources and
-licence notices; it has no mandatory runtime dependencies. `make library` builds
-and installs it outside the checkout, checks exact source/resource parity and
-version synchronisation, then exercises stdlib-only indexing/vertices and optional
-Qt raster pixels/retained nodes. [LIBRARY.md](LIBRARY.md) defines the public
-contracts; internal adapters/controllers remain application-specific.
+The standalone distribution is `moonraker-toolpath`, imported as
+`moonraker_toolpath`. Its `GCodeDocument` owns an in-memory index and returns
+frozen layer metadata, immutable geometry snapshots and exact inspection
+boundaries. It refuses incomplete geometry when scanner retention limits are
+reached. The mutable compact index API is explicitly advanced: callers own
+source identity and hydration lifetime.
+
+`tools/library_manifest.py` declares the complete dependency closure and stroke
+shader resources. The build maps selected `mpf/gcode`, `mpf/plate`, `mpf/geometry`
+and `mpf/resources` sources into the standalone namespace with identical bytes.
+A separate small root exports the document API without Cura registration. There
+are no copied algorithms or compatibility aliases. Plugin services, QML screens,
+network clients, cameras and runtime installers are excluded. `ToolpathGeometry`
+remains Qt-free; `.plate.qt` opts into the existing Qt renderers.
+
+AST boundary tests include imports nested inside functions. `make library`
+installs outside the checkout, checks the exact source/resource inventory and
+version synchronisation, then exercises stdlib-only documents/indexing/vertices
+and optional Qt raster pixels/retained nodes. [LIBRARY.md](LIBRARY.md) defines
+consumer contracts and the advanced API's responsibilities.
 
 Recovery source scanning records the effective feed rate, independent raw E mode,
 arc plane and active EXCLUDE_OBJECT name. Setup macros invalidate feed rate as

@@ -19,7 +19,7 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 stable release. Alongside recovery and heater controls, this candidate fixes file-list sorting and stale operations,
 frozen-camera detection, and temperature-command ordering across the product.
 The parser and toolpath geometry are also available as a dependency-free Python
-library, with optional Qt rendering: see [reusing the components](docs/LIBRARY.md)
+`moonraker_toolpath` library, with immutable document snapshots and optional Qt rendering: see [reusing the components](docs/LIBRARY.md)
 for installation, public APIs and a standalone rendering example.
 
 - Add Cura 5.14 beta 1 / SDK 8.13 support, with 5.14 beta 1 as the primary

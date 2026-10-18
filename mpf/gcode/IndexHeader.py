@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Ignore malformed optional per-extruder diameter metadata.
 # 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
 
 """Read slicer layer markers and filament metadata before the motion scan."""
@@ -41,9 +42,12 @@ def read_header(path):
     for line in head_lines if "head_lines" in locals() else ():
         tool_diameter = re.match(rb";EXTRUDER_TRAIN\.(\d+)\.MATERIAL\.DIAMETER:\s*([0-9.]+)", line, re.IGNORECASE)
         if tool_diameter:
-            tool, value = int(tool_diameter.group(1)), float(tool_diameter.group(2))
-            if 0 <= tool < 16 and .1 <= value <= 10:
-                filament_diameters[tool] = value
+            try:
+                tool, value = int(tool_diameter.group(1)), float(tool_diameter.group(2))
+                if 0 <= tool < 16 and .1 <= value <= 10:
+                    filament_diameters[tool] = value
+            except ValueError:
+                pass
         if b"filament_diameter" in line.lower() or line.upper().startswith(b";MATERIAL.DIAMETER:"):
             match = re.search(rb"[:=]\s*([0-9.]+)", line)
             if match:

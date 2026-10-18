@@ -3,14 +3,14 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
-# 2026-10-18 — 6.0.0: Demonstrate standalone layer rendering from the installed library.
+# 2026-10-18 — 6.0.0: Render immutable document geometry from the standalone consumer package.
 
 """Render a layer to PNG using the installed library, without Cura."""
 import argparse
 import math
 from PyQt6.QtGui import QGuiApplication
-from mpf.gcode import build_index_from_file, hydrate_layer_from_file, prepare_layer
-from mpf.plate.qt import render_layer_raster
+from moonraker_toolpath import GCodeDocument
+from moonraker_toolpath.plate.qt import render_layer_raster
 
 
 def main():
@@ -24,10 +24,11 @@ def main():
     if not math.isfinite(args.bed) or args.bed <= 0 or args.size <= 20:
         parser.error("bed must be finite and positive; size must exceed the 20 pixel margin")
     app = QGuiApplication.instance() or QGuiApplication([])
-    index = build_index_from_file(args.gcode, compact=True)
-    if not hydrate_layer_from_file(index, args.gcode, args.layer):
-        parser.error("the requested layer is unavailable")
-    payload = prepare_layer(index, args.layer)
+    document = GCodeDocument.from_file(args.gcode)
+    try:
+        payload = document.geometry(args.layer)
+    except (IndexError, ValueError) as error:
+        parser.error(str(error))
     scale = (args.size - 20) / args.bed
     plot = dict(sx=scale, sy=scale, offsetX=10, offsetY=10, bedXMin=0, bedYMax=args.bed)
     coloured, _, _ = render_layer_raster(payload, plot, dict(width=args.size, height=args.size, dpr=1))

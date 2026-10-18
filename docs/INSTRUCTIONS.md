@@ -475,6 +475,9 @@ sync; `make library` also checks the wheel version against both manifests. The
 release workflow asserts the plugin manifests equal the git tag, so no test edit
 is needed per release. Public library changes must update `docs/LIBRARY.md` and
 the isolated consumer proof in the same change; keep core imports free of Qt/Cura.
+Maintain the explicit module/resource boundary in `tools/library_manifest.py`;
+reuse the production source files rather than copying implementations, and keep
+application services out of the standalone distribution.
 
 `sdk_version` in `package.json` is a compatibility floor, not a release number:
 change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.py`).

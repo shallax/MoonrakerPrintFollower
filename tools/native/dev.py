@@ -1141,7 +1141,7 @@ def cmd_library(args) -> int:
     ok = run([sys.executable, "-m", "pip", "wheel", "--no-deps", ".",
               "--wheel-dir", "dist/library"], cwd=root, env=env) == 0
     if ok:
-        wheel = root / "dist" / "library" / ("moonraker_print_follower-%s-py3-none-any.whl" % _version(root))
+        wheel = root / "dist" / "library" / ("moonraker_toolpath-%s-py3-none-any.whl" % _version(root))
         ok = run([sys.executable, "tools/check_library.py", str(wheel), "--qt"], cwd=root, env=env) == 0
     return record("library", ok)
 

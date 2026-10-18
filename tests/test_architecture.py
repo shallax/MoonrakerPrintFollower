@@ -243,6 +243,7 @@ class SourceContractTests(unittest.TestCase):
             'LocalDetectionService': {'AssetInstaller', 'DetectionAssets', 'EvidenceStore', 'LocalFailureModel', 'DetectionObservation', 'DetectionMask'},
             'EvidenceStore': set(),
             'LocalFailureModel': {'DetectionMask', 'DetectionObservation'},
+            'GCodeDocument': {'GCodeIndex', 'IndexView', 'MotionIndex', 'PlateProgress'},
             'GCodeIndex': {'ArcGeometry', 'FeatureTracker', 'GCodeParser', 'IndexAssembly', 'IndexHeader', 'IndexLimits', 'IndexWork', 'MotionIndex', 'ObjectWork'},
             'GCodeIndexService': {'GCodeIndex', 'IndexTasks', 'IndexView', 'LayerCache', 'MotionIndex', 'MotionRefinement', 'ObjectVisitTracker', 'PlateProgress', 'PlateSplitTracker', 'PreparedSession', 'PrintState'},
             'GCodeParser': set(),

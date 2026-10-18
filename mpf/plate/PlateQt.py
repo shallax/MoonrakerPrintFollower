@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Convert empty immutable geometry and event markers to Qt-compatible values.
 # 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
 # 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
 # 2026-09-21 [f130718] 4.6.0: the native render path — dense toolpath geometry rasterises off the QML JavaScript
@@ -181,8 +182,9 @@ def qml_geometry(payload):
             for segment in groups]
     rows.extend(payload.get("travels") or ())
     rows.extend(segment for groups in (payload.get("travelClasses") or {}).values() for segment in groups)
-    marks = tuple(payload.get("travelStarts") or ()) + tuple(payload.get("travelEnds") or ())
-    if not any(isinstance(segment, tuple) or
+    marks = tuple(point for key in ("travelStarts", "travelEnds", "retractions", "unretractions")
+                  for point in payload.get(key) or ())
+    if isinstance(payload, dict) and not any(isinstance(segment, tuple) or
                (segment and isinstance(segment[0], tuple)) for segment in rows) \
             and not any(isinstance(point, tuple) for point in marks) \
             and not any(isinstance(payload.get(key), tuple) for key in ("widths", "speeds", "tools")) \
@@ -198,6 +200,7 @@ def qml_geometry(payload):
                          (payload.get("classes") or {}).items()},
                 travels=segments(payload.get("travels") or ()),
                 **({"travelClasses": {name:segments(rows) for name,rows in payload["travelClasses"].items()}} if "travelClasses" in payload else {}),
+                **({key: [list(point) for point in payload[key]] for key in ("retractions", "unretractions") if key in payload}),
                 travelStarts=[list(point) for point in payload.get("travelStarts") or ()],
                 travelEnds=[list(point) for point in payload.get("travelEnds") or ()])
 

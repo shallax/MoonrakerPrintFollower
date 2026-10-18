@@ -13,10 +13,10 @@ source shape; **do not send printer commands during a live print**. A disposable
 paused virtual-SD printer is still required before claiming physical recovery
 validation.
 
-The 18 October whole-product audit passed **6,220 tests in 273 isolated
-processes**, with **97.57% overall statement coverage** and every required
-in-process module at or above 95%. The extracted `ToolpathGeometry`, public
-library entry points, recovery controller, heater target discovery and tuning
+The 18 October whole-product audit passed **6,232 tests in 275 isolated
+processes**, with **97.58% overall statement coverage** and every required
+in-process module at or above 95%. The extracted `ToolpathGeometry`, `GCodeDocument`, recovery controller,
+heater target discovery and tuning
 owner are at 100%. The isolated STEP helper retains its separate mandatory
 95% native-CAD coverage gate in CI. Canonical Linux captures were regenerated;
 all 54 light/dark capture pairs are byte-identical. Native and Docker wheel
@@ -91,9 +91,15 @@ arc planes, selected object state, active-exclusion refusal, missing feed rates,
 zero bed targets, cancellation after restart submission and independently malformed
 physical/G-code coordinates. These augment the click-through workflow tests above.
 
-`make library` verifies every wheel source/resource byte and both plugin versions,
+`make library` verifies the selective module/shader inventory, every shared source
+byte and both plugin versions,
 then installs outside the checkout. A `-I -S` consumer exercises parsing, exact
-boundaries, compact hydration and CPU vertices without site packages. Optional Qt
+boundaries, compact hydration and CPU vertices without site packages. AST checks
+cover lazy imports so new application dependencies cannot silently enter the wheel.
+Document tests prove source-file independence, nested snapshot immutability,
+cross-document concurrent reads, cancellation and refusal of incomplete retained
+motion geometry. Real Qt tests cover immutable empty/retraction-only payloads
+through QVariantMap conversion as well as pixel parity. Optional installed Qt
 probes verify raster pixels, retained geometry and the standalone example; they do
 not claim an installed GPU-shader frame or physical-printer validation. The core
 consumer also runs in the normal test suite. Docker and native commands use their

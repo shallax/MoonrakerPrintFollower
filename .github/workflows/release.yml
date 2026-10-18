@@ -138,7 +138,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           CURA="dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
           SOURCE="dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
-          WHEEL="dist/library/moonraker_print_follower-${VERSION}-py3-none-any.whl"
+          WHEEL="dist/library/moonraker_toolpath-${VERSION}-py3-none-any.whl"
           test -f "$WHEEL"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             DRAFT="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)"
