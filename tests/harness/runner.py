@@ -4,6 +4,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Report invalid probe JSON instead of hiding the failed reply.
 # 2026-10-18 — 6.0.0: Bound RPC transactions and stop suites when the driver is lost.
 # 2026-10-18 — 6.0.0: Require the restored seed and preserve evidence on failed boot gates.
 # 2026-10-18 — 6.0.0: Fail boot evidence when real QtTest input is unavailable.
@@ -876,8 +877,11 @@ def exec_rpc(code, timeout=60.0, raise_on_error=False):
         return {"_truncated": True}
     try:
         return json.loads(reply.get("result") or "{}")
-    except (TypeError, ValueError):
-        return {}
+    except (TypeError, ValueError) as exc:
+        message = "driver exec returned a non-JSON result"
+        if raise_on_error:
+            raise RuntimeError(message) from exc
+        return {"error": message}
 
 
 # The exec snippets: scenario 1 reads the real model and the real UI.

@@ -142,6 +142,7 @@ class HarnessSpecTests(unittest.TestCase):
                 self.assertEqual(namespace["result"]["compatibility_mode"], compatibility)
 
     def test_penguin_preview_completion_requires_the_actual_final_path(self):
+        import numpy as np
         from types import SimpleNamespace
         from unittest.mock import patch
 
@@ -153,8 +154,8 @@ class HarnessSpecTests(unittest.TestCase):
                 (2, 1, 1, 0, False)):
             with self.subTest(layer=layer, expected=expected, actual=actual, maximum=maximum):
                 view = SimpleNamespace(getLayerData=lambda: object(), getMaxLayers=lambda: 2,
-                    getCurrentLayer=lambda layer=layer: layer, getMaxPaths=lambda maximum=maximum: maximum,
-                    getCurrentPath=lambda actual=actual: actual)
+                    getCurrentLayer=lambda layer=layer: layer, getMaxPaths=lambda maximum=maximum: np.int64(maximum),
+                    getCurrentPath=lambda actual=actual: np.float32(actual))
                 state = SimpleNamespace(attached=True, expected_layer=layer, expected_path=expected)
                 runtime = SimpleNamespace(preview=SimpleNamespace(_state=state, _motion=object()),
                     presentation=SimpleNamespace(reported_position=False))
@@ -165,7 +166,10 @@ class HarnessSpecTests(unittest.TestCase):
                 with patch.dict(sys.modules, {"UM.Application": SimpleNamespace(
                         Application=SimpleNamespace(getInstance=lambda app=app: app))}):
                     exec(_scenarios.PENGUIN_PREVIEW_READ, namespace)
-                self.assertEqual(namespace["result"]["finished"], finished)
+                # Match the actual driver/runner wire boundary: NumPy scalars
+                # in the raw Cura getters must not force the driver to repr().
+                wire = json.loads(json.dumps(namespace["result"]))
+                self.assertEqual(wire["finished"], finished)
 
     def test_scheduled_pause_scenarios_hold_the_exact_layer_before_ui_waits(self):
         # The v5.1.0 macOS gate observed layer 5 while p7 waited for layer 1:

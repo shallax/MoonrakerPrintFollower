@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Keep invalid inline probe serialization visible.
 # 2026-10-18 — 6.0.0: Prove bounded RPCs, no command replay and crash evidence finalization.
 # 2026-10-18 — 6.0.0: Prove failed startup stops scenarios and keeps its gallery.
 # 2026-10-18 — 6.0.0: Require usable real input in boot evidence.
@@ -39,6 +40,16 @@ import static_leg
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SCENARIO_PACKAGE = ROOT / "tests" / "harness" / "scenarios"
+
+
+class ExecResultTests(unittest.TestCase):
+    def test_invalid_probe_serialization_is_visible_in_the_verdict(self):
+        with patch.object(runner, "rpc", return_value={"ok": True,
+                "result": "{'ready': True, 'maximum_path': np.int64(1548)}"}):
+            reply = runner.exec_rpc("probe")
+            self.assertIn("non-JSON", reply["error"])
+            with self.assertRaisesRegex(RuntimeError, "non-JSON"):
+                runner.exec_rpc("probe", raise_on_error=True)
 
 
 class RpcDeadlineTests(unittest.TestCase):

@@ -1397,8 +1397,8 @@ for extension in app.getExtensions():
         result["layer"] = state.expected_layer
         result["path"] = state.expected_path
         result["moving"] = bool(result["ready"] and state.expected_path is not None and state.expected_path > 0 and view.getCurrentLayer() == state.expected_layer)
-        result["maximum_path"] = view.getMaxPaths() if result["ready"] else 0
-        result["actual_path"] = view.getCurrentPath() if result["ready"] else None
+        result["maximum_path"] = int(view.getMaxPaths()) if result["ready"] else 0
+        result["actual_path"] = float(view.getCurrentPath()) if result["ready"] else None
         result["finished"] = bool(result["moving"] and state.expected_layer == 2
             and result["maximum_path"] > 0
             and abs(state.expected_path - result["maximum_path"]) < .5
