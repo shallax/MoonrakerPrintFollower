@@ -4,6 +4,7 @@ from dataclasses import replace
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 from mpf.gcode.GCodeIndex import build_index_from_file
 from mpf.gcode.IndexView import IndexView
@@ -19,6 +20,31 @@ class RecoveryPlanningTests(unittest.TestCase):
             view = IndexView(("print.gcode", len(data), 1), build_index_from_file(path))
             boundary = view.recovery_boundary(layer, split)
             return scan_source(path, boundary)
+
+    def test_preview_contains_only_deposition_before_recorded_progress_even_for_future_resume(self):
+        data = b"G90\nM82\nG92 E0\n;LAYER:0\nG1 X1 Y1 Z0.2 F1800\nG1 X2 E1\nG1 X3 E2\nG1 X4 E3\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "print.gcode")
+            with open(path, "wb") as handle: handle.write(data)
+            view = IndexView(("print.gcode", len(data), 1), build_index_from_file(path))
+            boundary = view.recovery_boundary(0, 3)
+            plan = scan_source(path, boundary, preview_offset=data.index(b"G1 X3"))
+            self.assertEqual(plan.preview_segments, ((1., 1., .2, 2., 1., .2),))
+            self.assertEqual(plan.state.position, (3., 1., .2))
+
+    def test_preview_curves_follow_arc_geometry(self):
+        data = b"G90\nM82\nG92 E0\n;LAYER:0\nG1 X10 Y10 Z1 F1800\nG2 X20 Y10 I5 J0 E2\nG1 X21 E3\n"
+        plan = self.plan(data, 0, 2)
+        self.assertGreater(len(plan.preview_segments), 5)
+        self.assertEqual(plan.preview_segments[0][:3], (10., 10., 1.))
+        self.assertEqual(plan.preview_segments[-1][3:], (20., 10., 1.))
+        self.assertTrue(any(abs(edge[4] - 10) > 1 for edge in plan.preview_segments))
+
+    def test_preview_has_a_bounded_size_for_large_prints(self):
+        data = b"G90\nM83\n;LAYER:0\nG1 X1 Y1 Z1 F1800\n" + b"G1 X2 E1\nG1 X1 E1\n" * 13000
+        plan = self.plan(data, 0, 25000)
+        self.assertGreater(len(plan.preview_segments), 5000)
+        self.assertLessEqual(len(plan.preview_segments), 12000)
 
     def test_reconstructs_modes_e_resets_feed_and_thermal_targets(self):
         data = (b"G90\nM82\nG92 E0\nM104 S210\nM140 S60\nM106 S128\n"
@@ -219,6 +245,21 @@ class RecoveryPlanningTests(unittest.TestCase):
         invalid = b";LAYER:0\nG1 X1 E0.1\n@UNKNOWN\nG1 X2 E0.2\n"
         with self.assertRaises(RecoveryPlanError):
             self.plan(invalid, 0, 1)
+
+    def test_invalid_lead_in_distance_is_not_silently_accepted(self):
+        for value in (None, "bad", float("nan"), float("inf")):
+            with self.subTest(value=value), self.assertRaises(RecoveryPlanError):
+                suggest_lead_in(None, None, value)
+
+    def test_scanner_rejects_oversized_and_unparseable_commands(self):
+        from types import SimpleNamespace
+        from mpf.gcode.IndexLimits import _MAX_LINE_BYTES
+        for prefix in (b"@UNKNOWN\n", b";" + b"x" * (_MAX_LINE_BYTES + 1) + b"\n"):
+            with self.subTest(prefix=prefix[:12]), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "bad.gcode"
+                path.write_bytes(prefix + b"G1 X1 E1\n")
+                with self.assertRaises(RecoveryPlanError):
+                    scan_source(path, SimpleNamespace(next_motion_offset=len(prefix), position=(0, 0, 0)))
 
     def test_no_lead_in_exists_before_first_motion(self):
         data = b";LAYER:0\nG1 X1 E0.1\nG1 X2 E0.2\n"

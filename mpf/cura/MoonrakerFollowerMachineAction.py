@@ -272,6 +272,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
     def settingsRecoveryPrimeSpeed(self):
         return self._config().recovery_prime_speed_mm_s
 
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeDwell(self):
+        return self._config().recovery_prime_dwell_s
+
     @pyqtProperty(int, notify=settingsChanged)
     def settingsRecoveryCommandTimeout(self):
         return self._config().recovery_command_timeout_s
@@ -914,7 +918,8 @@ class MoonrakerFollowerMachineAction(MachineAction):
                                           ("recovery_prime_y", 0.0, 1000.0),
                                           ("recovery_prime_z", 0.0, 1000.0),
                                           ("recovery_prime_amount_mm", 0.1, 200.0),
-                                          ("recovery_prime_speed_mm_s", 0.1, 20.0)):
+                                          ("recovery_prime_speed_mm_s", 0.1, 20.0),
+                            ("recovery_prime_dwell_s", 0.0, 300.0)):
                 try:
                     value = float(raw.get(key, getattr(current, key)))
                 except (TypeError, ValueError):

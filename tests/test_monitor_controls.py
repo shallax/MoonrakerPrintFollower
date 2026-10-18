@@ -113,7 +113,7 @@ if QT_AVAILABLE:
         def preview(self, key, value):
             self.previews.append((key, value))
 
-        def queue(self, key, value, channel, script):
+        def queue(self, key, value, channel, script, *, guard=None):
             self.queued.append((key, value, channel, script))
 
     class BedMesh(QObject):
@@ -220,7 +220,7 @@ class ProjectionTests(ControlsCase):
         self.data.rebuild()
         values = self.controls.values
         self.assertFalse(values["canRunSetup"])
-        self.assertFalse(values["canApplyTemperaturePreset"])
+        self.assertTrue(values["canApplyTemperaturePreset"])
         self.assertFalse(values["canSaveConfig"])
 
     def test_a_paused_print_still_allows_a_temperature_preset(self):
@@ -681,18 +681,23 @@ class PresetTests(ControlsCase):
                                                    "\nSET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber TARGET=45"
                                                    "\nM117 PLA", can_apply_temperature_preset))
 
-    def test_apply_preset_honours_the_bounds_and_the_print_state_gate(self):
+    def test_apply_preset_honours_bounds_and_lock_while_printing(self):
         self.controls.apply_preset(0)
         self.controls.apply_preset(-1)
         self.data.rebuild(presets={"presets": {"pla": {"name": "PLA", "values": {
             "extruder": {"bool": True, "value": 200}}}}})
-        # The gate is the print state, NOT setup_allowed: that one
-        # refuses a paused print, which is the case this action exists
-        # for (the live report: a live button whose click was dropped
-        # here in silence).
         self.data.observation = record(state="printing")
-        self.controls.apply_preset(0)
         self.controls.apply_preset(7)
+        self.assertEqual(self.commands.calls, [])
+        self.controls.apply_preset(0)
+        self.assertEqual(self.commands.calls[-1][2],
+                         "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=200")
+        self.commands.calls.clear()
+        for fields in (dict(controls_locked=True), dict(connection="no"),
+                       dict(connection="unknown"), dict(state="")):
+            self.data.observation = record(**fields)
+            self.controls.apply_preset(0)
+            self.controls.heaters_off()
         self.assertEqual(self.commands.calls, [])
 
     def test_a_paused_print_dispatches_the_preset_and_the_cooldown(self):

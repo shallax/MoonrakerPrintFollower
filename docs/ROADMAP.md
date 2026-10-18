@@ -10,15 +10,33 @@ Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
-## Current release — 6.0.0 (13 October 2026)
+## Current release — 6.0.0 (18 October 2026)
 
-The `release/v6.0.0` branch starts from the latest main after 5.4.0. This
-release implements interrupted-print recovery within Print Follower: exact
-indexed replay boundaries, manual and sensor runout markers, optional extrusion
-lead-in, configurable per-printer sensor and macro contracts, read-only source
-planning, temperature waits and optional priming, and guarded active, paused,
-and unloaded-file handovers. The older 5.x plans below are
-historical.
+The `release/v6.0.0` branch includes interrupted-print recovery with exact
+indexed boundaries, live selection without detachment, manual and sensor stop
+bookmarks, earlier/future point selection, and unloaded-file recovery. The UI
+requires printing to be paused before starting recovery. Read-only planning,
+source identity checks, temperature waits, optional priming and guarded seek/modal
+restoration precede a final descent and immediate SD restart.
+
+Implemented review controls show layer and move, explicit ordered actions,
+estimated movement times and four coordinate views: angled front-right, XY, XZ
+and YZ. Recorded deposition and reported bed/travel bounds share the same scale.
+Return clearance and priming dwell are configurable; effective prime heights and
+travel respect the printer's Z ceiling. Dismiss leaves an active handover running,
+and reopening resets scrolling and preview steps.
+
+This release also adds bounded per-heater temperature sliders and selectable
+1/5/10/25 degree bumps, profiles during printing, and Cura 5.14 beta 1 compatibility.
+Package metadata, release notes and What's New stay at 6.0.0 until publication.
+
+Remaining work is validation rather than a claim of automatic failure detection:
+continue exercising paused/unloaded recovery on real printers and across supported
+Cura versions. Runout markers, parser position and recorded toolpaths cannot prove
+where extrusion physically stopped after a jam. Reliable missing-material detection
+or an automatically chosen restart layer remains future research. Preview diagrams
+are not collision simulation. The older 5.x and initial 6.0 design notes below are
+historical; the implementation contract is in ARCHITECTURE.md.
 
 ## Historical release plans — update (12 October 2026)
 
@@ -270,7 +288,7 @@ paused macro execution, planned filament-change waypoints, a Preview webcam
 thumbnail, accessibility marker styles and translations remain unassigned.
 Historical proposals below are not a commitment to add another 5.x release.
 
-### 6.0.0 — Resume printing from a scrubbed G-code position
+### Historical 6.0.0 design — Resume printing from a scrubbed G-code position
 
 The intended workflow is deliberate recovery from a user-selected point in the
 Print Follower pane, including an earlier point than the printer's pause:

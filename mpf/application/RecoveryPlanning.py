@@ -13,7 +13,7 @@ import os
 import re
 
 from ..gcode import ArcGeometry
-from ..gcode.GCodeParser import _COMMAND, _MOTION, _parse_axes
+from ..gcode.GCodeParser import _COMMAND, _MOTION, _parse_arc_words, _parse_axes
 from ..gcode.IndexLimits import _MAX_LINE_BYTES
 
 
@@ -75,6 +75,7 @@ class RecoverySourcePlan:
     sha256: str
     state: RecoveryModalState
     printed_top_z: float = 0.0
+    preview_segments: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -135,7 +136,7 @@ def suggest_lead_in(view, suspect, minimum_mm=5.0, minimum_moves=0):
 
 
 def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transparent_macros=(),
-                nozzle_parameter="EXTRUDER", bed_parameter="BED"):
+                nozzle_parameter="EXTRUDER", bed_parameter="BED", preview_offset=None):
     """Reconstruct supported modal state immediately before a motion.
 
     The exact original byte offset must name a complete G0/G1/G2/G3 line.
@@ -175,6 +176,11 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
     unknown_e = False
     selected_state = None
     seen_target = False
+    preview_limit = target if preview_offset is None else preview_offset
+    preview_segments = []
+    preview_count = 0
+    preview_stride = 1
+    plane = ArcGeometry.PLANE_XY
     def modal_state():
         if unknown_axes or unknown_e:
             raise RecoveryPlanError("A setup macro needs a full absolute XYZ move and G92 E before this point")
@@ -221,6 +227,20 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                             or position[1] != old_position[1]
                             or command in {b"G2", b"G02", b"G3", b"G03"})):
                         printed_top_z = max(printed_top_z, position[2], old_position[2])
+                        if handle.tell() <= preview_limit and not unknown_axes and not unknown_e:
+                            points = [old_position, tuple(position)]
+                            if command in {b"G2", b"G02", b"G3", b"G03"}:
+                                desc = ArcGeometry.descriptor(plane, command in {b"G2", b"G02"},
+                                                              _parse_arc_words(code), absolute_xyz=absolute_xyz)
+                                if desc is not None:
+                                    points = [old_position, *ArcGeometry.tessellate(desc, old_position, position)]
+                            for start, end in zip(points, points[1:], strict=False):
+                                if preview_count % preview_stride == 0:
+                                    preview_segments.append((*start, *end))
+                                preview_count += 1
+                                if len(preview_segments) > 12000:
+                                    preview_segments = preview_segments[::2]
+                                    preview_stride *= 2
                     if "F" in axes:
                         feedrate = _number(axes["F"], "feedrate")
                         if feedrate <= 0:
@@ -239,7 +259,9 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                     if "E" in axes:
                         e = _number(axes["E"], "E reset")
                         unknown_e = False
-                elif command == b"G21" or command in {b"G17", b"G18", b"G19"}:
+                elif command in {b"G17", b"G18", b"G19"}:
+                    plane = int(command[1:])
+                elif command == b"G21":
                     pass
                 elif command == b"G20":
                     raise RecoveryPlanError("Inch-mode G-code is not supported by Klipper")
@@ -306,4 +328,5 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
         raise RecoveryPlanError("The downloaded G-code changed during planning")
     if any(abs(a - float(b)) > 0.001 for a, b in zip(selected_state.position, boundary.position, strict=True)):
         raise RecoveryPlanError("Indexed and reconstructed positions disagree")
-    return RecoverySourcePlan(target, size, digest.hexdigest(), selected_state, printed_top_z)
+    return RecoverySourcePlan(target, size, digest.hexdigest(), selected_state, printed_top_z,
+                              tuple(preview_segments))

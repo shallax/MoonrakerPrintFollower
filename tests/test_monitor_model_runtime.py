@@ -3892,6 +3892,8 @@ Item {
             "visible: gridVertical.height > 0 && gridVertical.contentY < gridVertical.contentHeight - gridVertical.height - 2",
             "visible: root.printerModel != null && root.printerModel.fileManagerWalkError !== \"\"",
             "visible: root.printerModel != null && root.printerModel.plateSourceStatus !== \"\"",
+            # Profile headings/captions follow inventory, not running state.
+            "visible: root.printerModel != null && root.printerModel.temperaturePresetItems.length > 0",
             "visible: busy",
             # Download actions retain a permanent row; only the optional
             # consent/cancel buttons change opacity through visibility.

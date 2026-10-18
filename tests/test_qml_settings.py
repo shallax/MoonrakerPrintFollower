@@ -248,6 +248,27 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         self.assertEqual(set(result), set(types))
         return result
 
+    def test_recovery_clearance_and_dwell_edit_validate_and_publish(self):
+        document, _ = self.open_settings()
+        self.show_tab(document, 5)
+        page = self.pages(document)["RecoverySettings"]
+        values = page.property("values").toVariant()
+        self.assertEqual(values["recovery_clearance_mm"], 5)
+        self.assertEqual(values["recovery_prime_dwell_s"], 5)
+        self.find(document, "recoveryPrimeEnabled").setProperty("checked", True)
+        dwell = self.find(document, "recoveryPrimeDwell")
+        clearance = self.find(document, "recoveryTravelClearance")
+        for value, valid in (("0", True), ("12.5", True), ("300", True), ("301", False), ("-1", False), ("oops", False)):
+            dwell.setProperty("text", value)
+            self.pump(5)
+            self.assertEqual(page.property("valid"), valid, value)
+            if valid:
+                self.assertEqual(page.property("values").toVariant()["recovery_prime_dwell_s"], float(value))
+        dwell.setProperty("text", "5")
+        clearance.setProperty("text", "12")
+        self.pump(5)
+        self.assertEqual(page.property("values").toVariant()["recovery_clearance_mm"], 12)
+
     def test_tabs_publish_disjoint_complete_configuration_blocks(self):
         document, _ = self.open_settings()
         pages = self.pages(document)
@@ -263,7 +284,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
                                  "recovery_lead_in_mode", "recovery_lead_in_moves", "recovery_clearance_mm",
                                  "recovery_xy_speed_mm_s", "recovery_z_speed_mm_s", "recovery_prime_enabled",
                                  "recovery_prime_x", "recovery_prime_y", "recovery_prime_z",
-                                 "recovery_prime_amount_mm", "recovery_prime_speed_mm_s",
+                                 "recovery_prime_amount_mm", "recovery_prime_speed_mm_s", "recovery_prime_dwell_s",
                                  "recovery_command_timeout_s", "recovery_heating_timeout_s",
                                  "recovery_status_timeout_s"},
         }
@@ -273,7 +294,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
             self.assertEqual(set(values), expected[name])
             self.assertFalse(seen.intersection(values), "two tabs own the same setting")
             seen.update(values)
-        self.assertEqual(len(seen), 58)
+        self.assertEqual(len(seen), 59)
         for index in (5, 4, 3, 1, 2, 0):
             self.show_tab(document, index)
             self.assertEqual(self.pages(document), pages, "a tab switch recreated a draft owner")

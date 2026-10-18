@@ -11,6 +11,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from ..moonraker.MoonrakerProtocol import parse_file_identity
 from ..printing.RecoveryExecution import RecoveryExecution
+from ..printing.RecoveryHandover import RecoveryRefused, reviewed_pause_state
 from .RecoveryPlanning import RecoveryPlanError, scan_source
 
 
@@ -43,6 +44,7 @@ class RecoveryContext:
     unloaded: bool = False
     heating_timeout_s: int = 1800
     file_printed_top_z: float = 0.0
+    prime_dwell_s: float = 5.0
 
 
 def _source_still_matches(path, source):
@@ -82,6 +84,10 @@ class RecoveryController(QObject):
         self._planned_context = None
         self._source = None
         self._execution = None
+        self._reviewed_saved_state = ""
+        self._reviewed_position = (0.0, 0.0, 0.0)
+        self._reviewed_maximum_z = None
+        self._reviewed_bed = []
         self._manual_targets = (None, None)
         self._z_reference_mm = 0.0
         self._paused_replan_callback = None
@@ -98,8 +104,11 @@ class RecoveryController(QObject):
         context = self._planned_context
         return {"phase": self._phase, "detail": self._detail,
                 "ready": self._phase == "ready" and source is not None,
+                "pauseState": self._reviewed_saved_state,
                 "active": self._execution is not None and self._execution.active,
                 "offset": source.boundary_offset if source is not None else -1,
+                "resumeLayer": context.boundary.next_layer + 1 if context is not None else 0,
+                "resumeMove": context.boundary.next_motion + 1 if context is not None else 0,
                 "filename": context.filename if context is not None else "",
                 "unloaded": context.unloaded if context is not None else False,
                 "e": source.state.e if source is not None else 0.0,
@@ -111,6 +120,21 @@ class RecoveryController(QObject):
                 "suggestedTopZ": (max(context.printed_top_z, context.file_printed_top_z,
                                       source.printed_top_z)
                                   if source is not None and context is not None else 0.0),
+                "currentX": self._reviewed_position[0],
+                "currentY": self._reviewed_position[1],
+                "currentZ": self._reviewed_position[2],
+                "maximumZ": self._reviewed_maximum_z,
+                "bedBounds": self._reviewed_bed,
+                "previewSegments": [list(segment) for segment in source.preview_segments] if source is not None else [],
+                "previewCaption": ("Assumed print up to the chosen point" if context is not None and context.unloaded
+                                   else "Recorded G-code progress; actual material may be missing"),
+                "clearance": context.clearance_mm if context is not None else 5.0,
+                "xySpeed": context.xy_speed_mm_s if context is not None else 50.0,
+                "zSpeed": context.z_speed_mm_s if context is not None else 5.0,
+                "primeDwell": context.prime_dwell_s if context is not None else 5.0,
+                "skipsForward": (context is not None and source is not None
+                                 and not context.unloaded
+                                 and source.boundary_offset > context.observed_offset),
                 "primeEnabled": context.prime_enabled if context is not None else False,
                 "primeX": context.prime_xyz[0] if context is not None else 0.0,
                 "primeY": context.prime_xyz[1] if context is not None else 0.0,
@@ -143,11 +167,12 @@ class RecoveryController(QObject):
         def work():
             try:
                 source = scan_source(context.path, context.boundary,
-                                     context.observed_offset or None,
+                                     max(context.observed_offset, context.boundary.next_motion_offset),
                                      setup_macros=context.setup_macros,
                                      transparent_macros=context.transparent_macros,
                                      nozzle_parameter=context.nozzle_parameter,
-                                     bed_parameter=context.bed_parameter)
+                                     bed_parameter=context.bed_parameter,
+                                     preview_offset=context.observed_offset)
                 self._planned.emit(generation, source, None)
             except (RecoveryPlanError, OSError, ValueError) as error:
                 self._planned.emit(generation, None, str(error))
@@ -163,7 +188,48 @@ class RecoveryController(QObject):
             self._set("refused", str(error or "The G-code could not be planned."))
             return
         self._source = source
-        self._set("ready", "G-code state checked. Review the shown XYZ and E before starting recovery.")
+        self._reviewed_saved_state = ""
+        self._set("checking_printer", "Checking the printer's recovery commands and PAUSE state…")
+
+        def checked(payload, error):
+            if self._closed or generation != self._generation:
+                return
+            if error or not self._same_context(self._context()):
+                self._set("refused", "Printer state could not be checked or the selection changed. Check the G-code again.")
+                return
+            status = ((payload or {}).get("result") or {}).get("status")
+            try:
+                self._reviewed_saved_state = reviewed_pause_state(
+                    status, self._planned_context.saved_state) if not self._planned_context.unloaded else ""
+            except (RecoveryRefused, TypeError, AttributeError) as reason:
+                self._set("refused", str(reason))
+                return
+            move = (status or {}).get("gcode_move") or {}
+            self._reviewed_position = tuple(move.get("position" if self._planned_context.unloaded else "gcode_position", (0.0, 0.0, 0.0))[:3])
+            try:
+                maximum = float(status["toolhead"]["axis_maximum"][2])
+                base = float(move["position"][2]) - float(move["gcode_position"][2])
+                limit = maximum if self._planned_context.unloaded else maximum - base
+                self._reviewed_maximum_z = limit if math.isfinite(limit) else None
+            except (KeyError, TypeError, ValueError, IndexError):
+                self._reviewed_maximum_z = None
+            try:
+                minimum = status["toolhead"]["axis_minimum"]
+                maximum = status["toolhead"]["axis_maximum"]
+                base = [float(move["position"][i]) - float(move["gcode_position"][i]) for i in range(3)]
+                bed = [float(minimum[0]) - base[0], float(minimum[1]) - base[1],
+                       0.0 if self._planned_context.unloaded else -base[2],
+                       float(maximum[0]) - base[0], float(maximum[1]) - base[1]]
+                self._reviewed_bed = bed if all(math.isfinite(v) for v in bed) else []
+            except (KeyError, TypeError, ValueError, IndexError):
+                self._reviewed_bed = []
+            self._set("ready", "G-code and printer profile checked. Review the shown restart position before starting recovery.")
+
+        if not self._client.transport.send_json(
+                "recovery", "profile", "POST", "printer/objects/query", checked,
+                body={"objects": self.OBJECTS}, category="command",
+                timeout_ms=self._planned_context.status_timeout_s * 1000):
+            self._set("refused", "The printer profile could not be requested. Check the connection and try again.")
 
     def start(self, temperatures=None):
         if self._closed or self._phase != "ready" or self._source is None:
@@ -257,7 +323,7 @@ class RecoveryController(QObject):
                 if (stats.get("filename") != context.filename
                         or sd.get("file_size") != source.file_size
                         or sd.get("is_active") is not False
-                        or position < source.boundary_offset or position > source.file_size):
+                        or position < 0 or position > source.file_size):
                     return False
             except (TypeError, ValueError):
                 return False
@@ -265,7 +331,8 @@ class RecoveryController(QObject):
 
             def work():
                 try:
-                    updated = scan_source(context.path, context.boundary, position,
+                    updated = scan_source(context.path, context.boundary,
+                                          max(position, source.boundary_offset),
                                           setup_macros=context.setup_macros,
                                           transparent_macros=context.transparent_macros,
                                           nozzle_parameter=context.nozzle_parameter,
@@ -296,8 +363,10 @@ class RecoveryController(QObject):
             return self._client.transport.send_json(
                 "recovery", "script", "POST", "printer/gcode/script", received,
                 body={"script": script},
-                timeout_ms=(context.heating_timeout_s if script.startswith(("M140 S", "M104 S"))
-                            else context.command_timeout_s) * 1000,
+                timeout_ms=math.ceil((context.heating_timeout_s if script.startswith(("M140 S", "M104 S"))
+                            else context.command_timeout_s + (context.prime_dwell_s
+                                + context.prime_amount_mm / context.prime_speed_mm_s
+                                if "\nG4 P" in script else 0)) * 1000),
                 category="command")
 
         def changed(outcome):
@@ -308,7 +377,7 @@ class RecoveryController(QObject):
         self._execution.start(source=source, filename=context.filename,
                               printed_top_z=max(context.printed_top_z, context.file_printed_top_z,
                                                 source.printed_top_z),
-                              saved_state=context.saved_state,
+                              saved_state=self._reviewed_saved_state or context.saved_state,
                               prepare_macro=context.prepare_macro,
                               setup_macros=context.setup_macros,
                               transparent_macros=context.transparent_macros,
@@ -321,15 +390,32 @@ class RecoveryController(QObject):
                               prime_xyz=context.prime_xyz,
                               prime_amount_mm=context.prime_amount_mm,
                               prime_speed_mm_s=context.prime_speed_mm_s,
+                              prime_dwell_s=context.prime_dwell_s,
                               z_reference_mm=self._z_reference_mm)
 
     def cancel(self):
-        if self._phase == "planning":
+        if self._phase in {"planning", "checking_printer"}:
             self._generation += 1
             self._set("cancelled", "Recovery planning cancelled.")
         elif self._execution is not None and self._execution.active:
             self._execution.cancel()
             self._set("cancelling", "Stopping before the next recovery stage…")
+
+    def job_changed(self, stats, sd):
+        # Starting an unloaded recovery creates a new run. Its websocket
+        # notification may arrive before the M24 response/final query.
+        source, context = self._source, self._planned_context
+        if (context is not None and context.unloaded and source is not None
+                and self._phase in {"resuming", "checking_resume"}
+                and stats.get("state") == "printing"
+                and stats.get("filename") == context.filename
+                and sd.get("file_size") == source.file_size
+                and sd.get("is_active") is True):
+            position = sd.get("file_position")
+            if (isinstance(position, (int, float)) and not isinstance(position, bool)
+                    and source.boundary_offset <= position <= source.file_size):
+                return
+        self.invalidate()
 
     def invalidate(self, *_args):
         if self._closed:

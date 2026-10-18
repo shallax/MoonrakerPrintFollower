@@ -295,11 +295,23 @@ class GCodeIndexService(QObject):
 
         self._publish_change()
 
-    def request_hydration(self, layer):
+    def request_hydration(self, layer, *, exact=False):
         view = self._view
         if view is None or not 0 <= layer < len(view.ranges):
             return
-        self._request_window(int(layer))
+        if exact:
+            # Recovery needs original motion offsets even when GPU/prepared
+            # geometry has already satisfied the display's demand.
+            index = view._index
+            owed = {candidate for candidate in range(max(0, layer - 1), min(len(view.ranges), layer + 2))
+                    if index.compact and candidate not in index.hydrated_layers
+                    and candidate not in self._failed_hydrate}
+            new = owed - self._hydrate_arrays - (self._hydrating or set())
+            if not new:
+                return
+            self._hydrate_arrays.update(new)
+        else:
+            self._request_window(int(layer))
         self._advance()
 
     def set_manual_anchor(self, layer):

@@ -135,7 +135,7 @@ HARNESS_MODULES = (
     "tests/harness/test_harness_native.py",
 )
 DETERMINISM_SCRIPTS = ("capture_monitor.py", "capture_preview.py", "capture_preview_toolhead.py",
-                       "capture_settings.py", "capture_upload.py", "capture_toolhead.py")
+                       "capture_settings.py", "capture_upload.py", "capture_toolhead.py", "capture_recovery.py")
 CAPTURE_SCRIPTS = DETERMINISM_SCRIPTS + ("capture_whatsnew.py",
                                          "capture_filemanager.py")
 COVERAGE_BAR = 95.0

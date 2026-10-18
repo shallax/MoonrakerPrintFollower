@@ -237,6 +237,7 @@ class PrinterConfig:
     recovery_prime_z: float = 100.0
     recovery_prime_amount_mm: float = 50.0
     recovery_prime_speed_mm_s: float = 5.0
+    recovery_prime_dwell_s: float = 5.0
     recovery_command_timeout_s: int = 120
     recovery_heating_timeout_s: int = 1800
     recovery_status_timeout_s: int = 10
@@ -364,7 +365,8 @@ class PrinterConfig:
                             ("recovery_prime_y", 0.0, 1000.0),
                             ("recovery_prime_z", 0.0, 1000.0),
                             ("recovery_prime_amount_mm", 0.1, 200.0),
-                            ("recovery_prime_speed_mm_s", 0.1, 20.0)):
+                            ("recovery_prime_speed_mm_s", 0.1, 20.0),
+                            ("recovery_prime_dwell_s", 0.0, 300.0)):
             try:
                 number = float(data[key])
                 data[key] = number if isfinite(number) and lo <= number <= hi else getattr(defaults, key)

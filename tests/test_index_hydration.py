@@ -2,6 +2,24 @@
 from tests import index_plate_support as harness
 
 class HydrationWindowTests(harness.HydrationWindowTests):
+    def test_recovery_demands_exact_arrays_even_when_manual_gpu_geometry_is_ready(self):
+        index = self._bind(layers=8)
+        index.followed_layer = 0
+        index.manual_anchor = 5
+        self.service._manual_anchor = 5
+        self.service._gpu_consumers.add("popover")
+        from unittest.mock import patch
+        with patch.object(self.service, "_presentation_source", return_value="decoded"):
+            self.service.request_hydration(5, exact=True)
+            self.assertEqual(self.service._hydrate_arrays, {4, 5, 6})
+            self.assertEqual(self.service._hydrate, set())
+            self.service.request_hydration(5, exact=True)
+            self.assertEqual(self.service._hydrate_arrays, {4, 5, 6})
+            index.hydrated_layers.update((4, 5, 6))
+            self.service._hydrate_arrays.clear()
+            self.service.request_hydration(5, exact=True)
+            self.assertEqual(self.service._hydrate_arrays, set())
+
     def test_a_hydration_request_covers_the_layers_around_the_layer(self):
         self._bind()
         self.service.request_hydration(2)

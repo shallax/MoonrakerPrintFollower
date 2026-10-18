@@ -115,6 +115,15 @@ class RunoutEvents:
             self._events = self._events[-MAX_EVENTS:]
         return event
 
+    def remove(self, job_key, row):
+        if job_key is None or tuple(job_key) != self._job or not isinstance(row, Mapping):
+            return False
+        for index, event in enumerate(self._events):
+            if event.document() == dict(row):
+                del self._events[index]
+                return True
+        return False
+
     def restore(self, job_key, rows):
         """Merge bounded, validated saved evidence into this live print."""
         self.bind(job_key)

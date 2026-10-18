@@ -1,3 +1,4 @@
+from dataclasses import asdict
 import json
 import pathlib
 import unittest
@@ -23,6 +24,14 @@ class FakePreferences:
 
 
 class PrinterConfigTests(unittest.TestCase):
+    def test_prime_dwell_defaults_validation_and_persistence(self):
+        self.assertEqual(PrinterConfig.from_dict({}).recovery_prime_dwell_s, 5)
+        for value in (0, 5, 12.5, 300):
+            config = PrinterConfig.from_dict({"recovery_prime_dwell_s": value})
+            self.assertEqual(PrinterConfig.from_dict(asdict(config)).recovery_prime_dwell_s, value)
+        for value in (-1, 301, float("nan"), float("inf"), "bad"):
+            self.assertEqual(PrinterConfig.from_dict({"recovery_prime_dwell_s": value}).recovery_prime_dwell_s, 5)
+
     def test_recovery_prime_defaults_are_disabled_and_can_be_overridden(self):
         defaults = PrinterConfig.from_dict({})
         self.assertFalse(defaults.recovery_prime_enabled)

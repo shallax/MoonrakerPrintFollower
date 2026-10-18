@@ -17,7 +17,7 @@ COMMAND_OVERRIDES = frozenset({
     "clear_pause", "m23", "m24", "m26", "m104", "m109", "m140", "m190",
     "restore_gcode_state", "m82", "m83", "g92", "m220", "m221",
     "m204", "m106", "m107", "m400", "set_filament_sensor", "set_idle_timeout",
-    "set_gcode_offset",
+    "set_gcode_offset", "g4",
 })
 
 
@@ -26,6 +26,35 @@ def verify_command_handlers(status):
     names = {str(name).casefold() for name in config}
     if any(f"gcode_macro {name}" in names for name in COMMAND_OVERRIDES):
         raise RecoveryRefused("A command override prevents a verified recovery handover")
+
+
+def reviewed_pause_state(status, configured="PAUSE_STATE"):
+    """Resolve the stock default against an unambiguous pre-park PAUSE save.
+
+    Never select a parked state or expand a templated name. Explicit user
+    choices remain subject to the full handover validation at dispatch.
+    """
+    verify_command_handlers(status)
+    config = _mapping(_mapping(status, "configfile"), "config")
+    macro = next((value for name, value in config.items()
+                  if str(name).casefold() == "gcode_macro pause"), None)
+    if macro is None or configured != "PAUSE_STATE":
+        return configured
+    body = str(macro.get("gcode") or "") if isinstance(macro, Mapping) else ""
+    commands = [line.split(";", 1)[0].strip() for line in body.splitlines()]
+    saves = []
+    found_pause = False
+    for line in commands:
+        if re.match(r"(?:BASE_PAUSE|PAUSE_BASE)\b", line, re.I):
+            found_pause = True
+            break
+        match = re.fullmatch(r"SAVE_GCODE_STATE\s+NAME=([A-Z][A-Z0-9_]*)", line, re.I)
+        if match:
+            saves.append(match.group(1).upper())
+    choices = set(saves)
+    if found_pause and len(choices) == 1:
+        return choices.pop()
+    raise RecoveryRefused("Cannot identify the pre-park PAUSE state. Select the state saved before parking in Recovery settings, then check the G-code again.")
 
 
 @dataclass(frozen=True)
@@ -39,6 +68,7 @@ class ReturnPlan:
     modal_script: str
     restore_script: str
     finish_script: str
+    resume_script: str
 
 
 def heating_script(status, source_plan, *, hotend_target=None, bed_target=None):
@@ -97,7 +127,7 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
                    setup_macros=(), transparent_macros=(), idle=False,
                    hotend_target=None, bed_target=None, check_temperature=True,
                    prime_enabled=False, prime_xyz=(0.0, 250.0, 100.0),
-                   prime_amount_mm=50.0, prime_speed_mm_s=5.0,
+                   prime_amount_mm=50.0, prime_speed_mm_s=5.0, prime_dwell_s=5.0,
                    z_reference_mm=0.0):
     """Check a fresh paused snapshot and render the staged return.
 
@@ -134,8 +164,6 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
     if not idle and pause_macro is None and "gcode_macro resume" in names:
         raise RecoveryRefused("A custom RESUME macro without a matching PAUSE profile is unsupported")
     if not idle and pause_macro is not None:
-        if saved_state == "PAUSE_STATE":
-            raise RecoveryRefused("Choose the saved state used by the custom PAUSE macro")
         body = str(_mapping(config, "gcode_macro PAUSE" if "gcode_macro PAUSE" in config
                             else "gcode_macro pause").get("gcode") or "")
         if not re.search(r"\bSAVE_GCODE_STATE\s+NAME=" + re.escape(saved_state) + r"\b", body, re.I):
@@ -168,10 +196,13 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
         if idle:
             # G92 changes the current G-code frame without changing Klipper's
             # homing origin. A later G28 restores the printer's usual frame.
+            # G92 operates in gcode_move's planned frame. Toolhead Z
+            # includes bed-mesh compensation and cannot define this origin.
+            planned_z = bounds.gcode[2] + bounds.base[2]
             if abs(bounds.base[2] + reference) > 0.001:
-                z_reference_script = f"G92 Z{command_number(bounds.position[2] + reference)}"
+                z_reference_script = f"G92 Z{command_number(planned_z + reference)}"
             bounds = replace(bounds,
-                             gcode=(bounds.gcode[0], bounds.gcode[1], bounds.position[2] + reference),
+                             gcode=(bounds.gcode[0], bounds.gcode[1], planned_z + reference),
                              base=(bounds.base[0], bounds.base[1], -reference))
         top = finite(printed_top_z)
         clearance = finite(clearance_mm)
@@ -185,12 +216,18 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
         if prime_enabled and (not isinstance(prime_xyz, (tuple, list)) or len(prime_xyz) != 3):
             raise UnsafeMotion("Prime XYZ must contain three coordinates")
         prime_target = tuple(finite(value) for value in prime_xyz) if prime_enabled else None
-        if prime_target is not None and prime_target[2] < target[2]:
-            raise UnsafeMotion("Prime Z must be at or above the selected restart layer")
+        maximum_z = bounds.maximum[2] - bounds.base[2]
+        if idle and reference > 0:
+            maximum_z = min(maximum_z, bounds.maximum[2])
+        if prime_target is not None:
+            prime_z = prime_target[2] if prime_target[2] > target[2] else target[2] + 5.0
+            prime_target = (*prime_target[:2], min(prime_z, maximum_z))
         if prime_target is not None and idle and prime_target[2] - reference < bounds.minimum[2] - 0.001:
             raise UnsafeMotion("Prime Z is below the homed object-top reference")
-        clear_z = max(bounds.gcode[2], target[2], top,
-                      prime_target[2] if prime_target else target[2]) + clearance
+        # Recovery's selected layer is the physical restart reference. A
+        # parked nozzle or dry-running file height must not inflate its lift.
+        clear_z = min(target[2] + clearance, maximum_z)
+        prime_clear_z = min(max(bounds.gcode[2], target[2], prime_target[2]), maximum_z) if prime_target else clear_z
         if idle and reference > 0 and clear_z > bounds.maximum[2]:
             raise UnsafeMotion("Clearance exceeds the original file Z travel after object-top homing")
         bounds.check((bounds.gcode[0], bounds.gcode[1], clear_z))
@@ -199,12 +236,17 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
         if prime_target is not None:
             amount = finite(prime_amount_mm)
             speed = finite(prime_speed_mm_s)
+            dwell = finite(prime_dwell_s)
+            if not 0 <= dwell <= 300:
+                raise UnsafeMotion("Prime dwell must be between 0 and 300 seconds")
             max_amount = finite(extruder.get("max_extrude_only_distance", 50.0))
             max_speed = extruder.get("max_extrude_only_velocity")
             if amount <= 0 or amount > min(200.0, max_amount) or speed <= 0 or speed > 20:
                 raise UnsafeMotion("Prime extrusion exceeds the configured amount or speed limit")
             if max_speed is not None and speed > finite(max_speed):
                 raise UnsafeMotion("Prime speed exceeds the extruder-only velocity limit")
+            bounds.check((bounds.gcode[0], bounds.gcode[1], prime_clear_z))
+            bounds.check((prime_target[0], prime_target[1], prime_clear_z))
             bounds.check((prime_target[0], prime_target[1], clear_z))
             bounds.check(prime_target)
     except UnsafeMotion as error:
@@ -226,16 +268,15 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
     if prime_target is not None:
         prime_script = "\n".join((
             "M400", "G90", "M83", "M220 S100", "M221 S100",
-            f"G1 Z{n(clear_z)} F{n(z_speed * 120)}",
+            f"G1 Z{n(prime_clear_z)} F{n(z_speed * 120)}",
             f"G1 X{n(prime_target[0])} Y{n(prime_target[1])} F{n(xy_speed * 60)}",
             f"G1 Z{n(prime_target[2])} F{n(z_speed * 60)}",
-            f"G1 E{n(amount)} F{n(speed * 60)}", "M400",
+            f"G1 E{n(amount)} F{n(speed * 60)}", "M400", f"G4 P{n(dwell * 1000)}",
         ))
     return_script = "\n".join((
-        "M400", "G90",
+        "M400", "G90", "M220 S100",
         f"G1 Z{n(clear_z)} F{n(z_speed * 120)}",
         f"G1 X{n(target[0])} Y{n(target[1])} F{n(xy_speed * 60)}",
-        f"G1 Z{n(target[2])} F{n(z_speed * 60)}",
         "M400",
     ))
     state = source_plan.state
@@ -271,6 +312,13 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
             if timeout <= 0:
                 raise RecoveryRefused("The normal idle timeout is invalid")
             finish.append(f"SET_IDLE_TIMEOUT TIMEOUT={timeout}")
+    # Keep network acknowledgements above the object. The final descent and
+    # SD start share one script, without a dwell or a round trip at the surface.
+    resume = ["G90", "M220 S100", f"G1 Z{n(target[2])} F{n(z_speed * 60)}",
+              *modal[:-1]]
+    if not idle:
+        resume.append("CLEAR_PAUSE")
+    resume.append("M24")
     return ReturnPlan(clear_z, target, prime_target, z_reference_script, prime_script,
                       return_script, "\n".join(modal),
-                      restore_script, "\n".join(finish))
+                      restore_script, "\n".join(finish), "\n".join(resume))

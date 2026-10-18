@@ -33,6 +33,7 @@ class RecoveryExecution:
         self._idle = False
         self._primed = False
         self._phase = "idle"
+        self._pending_token = None
 
     @property
     def active(self):
@@ -48,7 +49,7 @@ class RecoveryExecution:
               setup_macros=(), transparent_macros=(),
               hotend_target=None, bed_target=None,
               prime_enabled=False, prime_xyz=(0.0, 250.0, 100.0),
-              prime_amount_mm=50.0, prime_speed_mm_s=5.0,
+              prime_amount_mm=50.0, prime_speed_mm_s=5.0, prime_dwell_s=5.0,
               z_reference_mm=0.0):
         if self._active:
             return False
@@ -56,7 +57,7 @@ class RecoveryExecution:
                          clearance_mm, xy_speed_mm_s, z_speed_mm_s,
                          tuple(setup_macros), tuple(transparent_macros),
                          hotend_target, bed_target, prime_enabled, prime_xyz,
-                         prime_amount_mm, prime_speed_mm_s, z_reference_mm)
+                         prime_amount_mm, prime_speed_mm_s, z_reference_mm, prime_dwell_s)
         self._return = None
         self._active = True
         self._cancelled = False
@@ -81,17 +82,31 @@ class RecoveryExecution:
 
     def _finish(self, phase, detail):
         self._active = False
+        self._pending_token = None
         self._note(phase, detail, True)
+
+    def _guard_callback(self, callback):
+        # A reply belongs to one operation, not merely an active execution.
+        # Ignore duplicates and replies arriving after abort or a new attempt.
+        token = self._pending_token = object()
+        def received(*args):
+            if not self._active or self._pending_token is not token:
+                return
+            self._pending_token = None
+            callback(*args)
+        return received
 
     def _advance(self, phase, callback):
         if self._cancelled:
             self._finish("cancelled", "Recovery preparation stopped; the print remains paused")
             return
         self._note(phase, phase.replace("_", " ").capitalize())
+        if not self._active:
+            return
         if self._cancelled:
             self._finish("cancelled", "Recovery preparation stopped; inspect the paused print")
             return
-        if not self._query(callback):
+        if not self._query(self._guard_callback(callback)):
             self._finish("uncertain", "Fresh printer status could not be requested; do not retry blindly")
 
     def _status(self, status, error):
@@ -106,7 +121,7 @@ class RecoveryExecution:
     def _prepare(self, status, *, check_temperature=True):
         (source, filename, top, saved_state, prepare_macro, clearance, xy_speed,
          z_speed, setup, transparent, nozzle, bed, prime_enabled, prime_xyz,
-         prime_amount, prime_speed, z_reference) = self._attempt
+         prime_amount, prime_speed, z_reference, prime_dwell) = self._attempt
         return prepare_return(status, source, filename=filename, printed_top_z=top,
                               saved_state=saved_state, prepare_macro=prepare_macro,
                               clearance_mm=clearance, xy_speed_mm_s=xy_speed,
@@ -116,17 +131,19 @@ class RecoveryExecution:
                               hotend_target=nozzle, bed_target=bed,
                               prime_enabled=prime_enabled, prime_xyz=prime_xyz,
                               prime_amount_mm=prime_amount, prime_speed_mm_s=prime_speed,
-                              z_reference_mm=z_reference)
+                              z_reference_mm=z_reference, prime_dwell_s=prime_dwell)
 
     def _script(self, phase, script, callback):
         if self._cancelled:
             self._finish("cancelled", "Recovery preparation stopped; inspect the paused print")
             return
         self._note(phase, phase.replace("_", " ").capitalize())
+        if not self._active:
+            return
         if self._cancelled:
             self._finish("cancelled", "Recovery preparation stopped; inspect the paused print")
             return
-        if not self._send(script, callback):
+        if not self._send(script, self._guard_callback(callback)):
             self._finish("uncertain", "A printer command could not be submitted; inspect before retrying")
 
     def _initial_status(self, status, error):
@@ -184,7 +201,7 @@ class RecoveryExecution:
             self._begin_heating(status)
             return
         self._note("rechecking_source", "Checking G-code through the final paused file position")
-        if not self._refresh_paused_source(status, self._refreshed_source):
+        if not self._refresh_paused_source(status, self._guard_callback(self._refreshed_source)):
             self._finish("uncertain", "Paused G-code could not be checked; inspect the print")
 
     def _refreshed_source(self, source, printed_top_z, error):
@@ -318,6 +335,16 @@ class RecoveryExecution:
         self._primed = True
         self._begin_return()
 
+    def _verify_staging_position(self, status):
+        try:
+            position = status["gcode_move"]["gcode_position"]
+            staging = (*self._return.target[:2], self._return.clearance_z)
+            if any(not math.isfinite(float(position[i]))
+                   or abs(float(position[i]) - staging[i]) > 0.05 for i in range(3)):
+                raise RecoveryRefused("The nozzle did not arrive above the selected point")
+        except (KeyError, TypeError, ValueError, IndexError) as error:
+            raise RecoveryRefused("The nozzle position above the selected point could not be verified") from error
+
     def _returned(self, error):
         if error:
             self._finish("uncertain", f"Return movement did not confirm: {error}")
@@ -330,9 +357,7 @@ class RecoveryExecution:
         source = self._attempt[0]
         try:
             self._prepare(status)
-            position = status["gcode_move"]["gcode_position"]
-            if any(abs(float(position[i]) - self._return.target[i]) > 0.05 for i in range(3)):
-                raise RecoveryRefused("The nozzle did not arrive at the selected point")
+            self._verify_staging_position(status)
         except (RecoveryRefused, KeyError, TypeError, ValueError) as reason:
             self._finish("refused", str(reason))
             return
@@ -350,6 +375,7 @@ class RecoveryExecution:
         source = self._attempt[0]
         try:
             self._prepare(status)
+            self._verify_staging_position(status)
             if status["virtual_sdcard"]["file_position"] != source.boundary_offset:
                 raise RecoveryRefused("Klipper did not confirm the selected file offset")
         except (RecoveryRefused, KeyError, TypeError) as reason:
@@ -369,6 +395,7 @@ class RecoveryExecution:
         source = self._attempt[0]
         try:
             self._prepare(status)
+            self._verify_staging_position(status)
             move = status["gcode_move"]
             if (move.get("absolute_coordinates") is not source.state.absolute_xyz
                     or move.get("absolute_extrude") is not source.state.absolute_e):
@@ -391,7 +418,7 @@ class RecoveryExecution:
         if self._return.finish_script:
             self._script("finishing_pause", self._return.finish_script, self._pause_finished)
         else:
-            self._script("resuming", "M24" if self._idle else "CLEAR_PAUSE\nM24", self._resumed)
+            self._script("resuming", self._return.resume_script, self._resumed)
 
     def _pause_finished(self, error):
         if error:
@@ -404,10 +431,11 @@ class RecoveryExecution:
             return
         try:
             self._prepare(status)
+            self._verify_staging_position(status)
         except RecoveryRefused as reason:
             self._finish("refused", str(reason))
             return
-        self._script("resuming", "CLEAR_PAUSE\nM24", self._resumed)
+        self._script("resuming", self._return.resume_script, self._resumed)
 
     def _resumed(self, error):
         if error:
@@ -421,9 +449,14 @@ class RecoveryExecution:
         source, filename = self._attempt[:2]
         stats = status.get("print_stats") or {}
         sd = status.get("virtual_sdcard") or {}
+        position = sd.get("file_position")
+        valid_position = (isinstance(position, (int, float)) and not isinstance(position, bool)
+                          and source.boundary_offset <= position <= source.file_size)
         if (stats.get("state") != "printing" or stats.get("filename") != filename
                 or sd.get("file_size") != source.file_size
-                or sd.get("file_position", -1) < source.boundary_offset):
+                or sd.get("is_active") is not True
+                or (status.get("pause_resume") or {}).get("is_paused") is not False
+                or not valid_position):
             self._finish("uncertain", "Printer did not confirm recovery printing; inspect it before retrying")
             return
         self._finish("complete", "Recovery is printing from the selected point")

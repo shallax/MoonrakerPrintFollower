@@ -44,6 +44,101 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
             self.assertEqual(context.printed_top_z, boundary.position[2])
             self.assertEqual(context.file_printed_top_z, 12)
 
+    def test_paused_selected_point_ahead_of_parser_still_produces_context(self):
+        from mpf.gcode.GCodeIndex import build_index_from_file
+        from mpf.gcode.IndexView import IndexView
+        from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
+        parts = self._make()
+        data = b"G90\nM82\nG92 E0\n;LAYER:0\nG1 X1 Y1 Z0.2 E1\nG1 X2 E2\n"
+        parts.client.statusReceived.emit(harness._status("paused",
+            virtual_sdcard={"file_position": 1, "file_size": len(data), "progress": 0}))
+        with harness.tempfile.TemporaryDirectory() as directory:
+            path = harness.os.path.join(directory, "cube.gcode")
+            with open(path, "wb") as handle: handle.write(data)
+            job = parts.files.job_key
+            parts.files.path = path
+            parts.files.identity = RemoteFileIdentity("cube.gcode", len(data), 123.)
+            parts.index.view = IndexView(job, build_index_from_file(path))
+            parts.coordinator.refresh()
+            parts.coordinator.set_plate_anchor(0)
+            parts.coordinator.set_plate_split(1)
+            context = parts.coordinator._recovery_context()
+            self.assertIsNotNone(context)
+            self.assertEqual(context.observed_offset, 1)
+            self.assertEqual(context.boundary.next_motion_offset, data.index(b"G1 X2"))
+
+    def test_recovery_files_are_ordered_by_last_print_then_modified(self):
+        parts = self._make()
+        parts.files.MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
+        parts.client.statusReceived.emit(harness._status("standby", filename=""))
+        parts.coordinator.refresh_recovery_files()
+        parts.client.reply({"result": {"files": [
+            {"filename": "a.gcode", "size": 31, "print_start_time": 10},
+            {"filename": "z.gcode", "size": 31, "print_start_time": 20},
+            {"filename": "new.gcode", "size": 31, "modified": 100},
+            {"filename": "old.gcode", "size": 31, "modified": 50},
+            {"filename": "bad.gcode", "size": 31, "print_start_time": "nan"}]}}, None)
+        self.assertEqual([row["name"] for row in parts.coordinator.recovery_files_state["options"]],
+                         ["z.gcode", "a.gcode", "new.gcode", "old.gcode", "bad.gcode"])
+
+    def test_unloaded_handover_survives_its_own_printing_notification(self):
+        from mpf.gcode.GCodeIndex import build_index_from_file
+        from mpf.gcode.IndexView import IndexView
+        from mpf.moonraker.MoonrakerProtocol import RemoteFileIdentity
+        from tests.test_recovery_protocol import ProtocolPrinter
+        from PyQt6.QtCore import QCoreApplication
+        parts = self._make()
+        parts.client.statusReceived.emit(harness._status("standby", filename=""))
+        data = (b"G90\nM82\nG92 E0\nM104 S210\nM140 S60\n"
+                b";LAYER:0\nG1 X40 Y50 Z2 E15.25 F1800\nG1 X41 E16\n")
+        with harness.tempfile.TemporaryDirectory() as directory:
+            path = harness.os.path.join(directory, "part.gcode")
+            with open(path, "wb") as handle: handle.write(data)
+            job = ("part.gcode", len(data), 0)
+            parts.coordinator._offline_recovery_job = job
+            parts.files.bind(job)
+            parts.files.path = path
+            parts.files.identity = RemoteFileIdentity("part.gcode", len(data), 123.)
+            parts.index.view = IndexView(job, build_index_from_file(path))
+            parts.coordinator.refresh()
+            parts.coordinator.set_plate_anchor(0)
+            parts.coordinator.set_plate_split(1)
+            printer = ProtocolPrinter()
+            command = printer.command
+            def notify(line):
+                command(line)
+                if line.startswith("M23 "):
+                    printer.state["virtual_sdcard"]["file_size"] = len(data)
+                if line == "M24":
+                    # A websocket notification may precede the HTTP reply.
+                    parts.client.statusReceived.emit(harness.copy.deepcopy(printer.state))
+            printer.command = notify
+            def transport(owner, channel, method, endpoint, callback, **kwargs):
+                if endpoint.startswith("server/files/metadata"):
+                    callback({"result": {"filename": "part.gcode", "size": len(data), "modified": 123.}}, None)
+                elif endpoint == "printer/objects/query":
+                    printer.query(lambda status, error: callback({"result": {"status": status}}, error))
+                elif endpoint == "printer/gcode/script":
+                    printer.send(kwargs["body"]["script"], lambda error: callback({}, error))
+                else:
+                    callback({"result": {}}, None)
+                return True
+            parts.client.transport.send_json = transport
+            recovery = parts.coordinator.recovery
+            self.assertTrue(recovery.plan())
+            def pump_until(predicate):
+                deadline = harness.time.monotonic() + 5
+                while not predicate() and harness.time.monotonic() < deadline:
+                    QCoreApplication.instance().processEvents()
+                    if printer.queue: printer.step()
+                    harness.time.sleep(.001)
+                self.assertTrue(predicate(), recovery.state)
+            pump_until(lambda: recovery.state["phase"] == "ready")
+            self.assertTrue(recovery.start())
+            pump_until(lambda: recovery.state["phase"] in {"complete", "refused", "uncertain"})
+            self.assertEqual(recovery.state["phase"], "complete", recovery.state)
+            self.assertTrue(printer.scripts[-1].endswith("M24"))
+
     def test_unloaded_file_listing_rejects_malformed_rows_and_reports_errors(self):
         parts = self._make()
         parts.client.statusReceived.emit(harness._status("standby", filename=""))
@@ -83,8 +178,27 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
                     observation=PrintObservation("paused", "cube.gcode", len(data), 20, 30)),
                 _index=harness.SimpleNamespace(view=view), _files=files,
                 _plate_anchor=0, _plate_split=1)
+            files.request_file = Mock()
+            files.path = None
+            self.assertIsNone(PrintCoordinator.selected_recovery_boundary(selection))
+            files.request_file.assert_called_once_with()
+            files.path = path
             boundary = PrintCoordinator.selected_recovery_boundary(selection)
             self.assertEqual(boundary.next_motion_offset, data.index(b"G1 X2"))
+            # Attached viewing pre-populates from the accepted live motion,
+            # without detaching, seeking, or using the parser's ahead offset.
+            from dataclasses import replace
+            from mpf.printing.PrintState import MotionProgress
+            selection._plate_anchor = selection._plate_split = None
+            selection._snapshot = replace(selection._snapshot,
+                motion_progress=MotionProgress(layer=0, split=1, partial=0, motion_total=2))
+            live = PrintCoordinator.selected_recovery_boundary(selection)
+            self.assertEqual(live, boundary)
+            self.assertIsNone(selection._plate_anchor)
+            self.assertIsNone(selection._plate_split)
+            selection._snapshot = replace(selection._snapshot, motion_progress=None)
+            self.assertIsNone(PrintCoordinator.selected_recovery_boundary(selection))
+            selection._plate_anchor, selection._plate_split = 0, 1
             files.job_key = ("other.gcode", len(data), 1)
             self.assertIsNone(PrintCoordinator.selected_recovery_boundary(selection))
             files.job_key = key

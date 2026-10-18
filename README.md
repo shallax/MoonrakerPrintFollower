@@ -16,12 +16,14 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - Add Cura 5.14 beta 1 / SDK 8.13 support, with 5.14 beta 1 as the primary
   CI version, 5.13 as secondary, and the beta included in the UI Version Sweep.
 
-Print Follower can recover a printing or paused virtual-SD job from an exact,
+Print Follower can recover a paused virtual-SD job from an exact,
 selected motion boundary. It can also select an unloaded root G-code file and
 start it at that boundary after power loss, without running the file's print-start
 macro. Scrub to the suspected stop, mark it manually or choose a filament
 sensor marker, then use **Recover interrupted print from selected point…**
-beneath the follower sliders. An optional lead-in rewinds through a contiguous
+beneath the follower sliders. While attached, the live layer and completed-move
+count pre-populate the selection; detaching is optional. The recovery button is
+disabled while printing. An optional lead-in rewinds through a contiguous
 extrusion run. The review shows the actual replay start, nozzle XYZ, file byte
 and reconstructed E value, including accumulated absolute extrusion. Checking
 the G-code sends no printer commands. A separate, explicit confirmation starts
@@ -44,8 +46,9 @@ parking disabled. Leave either list empty if the file does not contain a qualify
 macro. An unlisted macro stops planning rather than letting the plugin guess what
 it did. Macros encountered after the restart point run as part of the file.
 The plugin waits for the latest nozzle and bed targets before moving; if it
-cannot derive a target from the file, it asks for one. For unloaded recovery,
-the indexed G-code supplies a conservative height bound for the clearance move.
+cannot derive a target from the file, it asks for one. Return travel uses the
+selected restart layer plus the configured clearance (5 mm by default), capped
+at the permitted Z limit.
 If Z was homed on the object, enter the original file Z of that homed surface in
 the follower's recovery review; the plugin sets a temporary G-code Z origin
 with `G92` and confirms it before moving. Klipper restores its normal origin
@@ -53,6 +56,33 @@ at the next Z homing. Home XYZ safely away from the object first.
 Recovery refuses unsupported G-code, printer state or motion geometry before seeking.
 Nozzle priming remains off by default. Its initial values are X0, Y250, Z100,
 50 mm of filament at 5 mm/s; change them for the printer before enabling it.
+The configured priming Z is retained when above the restart layer; otherwise
+priming uses restart Z + 5 mm, capped at the permitted maximum. Travel to the
+prime point uses the higher of current Z and effective prime Z without an extra
+clearance lift. The configurable dwell occurs only after purging (default 5 s,
+0–300 s). File seek, modal restoration and pause cleanup finish above the print;
+the final descent and restart are sent together without a dwell at the surface.
+
+The confirmation lists exact coordinates, estimated descent time, the restart
+layer and the next move. Its step selector shows an angled front-right view and
+XY, XZ and YZ views of the nozzle, restart marker, recorded deposition and bed
+bounds. Red X, green Y and blue Z arrows start at zero; flat views show only
+their two visible axes. Bed outlines use the printer's reported XY travel limits,
+so printers with extra travel beyond the physical bed should interpret them as
+travel bounds. Recorded G-code progress is not proof that filament was deposited:
+a jam can leave missing layers without triggering a runout sensor. Future restart
+points carry an explicit warning about skipped toolpath.
+
+**Use point** selects a stop bookmark without starting anything; **Remove** deletes
+that bookmark without changing the current selection. After confirmation, **Dismiss**
+closes the dialogs without cancelling recovery. Reopening a dialog scrolls to the
+top and resets the preview step to 1. Keep Cura open and connected until recovery
+reports completion; an interrupted handover needs inspection before another attempt.
+
+The renamed **Temperatures** section includes per-heater sliders, Off, and +/- bumps
+of 1, 5, 10 or 25 °C. Limits come from Moonraker's heater configuration and are
+checked again before dispatch. Temperature profiles can be selected during printing.
+
 
 ## What changed in 5.4.0
 
@@ -991,6 +1021,27 @@ The custom controls appear only after a model has been configured; otherwise
 at the model upload controls.
 
 ## Screenshots
+
+### Interrupted-print recovery
+
+The recovery selection is pre-filled from the attached follower and can be changed
+to an exact layer and completed-move count. These captures use synthetic G-code;
+no printer commands are sent.
+
+![Recovery selection and stop bookmarks](screenshots/19-recovery-selection.png)
+
+The full preview panel shows the selected step from four directions, with the bed,
+recorded printed paths and nozzle in a shared coordinate frame.
+
+![Recovery step preview with scaled bed and XYZ axes](screenshots/20-recovery-preview.png)
+![Recovery step preview in the dark theme](screenshots/20-recovery-preview-dark.png)
+
+Scroll the confirmation to inspect the ordered actions and acknowledge the restart
+point. The confirmation controls remain accessible below the scrolling content.
+
+![Recovery action list and final confirmation](screenshots/21-recovery-confirmation.png)
+
+### Monitor and Preview
 
 The interface screenshots are captured deterministically from the plugin's real
 QML with the real Cura light/dark themes and synthetic printer data

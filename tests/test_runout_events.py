@@ -5,6 +5,16 @@ from mpf.printing.RunoutEvents import RunoutEvents, pause_owner
 
 
 class RunoutEventsTests(unittest.TestCase):
+    def test_remove_exact_bookmark_rejects_stale_jobs_and_preserves_others(self):
+        events = RunoutEvents()
+        job = ("part", 100, 1)
+        first = events.mark_manual(job, at=1, layer=0, split=2).document()
+        second = events.mark_manual(job, at=2, layer=0, split=3).document()
+        self.assertFalse(events.remove(("part", 100, 2), first))
+        self.assertTrue(events.remove(job, first))
+        self.assertFalse(events.remove(job, first))
+        self.assertEqual([e.document() for e in events.events], [second])
+
     def test_selected_sensor_records_only_true_to_false_transition(self):
         events = RunoutEvents()
         one = "filament_switch_sensor toolhead"
@@ -113,6 +123,18 @@ class RunoutEventsTests(unittest.TestCase):
         self.assertEqual(events.events[0].split, 6)
         self.assertIsNone(events.mark_manual(job, at="bad", layer=0, split=0))
 
+    def test_removed_sensor_resets_baseline_and_transition_history_is_bounded(self):
+        events = RunoutEvents()
+        job, name = ("x", 1), "filament_switch_sensor inlet"
+        events.observe(job, {name: {"filament_detected": True}}, at=1, selected=[name])
+        events.observe(job, {}, at=2, selected=[name])
+        self.assertEqual(events.observe(job, {name: {"filament_detected": False}}, at=3, selected=[name]), ())
+        for i in range(70):
+            events.observe(job, {name: {"filament_detected": True}}, at=10 + i * 2, selected=[name])
+            events.observe(job, {name: {"filament_detected": False}}, at=11 + i * 2, selected=[name])
+        self.assertEqual(len(events.events), 64)
+        self.assertEqual(events.events[0].observed_at, 23)
+
     def test_restored_history_filters_missing_fields_and_caps_records(self):
         events = RunoutEvents()
         base = {"kind": "manual", "precision": "estimate", "sensor": "",
@@ -120,7 +142,9 @@ class RunoutEventsTests(unittest.TestCase):
         bad = [None, dict(base, observed_at="bad"), dict(base, sensor="x" * 129)]
         events.restore(None, [base])
         self.assertEqual(events.events, ())
-        events.restore(("x", 1), bad + [dict(base, observed_at=i) for i in range(70)])
+        events.restore(("x", 1), bad + [base])
+        self.assertEqual(len(events.events), 1)
+        events.restore(("x", 1), [dict(base, observed_at=i) for i in range(70)])
         self.assertEqual(len(events.events), 64)
         self.assertEqual(events.events[0].observed_at, 6)
 

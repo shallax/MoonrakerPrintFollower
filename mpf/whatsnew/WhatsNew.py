@@ -29,9 +29,12 @@ WHATS_NEW: Tuple[dict, ...] = (
         "version": "6.0.0",
         "headline": "Version 6.0.0 adds reviewed interrupted-print recovery to Print Follower.",
         "items": (
-            "Scrub the follower to a suspected runout, mark it or choose a sensor marker, and review an optional extrusion lead-in. The actual restart position and extrusion value are shown before confirmation.",
-            "Recovery checks G-code without moving the printer, then separately confirms an active, paused or unloaded-file restart. It waits for temperatures and can prime the nozzle at a configured coordinate.",
-            "Select sensors and macros discovered from your printer in Recovery settings. Klipper keeps control of sensors that already pause on runout; recovery also works without sensors.",
+            "Recover a paused print or an unloaded G-code file from an exact layer and move. The live point is pre-filled without detaching; you can also select earlier or future points. Ordinary Resume remains separate.",
+            "Check the G-code without moving the printer, then review each action before starting. Angled 3D, top, front and side diagrams show the nozzle, restart point, recorded printed paths and bed bounds to scale, with coloured XYZ axes.",
+            "Set return clearance above the selected layer, optional priming XYZ, extrusion amount and speed, and a priming dwell (5 seconds by default). Low prime heights rise to restart Z + 5 mm; travel respects the printer's Z ceiling. There is no dwell at the restart point.",
+            "Use point selects a stop bookmark; Remove deletes it. Bookmarks and printed paths are estimates, not proof of deposited filament. After starting recovery, Dismiss returns to Print Follower without cancelling it. Reopened dialogs reset their scroll and preview step.",
+            "Adjust each heater in Temperatures with a slider or 1, 5, 10 and 25 degree bumps, within limits read from Moonraker. Temperature profiles remain available while printing.",
+            "Cura 5.14 beta 1 is supported alongside 5.13 in CI and the UI version sweep. Recovery settings discover the printer's sensors and macros; recovery also works without a runout sensor.",
         ),
     },
     {

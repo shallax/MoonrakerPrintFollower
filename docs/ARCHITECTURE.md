@@ -133,6 +133,7 @@ correct package ownership.
 | `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer`/`MotionProgress` and the single `LayerResolver` | QML/Cura writes |
 | `RecoveryPlanning.py` | Read-only scrub lead-in and exact source-modal reconstruction for a supported recovery point | Printer commands or inferred macro state |
 | `RecoveryHandover.py` | Pure paused-print, temperature and travel preflight plus staged return script rendering | Network transport, printer mutation or unverified clearance |
+
 | `RecoveryExecution.py` | Sequential one-attempt recovery handover over injected fresh-query and script-send capabilities, with ambiguous results terminal | Blind retries or direct transport ownership |
 | `RecoveryController.py` | Qt owner for asynchronous plan and file validation, live metadata check, and one transport-backed recovery attempt | G-code parsing policy or Cura view state |
 | `RunoutEvents.py` | Print-bound selected-sensor transitions and manual stop estimates with explicit observation precision | Printer commands or inferring an exact extrusion-stop location |
@@ -243,6 +244,7 @@ correct package ownership.
 | `DetectionPolicy.py` | Freshness, context reset and sustained evidence transitions | Qt, native inference or printer commands |
 | `LocalDetectionService.py` | Single background setup, benchmark and inference lane; global consent, readiness and persisted enable state. Disabling retires queued/in-flight results while retaining per-printer settings | Camera transport or printer commands |
 | `EvidenceStore.py` | The alert's bounded evidence on disk: the triggering frame and a per-print score timeline, pruned by count | Qt, policy or printer commands |
+| `HeaterTargets.py` | Heater target inventory and validated Klipper temperature limits | Networking or command dispatch |
 | `TemperaturePresentation.py` | Per-printer chart configuration, history ownership and independently cached mini/full/latest/legend projections | Monitor publication, networking or toolhead state |
 | `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
@@ -2338,3 +2340,50 @@ fallback; a null retained rectangle means no retained surface region is present.
 Do not add attachment texture rows to their parent framebuffer's byte estimate,
 or count borrowed buffers as additional plugin allocations. Stale worker receipts
 are historical observations, not simultaneous live-allocation totals.
+
+## Recovery confirmation preview
+
+Recovery checks file seek, modal restoration and pause cleanup at the selected
+XY above the print. A single final script lowers Z and starts the SD worker,
+without a dwell or network round trip at the print surface. The confirmation
+preview uses bounded deposition segments from the read-only source scan; its
+angled 3D and XY/XZ/YZ projections show the recorded prefix, not measured material.
+The bed outline uses reported XY travel bounds in the same coordinate frame and scale. Each
+step shares its position and text with the ordered confirmation.
+
+
+Recovery selection defaults to the accepted `PrintSnapshot.motion_progress`
+layer/split while the follower remains attached. A manual anchor takes precedence;
+no parser byte estimate substitutes for a missing exact motion boundary. Index
+hydration and source/job identity checks still gate publication. Planning preserves
+the selected point and validates the source and printer again before execution.
+
+`RecoveryController` publishes preview segments as nested QVariant-compatible
+lists, plus bed bounds translated from fresh firmware axis limits and coordinate
+bases. `RecoveryStepPreview.qml` projects them onto an angled front-right view and
+XY/XZ/YZ views; all use the same world units within each projection. RGB axis arrows
+start at G-code zero. The bed is the reported XY travel rectangle, not inferred CAD
+geometry. Unloaded Z reference is reflected in the bed placement. The preview is
+bounded/simplified and distinguishes recorded progress from actual deposited material.
+
+Priming chooses the configured Z only when above the restart layer, otherwise
+restart Z + 5 mm, capped at the transformed Z limit. Travel to prime uses the higher
+of current and effective prime Z without an additional lift. Return travel is the
+selected Z plus configured clearance, also capped. The prime-only dwell defaults
+to 5 seconds and participates in the command timeout. Final descent/modal restoration,
+pause release and SD start share one script without G4, M400 or a network round trip
+at the restart surface. Fresh staging-position checks precede that final script.
+
+Recovery dialogs reset their scroll offsets and preview selector when opened.
+After submission, Dismiss closes both dialogs without calling cancellation. User
+stop bookmarks can be removed independently of the selected restart boundary.
+
+`HeaterTargets` owns discovery and target bounds for extruders, beds and generic
+heaters. Monitor publishes bounded targets; the Temperatures UI offers sliders,
+Off and selectable 1/5/10/25 degree bumps. Dispatch revalidates against current
+configuration, while temperature profiles remain available during printing.
+
+`tools/capture_recovery.py` renders selection, a complete preview panel and the
+scrolled confirmation in light/dark real themes using synthetic source geometry.
+It has no network transport or command slots. It participates in native/container
+capture generation, text contrast auditing and deterministic capture comparison.

@@ -4,6 +4,38 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 6.0.0
 
+- Recovery retains a configured prime Z above the restart point; otherwise it uses restart Z + 5 mm. Prime and travel heights respect the printer’s Z ceiling, including coordinate offsets, and confirmation diagrams show the capped positions.
+
+- Preview each recovery step in angled 3D and XY/XZ/YZ views with the nozzle, restart
+  marker, scaled print bed, visible RGB axes and recorded printed toolpath.
+  Priming travel no longer adds a redundant clearance lift. Keep confirmation actions fixed below
+  the scrollable content. Finish checks above the print, then descend and start
+  printing in one script with no dwell at the restart point.
+
+- Prepopulate recovery from the attached follower, including the editable layer
+  and move fields when the index arrives after the dialog opens. Reset scroll
+  and step selection on opening, and dismiss the complete dialog stack after
+  submitting recovery.
+
+- Expand recovery lifecycle, simulated-printer and real-QML regression coverage.
+  Document the workflow and architecture with reproducible light/dark recovery
+  screenshots.
+
+- Allow recovery checks and confirmed restarts at future indexed points, with
+  an explicit skip-forward notice. Explain stop bookmarks, rename Select to
+  Use point, and allow individual markers to be removed.
+
+- Recovery return travel now uses the selected layer plus the configurable
+  clearance (5 mm by default), with an ordered confirmation of moves, heating,
+  purge and descent. Optional priming has a configurable 0–300 second dwell,
+  defaulting to 5 seconds, after extrusion finishes.
+
+- Rename Temperature profiles to Temperatures and add individual heater sliders,
+  Off buttons and selectable 1/5/10/25 °C bumps. Read each heater's limits from
+  Klipper configuration through Moonraker; individual targets can be adjusted
+  during printing, with limits and connection/lock state checked before dispatch.
+  Saved profiles and cooldown are also available while printing.
+
 - Add Cura 5.14 beta 1 / SDK 8.13 support. Run the primary CI UI gate
   on 5.14 beta 1, retain 5.13 as secondary, and include the beta in the
   full supported-version UI sweep.

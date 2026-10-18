@@ -11,6 +11,7 @@ class PendingValue:
     script: str = ""
     channel: str = ""
     sent: bool = False
+    guard: object = None
 
 
 class MonitorTuning(QObject):
@@ -53,13 +54,13 @@ class MonitorTuning(QObject):
         self._drop(key)
         self._pending[key] = PendingValue(value, self._revision)
 
-    def queue(self, key, value, channel, script):
+    def queue(self, key, value, channel, script, *, guard=None):
         if not self._data.active: return
         # A release replaces either a preview-only value or the last released
         # value retained while the user re-grabbed the Slider.
         self._drop(key)
         self._revision += 1
-        self._pending[key] = PendingValue(value, self._revision, script=script, channel=channel)
+        self._pending[key] = PendingValue(value, self._revision, script=script, channel=channel, guard=guard)
         timer = self._timer(self._debounce, key, self.DEBOUNCE_MS, self._send)
         timer.start()
         self.changed.emit()
@@ -102,6 +103,9 @@ class MonitorTuning(QObject):
     def _send(self, key):
         pending = self._pending.get(key)
         if pending is None or not pending.script: return
+        if pending.guard is not None and not pending.guard():
+            self._expire(key)
+            return
         pending.sent = True
         revision = pending.revision
         def finished(payload, error):

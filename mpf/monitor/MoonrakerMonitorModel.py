@@ -1982,6 +1982,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     hasBedMesh = value_property(bool, "hasBedMesh", controlsChanged, False)
     canRunSetup = value_property(bool, "canRunSetup", controlsChanged, False)
     temperaturePresetNames = value_property(QVariant, "temperaturePresetNames", controlsChanged, [])
+    heaterControlItems = value_property(QVariant, "heaterControlItems", typedControlsChanged, [])
+    canSetHeaterTemperature = value_property(bool, "canSetHeaterTemperature", typedControlsChanged, False)
     temperaturePresetItems = value_property(QVariant, "temperaturePresetItems", typedControlsChanged, [])
     canApplyTemperaturePreset = value_property(bool, "canApplyTemperaturePreset", controlsChanged, False)
     speedFactorPercent = value_property(int, "speedFactorPercent", controlsChanged, 100)
@@ -3166,6 +3168,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._persist_recovery_events(snapshot)
             self._publish()
 
+    @pyqtSlot(QVariant)
+    def removeRecoveryStop(self, row):
+        if hasattr(row, "toVariant"):
+            row = row.toVariant()
+        snapshot = self._print_state()
+        if self._runout_events.remove(getattr(snapshot, "job_key", None), row):
+            self._runout_pause_note = "Stop bookmark removed. The selected restart point is unchanged."
+            self._persist_recovery_events(snapshot)
+            self._publish()
+
     @pyqtSlot()
     def suggestRecoveryLeadIn(self):
         if self._recovery_suggest is not None:
@@ -3196,6 +3208,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot()
     @pyqtSlot(QVariant)
     def startRecovery(self, temperatures=None):
+        # QVariant slots receive QML object literals as QJSValue, not dict.
+        # Preserve the reviewed temperatures and Z reference at this boundary.
+        if hasattr(temperatures, "toVariant"):
+            temperatures = temperatures.toVariant()
         if self._recovery_start is not None:
             if temperatures is None:
                 self._recovery_start()
@@ -3366,3 +3382,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def extrude(self, direction): self._toolhead.extrude(direction)
     @pyqtSlot()
     def heatersOff(self): self._controls.heaters_off()
+
+    @pyqtSlot(str, float)
+    def setHeaterTemperature(self, name, target):
+        self._controls.set_heater_temperature(name, target)

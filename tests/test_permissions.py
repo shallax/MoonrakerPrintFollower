@@ -125,14 +125,9 @@ class PolicyRulingTests(unittest.TestCase):
         self.assertEqual(can_restart(obs(state="standby")), Verdict("allowed", ""))
         self.assertEqual(can_restart(obs(state="error")), Verdict("allowed", ""))
 
-    def test_temperature_presets_refuse_while_printing_and_allow_while_paused(self):
-        # The presets take their own row rather than riding the setup
-        # one: a firmware restart is unsafe in either print state, a
-        # heater target is not. A paused print holds no moving
-        # toolhead, so a pause is exactly when a temperature change is
-        # wanted.
+    def test_temperature_presets_allow_printing_paused_and_idle(self):
         self.assertEqual(can_apply_temperature_preset(obs(state="printing")),
-                         Verdict("disabled", R_PRINTING))
+                         Verdict("allowed", ""))
         self.assertEqual(can_apply_temperature_preset(obs(state="paused")),
                          Verdict("allowed", ""))
         self.assertEqual(can_apply_temperature_preset(obs(state="standby")),

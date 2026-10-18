@@ -13,6 +13,32 @@ source shape; **do not send printer commands during a live print**. A disposable
 paused virtual-SD printer is still required before claiming physical recovery
 validation.
 
+### Recovery regression audit
+
+Run these focused tests with
+`make test_files FILES="tests.test_qml_recovery tests.test_recovery_protocol tests.test_coordinator_coverage tests.test_recovery_controller"`.
+
+- Real Qt Quick windows receive mouse clicks to choose layer and within-layer
+  restart points, open confirmation, acknowledge it and submit. A refusal must
+  remain visible. Small-panel geometry and independent recovery/slider state
+  gates are checked. The numbered confirmation checks travel coordinates,
+  configurable clearance, purge/dwell order and estimated descent time.
+- A command-interpreting printer double executes the recovery sequence and
+  checks final XYZ, extrusion, feed rate and file offset across mesh offsets,
+  restart Z references and optional priming. Every pending operation is tested
+  for cancellation and transport failure; stale and duplicate replies must not
+  advance an attempt. Dwell tests check its duration and nozzle position after
+  extrusion, omission when priming is disabled, and transport timeout allowance.
+  Success requires matching print, SD and pause states.
+- The real coordinator and recovery controller run together with a source file
+  and simulated transport. The new-print notification deliberately arrives
+  before the resume command reply; recovery must survive its own new run while
+  unrelated jobs invalidate it.
+
+These tests run in the normal suite. The Qt tests use Cura component doubles,
+and the protocol model is not Klipper. They do not establish installed-Cura
+compatibility, custom macro correctness or physical print quality.
+
 ## 5.4.0 — historical validation
 
 Run `make all` and the platform CAD smoke matrix on `release/v5.4.0`. The
@@ -1203,3 +1229,33 @@ source tree and in both actual package formats. Moving or deleting a target is
 a failure, including the upload dialog that previously fell outside the scan.
 The normal QML engine and capture gates remain mandatory; static path existence
 is not a substitute for successful component creation or visual evidence.
+
+
+## Recovery release validation
+
+`make coverage` runs each test file in an isolated process and enforces 95% as a
+minimum both overall and per Python file. Inspect the JSON missing-line report
+when adding a workflow; a green total does not excuse an uncovered controller.
+Recovery tests cover exact indexed/attached selection, QVariant geometry delivery,
+visible model/bed/axis pixels in all four projections, dialog reopen resets,
+small-window controls, and Dismiss without cancelling the asynchronous handover.
+The independent protocol simulator checks that seek and modal restoration finish
+above the print and that the final descent and SD start share one command batch.
+
+Lifecycle tests hold and release asynchronous profile, metadata, source and command
+replies around cancellation or session invalidation. They assert that stale replies
+cannot restart a handover or send the next command. These are local synthetic
+checks, not proof of a safe path around an arbitrary real object.
+
+`tools/capture_recovery.py` adds `19-recovery-selection`, `20-recovery-preview`
+and `21-recovery-confirmation` (plus dark variants) to the normal capture commands.
+It scans synthetic G-code and renders the shipped QML with real Cura themes, audits
+contrast, and deliberately supplies no command slots or network transport. The
+preview capture shows the full panel separately; the confirmation capture shows
+its scrolled action list and fixed footer. Regenerate committed screenshots through
+`make BACKEND=docker generate_screenshots`; native captures are useful local evidence
+but do not replace the canonical Linux pixels.
+
+Never close or restart a user's Cura during recovery. Before an explicitly requested
+restart, verify a terminal recovery outcome in both the current UI and logs; a
+selected point or a stationary nozzle alone does not establish completion.

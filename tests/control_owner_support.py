@@ -241,7 +241,7 @@ if QT_AVAILABLE:
         def set_followed_layer(self, layer):
             self.followed.append(layer)
 
-        def request_hydration(self, layer):
+        def request_hydration(self, layer, *, exact=False):
             self.hydration.append(layer)
 
         def set_manual_anchor(self, layer):

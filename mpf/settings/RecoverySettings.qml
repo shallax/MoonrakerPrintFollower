@@ -31,6 +31,7 @@ Item {
             settingsRecoveryPrimeZ: 100,
             settingsRecoveryPrimeAmount: 50,
             settingsRecoveryPrimeSpeed: 5,
+            settingsRecoveryPrimeDwell: 5,
             settingsRecoveryCommandTimeout: 120,
             settingsRecoveryHeatingTimeout: 1800,
             settingsRecoveryStatusTimeout: 10,
@@ -43,7 +44,7 @@ Item {
     property var selectedNames: activeSettings.settingsRecoverySensorNames.slice()
     property var setupNames: activeSettings.settingsRecoverySetupMacros.slice()
     property var transparentNames: activeSettings.settingsRecoveryTransparentMacros.slice()
-    readonly property bool primeValid: inRange(primeXField.text, 0, 1000) && inRange(primeYField.text, 0, 1000) && inRange(primeZField.text, 0, 1000) && inRange(primeAmountField.text, 0.1, 200) && inRange(primeSpeedField.text, 0.1, 20)
+    readonly property bool primeValid: inRange(primeXField.text, 0, 1000) && inRange(primeYField.text, 0, 1000) && inRange(primeZField.text, 0, 1000) && inRange(primeAmountField.text, 0.1, 200) && inRange(primeSpeedField.text, 0.1, 20) && inRange(primeDwellField.text, 0, 300)
     readonly property bool valid: inRange(leadInField.text, 0.1, 50) && inRange(leadInMovesField.text, 1, 100) && inRange(clearanceField.text, 1, 30) && inRange(xySpeedField.text, 1, 200) && inRange(zSpeedField.text, 0.5, 20) && (!primeEnabledBox.checked || primeValid) && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(nozzleParameterField.text.trim()) && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(bedParameterField.text.trim()) && inRange(timeoutField.text, 10, 600) && inRange(heatingTimeoutField.text, 60, 3600) && inRange(statusTimeoutField.text, 3, 60)
     readonly property var values: ({
             "recovery_sensor_names": selectedNames,
@@ -66,6 +67,7 @@ Item {
             "recovery_prime_z": primeValue(primeZField.text, 0, 1000, activeSettings.settingsRecoveryPrimeZ),
             "recovery_prime_amount_mm": primeValue(primeAmountField.text, 0.1, 200, activeSettings.settingsRecoveryPrimeAmount),
             "recovery_prime_speed_mm_s": primeValue(primeSpeedField.text, 0.1, 20, activeSettings.settingsRecoveryPrimeSpeed),
+            "recovery_prime_dwell_s": primeValue(primeDwellField.text, 0, 300, activeSettings.settingsRecoveryPrimeDwell),
             "recovery_command_timeout_s": Number(timeoutField.text),
             "recovery_heating_timeout_s": Number(heatingTimeoutField.text),
             "recovery_status_timeout_s": Number(statusTimeoutField.text)
@@ -350,10 +352,11 @@ Item {
                 text: String(activeSettings.settingsRecoveryLeadInMoves)
             }
             UM.Label {
-                text: "Clearance above printed height (mm)"
+                text: "Travel clearance above selected layer (mm)"
             }
             Cura.TextField {
                 id: clearanceField
+                objectName: "recoveryTravelClearance"
                 width: parent.width
                 text: String(activeSettings.settingsRecoveryClearance)
             }
@@ -387,7 +390,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 enabled: primeEnabledBox.checked
-                text: "Choose a clear location away from the printed object. Recovery lifts above the printed height, travels to this XY position, descends to this Z, primes, then lifts before travelling to the actual restart point. Priming Z must be at or above the selected restart layer."
+                text: "Choose a clear location away from the printed object. Recovery travels at the higher of the current nozzle and effective prime height, descends if needed and primes. It then uses the selected layer height plus travel clearance to return to the restart point. Priming uses this Z when it is above the restart layer; otherwise it uses restart Z + 5 mm. Priming and travel heights are capped at the permitted maximum Z."
             }
             UM.Label {
                 enabled: primeEnabledBox.checked
@@ -438,6 +441,17 @@ Item {
                 enabled: primeEnabledBox.checked
                 width: parent.width
                 text: String(activeSettings.settingsRecoveryPrimeSpeed)
+            }
+            UM.Label {
+                enabled: primeEnabledBox.checked
+                text: "Dwell after priming (seconds, 0–300)"
+            }
+            Cura.TextField {
+                id: primeDwellField
+                objectName: "recoveryPrimeDwell"
+                enabled: primeEnabledBox.checked
+                width: parent.width
+                text: String(activeSettings.settingsRecoveryPrimeDwell)
             }
             UM.Label {
                 text: "Command acknowledgement timeout (seconds)"

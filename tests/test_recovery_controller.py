@@ -20,6 +20,7 @@ class FakeTransport:
         self.printer = printer
         self.identity = identity
         self.scripts = []
+        self.script_timeouts = []
         self.remote_changed = False
 
     def send_json(self, _owner, _channel, _method, path, callback, *, body=None, **_kwargs):
@@ -32,6 +33,7 @@ class FakeTransport:
         elif path == "printer/gcode/script":
             script = body["script"]
             self.scripts.append(script)
+            self.script_timeouts.append(_kwargs.get("timeout_ms"))
             self.printer.send(script, lambda error: callback({}, error))
         else:
             raise AssertionError(path)
@@ -70,10 +72,28 @@ class RecoveryControllerTests(unittest.TestCase):
             record=lambda context, phase, detail: self.records.append((context, phase, detail)))
         self.addCleanup(self.controller.close)
 
+    def test_preview_bed_bounds_follow_printer_limits_and_coordinate_offsets(self):
+        self.transport.printer.state["toolhead"].update(axis_minimum=[-5, -10, 0], axis_maximum=[250, 240, 300])
+        self.transport.printer.state["gcode_move"].update(position=[100, 100, 10], gcode_position=[90, 80, 8, 0])
+        self.ready()
+        self.assertEqual(self.controller.state["bedBounds"], [-15, -30, -2, 240, 220])
+        self.assertEqual(self.controller.state["maximumZ"], 298)
+
+    def test_prime_dwell_reaches_transport_with_sufficient_timeout(self):
+        self.context = replace(self.context, prime_enabled=True, prime_xyz=(10, 15, 3),
+                               prime_amount_mm=20, prime_speed_mm_s=2, prime_dwell_s=300)
+        self.ready()
+        self.assertEqual(self.controller.state["primeDwell"], 300)
+        self.assertEqual(self.controller.state["clearance"], 5)
+        self.assertTrue(self.controller.start())
+        self.wait_terminal()
+        index = next(i for i, script in enumerate(self.transport.scripts) if "G4 P300000" in script)
+        self.assertGreaterEqual(self.transport.script_timeouts[index], 430000)
+
     def ready(self):
         self.assertTrue(self.controller.plan())
         deadline = time.monotonic() + 5
-        while self.controller.state["phase"] == "planning" and time.monotonic() < deadline:
+        while self.controller.state["phase"] in {"planning", "checking_printer"} and time.monotonic() < deadline:
             self.app.processEvents()
             time.sleep(.01)
         self.assertEqual(self.controller.state["phase"], "ready", self.controller.state)
@@ -83,6 +103,168 @@ class RecoveryControllerTests(unittest.TestCase):
         while self.controller.state["phase"] in {"verifying_source", "checking_remote_file"} and time.monotonic() < deadline:
             self.app.processEvents()
             time.sleep(.01)
+
+    def wait_for(self, predicate):
+        deadline = time.monotonic() + 5
+        while not predicate() and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.001)
+        self.assertTrue(predicate(), self.controller.state)
+
+    def test_profile_reply_after_cancellation_cannot_restore_readiness(self):
+        pending = []
+        self.transport.send_json = lambda *args, **kwargs: pending.append(args[4]) or True
+        self.assertTrue(self.controller.plan())
+        self.wait_for(lambda pending=pending: bool(pending))
+        self.controller.cancel()
+        pending.pop()({"result": {"status": self.transport.printer.state}}, None)
+        self.assertEqual(self.controller.state["phase"], "cancelled")
+        self.assertFalse(self.controller.start())
+        self.assertEqual(self.transport.scripts, [])
+
+    def test_profile_dispatch_and_reply_failures_are_read_only(self):
+        for dispatch, error in ((False, None), (True, "offline")):
+            with self.subTest(dispatch=dispatch, error=error):
+                def fail(*args, dispatch=dispatch, error=error, **kwargs):
+                    if dispatch:
+                        args[4]({}, error)
+                    return dispatch
+                self.transport.send_json = fail
+                self.assertTrue(self.controller.plan())
+                self.wait_for(lambda: self.controller.state["phase"] == "refused")
+                self.assertEqual(self.transport.scripts, [])
+                self.assertFalse(self.controller.start())
+
+    def test_missing_preview_limits_are_not_invented_and_motion_is_refused(self):
+        del self.transport.printer.state["toolhead"]["axis_maximum"]
+        self.ready()
+        self.assertIsNone(self.controller.state["maximumZ"])
+        self.assertEqual(self.controller.state["bedBounds"], [])
+        self.assertTrue(self.controller.start())
+        self.wait_for(lambda: self.controller.state["phase"] in {"refused", "uncertain"})
+        self.assertFalse(any("G1 " in script for script in self.transport.scripts))
+
+    def test_cancel_during_a_script_blocks_next_stage_and_replanning(self):
+        self.ready()
+        original = self.transport.send_json
+        pending = []
+        def hold(*args, **kwargs):
+            if args[3] == "printer/gcode/script":
+                pending.append(args[4])
+                return True
+            return original(*args, **kwargs)
+        self.transport.send_json = hold
+        self.assertTrue(self.controller.start())
+        self.wait_for(lambda pending=pending: bool(pending))
+        self.assertFalse(self.controller.plan())
+        self.controller.cancel()
+        self.assertEqual(self.controller.state["phase"], "cancelling")
+        pending.pop()({}, None)
+        self.assertFalse(self.controller.state["active"])
+        self.assertEqual(self.transport.scripts, [])
+
+    def test_session_change_discards_pending_metadata_and_script_replies(self):
+        for held_path in ("server/files/metadata", "printer/gcode/script"):
+            with self.subTest(path=held_path):
+                self.transport.send_json = FakeTransport.send_json.__get__(self.transport)
+                self.ready()
+                original = self.transport.send_json
+                pending = []
+                def hold(*args, held_path=held_path, pending=pending, original=original, **kwargs):
+                    if args[3].startswith(held_path):
+                        pending.append(args[4])
+                        return True
+                    return original(*args, **kwargs)
+                self.transport.send_json = hold
+                self.assertTrue(self.controller.start())
+                self.wait_for(lambda pending=pending: bool(pending))
+                self.client.sessionInvalidated.emit()
+                phase = self.controller.state["phase"]
+                pending.pop()({}, None)
+                self.assertEqual(self.controller.state["phase"], phase)
+                self.assertFalse(self.controller.state["active"])
+                self.assertEqual(self.transport.scripts, [])
+
+    def test_closed_controller_ignores_verification_and_session_notifications(self):
+        self.ready()
+        generation = self.controller._generation
+        self.controller.close()
+        self.controller._verification_done(generation, True)
+        self.controller.invalidate()
+        self.assertFalse(self.controller.plan())
+        self.assertFalse(self.controller.start())
+        self.assertEqual(self.transport.scripts, [])
+
+    def test_custom_pause_profile_is_reviewed_and_uses_pre_park_save(self):
+        config = self.transport.printer.state["configfile"]["config"]
+        config["gcode_macro PAUSE"] = {"gcode": "SAVE_GCODE_STATE NAME=PAUSE\nBASE_PAUSE\n"
+            "G1 X200\nSAVE_GCODE_STATE NAME=PAUSEPARK\n"
+            "SET_FILAMENT_SENSOR SENSOR=upper ENABLE=0\nSET_IDLE_TIMEOUT TIMEOUT=43200"}
+        config["gcode_macro RESUME"] = {"gcode": "BASE_RESUME"}
+        config["idle_timeout"] = {"timeout": "600"}
+        self.ready()
+        self.assertEqual(self.controller.state["pauseState"], "PAUSE")
+        self.assertEqual(self.transport.scripts, [])
+        self.assertTrue(self.controller.start())
+        self.wait_terminal()
+        self.assertEqual(self.controller.state["phase"], "complete", self.controller.state)
+        self.assertIn("RESTORE_GCODE_STATE NAME=PAUSE MOVE=0", self.transport.scripts)
+        self.assertFalse(any("PAUSEPARK" in script for script in self.transport.scripts))
+
+    def test_ambiguous_pause_profile_refuses_during_read_only_preparation(self):
+        self.transport.printer.state["configfile"]["config"]["gcode_macro PAUSE"] = {
+            "gcode": "SAVE_GCODE_STATE NAME=ONE\nSAVE_GCODE_STATE NAME=TWO\nBASE_PAUSE"}
+        self.assertTrue(self.controller.plan())
+        deadline = time.monotonic() + 5
+        while self.controller.state["phase"] in {"planning", "checking_printer"} and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.01)
+        self.assertEqual(self.controller.state["phase"], "refused")
+        self.assertIn("pre-park PAUSE state", self.controller.state["detail"])
+        self.assertEqual(self.transport.scripts, [])
+
+    def test_only_expected_new_run_is_accepted_during_unloaded_resume(self):
+        for phase, filename, size_delta, position_delta, accepted in (
+            ("resuming", "part.gcode", 0, 0, True),
+            ("checking_resume", "part.gcode", 0, 1, True),
+            ("returning", "part.gcode", 0, 0, False),
+            ("resuming", "other.gcode", 0, 0, False),
+            ("resuming", "part.gcode", 1, 0, False),
+            ("resuming", "part.gcode", 0, -1, False),
+        ):
+            with self.subTest(phase=phase, filename=filename, size_delta=size_delta, position_delta=position_delta):
+                self.context = replace(self.context, unloaded=True)
+                self.ready()
+                self.controller._phase = phase
+                generation = self.controller._generation
+                self.controller.job_changed(
+                    {"state": "printing", "filename": filename},
+                    {"file_size": self.context.identity.size + size_delta,
+                     "file_position": self.context.boundary.next_motion_offset + position_delta,
+                     "is_active": True})
+                self.assertEqual(self.controller._generation == generation, accepted)
+
+    def test_read_only_plan_and_confirmed_restart_accept_a_selected_point_ahead(self):
+        self.context = replace(self.context, observed_offset=1)
+        self.transport.printer.state["virtual_sdcard"]["file_position"] = 1
+        self.ready()
+        self.assertTrue(self.controller.state["skipsForward"])
+        self.assertEqual(self.controller.state["resumeLayer"], self.context.boundary.next_layer + 1)
+        self.assertEqual(self.controller.state["resumeMove"], self.context.boundary.next_motion + 1)
+        self.assertEqual(self.transport.scripts, [])
+        self.assertTrue(self.controller.start())
+        self.wait_terminal()
+        self.assertEqual(self.controller.state["phase"], "complete", self.controller.state)
+        self.assertIn(f"M26 S{self.context.boundary.next_motion_offset}", self.transport.scripts)
+
+    def test_resume_description_uses_next_layer_when_selection_finishes_a_layer(self):
+        self.ready()
+        context = self.controller._planned_context
+        self.controller._planned_context = replace(context,
+            boundary=replace(context.boundary, selected_layer=2, completed_motions=879,
+                             next_layer=3, next_motion=0))
+        self.assertEqual(self.controller.state["resumeLayer"], 4)
+        self.assertEqual(self.controller.state["resumeMove"], 1)
 
     def test_remote_mutation_refuses_before_printer_commands(self):
         self.ready()
@@ -97,7 +279,7 @@ class RecoveryControllerTests(unittest.TestCase):
         self.assertTrue(self.controller.start())
         self.wait_terminal()
         self.assertEqual(self.controller.state["phase"], "complete", self.controller.state)
-        self.assertEqual(self.transport.scripts[-1], "CLEAR_PAUSE\nM24")
+        self.assertTrue(self.transport.scripts[-1].endswith("CLEAR_PAUSE\nM24"))
         self.assertEqual(self.records[-1][1], "complete")
 
     def test_active_print_is_paused_and_source_rechecked_before_heating(self):
@@ -135,8 +317,8 @@ class RecoveryControllerTests(unittest.TestCase):
         self.assertEqual(self.transport.scripts[0], "M23 part.gcode")
         self.assertIn("M109 S210", self.transport.scripts[1])
         self.assertEqual(self.transport.scripts[2], "G92 Z12")
-        self.assertIn("G1 Z17", self.transport.scripts[3])
-        self.assertEqual(self.transport.scripts[-1], "M24")
+        self.assertIn("G1 Z7", self.transport.scripts[3])
+        self.assertTrue(self.transport.scripts[-1].endswith("M24"))
         self.assertNotIn("PRINT_START", "\n".join(self.transport.scripts))
 
     def test_missing_or_changed_selection_refuses_before_handover(self):
@@ -147,7 +329,7 @@ class RecoveryControllerTests(unittest.TestCase):
         self.context = replace(original, path="missing.gcode")
         self.assertTrue(self.controller.plan())
         deadline = time.monotonic() + 5
-        while self.controller.state["phase"] == "planning" and time.monotonic() < deadline:
+        while self.controller.state["phase"] in {"planning", "checking_printer"} and time.monotonic() < deadline:
             self.app.processEvents()
             time.sleep(.01)
         self.assertEqual(self.controller.state["phase"], "refused")
@@ -273,6 +455,47 @@ class RecoveryControllerTests(unittest.TestCase):
         self.wait_terminal()
         self.assertEqual(self.controller.state["phase"], "refused")
         self.assertEqual(self.transport.scripts, [])
+
+    def test_missing_final_paused_offset_refuses_before_heat(self):
+        self.ready()
+        printer = self.transport.printer
+        printer.state["print_stats"]["state"] = "printing"
+        printer.state["virtual_sdcard"]["is_active"] = True
+        printer.state["pause_resume"]["is_paused"] = False
+        original = printer.send
+        def changed_offset(script, callback):
+            if script == "M400":
+                def changed(error):
+                    printer.state["virtual_sdcard"]["file_position"] = None
+                    callback(error)
+                return original(script, changed)
+            return original(script, callback)
+        printer.send = changed_offset
+        self.assertTrue(self.controller.start())
+        self.wait_for(lambda: self.controller.state["phase"] == "uncertain")
+        self.assertNotIn("M109", "\n".join(self.transport.scripts))
+
+    def test_source_becoming_unparseable_during_pause_refuses_before_heat(self):
+        self.ready()
+        printer = self.transport.printer
+        printer.state["print_stats"]["state"] = "printing"
+        printer.state["virtual_sdcard"]["is_active"] = True
+        printer.state["pause_resume"]["is_paused"] = False
+        original = printer.send
+        def corrupt_after_pause(script, callback):
+            if script == "M400":
+                def changed(error):
+                    with open(self.context.path, "r+b") as handle:
+                        data = handle.read()
+                        handle.seek(0)
+                        handle.write(data.replace(b"G1 X41 E16", b"BADCODE   "))
+                    callback(error)
+                return original(script, changed)
+            return original(script, callback)
+        printer.send = corrupt_after_pause
+        self.assertTrue(self.controller.start())
+        self.wait_for(lambda: self.controller.state["phase"] == "refused")
+        self.assertNotIn("M109", "\n".join(self.transport.scripts))
 
     def test_bad_final_paused_offset_refuses_before_heat(self):
         self.ready()

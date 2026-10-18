@@ -116,7 +116,7 @@ MonitorPopOver {
                 UM.Label {
                     Layout.fillWidth: true
                     visible: root.printerModel != null && root.printerModel.recoveryFiles !== undefined && root.printerModel.recoveryFiles.available === true
-                    text: "Recover an unloaded print: choose its G-code, then select a restart point below."
+                    text: "Choose G-code to recover · most recently printed first."
                     wrapMode: Text.WordWrap
                 }
                 RowLayout {
@@ -130,7 +130,7 @@ MonitorPopOver {
                         textRole: "name"
                     }
                     Cura.SecondaryButton {
-                        text: "Use file"
+                        text: "Load for recovery"
                         enabled: unloadedFileBox.currentIndex >= 0 && unloadedFileBox.model.length > 0
                         onClicked: root.printerModel.selectRecoveryFile(unloadedFileBox.model[unloadedFileBox.currentIndex].name)
                     }
@@ -598,7 +598,7 @@ MonitorPopOver {
                     objectName: "moonrakerFollowerOpenRecovery"
                     Layout.fillWidth: true
                     text: "Recover interrupted print from selected point…"
-                    enabled: root.printerModel != null && root.printerModel.recoverySelection.offset !== undefined
+                    enabled: root.printerModel != null && root.printerModel.plateLayerCount > 0 && root.printerModel.monitorState !== "Printing"
                     onClicked: recoveryDialog.open()
                 }
 
@@ -667,6 +667,8 @@ MonitorPopOver {
 
             Popup {
                 id: recoveryDialog
+                onOpened: contentItem.resetView()
+                objectName: "moonrakerRecoveryDialog"
                 parent: root
                 x: Math.max(0, (root.width - width) / 2)
                 y: Math.max(0, (root.height - height) / 2)

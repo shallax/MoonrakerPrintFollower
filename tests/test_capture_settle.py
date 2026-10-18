@@ -8,6 +8,7 @@ veto, and the refusal when the scene never goes quiet.
 """
 from __future__ import annotations
 
+import itertools
 import pathlib
 import sys
 import unittest
@@ -42,9 +43,11 @@ class FakeScene:
 class CaptureSettleTests(unittest.TestCase):
     def test_a_moving_scene_never_settles_and_says_so(self):
         app = FakeApp()
-        scene = FakeScene(["a", "b", "c"])
+        # The fixture must actually move forever; repeating the third frame
+        # sometimes satisfied the settle span on a fast host.
+        frames = itertools.count()
         with self.assertRaisesRegex(RuntimeError, "never settled"):
-            capture_settle.settle(app, scene.grab, label="moving",
+            capture_settle.settle(app, lambda: next(frames), label="moving",
                                   span_seconds=0.05, timeout_ms=120)
 
     def test_the_first_frame_that_proves_the_run_is_returned(self):

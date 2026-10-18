@@ -44,8 +44,8 @@ class FakePrinter:
             self.state["gcode_move"]["gcode_position"][2] = float(script.removeprefix("G92 Z"))
         if "G1 X40 Y50" in script:
             base_z = self.state["gcode_move"]["position"][2] - self.state["gcode_move"]["gcode_position"][2]
-            self.state["gcode_move"]["gcode_position"] = [40, 50, 2, 0]
-            physical_z = 2 + base_z
+            self.state["gcode_move"]["gcode_position"] = [40, 50, 7, 0]
+            physical_z = 7 + base_z
             self.state["gcode_move"]["position"] = [40, 50, physical_z]
             self.state["toolhead"]["position"] = [40, 50, physical_z]
         if "G1 X10 Y15" in script:
@@ -63,6 +63,10 @@ class FakePrinter:
             self.state["gcode_move"]["speed_factor"] = float(re.search(r"M220 S([0-9.]+)", script)[1]) / 100
             self.state["gcode_move"]["extrude_factor"] = float(re.search(r"M221 S([0-9.]+)", script)[1]) / 100
         if "M24" in script:
+            base_z = self.state["gcode_move"]["position"][2] - self.state["gcode_move"]["gcode_position"][2]
+            self.state["gcode_move"]["gcode_position"][2] = 2
+            self.state["gcode_move"]["position"][2] = 2 + base_z
+            self.state["toolhead"]["position"][2] = 2 + base_z
             self.state["print_stats"]["state"] = "printing"
             self.state["pause_resume"]["is_paused"] = False
             self.state["virtual_sdcard"]["is_active"] = True
@@ -86,7 +90,7 @@ class RecoveryExecutionTests(unittest.TestCase):
         self.assertIn("G1 X40 Y50", printer.scripts[2])
         self.assertEqual(printer.scripts[3], "M26 S300")
         self.assertIn("G92 E15.25", printer.scripts[4])
-        self.assertEqual(printer.scripts[5], "CLEAR_PAUSE\nM24")
+        self.assertTrue(printer.scripts[5].endswith("CLEAR_PAUSE\nM24"))
 
     def test_ambiguous_return_does_not_seek_or_retry(self):
         printer = FakePrinter()
@@ -157,7 +161,7 @@ class RecoveryExecutionTests(unittest.TestCase):
         execution.start(source=source(), filename="part.gcode", printed_top_z=8)
         self.assertEqual(execution.phase, "complete")
         self.assertEqual(printer.scripts[0], "M23 part.gcode")
-        self.assertEqual(printer.scripts[-1], "M24")
+        self.assertTrue(printer.scripts[-1].endswith("M24"))
         self.assertLess(printer.scripts.index("M26 S300"), len(printer.scripts) - 1)
         self.assertNotIn("PRINT_START", "\n".join(printer.scripts))
 
@@ -171,7 +175,7 @@ class RecoveryExecutionTests(unittest.TestCase):
                         z_reference_mm=2)
         self.assertEqual(execution.phase, "complete")
         self.assertEqual(printer.scripts[2], "G92 Z12")
-        self.assertIn("G1 Z17", printer.scripts[3])
+        self.assertIn("G1 Z7", printer.scripts[3])
         self.assertEqual(printer.state["toolhead"]["position"][2], 0)
         self.assertLess(printer.scripts.index("G92 Z12"),
                         printer.scripts.index("M26 S300"))
@@ -187,6 +191,20 @@ class RecoveryExecutionTests(unittest.TestCase):
                         z_reference_mm=2)
         self.assertEqual(execution.phase, "uncertain")
         self.assertNotIn("M26 S", "\n".join(printer.scripts))
+
+    def test_zero_reference_with_mesh_compensation_confirms_in_planned_frame(self):
+        printer = FakePrinter()
+        printer.state["print_stats"].update(state="standby", filename="")
+        printer.state["virtual_sdcard"].update(file_size=0, file_position=0)
+        printer.state["pause_resume"]["is_paused"] = False
+        printer.state["toolhead"]["position"][2] = 10.18
+        printer.state["gcode_move"]["gcode_position"][2] = 9.95
+        execution = RecoveryExecution(printer.query, printer.send, lambda _outcome: None)
+        execution.start(source=source(), filename="part.gcode", printed_top_z=12,
+                        z_reference_mm=0)
+        self.assertEqual(execution.phase, "complete")
+        self.assertIn("G92 Z10", printer.scripts)
+        self.assertEqual(sum(script.startswith("G92 Z") for script in printer.scripts), 1)
 
     def test_unconfirmed_z_reference_refuses_before_return(self):
         printer = FakePrinter()
@@ -231,6 +249,9 @@ class RecoveryExecutionTests(unittest.TestCase):
                                 ("resuming", "M24")):
             with self.subTest(phase=phase):
                 printer = FakePrinter()
+                if phase == "checking_pause_cleanup":
+                    printer.state["configfile"]["config"]["gcode_macro PAUSE"] = {
+                        "gcode": "SAVE_GCODE_STATE NAME=PAUSE_STATE\nBASE_PAUSE\nSET_FILAMENT_SENSOR SENSOR=inlet ENABLE=0"}
                 def changed(outcome, phase=phase, printer=printer, fragment=fragment):
                     if outcome.phase == phase:
                         printer.fail_script = fragment
@@ -244,6 +265,8 @@ class RecoveryExecutionTests(unittest.TestCase):
 
     def test_each_fresh_telemetry_gate_refuses_a_changed_printer(self):
         for phase, mutate in (
+            ("checking_restored_state", lambda s: s["toolhead"].update(homed_axes="xy")),
+            ("checking_pause_cleanup", lambda s: s["gcode_move"].update(gcode_position=[41, 50, 7, 15.25])),
             ("checking_prime", lambda s: s["gcode_move"].update(gcode_position=[11, 15, 3, 0])),
             ("checking_return", lambda s: s["gcode_move"].update(gcode_position=[41, 50, 2, 0])),
             ("checking_seek", lambda s: s["virtual_sdcard"].update(file_position=299)),
@@ -251,6 +274,9 @@ class RecoveryExecutionTests(unittest.TestCase):
         ):
             with self.subTest(phase=phase):
                 printer = FakePrinter()
+                if phase == "checking_pause_cleanup":
+                    printer.state["configfile"]["config"]["gcode_macro PAUSE"] = {
+                        "gcode": "SAVE_GCODE_STATE NAME=PAUSE_STATE\nBASE_PAUSE\nSET_FILAMENT_SENSOR SENSOR=inlet ENABLE=0"}
                 def changed(outcome, phase=phase, printer=printer, mutate=mutate):
                     if outcome.phase == phase:
                         mutate(printer.state)
@@ -302,7 +328,7 @@ class RecoveryExecutionTests(unittest.TestCase):
         execution.start(source=reviewed, filename="part.gcode", printed_top_z=8)
         self.assertEqual(execution.phase, "complete")
         self.assertEqual(rescans, [600])
-        self.assertIn("G1 Z17", "\n".join(printer.scripts))
+        self.assertIn("G1 Z7", "\n".join(printer.scripts))
 
     def test_changed_source_after_pause_refuses_handover(self):
         for mutation in (lambda s: replace(s, boundary_offset=s.boundary_offset + 1),
@@ -342,9 +368,12 @@ class RecoveryExecutionTests(unittest.TestCase):
     def test_lost_fresh_status_at_each_stage_never_dispatches_resume(self):
         for phase in ("checking", "checking_temperature", "checking_restored_state",
                       "checking_prime", "checking_return", "checking_seek",
-                      "checking_modal_state", "checking_resume"):
+                      "checking_modal_state", "checking_pause_cleanup", "checking_resume"):
             with self.subTest(phase=phase):
                 printer = FakePrinter()
+                if phase == "checking_pause_cleanup":
+                    printer.state["configfile"]["config"]["gcode_macro PAUSE"] = {
+                        "gcode": "SAVE_GCODE_STATE NAME=PAUSE_STATE\nBASE_PAUSE\nSET_FILAMENT_SENSOR SENSOR=inlet ENABLE=0"}
                 holder = [None]
                 def query(callback, holder=holder, phase=phase, printer=printer):
                     if holder[0].phase == phase:
@@ -431,6 +460,39 @@ class RecoveryExecutionTests(unittest.TestCase):
                 self.assertIn(execution.phase, {"refused", "uncertain"})
                 self.assertNotIn("M109", "\n".join(printer.scripts))
 
+    def test_cancel_while_paused_source_is_rebuilt_never_heats(self):
+        printer = FakePrinter()
+        printer.state["print_stats"]["state"] = "printing"
+        printer.state["virtual_sdcard"]["is_active"] = True
+        printer.state["pause_resume"]["is_paused"] = False
+        pending = []
+        def refresh(_status, callback):
+            pending.append(callback)
+            return True
+        execution = RecoveryExecution(printer.query, printer.send, lambda _outcome: None, refresh)
+        execution.start(source=source(), filename="part.gcode", printed_top_z=8)
+        self.assertEqual(execution.phase, "rechecking_source")
+        execution.cancel()
+        pending.pop()(source(), 8, None)
+        self.assertEqual(execution.phase, "cancelled")
+        self.assertFalse(execution.active)
+        self.assertFalse(any("M109" in script or "M24" in script for script in printer.scripts))
+
+    def test_lost_status_after_pause_does_not_heat(self):
+        printer = FakePrinter()
+        printer.state["print_stats"]["state"] = "printing"
+        printer.state["virtual_sdcard"]["is_active"] = True
+        printer.state["pause_resume"]["is_paused"] = False
+        def query(callback):
+            if execution.phase == "checking_pause":
+                callback(None, "connection lost")
+                return True
+            return printer.query(callback)
+        execution = RecoveryExecution(query, printer.send, lambda _outcome: None)
+        execution.start(source=source(), filename="part.gcode", printed_top_z=8)
+        self.assertEqual(execution.phase, "uncertain")
+        self.assertFalse(any("M109" in script or "M24" in script for script in printer.scripts))
+
     def test_custom_pause_cleanup_is_verified_before_starting_sd_worker(self):
         printer = FakePrinter()
         config = printer.state["configfile"]["config"]
@@ -445,7 +507,7 @@ class RecoveryExecutionTests(unittest.TestCase):
         self.assertEqual(execution.phase, "complete")
         self.assertIn("SET_FILAMENT_SENSOR SENSOR=inlet ENABLE=1", printer.scripts[-2])
         self.assertIn("SET_IDLE_TIMEOUT TIMEOUT=600", printer.scripts[-2])
-        self.assertEqual(printer.scripts[-1], "CLEAR_PAUSE\nM24")
+        self.assertTrue(printer.scripts[-1].endswith("CLEAR_PAUSE\nM24"))
 
     def test_cancel_before_dispatch_does_not_send_a_script(self):
         printer = FakePrinter()
@@ -482,6 +544,9 @@ class RecoveryExecutionTests(unittest.TestCase):
         for phase in ("checking_temperature", "checking_resume"):
             with self.subTest(phase=phase):
                 printer = FakePrinter()
+                if phase == "checking_pause_cleanup":
+                    printer.state["configfile"]["config"]["gcode_macro PAUSE"] = {
+                        "gcode": "SAVE_GCODE_STATE NAME=PAUSE_STATE\nBASE_PAUSE\nSET_FILAMENT_SENSOR SENSOR=inlet ENABLE=0"}
                 def changed(outcome, phase=phase, printer=printer):
                     if outcome.phase == phase:
                         if phase == "checking_temperature":

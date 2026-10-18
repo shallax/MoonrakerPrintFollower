@@ -10,7 +10,8 @@ from ..MonitorFormatting import (
     FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES,
     fan_writable, friendly, infer_macro_parameters, number, mesh_profiles,
 )
-from ..MonitorPermissions import R_UNKNOWN, Verdict, can_apply_temperature_preset, can_exclude, can_macro, can_power, can_restart, can_restore, can_z_offset
+from ..temperature.HeaterTargets import heater_targets, finite
+from ..MonitorPermissions import can_set_temperature, R_UNKNOWN, Verdict, can_apply_temperature_preset, can_exclude, can_macro, can_power, can_restart, can_restore, can_z_offset
 
 # The in-flight latch's hard ceiling: a gesture's pending state expires
 # on its own after a few multiples of the status lag (the review's
@@ -192,15 +193,18 @@ class MonitorControls(QObject):
         setup = self._allowed(can_restart)
         objects = {name.lower() for name in snapshot.objects}
         profiles = mesh_profiles(aux.get("bed_mesh"))
+        heaters = heater_targets(aux)
+        for heater in heaters:
+            heater["target"] = self._display("heater:" + heater["object"], heater["target"])
         new_values = {
+            "heaterControlItems": heaters,
+            "canSetHeaterTemperature": self._allowed(can_set_temperature),
             "macroNames": list(self._macros), "hasQuadGantryLevel": "quad_gantry_level" in objects,
             "hasBedMesh": "bed_mesh" in objects, "canRunSetup": setup,
             "temperaturePresetNames": [item["name"] for item in self._presets],
             "temperaturePresetItems": [{"index": i, "name": item["name"], "active": self.preset_active(item, aux)} for i, item in enumerate(self._presets)],
-            # The presets do NOT ride the setup row: a firmware restart
-            # is unsafe in either print state, a heater target is not,
-            # so this one action takes its own policy row (a pause is
-            # exactly when a temperature change is wanted).
+            # Temperature profiles share live heater permissions, independently
+            # of setup actions such as firmware restart.
             "canApplyTemperaturePreset": self._allowed(can_apply_temperature_preset) and bool(self._presets),
             "speedFactorPercent": self._display("speed-factor", _factor_percent(min(500, max(0.01, number(move.get("speed_factor"), 1))) * 100)),
             "flowFactorPercent": self._display("flow-factor", _factor_percent(min(500, max(0.01, number(move.get("extrude_factor"), 1))) * 100)),
@@ -303,6 +307,21 @@ class MonitorControls(QObject):
             commands.append(command + f" TARGET={target:g}")
         if preset.get("gcode"): commands.append(str(preset["gcode"]))
         if commands: self._commands.script(item["name"], "\n".join(commands), rule=can_apply_temperature_preset)
+
+    def set_heater_temperature(self, name, target):
+        if not self._allowed(can_set_temperature):
+            return
+        item = next((row for row in heater_targets(self._data.snapshot.auxiliary)
+                     if row["object"] == name), None)
+        value = finite(target)
+        if item is None or value is None or (value != 0 and not item["minimum"] <= value <= item["maximum"]):
+            return
+        key = "heater:" + name
+        self._tuning.queue(key, value, key,
+                          f"SET_HEATER_TEMPERATURE HEATER={name.split()[-1]} TARGET={value:g}",
+                          guard=lambda: self._allowed(can_set_temperature) and any(
+                              row["object"] == name and (value == 0 or row["minimum"] <= value <= row["maximum"])
+                              for row in heater_targets(self._data.snapshot.auxiliary)))
 
     def heaters_off(self):
         """Cooldown: set every heater appearing in the profiles to 0 target.

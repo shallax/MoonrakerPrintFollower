@@ -1,5 +1,6 @@
 """Fail-closed paused-print return and modal handover policy."""
 import unittest
+from dataclasses import replace
 
 from mpf.printing.RecoveryHandover import RecoveryRefused, heating_script, prepare_return
 from mpf.application.RecoveryPlanning import RecoveryModalState, RecoverySourcePlan
@@ -29,6 +30,51 @@ def source():
 
 
 class RecoveryHandoverTests(unittest.TestCase):
+    def test_prime_height_policy_and_ceiling_apply_to_every_travel(self):
+        for restart, configured, expected in ((2, 100, 100), (2, 2, 7), (2, 1, 7),
+                                               (248, 100, 250), (250, 100, 250),
+                                               (248, 249, 249), (248, 300, 250)):
+            with self.subTest(restart=restart, configured=configured):
+                original = source()
+                chosen = replace(original, state=replace(original.state, position=(40, 50, restart)))
+                plan = prepare_return(status(), chosen, filename="part.gcode", printed_top_z=restart,
+                                      prime_enabled=True, prime_xyz=(10, 15, configured))
+                self.assertEqual(plan.prime_target, (10, 15, expected))
+                self.assertIn(f"G1 Z{expected} F300", plan.prime_script)
+                for script in (plan.prime_script, plan.return_script):
+                    for line in script.splitlines():
+                        if line.startswith("G1 Z"):
+                            self.assertLessEqual(float(line.split()[1][1:]), 250)
+
+    def test_malformed_state_reference_and_prime_coordinates_are_refused(self):
+        with self.assertRaisesRegex(RecoveryRefused, "Fresh printer status"):
+            prepare_return(None, source(), filename="part.gcode", printed_top_z=8)
+        for kwargs in ({"z_reference_mm": 1}, {"z_reference_mm": -1},
+                       {"prime_enabled": True, "prime_xyz": (10, 15)}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(RecoveryRefused):
+                prepare_return(status(), source(), filename="part.gcode", printed_top_z=8, **kwargs)
+
+    def test_near_target_temperature_still_must_allow_extrusion(self):
+        fresh = status()
+        fresh["extruder"].update(temperature=168, target=170)
+        planned = replace(source(), state=replace(source().state, hotend_target=170))
+        with self.assertRaisesRegex(RecoveryRefused, "minimum extrusion"):
+            prepare_return(fresh, planned, filename="part.gcode", printed_top_z=8)
+
+    def test_cleanup_requires_a_numeric_normal_idle_timeout(self):
+        fresh = status()
+        config = fresh["configfile"]["config"]
+        config["gcode_macro PAUSE"] = {"gcode": "SAVE_GCODE_STATE NAME=PAUSE\nBASE_PAUSE\nSET_IDLE_TIMEOUT TIMEOUT=9999"}
+        config["idle_timeout"] = {"timeout": "not-a-number"}
+        with self.assertRaisesRegex(RecoveryRefused, "normal idle timeout"):
+            prepare_return(fresh, source(), filename="part.gcode", printed_top_z=8, saved_state="PAUSE")
+
+    def test_invalid_prime_dwell_is_refused_before_motion(self):
+        for dwell in (-1, 301, float("nan"), float("inf")):
+            with self.subTest(dwell=dwell), self.assertRaises(RecoveryRefused):
+                prepare_return(status(), source(), filename="part.gcode", printed_top_z=8,
+                    prime_enabled=True, prime_xyz=(10, 15, 3), prime_dwell_s=dwell)
+
     def test_unloaded_object_top_reference_maps_file_z_to_physical_zero(self):
         fresh = status()
         fresh["print_stats"]["state"] = "standby"
@@ -37,15 +83,18 @@ class RecoveryHandoverTests(unittest.TestCase):
                               printed_top_z=12, idle=True, z_reference_mm=2)
         self.assertEqual(plan.z_reference_script, "G92 Z12")
         self.assertEqual(plan.target[2], 2)
-        self.assertEqual(plan.clearance_z, 17)
-        self.assertIn("G1 Z17", plan.return_script)
+        self.assertEqual(plan.clearance_z, 7)
+        self.assertIn("G1 Z7", plan.return_script)
         with self.assertRaisesRegex(RecoveryRefused, "below the homed object-top"):
             prepare_return(fresh, source(), filename="part.gcode",
                            printed_top_z=12, idle=True, z_reference_mm=3)
-        fresh["toolhead"]["axis_maximum"][2] = 16
-        with self.assertRaisesRegex(RecoveryRefused, "original file Z travel"):
-            prepare_return(fresh, source(), filename="part.gcode",
-                           printed_top_z=12, idle=True, z_reference_mm=2)
+        fresh["toolhead"]["position"][2] = 4
+        fresh["gcode_move"]["gcode_position"][2] = 4
+        fresh["gcode_move"]["position"][2] = 4
+        fresh["toolhead"]["axis_maximum"][2] = 6
+        capped = prepare_return(fresh, source(), filename="part.gcode",
+                                printed_top_z=12, idle=True, z_reference_mm=2)
+        self.assertEqual(capped.clearance_z, 6)
 
     def test_unloaded_z_reference_replaces_an_existing_g92_z_origin(self):
         fresh = status()
@@ -59,10 +108,13 @@ class RecoveryHandoverTests(unittest.TestCase):
 
     def test_staged_return_and_modal_state_are_explicit(self):
         plan = prepare_return(status(), source(), filename="part.gcode", printed_top_z=8)
-        self.assertEqual(plan.clearance_z, 15)
-        self.assertIn("G1 Z15 F600", plan.return_script)
+        self.assertEqual(plan.clearance_z, 7)
+        self.assertIn("G1 Z7 F600", plan.return_script)
         self.assertIn("G1 X40 Y50 F3000", plan.return_script)
-        self.assertIn("G1 Z2 F300", plan.return_script)
+        self.assertNotIn("G1 Z2 F300", plan.return_script)
+        self.assertIn("G1 Z2 F300", plan.resume_script)
+        self.assertNotIn("M400", plan.resume_script)
+        self.assertNotIn("G4 ", plan.resume_script)
         self.assertIn("M221 S95", plan.modal_script)
         self.assertLess(plan.modal_script.index("M221 S95"), plan.modal_script.index("G92 E15.25"))
         self.assertIn("M82", plan.modal_script)
@@ -75,7 +127,7 @@ class RecoveryHandoverTests(unittest.TestCase):
                               prime_enabled=True, prime_xyz=(10, 15, 3),
                               prime_amount_mm=30, prime_speed_mm_s=2.5)
         self.assertEqual(plan.prime_target, (10, 15, 3))
-        self.assertLess(plan.prime_script.index("G1 Z15 F600"),
+        self.assertLess(plan.prime_script.index("G1 Z10 F600"),
                         plan.prime_script.index("G1 X10 Y15 F3000"))
         self.assertLess(plan.prime_script.index("G1 X10 Y15 F3000"),
                         plan.prime_script.index("G1 Z3 F300"))
@@ -83,7 +135,7 @@ class RecoveryHandoverTests(unittest.TestCase):
         self.assertIn("M83", plan.prime_script)
         self.assertEqual(prepare_return(fresh, source(), filename="part.gcode",
                                         printed_top_z=8).prime_script, "")
-        for location, amount in (((10, 15, 1), 30), ((300, 15, 3), 30),
+        for location, amount in (((300, 15, 3), 30),
                                  ((10, 15, 3), 41)):
             with self.subTest(location=location, amount=amount):
                 with self.assertRaises(RecoveryRefused):
@@ -111,9 +163,15 @@ class RecoveryHandoverTests(unittest.TestCase):
         with self.assertRaises(RecoveryRefused):
             prepare_return(cold, source(), filename="part.gcode", printed_top_z=8)
         tight = status()
-        tight["toolhead"]["axis_maximum"][2] = 12
+        tight["toolhead"]["position"][2] = 4
+        tight["gcode_move"]["gcode_position"][2] = 4
+        tight["gcode_move"]["position"][2] = 4
+        tight["toolhead"]["axis_maximum"][2] = 6
+        capped = prepare_return(tight, source(), filename="part.gcode", printed_top_z=8)
+        self.assertEqual(capped.clearance_z, 6)
+        outside = replace(source(), state=replace(source().state, position=(40, 50, 7)))
         with self.assertRaises(RecoveryRefused):
-            prepare_return(tight, source(), filename="part.gcode", printed_top_z=8)
+            prepare_return(tight, outside, filename="part.gcode", printed_top_z=8)
 
     def test_custom_pause_uses_discovered_saved_state_and_restores_sensor(self):
         fresh = status()
@@ -257,3 +315,25 @@ class RecoveryHandoverTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class SelectedLayerClearanceTests(unittest.TestCase):
+    def test_parked_nozzle_and_dry_print_height_do_not_inflate_return(self):
+        for clearance in (1, 5, 12, 30):
+            with self.subTest(clearance=clearance):
+                fresh = status()
+                fresh["toolhead"]["position"][2] = 50
+                fresh["gcode_move"]["position"][2] = 50
+                fresh["gcode_move"]["gcode_position"][2] = 50
+                plan = prepare_return(fresh, source(), filename="part.gcode",
+                                      printed_top_z=100, clearance_mm=clearance)
+                self.assertEqual(plan.clearance_z, 2 + clearance)
+                moves = [line for line in plan.return_script.splitlines() if line.startswith("G1")]
+                self.assertEqual(moves, [f"G1 Z{2+clearance} F600",
+                                        "G1 X40 Y50 F3000"])
+
+    def test_high_prime_keeps_its_own_travel_but_returns_at_layer_plus_clearance(self):
+        plan = prepare_return(status(), source(), filename="part.gcode", printed_top_z=100,
+                              prime_enabled=True, prime_xyz=(0, 200, 100))
+        self.assertIn("G1 Z100 F600", plan.prime_script)
+        self.assertIn("G1 Z7 F600", plan.return_script)
+        self.assertEqual(plan.clearance_z, 7)

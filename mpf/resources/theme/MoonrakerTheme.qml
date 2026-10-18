@@ -8,6 +8,9 @@ import QtQuick 2.15
 // MoonrakerTheme.axisX etc. (File imports with a .qml suffix do not
 // resolve on the shipped engine — probe-proven.)
 QtObject {
+    readonly property color recoveryPrinted: "#579c83"
+    readonly property color recoveryBedFill: "#d8dde3"
+    readonly property color recoveryBedOutline: "#77828e"
     // ── identity colours shared across surfaces ─────────────────
     // The axis identity colours: X red, Y green, Z blue — used by
     // the toolhead readouts and the collapsed position cells.

@@ -222,6 +222,22 @@ class RecoveryModelTests(MonitorModelCase):
         self.sent("printer/objects/query")[-1].callback({"result": {"status": status}}, None)
         self.assertEqual(self.sent("printer/gcode/script")[-1].options["body"]["script"], "PAUSE")
 
+    def test_qml_recovery_submission_preserves_reviewed_temperatures_and_z_reference(self):
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtQml import QQmlEngine, QQmlComponent
+        submitted = []
+        self.model = self.build(recovery_start=submitted.append)
+        engine = QQmlEngine()
+        engine.rootContext().setContextProperty("printer", self.model)
+        component = QQmlComponent(engine)
+        component.setData(b'import QtQml 2.15\nQtObject { Component.onCompleted: '
+                          b'printer.startRecovery({hotend: 215, bed: 60, zReference: 12.4}) }', QUrl())
+        item = component.create()
+        self.assertIsNotNone(item, [error.toString() for error in component.errors()])
+        self.assertEqual(submitted, [{"hotend": 215, "bed": 60, "zReference": 12.4}])
+        item.deleteLater()
+        self.qt.events()
+
     def test_recovery_slots_forward_only_selected_user_intents(self):
         calls = []
         self.model = self.build(
@@ -256,6 +272,11 @@ class RecoveryModelTests(MonitorModelCase):
         self.assertEqual(len(restored._runout_events.events), 1)
         self.assertEqual(restored._runout_events.events[0].split, 2)
         self.assertEqual(restored._recovery_previous_attempt["phase"], "uncertain")
+        restored.removeRecoveryStop(restored._runout_events.events[0].document())
+        self.assertEqual(store.get_machine_state("A")["recoveryEvents"]["events"], [])
+        again = self.build(persistence=store)
+        again._sync_recovery_history(self.print_state)
+        self.assertEqual(again._runout_events.events, ())
 
 
 class PublishSentinelTests(MonitorModelCase):
@@ -2317,3 +2338,17 @@ class SurfaceLifecycleTests(MonitorModelCase):
         self.model._publish()
         self.assertEqual(self.value("plateLayerCount"), 0,
                          "an unparseable layer count reached the slider's range")
+
+class HeaterPublicationTests(MonitorModelCase):
+    def test_heater_rows_publish_and_qt_slot_routes_the_target(self):
+        self.model = self.build()
+        signals = []
+        self.model.typedControlsChanged.connect(lambda: signals.append(True))
+        self.observe(auxiliary={"configfile": {"settings": {
+            "extruder": {"min_temp": 5, "max_temp": 285}}},
+            "extruder": {"target": 215}})
+        self.assertEqual(self.value("heaterControlItems")[0]["maximum"], 285)
+        self.assertTrue(signals)
+        with patch.object(self.model._controls, "set_heater_temperature") as set_target:
+            self.model.setHeaterTemperature("extruder", 220)
+            set_target.assert_called_once_with("extruder", 220)

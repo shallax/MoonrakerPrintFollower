@@ -321,7 +321,7 @@ class PrintCoordinator(QObject):
             job = transition.key if active else self._offline_recovery_job
             if transition.new_job or not active:
                 if transition.new_job:
-                    self.recovery.invalidate()
+                    self.recovery.job_changed(stats, sd)
                     self._recovery_suggestion = {}
                 self._preview.reset_print()
                 self._layers.reset()
@@ -1182,8 +1182,17 @@ class PrintCoordinator(QObject):
                             and "/" not in name and "\\" not in name
                             and not any(char in name for char in ";\r\n\x00")
                             and is_gcode_name(name) and 0 < size <= self._files.MAX_DOWNLOAD_BYTES):
-                        found[name] = {"name": name, "size": size}
-                self._recovery_file_options = [found[name] for name in sorted(found, key=str.casefold)]
+                        def timestamp(value):
+                            try:
+                                value = float(value or 0)
+                                return value if 0 < value < float("inf") else 0
+                            except (TypeError, ValueError, OverflowError):
+                                return 0
+                        found[name] = {"name": name, "size": size,
+                                       "lastPrinted": timestamp(row.get("print_start_time")),
+                                       "modified": timestamp(row.get("modified"))}
+                self._recovery_file_options = sorted(found.values(), key=lambda item: (
+                    -item["lastPrinted"], -item["modified"], item["name"].casefold()))
                 if not found:
                     self._recovery_files_error = "No root G-code files are available for unloaded recovery."
             self.recovery.changed.emit()
@@ -1221,7 +1230,7 @@ class PrintCoordinator(QObject):
         return True
 
     def selected_recovery_boundary(self):
-        """Inspect the detached follower's selected point for this print.
+        """Inspect the manual selection or attached follower's live boundary.
 
         This is an exact file-location query, not permission to seek or resume.
         The downloaded source, current job and index must still agree; the
@@ -1232,10 +1241,18 @@ class PrintCoordinator(QObject):
         path = self._files.path
         offline_job = getattr(self, "_offline_recovery_job", None)
         offline = offline_job is not None and not snapshot.active
-        if ((not snapshot.active and not offline) or view is None or path is None
-                or self._plate_anchor is None or self._plate_split is None
+        anchor, split = self._plate_anchor, self._plate_split
+        if anchor is None and snapshot.motion_progress is not None:
+            anchor, split = snapshot.motion_progress.layer, snapshot.motion_progress.split
+        if ((not snapshot.active and not offline) or view is None
+                or anchor is None or split is None
                 or snapshot.job_key is None or view.job_key != snapshot.job_key
                 or self._files.job_key != snapshot.job_key):
+            return None
+        if path is None:
+            # A restored display index does not restore the source file.
+            # Recovery must demand it before exact byte mapping can proceed.
+            self._files.request_file()
             return None
         try:
             actual_size = os.path.getsize(path)
@@ -1248,7 +1265,10 @@ class PrintCoordinator(QObject):
                 or identity is None or not identity.matches_job(snapshot.job_key[0], expected_size)
                 or (identity.size > 0 and identity.size != actual_size)):
             return None
-        return view.recovery_boundary(self._plate_anchor, self._plate_split)
+        boundary = view.recovery_boundary(anchor, split)
+        if boundary is None:
+            self._index.request_hydration(anchor, exact=True)
+        return boundary
 
     def _recovery_context(self):
         boundary = self.selected_recovery_boundary()
@@ -1256,8 +1276,7 @@ class PrintCoordinator(QObject):
         identity = self._files.identity
         offline = self._offline_recovery_job is not None and not snapshot.active
         if (boundary is None or identity is None
-                or (not offline and (snapshot.observation is None or not snapshot.active
-                    or boundary.next_motion_offset > snapshot.observation.file_position))):
+                or (not offline and (snapshot.observation is None or not snapshot.active))):
             return None
         config = self._binding.config
         machine_id = self._binding.identity[0]
@@ -1274,9 +1293,13 @@ class PrintCoordinator(QObject):
             config.recovery_prime_amount_mm, config.recovery_prime_speed_mm_s,
             config.recovery_nozzle_parameter, config.recovery_bed_parameter, offline,
             config.recovery_heating_timeout_s,
-            self._index.view.printed_top_z if offline else 0.0)
+            self._index.view.printed_top_z if offline else 0.0,
+            prime_dwell_s=config.recovery_prime_dwell_s)
 
     def _record_recovery_phase(self, context, phase, detail):
+        Logger.log("w" if phase in {"refused", "uncertain"} else "i",
+                   "Recovery %s: %s (file=%s, byte=%s)", phase, detail,
+                   context.filename, context.boundary.next_motion_offset)
         if (self._persistence is None or not context.history_job_id
                 or not context.machine_id or context.machine_id == "unknown"):
             return

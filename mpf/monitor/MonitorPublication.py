@@ -113,7 +113,7 @@ SIGNAL_GROUPS = (
     # scroll-triggered fetch reply rebuilt the whole payload).
     ("fileManagerThumbsChanged", ("fileManagerThumbs",)),
     ("consoleChanged", ("consoleHistory", "consoleLines", "consoleDropped", "consoleRevisions", "consolePending", "consoleErrorBell")),
-    ("typedControlsChanged", ("temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
+    ("typedControlsChanged", ("heaterControlItems", "canSetHeaterTemperature", "temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
                               "bedMeshProfileNames", "bedMeshRows", "bedMeshColumns", "bedMeshValues", "bedMeshMinimum",
                               "bedMeshMaximum", "bedMeshRange", "bedMeshXMin", "bedMeshXMax", "bedMeshYMin", "bedMeshYMax",
                               "bedMeshRangeText", "bedMeshPreviewVisible", "bedMeshThresholdLow", "bedMeshThresholdHigh",

@@ -440,6 +440,54 @@ PREFIX_RULES = [
 # fields are validated by test_coverage.py. An entry whose re-check
 # trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
+    'MoonrakerMonitorModel.setHeaterTemperature': {
+        "reason": "heater controls are covered in real Qt; native peer heater-limit fixtures are not yet present",
+        "evidence": "test_qml_heater_controls: mouse gestures, all step sizes, polling during drag and guarded command dispatch; test_heater_targets and HeaterPublicationTests",
+        "date": "2026-10-17",
+        "recheck": "native temperature scenarios provide configured heater limits",
+    },
+    'heaterMinus_': {
+        "reason": "heater controls are covered in real Qt; native peer heater-limit fixtures are not yet present",
+        "evidence": "test_qml_heater_controls: mouse gestures, all step sizes, polling during drag and guarded command dispatch; test_heater_targets and HeaterPublicationTests",
+        "date": "2026-10-17",
+        "recheck": "native temperature scenarios provide configured heater limits",
+    },
+    'heaterOff_': {
+        "reason": "heater controls are covered in real Qt; native peer heater-limit fixtures are not yet present",
+        "evidence": "test_qml_heater_controls: mouse gestures, all step sizes, polling during drag and guarded command dispatch; test_heater_targets and HeaterPublicationTests",
+        "date": "2026-10-17",
+        "recheck": "native temperature scenarios provide configured heater limits",
+    },
+    'heaterPlus_': {
+        "reason": "heater controls are covered in real Qt; native peer heater-limit fixtures are not yet present",
+        "evidence": "test_qml_heater_controls: mouse gestures, all step sizes, polling during drag and guarded command dispatch; test_heater_targets and HeaterPublicationTests",
+        "date": "2026-10-17",
+        "recheck": "native temperature scenarios provide configured heater limits",
+    },
+    'heaterSlider_': {
+        "reason": "heater controls are covered in real Qt; native peer heater-limit fixtures are not yet present",
+        "evidence": "test_qml_heater_controls: mouse gestures, all step sizes, polling during drag and guarded command dispatch; test_heater_targets and HeaterPublicationTests",
+        "date": "2026-10-17",
+        "recheck": "native temperature scenarios provide configured heater limits",
+    },
+    'heaterStepPicker': {
+        "reason": "heater controls are covered in real Qt; native peer heater-limit fixtures are not yet present",
+        "evidence": "test_qml_heater_controls: mouse gestures, all step sizes, polling during drag and guarded command dispatch; test_heater_targets and HeaterPublicationTests",
+        "date": "2026-10-17",
+        "recheck": "native temperature scenarios provide configured heater limits",
+    },
+    'canSetHeaterTemperature': {
+        "reason": "heater controls are covered in real Qt; native peer heater-limit fixtures are not yet present",
+        "evidence": "test_qml_heater_controls: mouse gestures, all step sizes, polling during drag and guarded command dispatch; test_heater_targets and HeaterPublicationTests",
+        "date": "2026-10-17",
+        "recheck": "native temperature scenarios provide configured heater limits",
+    },
+    'heaterControlItems': {
+        "reason": "heater controls are covered in real Qt; native peer heater-limit fixtures are not yet present",
+        "evidence": "test_qml_heater_controls: mouse gestures, all step sizes, polling during drag and guarded command dispatch; test_heater_targets and HeaterPublicationTests",
+        "date": "2026-10-17",
+        "recheck": "native temperature scenarios provide configured heater limits",
+    },
     "moonrakerFollowerSourceProgress": {
         "reason": "read-only source-download indicator; no native scenario downloads an uncached print",
         "evidence": "test_qml_plate_navigation: follower progress, unknown length and animation",
@@ -1396,18 +1444,22 @@ for _name in (
 for _name in (
     "MoonrakerFollowerMachineAction.refreshRecoveryConfiguration",
     "MoonrakerMonitorModel.cancelRecovery", "MoonrakerMonitorModel.markRecoveryStop",
+    "MoonrakerMonitorModel.removeRecoveryStop", "recoveryUseBookmark", "recoveryRemoveBookmark",
     "MoonrakerMonitorModel.prepareRecovery", "MoonrakerMonitorModel.startRecovery",
     "MoonrakerMonitorModel.suggestRecoveryLeadIn", "MoonrakerMonitorModel.refreshRecoveryFiles",
     "MoonrakerMonitorModel.selectRecoveryFile",
     "moonrakerFollowerOpenRecovery", "recoveryAutoPause", "recoveryLeadInMode", "recoveryPrepareMacroDropdown",
-    "recoverySavedStateDropdown", "recoverySensorDropdown", "recoveryPrimeEnabled",
-    "moonrakerRecoveryUnloadedFileDropdown",
+    "recoverySavedStateDropdown", "recoverySensorDropdown", "recoveryPrimeEnabled", "recoveryTravelClearance", "recoveryPrimeDwell", "moonrakerRecoverySteps",
+    "moonrakerRecoveryUnloadedFileDropdown", "moonrakerRecoveryAttemptStatus",
+    "recoveryPreviewStep", "recoveryPreviewDescription", "recoveryPreviewCoordinates", "recoveryPreviewPlot",
+    "moonrakerRecoveryScroll", "moonrakerRecoveryConfirmationScroll", "moonrakerRecoveryConfirmation", "moonrakerRecoveryDismiss", "moonrakerRecoveryDialog", "moonrakerRecoveryReview", "moonrakerRecoveryReviewed",
+    "moonrakerRecoveryStart", "moonrakerRecoveryLayer", "moonrakerRecoveryChooseLayer", "moonrakerRecoveryMove", "moonrakerRecoveryChooseMove",
     "recoveryEvents", "recoveryPreviousAttempt", "recoveryPauseNote", "recoveryPlan",
     "recoveryPrepareMacro", "recoverySelection", "recoverySensorChoices", "recoveryFiles",
 ):
     EXCLUSIONS[_name] = {
         "reason": "native simulator has no paused virtual-SD recovery fixture; isolated Qt and transport suites own this surface",
-        "evidence": "test_machine_action_coverage checks discovered dropdown choices; test_monitor_model_coverage checks recovery slots and persisted markers; test_recovery_controller and test_recovery_execution check guarded handover; the QML engine gate compiles both recovery panels",
+        "evidence": "test_machine_action_coverage checks discovered dropdown choices; test_monitor_model_coverage checks recovery slots and persisted markers; test_recovery_controller and test_recovery_execution check guarded handover; test_qml_recovery exercises the real confirmation, unchanged-selection publications, submission values and visible refusals; the QML engine gate compiles both recovery panels",
         "date": "2026-10-13",
         "recheck": "a native simulator scenario provides a paused virtual-SD print with a matching downloaded G-code file",
     }
