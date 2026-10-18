@@ -44,6 +44,11 @@ Native test files have a 300-second process deadline, report start/end progress
 immediately and dump thread stacks every 60 seconds while running. Failed or
 cancelled CI jobs retain their per-file logs. `tools/native/test_worker.py` keeps
 the same isolated module/script and coverage invocation under that watchdog.
+UI-driver RPCs have one total deadline and never replay a command after a send
+attempt. Losing the driver stops the suite and finalizes its partial gallery.
+macOS gate artifacts also retain launcher/configuration logs, Cura's redirected
+Python streams and native crash reports under `native-diagnostics/`, even when
+the scenario process is interrupted before its own cleanup runs.
 
 Additional qualification remains necessary before claiming physical recovery
 validation or sustained whole-product performance:

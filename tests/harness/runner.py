@@ -4,6 +4,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Bound RPC transactions and stop suites when the driver is lost.
 # 2026-10-18 — 6.0.0: Require the restored seed and preserve evidence on failed boot gates.
 # 2026-10-18 — 6.0.0: Fail boot evidence when real QtTest input is unavailable.
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
@@ -195,45 +196,59 @@ def harvest_cura_log(dest_dir, suffix=""):
     return kept
 
 
+class DriverRPCError(RuntimeError):
+    """The driver is unavailable or a command's reply can no longer be trusted."""
+
+
 def rpc(request, timeout=20.0):
+    deadline = time.monotonic() + timeout
     last_error = None
-    for _ in range(60):
+    sock = None
+    while time.monotonic() < deadline:
         try:
-            port = int(open(PORT_FILE, encoding="utf-8").read().strip())
+            with open(PORT_FILE, encoding="utf-8") as handle:
+                port = int(handle.read().strip())
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            sock = socket.create_connection((DRIVER_HOST, port), timeout=remaining)
+            break
         except (OSError, ValueError) as exc:
             last_error = exc
-            time.sleep(1)
-            continue
-        try:
-            # Present the per-run token on every request: the driver
-            # refuses anything else (the security panel's H1 — an
-            # unauthenticated exec channel in Cura's process).
+            if not cura_process_alive():
+                raise DriverRPCError(f"driver RPC failed: Cura process exited ({exc})") from exc
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+    if sock is None:
+        raise DriverRPCError(f"driver RPC failed within {timeout}s: {last_error}")
+    # Retry only before connecting. sendall may send a partial command before
+    # raising; replaying it can duplicate a click, e-stop or other mutation.
+    try:
+        with sock:
             token = ""
             try:
                 with open(TOKEN_FILE, encoding="utf-8") as handle:
                     token = handle.read().strip()
             except OSError:
                 pass
-            request = dict(request)
-            request["token"] = token
-            with socket.create_connection((DRIVER_HOST, port), timeout=timeout) as sock:
-                sock.sendall(json.dumps(request).encode("utf-8") + b"\n")
-                sock.settimeout(timeout)
-                line = b""
-                while b"\n" not in line:
-                    chunk = sock.recv(4096)
-                    if not chunk:
-                        break
-                    line += chunk
-                # A reply can arrive coalesced with another write from
-                # the driver; take the first object and discard the
-                # tail (json.loads would raise "Extra data").
-                line = line.split(b"\n", 1)[0]
-                return json.loads(line.decode("utf-8"))
-        except (OSError, ValueError) as exc:
-            last_error = exc
-            time.sleep(1)
-    raise RuntimeError(f"driver RPC failed: {last_error}")
+            payload = dict(request, token=token)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("deadline reached before send")
+            sock.settimeout(remaining)
+            sock.sendall(json.dumps(payload).encode("utf-8") + b"\n")
+            line = b""
+            while b"\n" not in line:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("reply deadline reached")
+                sock.settimeout(remaining)
+                chunk = sock.recv(4096)
+                if not chunk:
+                    raise ConnectionError("driver closed before replying")
+                line += chunk
+            return json.loads(line.split(b"\n", 1)[0].decode("utf-8"))
+    except (OSError, ValueError) as exc:
+        raise DriverRPCError(f"driver RPC failed after connecting; command not replayed: {exc}") from exc
 
 
 def _png_size(path):
@@ -377,6 +392,8 @@ def ensure_ready(require_aux=True):
                        and list(_pin.get("screen") or ()) == _screen)
         progress(f"boot geometry: requested {_want}, actual {_pin.get('size')}, "
             f"available {_pin.get('available')}, frame {_pin.get('frame')}, verified={_pin_ok}")
+    except DriverRPCError:
+        raise
     except Exception:
         _pin_ok = False
     # The model gate: the plugin's per-machine model appears when the
@@ -530,7 +547,7 @@ report_only_scenarios = liveness.report_only_scenarios
 
 def frames_probe(phase, scenario_id):
     """One presentation sample, over the runner's own transport."""
-    return liveness.probe(rpc, phase, scenario_id)
+    return liveness.probe(rpc, phase, scenario_id, propagate=(DriverRPCError,))
 
 
 def liveness_outcome(samples):
@@ -598,6 +615,8 @@ def foreground_guard():
         return {"authority": "not-applicable", "capture": "off"}
     try:
         state = rpc({"id": 1, "cmd": "foreground", "raise": True}, timeout=20)
+    except DriverRPCError:
+        raise
     except Exception as exc:
         return {"authority": "unreachable", "foreground": None,
                 "error": repr(exc)[:120]}
@@ -3065,6 +3084,7 @@ def suite_run(group_id):
     video_path = os.path.join(RUN_DIR, f"suite-{group_id}.mp4")
     video = start_recorder(video_path, framerate=15)
     steps = []
+    active_spec = {"id": group_id}
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
         _boot = boot_step(hello)
@@ -3088,6 +3108,7 @@ def suite_run(group_id):
         progress(f"{group_id}: {len(specs)} scenario(s) in this group")
         done = 0
         for spec in specs:
+            active_spec = spec
             if spec.get("container_skip"):
                 # The engine-divergent scenarios (real Cura
                 # proves them live; the container's engine cannot —
@@ -3138,6 +3159,15 @@ def suite_run(group_id):
                      + f" in {time.monotonic() - started:.0f}s — "
                      + (f"{len(scenario_steps)} steps, failed: {', '.join(failed)}"
                         if failed else f"all {len(scenario_steps)} steps passed"))
+    except DriverRPCError as exc:
+        name = active_spec["id"] + "-driver-lost"
+        detail = str(exc)
+        capture = shot(name)
+        steps.append((name, "Cura driver unavailable", detail, False, capture))
+        EVIDENCE.append(_evidence_entry(active_spec, -6, {"op": "driver_lost"}, name,
+                                        False, "Cura driver unavailable", detail,
+                                        capture, time.monotonic()))
+        progress(f"{active_spec['id']}: FAILED — {detail}")
     finally:
         stop_recorder(video)
         title = f"Scenario group {group_id}"
@@ -3172,6 +3202,8 @@ def suite_scenario(spec, step_fn=None):
                 progress(f"geometry {spec['id']}/start: requested {_want}, actual {_got}, "
                     f"available {reply.get('available')}, frame {reply.get('frame')}, "
                     f"watchdog repairs={reply.get('watchdog_repairs', 0)}, verified={_ok}")
+            except DriverRPCError:
+                raise
             except Exception:
                 _ok = False
                 _got = []
@@ -3214,6 +3246,8 @@ def suite_scenario(spec, step_fn=None):
             EVIDENCE.append(_evidence_entry(spec, index, step, name, False,
                                             f"{spec['name']}: {step.get('op')}",
                                             f"step error: {exc!r}", capture, started))
+            if isinstance(exc, DriverRPCError):
+                raise
     end_sample = frames_probe("end", spec["id"])
     # The liveness verdict, folded into the scenario's own steps: a
     # window that answered no forced repaint FAILS the scenario where

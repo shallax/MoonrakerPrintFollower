@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Check presentation probe arguments without rejecting optional failure policy.
 # 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
 # 2026-10-06 [8da5d38] Update UI probes for cached toolhead rendering and larger settings tree
 # 2026-09-13 [4fe5590] the panel round's harness hardening: honest evidence, real semantics, closed gaps
@@ -698,7 +699,9 @@ class HarnessSpecTests(unittest.TestCase):
         with open(_liveness.__file__, encoding="utf-8") as handle:
             owner = handle.read()
         self.assertIn('"cmd": "frames"', owner)
-        self.assertIn("def probe(rpc, phase, scenario_id):", owner)
+        probe = next(node for node in ast.parse(owner).body
+                     if isinstance(node, ast.FunctionDef) and node.name == "probe")
+        self.assertEqual([arg.arg for arg in probe.args.args[:3]], ["rpc", "phase", "scenario_id"])
         self.assertIn("def outcome_records(", owner)
         self.assertIn("def frames_probe(", source)
         self.assertIn("def liveness_outcome(", source)

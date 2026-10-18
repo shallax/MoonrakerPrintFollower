@@ -1758,6 +1758,11 @@ and writes the recorded failure gallery. Native unit-test processes run through
 `tools/native/test_worker.py`, with periodic thread-stack evidence and a hard
 parent-process deadline; this also covers native Qt calls that block event-loop
 deadline checks.
+Harness RPC retries stop once a connection succeeds: a partially sent command
+or lost reply must never replay a mutation. Connection and response reads share
+one monotonic deadline. Terminal transport failures abort the scenario group
+while its recording/gallery cleanup runs. A separate always-run CI collector
+preserves native logs and macOS crash reports independently of runner cleanup.
 
 ### Object-outline retention
 

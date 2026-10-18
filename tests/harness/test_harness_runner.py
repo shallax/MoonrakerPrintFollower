@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Prove bounded RPCs, no command replay and crash evidence finalization.
 # 2026-10-18 — 6.0.0: Prove failed startup stops scenarios and keeps its gallery.
 # 2026-10-18 — 6.0.0: Require usable real input in boot evidence.
 # 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
@@ -30,7 +31,7 @@ import time
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import liveness
 import runner
@@ -40,7 +41,153 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 SCENARIO_PACKAGE = ROOT / "tests" / "harness" / "scenarios"
 
 
+class RpcDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.port = self.root / "port"
+        self.port.write_text("1234")
+        token = self.root / "token"
+        token.write_text("test-token")
+        self.clock = 0.0
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(patch.object(runner, "PORT_FILE", str(self.port)))
+        stack.enter_context(patch.object(runner, "TOKEN_FILE", str(token)))
+        stack.enter_context(patch.object(runner.time, "monotonic", side_effect=lambda: self.clock))
+        stack.enter_context(patch.object(runner.time, "sleep", side_effect=self.advance))
+        stack.enter_context(patch.object(runner, "cura_process_alive", return_value=True))
+        self.connect = stack.enter_context(patch.object(runner.socket, "create_connection"))
+        self.sock = MagicMock()
+        self.sock.__enter__.return_value = self.sock
+        self.sock.recv.return_value = b'{"ok":true}\n'
+        self.connect.return_value = self.sock
+
+    def advance(self, seconds):
+        self.clock += seconds
+
+    def test_connect_can_recover_before_sending_and_split_coalesced_reply_is_compatible(self):
+        self.connect.side_effect = [ConnectionRefusedError(), self.sock]
+        self.sock.recv.side_effect = [b'{"ok":', b'true}\n{"discard":true}\n']
+        request = {"cmd": "exec", "code": "do_once()"}
+        self.assertEqual(runner.rpc(request, timeout=2), {"ok": True})
+        self.assertEqual(self.connect.call_count, 2)
+        self.sock.sendall.assert_called_once()
+        self.assertEqual(request, {"cmd": "exec", "code": "do_once()"})
+        self.assertIn(b'"token": "test-token"', self.sock.sendall.call_args.args[0])
+
+    def test_missing_port_and_refused_connection_share_one_total_budget(self):
+        for missing in (False, True):
+            with self.subTest(missing=missing):
+                self.clock = 0
+                self.connect.reset_mock()
+                self.connect.side_effect = ConnectionRefusedError()
+                if missing:
+                    self.port.unlink()
+                with self.assertRaises(runner.DriverRPCError):
+                    runner.rpc({"cmd": "hello"}, timeout=2)
+                self.assertEqual(self.clock, 2)
+                self.assertEqual(self.connect.call_count, 0 if missing else 2)
+        self.sock.sendall.assert_not_called()
+
+    def test_send_failure_eof_timeout_and_invalid_reply_never_replay_a_command(self):
+        for mode in ("send", "eof", "timeout", "json"):
+            with self.subTest(mode=mode):
+                self.connect.reset_mock()
+                self.sock.reset_mock(side_effect=True)
+                self.sock.__enter__.return_value = self.sock
+                self.sock.sendall.side_effect = OSError("partial send") if mode == "send" else None
+                self.sock.recv.side_effect = TimeoutError() if mode == "timeout" else None
+                self.sock.recv.return_value = b"" if mode == "eof" else b"invalid\n"
+                with self.assertRaises(runner.DriverRPCError):
+                    runner.rpc({"cmd": "exec"}, timeout=2)
+                self.connect.assert_called_once()
+                self.sock.sendall.assert_called_once()
+
+    def test_fragmented_reply_cannot_extend_the_total_deadline(self):
+        def receive(_size):
+            self.advance(0.75)
+            return b"{"
+        self.sock.recv.side_effect = receive
+        with self.assertRaises(runner.DriverRPCError):
+            runner.rpc({"cmd": "hello"}, timeout=2)
+        self.assertLess(self.clock, 3)
+        self.assertEqual([call.args[0] for call in self.sock.settimeout.call_args_list],
+                         [2, 2, 1.25, 0.5])
+        self.sock.sendall.assert_called_once()
+
+    def test_exited_cura_stops_before_any_command_is_sent(self):
+        self.connect.side_effect = ConnectionRefusedError()
+        with patch.object(runner, "cura_process_alive", return_value=False):
+            with self.assertRaisesRegex(runner.DriverRPCError, "Cura process exited"):
+                runner.rpc({"cmd": "exec"}, timeout=60)
+        self.assertEqual(self.clock, 0)
+        self.sock.sendall.assert_not_called()
+
+
 class BootEvidenceTests(unittest.TestCase):
+    def test_lost_driver_stops_the_group_and_keeps_the_gallery(self):
+        for phase in ("hello", "prelude", "scenario"):
+            with self.subTest(phase=phase):
+                self._assert_driver_loss(phase)
+
+    def _assert_driver_loss(self, phase):
+        specs = [{"id": "dead", "name": "dead", "steps": []},
+                 {"id": "later", "name": "must not run", "steps": []}]
+
+        def reply(request):
+            if request["cmd"] == {"hello": "hello", "prelude": "hide_update_toast"}.get(phase):
+                raise runner.DriverRPCError("Cura process exited")
+            return {}
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(runner, "RUN_DIR", SCRATCH))
+            stack.enter_context(patch.object(runner, "EVIDENCE", []))
+            stack.enter_context(patch.object(runner, "suite_specs", return_value=specs))
+            stack.enter_context(patch.object(runner, "start_recorder", return_value="recorder"))
+            stop = stack.enter_context(patch.object(runner, "stop_recorder"))
+            stack.enter_context(patch.object(runner, "rpc", side_effect=reply))
+            stack.enter_context(patch.object(runner, "boot_step", return_value=("boot", "boot", "ready", True, None)))
+            stack.enter_context(patch.object(runner, "ensure_ready", return_value=True))
+            stack.enter_context(patch.object(runner, "wait_stage"))
+            stack.enter_context(patch.object(runner, "sim_http"))
+            stack.enter_context(patch.object(runner, "shot", return_value=None))
+            scenario = stack.enter_context(patch.object(runner, "suite_scenario",
+                                                       side_effect=runner.DriverRPCError("Cura process exited")))
+            gallery = stack.enter_context(patch.object(runner, "write_gallery"))
+            self.assertNotEqual(runner.suite_run("smoke"), 0)
+            if phase == "scenario":
+                scenario.assert_called_once_with(specs[0])
+            else:
+                scenario.assert_not_called()
+            stop.assert_called_once_with("recorder")
+            gallery.assert_called_once()
+            self.assertFalse(gallery.call_args.args[0][-1][3])
+            self.assertIn("Cura process exited", gallery.call_args.args[0][-1][2])
+            self.assertFalse(runner.EVIDENCE[-1]["ok"])
+
+    def test_dead_driver_probe_propagates_instead_of_running_scenario_steps(self):
+        with patch.object(runner, "rpc", side_effect=runner.DriverRPCError("gone")), \
+                patch.object(runner, "shot", return_value=None), \
+                patch.object(runner, "suite_step") as step:
+            with self.assertRaises(runner.DriverRPCError):
+                runner.suite_scenario({"id": "dead", "name": "dead", "steps": [{"op": "click_stage"}]})
+            step.assert_not_called()
+
+    def test_mid_step_driver_loss_preserves_the_failed_step_and_stops_later_actions(self):
+        spec = {"id": "dead", "name": "dead", "steps": [{"op": "first"}, {"op": "later"}]}
+        step = MagicMock(side_effect=runner.DriverRPCError("connection lost"))
+        with patch.object(runner, "EVIDENCE", []), \
+                patch.object(runner, "frames_probe", return_value={}), \
+                patch.object(runner, "rpc", return_value={"ok": True, "size": [1840, 900]}), \
+                patch.object(runner, "verified_geometry", return_value=True), \
+                patch.object(runner, "shot", return_value=None):
+            with self.assertRaises(runner.DriverRPCError):
+                runner.suite_scenario(spec, step_fn=step)
+            step.assert_called_once_with(spec["steps"][0])
+            self.assertFalse(runner.EVIDENCE[-1]["ok"])
+
     def test_missing_seed_never_passes_even_with_the_welcome_overlay_absent(self):
         def reply(request, **kwargs):
             if request["cmd"] == "seed_machine":

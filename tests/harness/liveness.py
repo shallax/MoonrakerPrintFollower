@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Propagate terminal driver failures to stop native suites promptly.
 # 2026-09-30 [1378522] The runner's two measurement instruments get owners
 
 """The presentation record and its verdict.
@@ -165,7 +166,7 @@ def _beat(sample):
             f"deadline={record.get('deadline_ms')}ms")
 
 
-def probe(rpc, phase, scenario_id):
+def probe(rpc, phase, scenario_id, propagate=()):
     """One presentation sample, recorded.
 
     The window is told to present a change its scene graph cannot
@@ -180,6 +181,8 @@ def probe(rpc, phase, scenario_id):
         reply = rpc({"id": 1, "cmd": "frames", "heartbeat": True,
                      "deadline_ms": FRAME_HEARTBEAT_DEADLINE_MS}, timeout=60)
     except Exception as exc:
+        if isinstance(exc, propagate):
+            raise
         reply = {"ok": False, "error": repr(exc)}
     for key in ("swapped", "gained", "since", "exposed", "visible", "active",
                 "visibility", "state", "platform", "error",
