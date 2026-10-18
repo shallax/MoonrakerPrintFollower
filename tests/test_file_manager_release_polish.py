@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
-# 2026-10-18 — Cover file sorting, refresh races, active-file protection and print acknowledgements.
+# 2026-10-18 — 6.0.0: Cover file sorting, refresh races, active-file protection and print acknowledgements.
 
 """User-visible outcomes across file-manager races and failures."""
 from tests.test_file_manager_coverage import ServiceCase, make_row, sort_rows

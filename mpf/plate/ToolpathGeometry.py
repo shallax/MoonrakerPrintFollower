@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
-# 2026-10-18 — Extract reusable CPU toolpath and vertex preparation from the Qt renderer.
+# 2026-10-18 — 6.0.0: Extract reusable CPU toolpath and vertex preparation from the Qt renderer.
 # 2026-09-27 [43ab36d] Retained GPU shader geometry and stroke generation.
 
 """Qt-free toolpath preparation shared by the plugin and library consumers."""

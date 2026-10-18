@@ -1,6 +1,8 @@
 # Moonraker Print Follower roadmap
 
-6.0.0 is the intended feature-complete stable release. Further maintenance focuses
+6.0.0 is the intended feature-complete stable release; the branch currently holds
+a release candidate. Feature scope is complete, while release readiness remains
+subject to the validation gaps in TESTING.md. Further maintenance focuses
 on correctness, compatibility, documentation and reusable component boundaries.
 `ARCHITECTURE.md` describes the implemented product; version fields and the release
 checklist live in `INSTRUCTIONS.md`. Older plans below are historical proposals,

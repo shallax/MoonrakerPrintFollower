@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
-# 2026-10-18 — Publish standalone Qt raster and scene-graph renderers without Cura.
+# 2026-10-18 — 6.0.0: Publish standalone Qt raster and scene-graph renderers without Cura.
 
 """Optional PyQt6 renderers. Create a QGuiApplication before using them."""
 from .GpuFollower import GpuFollower

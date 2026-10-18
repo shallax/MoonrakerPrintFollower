@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
-# 2026-10-18 — Exercise public components in an isolated stdlib-only consumer.
+# 2026-10-18 — 6.0.0: Exercise public components in an isolated stdlib-only consumer.
 
 """The documented core API must remain independent of optional runtimes."""
 from pathlib import Path

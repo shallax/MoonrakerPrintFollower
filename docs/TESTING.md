@@ -22,6 +22,31 @@ owner are at 100%. The isolated STEP helper retains its separate mandatory
 all 54 light/dark capture pairs are byte-identical. Native and Docker wheel
 checks pass, including external installation and the rendering example.
 
+### Release readiness and outstanding qualification
+
+These results establish a tested release candidate, not a bug-free product or a
+whole-product performance guarantee. Statement coverage measures executed lines;
+it does not prove every interaction, printer macro, timing order or UI path.
+
+Before treating this exact candidate as the final stable release:
+
+- Complete branch CI on its final commit, including native Windows/macOS builds,
+  supported Python versions and installed-Cura smoke checks.
+- Run the full Cura release scenarios and supported-version UI sweep against
+  that same commit. Ordinary branch CI is a narrower check; configuring these
+  matrices does not mean they have run.
+- Validate paused and unloaded recovery on a disposable physical print, including
+  within-layer selection, prime/XY/Z order, object-top reference and final restart.
+  Earlier user trials and simulated firmware tests do not qualify this exact build.
+- Record current-build performance and memory behaviour during sustained following,
+  large-file indexing/seeking, camera decoding and combined rendering/lighting.
+  Existing seek budgets and historical rendering measurements cover specific
+  cases; no whole-product performance or long-duration stability claim is made.
+
+Do not restart an active user Cura session or issue printer commands to obtain
+this evidence. Use an isolated Cura profile/simulator and a deliberately prepared
+disposable printer test. Release publication remains a separate decision.
+
 ### Recovery regression audit
 
 Run these focused tests with

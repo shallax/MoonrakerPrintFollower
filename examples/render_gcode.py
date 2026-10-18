@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
-# 2026-10-18 — Demonstrate standalone layer rendering from the installed library.
+# 2026-10-18 — 6.0.0: Demonstrate standalone layer rendering from the installed library.
 
 """Render a layer to PNG using the installed library, without Cura."""
 import argparse

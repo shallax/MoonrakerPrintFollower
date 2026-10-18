@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
-# 2026-10-18 — Package reusable G-code and rendering components with optional Qt.
+# 2026-10-18 — 6.0.0: Package reusable G-code and rendering components with optional Qt.
 
 [build-system]
 requires = ["setuptools>=77"]

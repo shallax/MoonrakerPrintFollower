@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
-# 2026-10-18 — Verify installed library imports, geometry, Qt rendering and resource parity.
+# 2026-10-18 — 6.0.0: Verify installed library imports, geometry, Qt rendering and resource parity.
 
 """Install and exercise a built wheel outside the source checkout."""
 import argparse
