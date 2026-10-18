@@ -4,6 +4,9 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 6.0.0
 
+- Keep the Preview follower card rendered and clickable after switching Cura
+  stages. Stage readable QtTest bindings on macOS and the matching test runtime
+  on Windows; require working real input in UI-harness boot evidence.
 - Package reusable G-code indexing and toolpath geometry as a dependency-free
   Python library, with optional Qt raster/scene-graph rendering, documented public
   entry points and an installed-wheel example checked in CI. The separate

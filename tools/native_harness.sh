@@ -4,6 +4,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 - 6.0.0: Repair root-only QtTest permissions before launching Cura.
 # 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 # 2026-09-24 [bf703bf] gate: every unit runs on every platform - 17 units x 3 OS
@@ -862,6 +863,11 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
             fi
             rm -f "$QT_WHEEL"
         fi
+    fi
+    if [ -f "$QT_TEST" ]; then
+        sudo sh "$ROOT/tools/qtest_binding_permissions.sh" "$QT_TEST" ||
+            die "could not make the QtTest binding readable by Cura"
+        [ -r "$QT_TEST" ] || die "the runner still cannot read $QT_TEST"
     fi
     if [ -e "$QT_LIB/QtTest.framework/Versions/A/QtTest" ]; then
         echo "framework   : $QT_LIB/QtTest.framework (the binding's own rpath target)"

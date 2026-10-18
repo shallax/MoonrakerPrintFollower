@@ -3,6 +3,7 @@
 // Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 //
 // Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-18 — 6.0.0: Restore rendered controls after Cura replaces a stage host.
 // 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 // 2026-10-05 [228f698] Finish Preview object banners for 5.1.0
 // 2026-09-13 [e2ef237] 4.0.0 live-test round: the locked preview card, camera auto-start, controls nudge, dwell
@@ -22,6 +23,26 @@ import UM 1.5 as UM
 Item {
     id: host
     objectName: "moonrakerPreviewCardPanelHost"
+
+    // Cura reparents this shared component while its stage Loader destroys
+    // the old Row. Qt 6.10+ can retain visible=true while dropping the card's
+    // rendered nodes and mouse targets. Renew visibility on the next animation
+    // tick, after that teardown. A zero timer/callLater runs too early.
+    property bool parentedOnce: false
+    onParentChanged: {
+        if (host.parent === null)
+            return;
+        if (parentedOnce) {
+            host.visible = false;
+            restoreVisibility.restart();
+        }
+        parentedOnce = true;
+    }
+    Timer {
+        id: restoreVisibility
+        interval: 1
+        onTriggered: host.visible = host.parent !== null
+    }
 
     property real externalGap: UM.Theme.getSize("default_margin").width
     property real verticalPadding: UM.Theme.getSize("thick_margin").height

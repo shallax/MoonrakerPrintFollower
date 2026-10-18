@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Require usable real input in boot evidence.
 # 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
 # 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
 # 2026-09-14 [6f074cf] harness: the per-run evidence record — every step leaves a machine-readable entry, and
@@ -36,6 +37,18 @@ import static_leg
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SCENARIO_PACKAGE = ROOT / "tests" / "harness" / "scenarios"
+
+
+class BootEvidenceTests(unittest.TestCase):
+    def test_registration_and_qtest_must_both_be_ready(self):
+        for registered in (True, False, None):
+            for reply in ({"ok": True}, {"ok": False, "error": "permission denied"}, {}):
+                with self.subTest(registered=registered, qtest=reply):
+                    with patch.object(runner, "rpc", return_value=reply), \
+                            patch.object(runner, "shot", return_value="boot.png"):
+                        result = runner.boot_step({"registered": registered, "pid": 123})
+                    self.assertEqual(result[3], registered is True and reply.get("ok") is True)
+                    self.assertIn("qtest:", result[1])
 
 
 def _scenario_text():

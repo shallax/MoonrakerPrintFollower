@@ -13,7 +13,7 @@ source shape; **do not send printer commands during a live print**. A disposable
 paused virtual-SD printer is still required before claiming physical recovery
 validation.
 
-The 18 October whole-product audit passed **6,232 tests in 275 isolated
+The initial 18 October whole-product audit passed **6,232 tests in 275 isolated
 processes**, with **97.58% overall statement coverage** and every required
 in-process module at or above 95%. The extracted `ToolpathGeometry`, `GCodeDocument`, recovery controller,
 heater target discovery and tuning
@@ -24,17 +24,26 @@ checks pass, including external installation and the rendering example.
 
 ### Release readiness and outstanding qualification
 
-These results establish a tested release candidate, not a bug-free product or a
-whole-product performance guarantee. Statement coverage measures executed lines;
-it does not prove every interaction, printer macro, timing order or UI path.
+Statement coverage measures executed lines; it does not prove every interaction,
+printer macro, timing order or UI path. Automated checks do not establish a
+bug-free product or a whole-product performance guarantee.
 
-Before treating this exact candidate as the final stable release:
+The 6.0.0 merge and tag require both gates on the final PR commit:
 
-- Complete branch CI on its final commit, including native Windows/macOS builds,
-  supported Python versions and installed-Cura smoke checks.
-- Run the full Cura release scenarios and supported-version UI sweep against
-  that same commit. Ordinary branch CI is a narrower check; configuring these
-  matrices does not mean they have run.
+- PR CI, including native Windows/macOS builds, supported Python versions,
+  installed-Cura smoke checks and the full three-platform release scenarios.
+- The complete supported-version UI sweep against that same commit. Ordinary
+  branch CI is a narrower check; configuring these matrices does not mean they
+  have run. GitHub Actions retains the per-step evidence and job verdicts.
+
+Release-check regressions cover normalized older Cura runtime metadata, readable
+macOS QtTest bindings, missing Windows QtTest runtime installation and boot input
+readiness. Real-QML stage replacement tests check both rendered pixels and actual
+mouse delivery; a visible-property check alone missed a disappearing Preview card.
+
+Additional qualification remains necessary before claiming physical recovery
+validation or sustained whole-product performance:
+
 - Validate paused and unloaded recovery on a disposable physical print, including
   within-layer selection, prime/XY/Z order, object-top reference and final restart.
   Earlier user trials and simulated firmware tests do not qualify this exact build.

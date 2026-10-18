@@ -517,6 +517,13 @@ route to the selected machine only, revokes it before deactivation, and clears
 readouts, target and distance drafts, motion focus and the open menu at a machine switch. The pane has
 no transport, command owner or extra poller.
 
+`MoonrakerPreviewCardPanelHost.qml` participates in Cura's `saveButton` row.
+When Cura replaces a stage, it reparents this persistent card into the new row.
+The host renews visibility on the next animation tick after the old row's
+teardown; newer Qt releases otherwise retain visible geometry without rendering
+or accepting clicks. A real-QML regression checks pixels and mouse delivery
+through repeated Loader replacements, alongside the installed-Cura UI sweep.
+
 `PreviewToolheadHost.qml` anchors at the top left below Cura's actual stage
 menu, reserving the lower-left perspective controls, job summary and object
 selector through their QML context IDs. It

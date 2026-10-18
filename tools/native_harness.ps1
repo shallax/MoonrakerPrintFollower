@@ -4,6 +4,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 - 6.0.0: Install the exact missing QtTest runtime independently of its binding.
 # 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
 # 2026-09-28 [9887e49] Keep native Windows harness RPC files in its temp work directory
 # 2026-09-24 [bf703bf] gate: every unit runs on every platform - 17 units x 3 OS
@@ -1366,9 +1367,9 @@ Write-Log "staged $PluginDir\MoonrakerPrintFollower and $PluginDir\HarnessDriver
 # injection unavailable". UltiMaker's build of PyQt6 carries only the
 # modules Cura uses and QtTest is not one of them, so `from PyQt6 import
 # QtTest` cannot succeed; the driver's fallback then looks for the wheel's
-# binding under its Linux-only name, which no Windows leg stages. Qt's own
-# Qt6Test.dll IS in the bundle - only the binding is missing - so one file
-# restores the import path the driver tries first.
+# binding under its Linux-only name, which no Windows leg stages. Recent
+# Cura bundles omit both the binding and Qt6Test.dll. Stage each missing
+# component independently, retaining Cura's existing Qt libraries.
 Write-Log ""
 Write-Log "--- the QtTest binding (the driver's click path) ---"
 $QtPkg = Join-Path $curaDir 'PyQt6'
@@ -1425,10 +1426,32 @@ if (Test-Path -LiteralPath $QtTest) {
         }
     }
 }
-if (Test-Path -LiteralPath $QtTestDll) {
+if (-not (Test-Path -LiteralPath $QtTestDll)) {
+    $coreDll = Join-Path $QtPkg 'Qt6\bin\Qt6Core.dll'
+    $runtimeVersion = (Get-Item -LiteralPath $coreDll).VersionInfo.FileVersion
+    if ($runtimeVersion -notmatch '^(\d+\.\d+\.\d+)') {
+        Fail "cannot determine the exact Qt runtime version from $coreDll"
+    }
+    $runtimeVersion = $Matches[1]
+    $runtimeMeta = Join-Path $WorkDir 'pyqt6-qt6-pypi.json'
+    if (-not (Get-CurlFile "https://pypi.org/pypi/PyQt6-Qt6/$runtimeVersion/json" $runtimeMeta)) {
+        Fail "could not resolve the Qt $runtimeVersion runtime wheel"
+    }
+    $runtimeUrl = (ConvertFrom-Json -InputObject (Get-Content -LiteralPath $runtimeMeta -Raw -Encoding UTF8)).urls |
+        Where-Object { $_.filename -like '*win_amd64.whl' } |
+        Select-Object -First 1 -ExpandProperty url
+    $runtimeWheel = Join-Path $WorkDir 'PyQt6-Qt6-wheel.zip'
+    if (-not $runtimeUrl -or -not (Get-CurlFile $runtimeUrl $runtimeWheel)) {
+        Fail "could not download the Qt $runtimeVersion Windows runtime wheel"
+    }
+    & python (Join-Path $Root 'tools\stage_qtest_runtime.py') $runtimeWheel $QtPkg
+    if ($LASTEXITCODE -ne 0) { Fail 'could not stage Qt6Test.dll from its matching runtime wheel' }
+    Remove-Item -LiteralPath $runtimeWheel -Force
+}
+if ((Test-Path -LiteralPath $QtTest) -and (Test-Path -LiteralPath $QtTestDll)) {
     Write-Log "runtime     : $QtTestDll (the binding loads this by name, from the bundle)"
 } else {
-    Write-Warn "no Qt6Test.dll at $QtTestDll - the binding would not resolve it"
+    Fail "QtTest is incomplete: both $QtTest and $QtTestDll are required"
 }
 
 # --- 6b. the suite's test model -------------------------------------------

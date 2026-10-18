@@ -4,6 +4,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Fail boot evidence when real QtTest input is unavailable.
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 # 2026-10-03 [950d97a] Keep the alert's frame and timeline, and carry it to the desktop
 # 2026-09-12 [1fcf985] harness: Phase-A skeleton — driver, runner, wrapper, first live run
@@ -1044,7 +1045,8 @@ def boot_step(hello):
             f" · registered={registered}"
             f" · qtest: ok={qtest_state.get('ok')} err={qtest_state.get('error')}"
             f" wheel={qtest_state.get('sys_path_has_wheel')}")
-    return ("00-boot", note, "hello succeeds", registered is True, shot("00-boot"))
+    ready = registered is True and qtest_state.get("ok") is True
+    return ("00-boot", note, "driver registered and QtTest ready", ready, shot("00-boot"))
 
 LOAD_EMIT = """
 window = _main_window()

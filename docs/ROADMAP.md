@@ -1,8 +1,8 @@
 # Moonraker Print Follower roadmap
 
-6.0.0 is the intended feature-complete stable release; the branch currently holds
-a release candidate. Feature scope is complete, while release readiness remains
-subject to the validation gaps in TESTING.md. Further maintenance focuses
+6.0.0 completes the planned feature scope. Its merge and tag require passing PR
+CI and the full supported-version UI sweep on the final commit, as described in
+TESTING.md alongside the limits of automated validation. Further maintenance focuses
 on correctness, compatibility, documentation and reusable component boundaries.
 `ARCHITECTURE.md` describes the implemented product; version fields and the release
 checklist live in `INSTRUCTIONS.md`. Older plans below are historical proposals,
@@ -45,9 +45,9 @@ from painting would allow a smaller raster-only import. The compact index also
 retains plugin-oriented retention fields. These are architectural follow-ups, not
 claims that all useful boundaries have already been extracted.
 
-Release qualification still needs validation:
-continue exercising paused/unloaded recovery on real printers and across supported
-Cura versions. Runout markers, parser position and recorded toolpaths cannot prove
+Ongoing qualification includes paused/unloaded recovery on real printers,
+sustained performance measurements and supported Cura versions. Runout markers,
+parser position and recorded toolpaths cannot prove
 where extrusion physically stopped after a jam. Reliable missing-material detection
 or an automatically chosen restart layer remains unscheduled research. Preview diagrams
 are not collision simulation. The older 5.x and initial 6.0 design notes below are
