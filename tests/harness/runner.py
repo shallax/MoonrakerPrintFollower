@@ -4,6 +4,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Require the restored seed and preserve evidence on failed boot gates.
 # 2026-10-18 — 6.0.0: Fail boot evidence when real QtTest input is unavailable.
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 # 2026-10-03 [950d97a] Keep the alert's frame and timeline, and carry it to the desktop
@@ -332,18 +333,20 @@ def wait_stage(wanted, timeout_ms=20000):
 def ensure_ready(require_aux=True):
     """The boot gate: on a fresh seeded profile Cura's one-shot
     welcome check can run before the saved machine is restored, and
-    the dialog's grey-out then eats every click. Seed the machine
-    (the Add-printer wizard's own code path) and hide the welcome
+    the dialog's grey-out then eats every click. Wait for the exact
+    saved machine to finish restoring and hide the welcome
     overlay until the gate is clear. Orchestration only — no
     plugin-surface claims. The first-install leg passes
     require_aux=False: a clean install has no printer to connect to,
     so the discovery chain cannot come alive — that absence is the
     state under test, not a bad boot."""
-    for _ in range(10):
+    seed_ready = False
+    for _ in range(30):
+        seed = rpc({"id": 1, "cmd": "seed_machine"})
         reply = rpc({"id": 1, "cmd": "welcome"})
-        if reply.get("ok") and not reply.get("up"):
+        if seed.get("ok") is True and reply.get("ok") and not reply.get("up"):
+            seed_ready = True
             break
-        rpc({"id": 1, "cmd": "seed_machine"})
         rpc({"id": 1, "cmd": "hide_welcome"})
         # The g-code-suitability message: dismissed conditionally at
         # boot, never waited for — a flow that loads no gcode never
@@ -353,6 +356,9 @@ def ensure_ready(require_aux=True):
         # over the console's buttons): same conditional dismissal.
         rpc({"id": 1, "cmd": "hide_update_toast"})
         time.sleep(2)
+    if not seed_ready:
+        progress(f"boot machine was not ready: {seed}")
+        return False
     # Cura's first-boot window size is nondeterministic, and a narrow
     # window collapses the header's stage buttons into the overflow
     # menu — the stage clicks then fail ("stage button not found")
@@ -3066,6 +3072,8 @@ def suite_run(group_id):
         EVIDENCE.append(_evidence_entry({"id": group_id}, -1, {"op": "hello"},
                                         _boot[0], _boot[3], _boot[1], _boot[2],
                                         _boot[4], time.monotonic()))
+        if not _boot[3]:
+            return _verdict(steps)
         gate = ensure_ready()
         _gate_cap = shot("01-gate")
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -3074,6 +3082,8 @@ def suite_run(group_id):
                                         "01-gate", gate,
                                         "boot gate: active machine present, no welcome overlay",
                                         "welcome absent, window at the pinned geometry", _gate_cap, time.monotonic()))
+        if not gate:
+            return _verdict(steps)
         wait_stage("PrepareStage", timeout_ms=60000)
         progress(f"{group_id}: {len(specs)} scenario(s) in this group")
         done = 0
@@ -3130,9 +3140,9 @@ def suite_run(group_id):
                         if failed else f"all {len(scenario_steps)} steps passed"))
     finally:
         stop_recorder(video)
-    title = f"Scenario group {group_id}"
-    write_gallery(steps, False, title, video=video_path)
-    print(f"gallery: {RUN_DIR}/index.html")
+        title = f"Scenario group {group_id}"
+        write_gallery(steps, False, title, video=video_path)
+        print(f"gallery: {RUN_DIR}/index.html")
     return _verdict(steps)
 
 

@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Prove failed startup stops scenarios and keeps its gallery.
 # 2026-10-18 — 6.0.0: Require usable real input in boot evidence.
 # 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
 # 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
@@ -40,6 +41,42 @@ SCENARIO_PACKAGE = ROOT / "tests" / "harness" / "scenarios"
 
 
 class BootEvidenceTests(unittest.TestCase):
+    def test_missing_seed_never_passes_even_with_the_welcome_overlay_absent(self):
+        def reply(request, **kwargs):
+            if request["cmd"] == "seed_machine":
+                return {"ok": False, "error": "seeded machine has not been restored"}
+            return {"ok": True, "up": False}
+        with patch.object(runner, "rpc", side_effect=reply) as rpc, \
+                patch.object(runner.time, "sleep"), patch.object(runner, "exec_rpc") as probe:
+            self.assertFalse(runner.ensure_ready(require_aux=False))
+        probe.assert_not_called()
+        self.assertEqual(sum(call.args[0]["cmd"] == "seed_machine" for call in rpc.call_args_list), 30)
+
+    def test_failed_boot_or_readiness_keeps_evidence_without_running_scenarios(self):
+        for boot_ok, gate_ok in ((False, True), (True, False)):
+            with self.subTest(boot=boot_ok, gate=gate_ok), contextlib.ExitStack() as stack:
+                stack.enter_context(patch.object(runner, "RUN_DIR", SCRATCH))
+                stack.enter_context(patch.object(runner, "EVIDENCE", []))
+                stack.enter_context(patch.object(runner, "suite_specs", return_value=[{"id": "x1"}]))
+                stack.enter_context(patch.object(runner, "start_recorder", return_value="recorder"))
+                stop = stack.enter_context(patch.object(runner, "stop_recorder"))
+                stack.enter_context(patch.object(runner, "rpc", return_value={}))
+                stack.enter_context(patch.object(runner, "shot", return_value=None))
+                stack.enter_context(patch.object(runner, "boot_step",
+                                                return_value=("00-boot", "boot", "ready", boot_ok, None)))
+                ready = stack.enter_context(patch.object(runner, "ensure_ready", return_value=gate_ok))
+                stage = stack.enter_context(patch.object(runner, "wait_stage"))
+                scenario = stack.enter_context(patch.object(runner, "suite_scenario"))
+                gallery = stack.enter_context(patch.object(runner, "write_gallery"))
+                self.assertNotEqual(runner.suite_run("configure"), 0)
+                scenario.assert_not_called()
+                stage.assert_not_called()
+                self.assertEqual(ready.call_count, int(boot_ok))
+                stop.assert_called_once_with("recorder")
+                gallery.assert_called_once()
+                self.assertFalse(gallery.call_args.args[0][-1][3])
+                self.assertEqual(len(runner.EVIDENCE), 2 if boot_ok else 1)
+
     def test_registration_and_qtest_must_both_be_ready(self):
         for registered in (True, False, None):
             for reply in ({"ok": True}, {"ok": False, "error": "permission denied"}, {}):

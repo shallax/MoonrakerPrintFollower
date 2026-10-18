@@ -1746,6 +1746,14 @@ Native and Linux harnesses use `tests/harness/log_gate.py` to reject plugin
 warnings, errors and QML binding/polish loops. Native first-install and migration
 legs include both boots' logs. Missing evidence fails the gate. Deliberate fault-injection scenarios may declare exact expected log messages; only a fully passing scenario records that allowance, and the shared gate consumes its bounded message count. Repeated authentication-refusal warnings are permitted only inside the successful authentication-fault scenario's recorded time window. Other warnings still fail.
 
+The test-only driver's `machine.py` selects the exact seeded printer after Cura
+reports startup completion. It never manufactures a machine while the registry
+is loading. The runner refuses dependent scenarios after a failed startup gate
+and writes the recorded failure gallery. Native unit-test processes run through
+`tools/native/test_worker.py`, with periodic thread-stack evidence and a hard
+parent-process deadline; this also covers native Qt calls that block event-loop
+deadline checks.
+
 ### Object-outline retention
 
 The Exclude Object Picker retains the grid and each object's native outline

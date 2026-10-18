@@ -40,6 +40,10 @@ Release-check regressions cover normalized older Cura runtime metadata, readable
 macOS QtTest bindings, missing Windows QtTest runtime installation and boot input
 readiness. Real-QML stage replacement tests check both rendered pixels and actual
 mouse delivery; a visible-property check alone missed a disappearing Preview card.
+Native test files have a 300-second process deadline, report start/end progress
+immediately and dump thread stacks every 60 seconds while running. Failed or
+cancelled CI jobs retain their per-file logs. `tools/native/test_worker.py` keeps
+the same isolated module/script and coverage invocation under that watchdog.
 
 Additional qualification remains necessary before claiming physical recovery
 validation or sustained whole-product performance:
@@ -706,6 +710,11 @@ pinned config directory checked into `tests/harness/config` (welcome,
 What's-New and local-detection offer prompts suppressed, machine and
 printer record present, window geometry pinned); a pre-scenario gate
 asserts the expected stage is active and no overlay covers it.
+The driver waits for `CuraApplication.started` and activates the exact
+`FDM Printer Base Description` fixture. An empty startup registry is pending;
+it never triggers creation of a replacement printer. A missing fixture fails
+the gate. Failed registration, real-input readiness or boot gates stop the
+scenario group and save its gallery immediately.
 
 Artifacts land in `/tmp/mpf/ui-artifacts/<run>/`: `index.html` (the
 step gallery), `evidence.json` (the machine-readable per-step
