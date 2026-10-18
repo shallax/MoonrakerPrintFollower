@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Mention the macOS camera stability repair.
 # 2026-10-18 — 6.0.0: Describe final recovery, temperature and whole-product reliability changes.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -45,7 +46,7 @@ WHATS_NEW: Tuple[dict, ...] = (
             "Use point selects a stop bookmark; Remove deletes it. Bookmarks and printed paths are estimates, not proof of deposited filament. After starting recovery, Dismiss returns to Print Follower without cancelling it. Reopened dialogs reset their scroll and preview step.",
             "Adjust each heater in Temperatures with a slider or 1, 5, 10 and 25 degree bumps, within limits read from Moonraker. Temperature profiles remain available while printing; cooldown also works without saved profiles.",
             "Cura 5.14 beta 1 is supported alongside 5.13 in CI and the UI version sweep. Recovery also works without a runout sensor.",
-            "File-manager sorting and stale actions, frozen-camera detection and queued heater adjustments are corrected. Developers can reuse the parser and rendering components through a documented Python library.",
+            "File-manager sorting and stale actions, frozen-camera detection, macOS camera stability and queued heater adjustments are corrected. Developers can reuse the parser and rendering components through a documented Python library.",
         ),
     },
     {

@@ -4,6 +4,9 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 6.0.0
 
+- Use raster camera painting on macOS to avoid a native OpenGL framebuffer
+  crash with newer Qt versions. Preserve native crash evidence and stop UI
+  tests promptly when Cura exits.
 - Keep the Preview follower card rendered and clickable after switching Cura
   stages. Stage readable QtTest bindings on macOS and the matching test runtime
   on Windows; require working real input in UI-harness boot evidence.

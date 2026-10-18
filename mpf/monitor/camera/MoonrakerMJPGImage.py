@@ -4,6 +4,7 @@
 # Upstream portions retain the LGPLv3-or-later terms and notices below.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Avoid macOS OpenGL framebuffer painter crashes with raster camera frames.
 # 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
 # 2026-10-03 [13b277f] Keep a stale signal visible, contain the camera seam, and give alerts reach
 # 2026-09-19 [0f5d266] 4.5.0: the camera stream, the narrow-window contract and the release hardening
@@ -28,6 +29,7 @@ from .CameraStatistics import CameraStatistics
 from .MJPEGParser import MJPEGParser
 
 import math
+import sys
 import time
 from typing import Optional
 
@@ -163,10 +165,12 @@ class MoonrakerMJPGImage(QQuickPaintedItem):
         self._pending_arrival = 0.0
 
         self.setAntialiasing(True)
-        # Ignored by Qt 6.0-6.8 (including Cura 5.13's Qt 6.6).
-        # Qt 6.9+ can paint directly into an OpenGL framebuffer instead
-        # of rasterising an intermediate image and uploading it.
-        self.setRenderTarget(QQuickPaintedItem.RenderTarget.FramebufferObject)
+        # Qt 6.9+ enables the formerly ignored FBO target. Apple's legacy
+        # OpenGL painter can crash while Qt clears that target, before our
+        # paint() runs. Keep macOS on the portable raster/image upload path.
+        target = (QQuickPaintedItem.RenderTarget.Image if sys.platform == "darwin"
+                  else QQuickPaintedItem.RenderTarget.FramebufferObject)
+        self.setRenderTarget(target)
 
     # -- the QML-facing contract -------------------------------------
 

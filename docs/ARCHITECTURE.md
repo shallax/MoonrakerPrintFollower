@@ -1415,8 +1415,10 @@ execution lock during native decoding. Periodic ticks and worker completions
 share one dispatch deadline, with a single-shot wake for its remaining interval.
 The mailbox still holds only the latest pending frame, the worker still permits
 one in-flight decode, and stopping or replacing a stream cancels the extra wake.
-The camera requests a framebuffer render target: Qt 6.0-6.8 ignores it, while
-Qt 6.9+ can use accelerated OpenGL painting when the host supports it.
+On macOS the camera uses QQuickPaintedItem's raster image target. Its framebuffer
+painter can crash in Apple's legacy OpenGL driver during Qt's target clear,
+before plugin painting begins. Other platforms request a framebuffer target:
+Qt 6.0-6.8 ignores it, while Qt 6.9+ can accelerate OpenGL painting when supported.
 
 Partial-layer scrub geometry has a dedicated notification for each surface.
 Each face retains it in a separate QML binding, so split advances and raster

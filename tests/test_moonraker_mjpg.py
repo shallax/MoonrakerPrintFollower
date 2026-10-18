@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Require raster camera painting on macOS and retain FBO requests elsewhere.
 # 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
 # 2026-10-03 [13b277f] Keep a stale signal visible, contain the camera seam, and give alerts reach
 # 2026-09-19 [0f5d266] 4.5.0: the camera stream, the narrow-window contract and the release hardening
@@ -37,10 +38,15 @@ class MoonrakerMJPGImageTests(unittest.TestCase):
     def _reply(self):
         return self.nam.requests[-1]
 
-    def test_camera_requests_the_framebuffer_render_target(self):
+    def test_camera_render_target_avoids_the_macos_framebuffer_painter(self):
         from PyQt6.QtQuick import QQuickPaintedItem
-        self.assertEqual(self.item.renderTarget(),
-                         QQuickPaintedItem.RenderTarget.FramebufferObject)
+        for platform, expected in (("darwin", QQuickPaintedItem.RenderTarget.Image),
+                                   ("linux", QQuickPaintedItem.RenderTarget.FramebufferObject),
+                                   ("win32", QQuickPaintedItem.RenderTarget.FramebufferObject)):
+            with self.subTest(platform=platform), patch.object(mjpg_module.sys, "platform", platform):
+                item = MoonrakerMJPGImage()
+                self.addCleanup(item.stop)
+                self.assertEqual(item.renderTarget(), expected)
 
     def _drain(self, milliseconds):
         """Run the event loop so the render timer fires its ticks."""
