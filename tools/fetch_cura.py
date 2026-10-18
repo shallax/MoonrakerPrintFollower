@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [1d52947] Handle multiple compatible PyQt wheels deterministically
+# 2026-10-16 [10580bf] Match harness QtTest wheels to Cura embedded runtime metadata
+# 2026-09-13 [433ee88] harness: Cura version selection, swap proven, release-gate wiring
+
 """Fetch and prepare a pinned Cura version for the scenario harness.
 
 Downloads the official AppImage, extracts it, unpacks the matching

@@ -1,4 +1,14 @@
 #!/bin/sh
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-15 [33b3b2d] harness: the re-review's script defects — the serial wipe, the shared-tree boot wait,
+#   slot boundaries, wall clocks, provenance and the evidence gate
+# 2026-09-15 [f1dcf0a] harness: one path model across the scripts — the slot mapping is a shared, tested rule
+# 2026-09-14 [e168ec7] harness: fix the doubled evidence path, with tests
+
 # The harness's path rules, ONE module with tests:
 #
 #   resolve <base> <run_dir_name>

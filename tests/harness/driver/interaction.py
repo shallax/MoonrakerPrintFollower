@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-30 [1f78aec] The driver's probe and interaction families get owners
+
 """Synthesized input, and the proof that it arrived where it was aimed.
 
 The click walks' window union, the control a name resolves to, the aim

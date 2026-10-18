@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-10-05 [228f698] Finish Preview object banners for 5.1.0
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """The only follower component that knows Cura scene/view/file lifecycle APIs."""
 from __future__ import annotations
 

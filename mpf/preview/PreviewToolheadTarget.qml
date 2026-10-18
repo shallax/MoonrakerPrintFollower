@@ -1,3 +1,10 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+
 import QtQuick 2.15
 import UM 1.5 as UM
 import Cura 1.1 as Cura

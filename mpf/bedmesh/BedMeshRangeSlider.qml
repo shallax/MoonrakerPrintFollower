@@ -1,3 +1,12 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
+// 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+// 2026-09-15 [ff4666f] 4.2.0 snapshot rounds: the bed-mesh range filter and the live-verdict fixes
+
 import QtQuick 2.15
 import UM 1.5 as UM
 import "../resources/theme"

@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [52df354] Verify recovery safety paths and release gates
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+
 """Sensor evidence is selected, print-bound, and never claims exact runout."""
 import unittest
 

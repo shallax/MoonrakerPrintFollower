@@ -1,3 +1,15 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-09-18 [8d5403b] 4.5.0: the persistence transaction commits only after verify, and the boot latch is
+#   explicit
+# 2026-09-15 [fb627c3] 4.2.0 state store: the explicit owner of the Monitor's persisted chrome —
+#   read-modify-write merges that preserve foreign keys (4.3.0's store consumes the same file), the one-time
+#   migration's deliberate replace, and rate-limited failure notes through the console with a per-session latch
+
 """The plugin JSON's file-semantics owner (4.2.0, F11/A6; the 4.5.0
 M8/E9 extensions): the raw read, the read-modify-write that preserves
 foreign keys, the atomic replace and the rate-limited failure

@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-15 [dd937c1] 4.3.0: the files view model — the stable-identity QAbstractListModel behind the
+#   list-valued projection, rebuilt only on the projection's revision; the public surface, the attribute
+#   identity and the harness's value-read of fileManagerRows stay untouched
+
 """The files view model (4.3.0): the file projection's stable-identity
 surface — a QAbstractListModel holding the current page's rows with
 the relpath as the row identity, so a rebuild keeps the delegate's

@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-09-15 [1a83a16] 4.2.0 policy prerequisites: the frozen observation record assembled once in MonitorData,
+#   the tri-state connection (unknown/yes/no) originated in the data owner, and the two closed push-ins —
+#   controlsLocked and the command lane's busy flag; the client exposes the e-stop assumption
+
 """The printer-state permission policy (4.2.0): ONE pure module
 projecting the polled observation into named action permissions, with
 the rulings as an explicit table. Pure by contract — no Qt, no

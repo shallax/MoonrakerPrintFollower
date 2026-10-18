@@ -1,4 +1,12 @@
 #!/bin/sh
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-09-26 [c9839b9] Keep scrub frames stable and prepare current-layer rewind checkpoints
+
 # Run the pinned workflow linter natively inside the dev container.
 set -eu
 case "$(uname -m)" in

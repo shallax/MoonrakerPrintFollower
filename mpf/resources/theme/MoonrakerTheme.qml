@@ -1,3 +1,17 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+// 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
+// 2026-09-18 [39b9a74] 4.4.0: the verification round — the panel-fix batch (the download guard and its pins, the
+//   load supersede, the pause-items stash keyed on the states, the strip's own fill address with x10's collapse
+//   pin, the card's independent height gate, the dashboard's visible-window fit bound, the popover's overlay
+//   host, the slider's colour type, the theme-covered lint globs, the hourglass tooltip, the settled docs), the
+//   p6/p7 determinism pins, the timestamped evidence dirs, and the ratchet re-census; every gate green on the
+//   fixed tree
+
 pragma Singleton
 import QtQuick 2.15
 

@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-04 [95512c0] Polish monitor mini beds and refresh release screenshots
+# 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
+# 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
+
 """Global detection service lifecycle, without network or native imports."""
 
 import os

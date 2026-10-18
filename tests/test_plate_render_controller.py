@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-30 [00b0e3e] Spell the discard sweep's URLs the way the renderer spells them
+# 2026-09-30 [1634aac] Cover the controller's seams and drop an accessor nothing called
+
 """The render controller's own contracts: the presentation restamp, the
 decoded cache's consumer identity, the pixel-width stroke, the
 checkpoint worker's terminal paths and the teardown release.

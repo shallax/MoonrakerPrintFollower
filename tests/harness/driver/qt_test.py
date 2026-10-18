@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-30 [1f78aec] The driver's probe and interaction families get owners
+
 """Qt's own QTest module, loaded once with its fallbacks.
 
 Synthesized input and the event-loop settle both need it, and neither

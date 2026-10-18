@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-10-03 [13b277f] Keep a stale signal visible, contain the camera seam, and give alerts reach
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """Real Qt, minimal Cura host doubles, and isolated production-package imports.
 
 No plugin method is copied or mocked by this harness. Qt tests are optional for

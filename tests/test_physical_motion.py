@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [aeb1e5c] Restore faster centre and move-to toolhead travel
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+
 """Physical guard boundaries using invented Klipper status, never a printer."""
 import unittest
 

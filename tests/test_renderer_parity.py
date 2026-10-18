@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-22 [773e361] 4.6.0: the burn fix, the parity coverage floor and the webcam FPS control
+
 """The renderer-parity contract (4.6.0): the native rasterised
 toolpath presents the SAME PHYSICAL stroke width the QML vector
 sections paint — never a fixed-width floor.

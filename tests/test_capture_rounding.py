@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-06 [1df3fc1] Bound native 3D capture rounding without relaxing UI or alpha checks
+
 """Native 3D rounding never masks alpha, geometry or UI capture regressions."""
 import tempfile
 import unittest

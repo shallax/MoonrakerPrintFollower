@@ -1,3 +1,12 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-09-18 [53afbd7] 4.5.0: the reviewer-attribution phrasing goes from the codebase
+// 2026-09-13 [a5234d9] docs: drop verbatim quotes and author attributions from the repo text
+// 2026-09-10 [4990f07] Monitor readouts: layer-anchored ETA, endstops and the first live-pass fixes
+
 import QtQuick 2.15
 import UM 1.5 as UM
 import Cura 1.1 as Cura

@@ -910,6 +910,23 @@ reproducible with only PyQt6.
 
 ## Comment discipline
 
+Project-owned source, test and build files carry the copyright notice
+`Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>` and
+an SPDX licence identifier. The project licence is GNU GPLv3, version 3 only
+(`GPL-3.0-only`); the full text is in `LICENSE`. Preserve upstream attribution
+and licence terms in derived camera modules and vendored fixtures.
+
+Each source header also records a brief Git-history snapshot: the earliest commit
+and two latest content changes, following renames, in newest-first order. Pure
+renames with no content change are omitted from the recent entries.
+Entries use Git author dates, abbreviated commit hashes and commit subjects;
+subjects describe the containing commit and can cover more than that one file.
+Git remains the complete history. Keep future entries brief and accurate rather
+than copying the full log into each file. Shebangs, encoding declarations and
+format directives retain their required positions before the header. Do not add
+comments to JSON, binary/generated assets or byte-sensitive G-code fixtures.
+Vendored Cura/Uranium files retain their original notices without project headers.
+
 Comments state WHY, briefly:
 
 - One or two lines for the ordinary case; a documented trap may earn

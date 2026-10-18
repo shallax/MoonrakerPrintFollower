@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-03 [13b277f] Keep a stale signal visible, contain the camera seam, and give alerts reach
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-29 [2097457] Separate camera byte parsing, decoding and statistics from Qt presentation
+
 """The plugin-owned MJPEG renderer (the fork of Cura's
 NetworkMJPGImage): the receive/parse/latest-wins/render-scheduler
 contracts. Qt-guarded — the container runs them for real against the

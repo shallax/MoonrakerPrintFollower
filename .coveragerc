@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-03 [a7058b7] Close the gate's mask, repair the mirror, and correct the round's text
+# 2026-10-03 [a362eb3] Scope the coverage run to the plugin so test stand-ins stay out of the data
+
 # The coverage run measures the plugin only. Tests import stand-ins
 # from temporary directories (the pinned onnxruntime install), and a
 # measured file whose source is gone before the report makes

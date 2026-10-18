@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-04 [c5fae60] Break mini-bed height layout feedback
+# 2026-10-04 [92300ee] Wait for mini bed layouts in cross-platform QML tests
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable qml plate geometry contracts."""
 from tests import qml_engine_support as harness
 

@@ -1,3 +1,14 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+// 2026-09-30 [f425547] mpf's subpackages are capitalised
+// 2026-09-16 [35470e0] 4.3.0 extraction: the Temperature-history section — TempHistorySection.qml owns the mini
+//   chart and legend as a property-driven component; the host feeds the mini-series state and owns the pop-over
+//   behind the shared toggle signal; pins retarget same-pass
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3

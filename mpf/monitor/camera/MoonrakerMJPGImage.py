@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: LGPL-3.0-or-later AND GPL-3.0-only
+# Moonraker Print Follower modifications: GNU GPLv3 (version 3 only); see LICENSE.
+# Upstream portions retain the LGPLv3-or-later terms and notices below.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-10-03 [13b277f] Keep a stale signal visible, contain the camera seam, and give alerts reach
+# 2026-09-19 [0f5d266] 4.5.0: the camera stream, the narrow-window contract and the release hardening
+
 # Copyright (c) 2018 Aldo Hoeben / fieldOfView
 # NetworkMJPGImage is released under the terms of the LGPLv3 or higher.
 #

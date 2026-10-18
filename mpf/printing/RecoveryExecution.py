@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [d2db7b8] Clarify source macro choices and update prime defaults
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+
 """Sequential recovery handover with no automatic retry after ambiguity."""
 from __future__ import annotations
 

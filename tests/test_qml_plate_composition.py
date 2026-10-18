@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-06 [a72a380] Match subprocess and delivered-frame test ownership
+# 2026-10-06 [4b3a9d6] Keep zoom in the panned composition test fixture
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable qml plate composition contracts."""
 from tests import qml_engine_support as harness
 

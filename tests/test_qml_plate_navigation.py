@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-07 [96a5e48] Fix follower deadline layout and simulator motion state
+# 2026-10-03 [61c3b8b] Read the anchor ETA to the selected point and group the layer tracks
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable qml plate navigation contracts."""
 from tests import qml_engine_support as harness
 

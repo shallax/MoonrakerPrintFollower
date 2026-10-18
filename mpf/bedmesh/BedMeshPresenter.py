@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-18 [53afbd7] 4.5.0: the reviewer-attribution phrasing goes from the codebase
+# 2026-09-18 [b626228] 4.5.0: the second live round — the bed-mesh keys move into the settings document (the
+#   no-trace ruling, the deferral withdrawn), the pane order retries at printer arrival, and the per-child
+#   reflow loggers name the polish-loop flipper
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """One owner of the active bed-mesh overlay, visibility and Preview controls."""
 from __future__ import annotations
 

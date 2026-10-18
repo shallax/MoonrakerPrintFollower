@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-08 [0c51c11] Fix deferred plate teardown and qualify capture determinism
+# 2026-10-08 [4a8f8a3] Fix slice reflections and reduce large-print capture overhead
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+
 """Production Cura editor: scrollbar gutter, themed intensity and draft cancellation."""
 from __future__ import annotations
 

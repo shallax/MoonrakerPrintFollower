@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [1d52947] Handle multiple compatible PyQt wheels deterministically
+# 2026-10-16 [10580bf] Match harness QtTest wheels to Cura embedded runtime metadata
+# 2026-09-14 [e168ec7] harness: fix the doubled evidence path, with tests
+
 """Regression pins for the run-dir resolution rule.
 
 The doubled-path bug (shipped in 4.0.2): the container side of

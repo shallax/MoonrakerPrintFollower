@@ -1,3 +1,12 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-04 [95512c0] Polish monitor mini beds and refresh release screenshots
+// 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+// 2026-09-05 [54dfe36] v3: add webcam and live status Monitor tab
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3

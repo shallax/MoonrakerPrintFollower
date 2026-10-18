@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
+# 2026-09-14 [6f074cf] harness: the per-run evidence record — every step leaves a machine-readable entry, and
+#   shot() refuses a mis-sized frame
+
 """Host-side pins for the runner's evidence spine.
 
 runner.py runs inside the harness container, but its imports are

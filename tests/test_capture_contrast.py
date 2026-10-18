@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-03 [88c7cbf] Fit the settings captures to their pages and judge placeholder text as muted
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-18 [bf0df73] 4.5.0: the capture legs gain a contrast census, and the cross-platform legs get honest
+
 """The capture contrast census, tested without a Qt install.
 
 The census runs inside the capture legs (the dev container), but its maths

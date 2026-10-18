@@ -1,3 +1,13 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+// 2026-09-30 [f425547] mpf's subpackages are capitalised
+// 2026-09-15 [316905f] 4.3.0 extraction: the System section — SystemSection.qml owns the restart buttons and the
+//   policy-reason row as a property-driven component; pins retarget same-pass
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3

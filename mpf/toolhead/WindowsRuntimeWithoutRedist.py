@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-12 [88f08ec] Make Windows CAD derivative reproducible across hosts
+# 2026-10-12 [abf18f3] Mirror optional runtime assets on plugin releases
+
 """Remove bundled Microsoft CRT/OpenMP files from the pinned Windows archives.
 
 The CAD wheel's PE import names are repaired to the ordinary system DLL names.

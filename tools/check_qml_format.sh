@@ -1,4 +1,12 @@
 #!/bin/sh
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-29 [5a07535] The QML format gate expands its own globs
+# 2026-09-08 [7341f82] Development tooling: pinned container, quality gates and the Makefile
+
 # Verify that QML files are qmlformat-canonical.
 #
 # qmlformat before Qt 6.5 has no --check, so this formats to stdout and

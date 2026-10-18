@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-07 [96a5e48] Fix follower deadline layout and simulator motion state
+# 2026-09-12 [34ac359] harness: Phase B open — the Moonraker simulator and its contract tests
+
 """The Moonraker simulator's contract tests: the real protocols, the
 one-permitted-fake's fidelity. Skipped wherever tornado is absent (the
 stdlib host and the pinned dev image; the harness image pins it)."""

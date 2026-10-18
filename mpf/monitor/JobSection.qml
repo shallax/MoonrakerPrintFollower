@@ -1,3 +1,14 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-01 [4be23c8] Fix slow-link source recovery and stream wakeups
+// 2026-10-01 [1866243] Persist print sources and publish live download progress
+// 2026-09-16 [37813c3] 4.3.0 extraction: the Print-job section — JobSection.qml owns the status, progress,
+//   layer, ETA and Improve-ETA rows as a property-driven component; the monitor's collapsible sections are now
+//   fully extracted; pins retarget same-pass
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3

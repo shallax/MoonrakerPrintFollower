@@ -1,3 +1,15 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-21 [f130718] 4.6.0: the native render path — dense toolpath geometry rasterises off the QML JavaScript
+#   path (QPainterPath per segment on a worker, the measured winner at ~120 ms for 500k motions), the face
+#   composes blitted QImages with role-free reuse, the scrub keeps its vector delta, and the whole pipeline is
+#   generation-gated and latest-wins coalesced
+
 """The native render path: dense toolpath
 geometry rasterises below the QML JavaScript layer.
 

@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-27 [dd99358] Mirror Cura preview colours and travel states and composite ghost opacity on GPU
+
 """Print-wide Preview colour projections, matching Cura's gradient equations.
 
 The gradients match Cura 5.13's SimulationView/layers3d.shader. Static colours

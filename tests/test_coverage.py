@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-03 [8b8ac48] Give the pixel settle and the exclusion schema one owner each
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-12 [ee78fa4] harness: Phase D — the code-derived coverage matrix + Tier-2 specs
+
 """The coverage matrix gate: every addressable surface in the plugin
 (a @pyqtSlot verb, an objectName'd item, a protocol endpoint, a
 published key) must map to a scenario or carry a justified exclusion.

@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-29 [da47b7c] The documents and resources move into their domains
+# 2026-09-29 [fa05e3a] The package gains its domain hierarchy
+
 """Finding a source file by name, not by the directory it sits in.
 
 The plugin tree nests by domain, and the nesting is expected to keep
@@ -16,6 +24,16 @@ from __future__ import annotations
 
 import pathlib
 from typing import Iterator, Union
+
+
+def without_source_notice(source: str) -> str:
+    """Keep source contracts independent of the leading licence/history notice."""
+    notice, separator, body = source.partition("\n\n")
+    if (separator and "SPDX-License-Identifier:" in notice
+            and notice.startswith(("# Copyright ", "// Copyright "))
+            and all(line.startswith(("#", "//")) for line in notice.splitlines())):
+        return body
+    return source
 
 
 class AmbiguousSource(LookupError):

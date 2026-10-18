@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-12 [38454b2] Cover native path buffer ownership without installed Cura
+
 """Portable native-buffer admission/transaction ownership tests, without Cura."""
 from types import SimpleNamespace
 import unittest

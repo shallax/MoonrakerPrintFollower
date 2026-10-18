@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-30 [ecf0840] Give the thumbnails and the reply bodies their own owners
+
 """Bounded reply bodies: the byte cap every hand-read reply shares.
 
 The two replies the file chrome reads itself — the thumbnail fetches and

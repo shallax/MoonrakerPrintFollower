@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-08 [7341f82] Development tooling: pinned container, quality gates and the Makefile
+
 # The image only COPYs one helper script; keep the build context small
 # (the CI Screenshot sync job and docker_gates.sh both build from ".").
 .git

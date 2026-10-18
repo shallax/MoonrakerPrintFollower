@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-12 [b60b255] Qualify exact clipping on Apple software OpenGL and isolate EGL tests
+
 """Standalone EGL/native alpha-pair proof, isolated from Qt GLX fixtures.
 
 The test runner gives each module its own process. Mesa EGL and Qt GLX must

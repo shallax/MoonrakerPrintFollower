@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-08 [7341f82] Development tooling: pinned container, quality gates and the Makefile
+# 2026-09-07 [d02d883] Fix review findings and finish the 3.2.0 docs/tools pass
+# 2026-09-06 [4a110aa] Add Marketplace source ZIP verifier
+
 from __future__ import annotations
 
 import argparse

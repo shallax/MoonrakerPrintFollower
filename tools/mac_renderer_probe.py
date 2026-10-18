@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
+# 2026-09-27 [3fdb090] Refresh canonical UI captures, centre picker legend and add macOS presentation
+#   diagnostics
+
 """Compare Cura's internal frame with macOS presentation, on a diagnostic run.
 
 This is deliberately outside the release gate. A frameSwapped signal alone

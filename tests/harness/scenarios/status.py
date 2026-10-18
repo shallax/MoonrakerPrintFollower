@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-03 [b80314a] Show the detached anchor's ETA and keep the Live pill about the stream
+# 2026-09-30 [67f0fe4] The scenario suite becomes a package, by group
+
 """The the printer-state readouts and their availability gates scenarios.
 
 One group of the suite, in the order the runner executes it.

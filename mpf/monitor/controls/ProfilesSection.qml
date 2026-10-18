@@ -1,3 +1,13 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+// 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+// 2026-09-15 [0f92425] 4.3.0 extraction: the Temperature-profiles section — ProfilesSection.qml owns the preset
+//   rows, the cooldown and the status readout as a property-driven component; the pins retarget same-pass
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3

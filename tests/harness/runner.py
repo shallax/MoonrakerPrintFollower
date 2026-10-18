@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-10-03 [950d97a] Keep the alert's frame and timeline, and carry it to the desktop
+# 2026-09-12 [1fcf985] harness: Phase-A skeleton — driver, runner, wrapper, first live run
+
 """Phase-A runner: real Cura under Xvfb, real clicks, real captures.
 
 Runs INSIDE the harness container (it must reach the driver's loopback

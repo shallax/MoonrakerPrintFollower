@@ -1,3 +1,15 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-21 [71d74c5] 4.6.0: the render context's identity, cancellation and stroke semantics — a print epoch
+#   rides every ticket, render key and file stem so a stale worker can never cross a print or model boundary,
+#   every asset URL is immutable and atomically published, and the full layer, prefix, base and travels share
+#   the ONE geometry pen
+
 """The native renderer's stroke semantics: ONE configured geometry
 pen shared by every asset, so the full layer, the prefix and the
 grey base can never disagree on physical width.

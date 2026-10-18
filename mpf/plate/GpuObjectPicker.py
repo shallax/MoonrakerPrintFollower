@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
+# 2026-09-27 [5a5719d] Retain object outlines and guard frame-hold transitions
+# 2026-09-27 [43ab36d] Accelerate follower rendering with retained GPU shader geometry
+
 """Retained object outlines using the follower's scene-graph stroke engine."""
 from array import array
 import math

@@ -1,3 +1,12 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
+// 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
+// 2026-09-30 [4d989ec] The camera picture and its control bar become their own components
+
 import QtQuick 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM

@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-27 [d70d1b6] Share accepted live motion progress across Preview and Monitor and repair CI expectations
+# 2026-09-27 [43ab36d] Accelerate follower rendering with retained GPU shader geometry
+# 2026-09-26 [2a65a34] refactor: isolate live plate split policy from index service
+
 """Single owner for the live print's accepted motion boundary in both views.
 
 Geometry matching supplies a raw physical candidate. This policy owns the

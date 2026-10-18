@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-04 [95512c0] Polish monitor mini beds and refresh release screenshots
+# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-09-08 [0f363ac] Deterministic captures: vendored Cura assets, capture harness, committed screenshots
+
 """Deterministic Monitor captures: render the real dashboard QML in an
 offscreen engine with stubbed Cura/UM types and fake printer data, and
 write PNGs for release notes and layout regression checks.

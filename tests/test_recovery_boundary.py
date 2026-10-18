@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-13 [3f9fcb5] Begin v6 recovery with exact follower boundary mapping
+
 """Exact scrub-to-file mapping used by the planned print recovery flow."""
 import os
 import tempfile

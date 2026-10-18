@@ -1,3 +1,14 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+// 2026-09-30 [f425547] mpf's subpackages are capitalised
+// 2026-09-20 [840a300] 4.6.0: the follower's payload builds inside the index service (the worker boundary), the
+//   shared download action with the percentage and stage labels, and the Information ordering with the
+//   support-gated picker
+
 import QtQuick 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM

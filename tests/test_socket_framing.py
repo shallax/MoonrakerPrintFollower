@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-11 [ab8865e] 4.0.0: add the pure RFC 6455 framing module with the security table as its tests
+
 """Byte-level acceptance tests for the pure RFC 6455 framing module.
 
 The table below is the security panel's S5/S7/S10/S11 list plus the

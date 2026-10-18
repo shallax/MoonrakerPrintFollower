@@ -1,3 +1,12 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-01 [3ad5327] Collapse unavailable pause clear action deterministically
+// 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
+// 2026-09-30 [e6d88d0] The print-follower card and its pause schedule move out of the Monitor
+
 import QtQuick 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM

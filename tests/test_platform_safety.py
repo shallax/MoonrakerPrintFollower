@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-16 [15ad606] 4.3.0 platform safety: the cross-platform gate — a permanent source sweep pins every
+#   POSIX-only token to its guard (the O_NOFOLLOW class of bug cannot come back) and pins the binary-safe open
+#   modes on the download and output paths
+
 """The cross-platform gate (the directive: the plugin MUST
 run on Windows, macOS and Linux). The O_NOFOLLOW lesson — one
 POSIX-only constant silently broke every state write on Windows —

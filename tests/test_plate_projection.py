@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-20 [01aab4a] 4.6.0: the plate map — the exclude surface end to end: the restore-grace owner with the
+#   exact cursor rule, the name-targeted dispatch with the guarded restore verb, the plate canvas with the
+#   triple-click gesture, the Objects readout rework, and the dual-lane plate feed
+
 """The plate map's projection: polygon normalisation, sanitisation, the
 natural-sort order, the truncation cap and the memo the coordinator's
 poll path rides — pure, lane-agnostic.

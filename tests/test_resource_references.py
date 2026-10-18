@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-12 [0701dcb] Improve reflection continuity and reduce rendering overhead
+# 2026-10-10 [e1b5812] Exclude unused rendering prototypes from the release
+# 2026-09-29 [da47b7c] The documents and resources move into their domains
+
 """References the engine check cannot see, resolved the runtime way.
 
 A glyph whose URL misses the file is not a component error, it is an

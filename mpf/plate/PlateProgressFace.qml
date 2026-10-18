@@ -1,3 +1,14 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-13 [d2a7563] Dismiss follower zoom bar after two seconds
+// 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
+// 2026-09-20 [11c27cf] 4.6.0: the follower face — the progress polylines prepared in the coordinator with the
+//   motion-index split, the OctoApp-style prev/current/next view with the travel-boundary glyphs, the face
+//   toggle, the right-inset sweep and the plate capture seed
+
 import QtQuick 2.15
 import QtQuick.Layouts 1.3
 import QtQuick.Window 2.15

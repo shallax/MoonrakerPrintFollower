@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
+# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-09-18 [7fe91f6] 4.5.0: the persistence facade and the one-shot migration's control flow — the strict
+#   read, the backup gate, the verify-by-re-read, the clean-as-commit-point and the pretty key-scoped stores
+
 """The 4.5.0 persistence facade (the panel's E2/E3/H5/M8 rulings):
 the plugin's ONE owner for the settings document and the state
 shards. Key-scoped operations only — components never see filenames

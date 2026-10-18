@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-07 [96a5e48] Fix follower deadline layout and simulator motion state
+# 2026-09-28 [b0e0ab1] Stabilize telemetry layouts and native harness observations
+# 2026-09-12 [34ac359] harness: Phase B open — the Moonraker simulator and its contract tests
+
 """The Moonraker simulator: the harness's network peer.
 
 Speaks the REAL protocols over real TCP, in both transports — the

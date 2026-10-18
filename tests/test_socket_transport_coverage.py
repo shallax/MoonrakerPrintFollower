@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [3f53c33] Retire already-disconnected upgraded sockets
+# 2026-10-01 [c541945] Preserve websocket close delivery and synchronize handoff test
+# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+
 """Coverage suite for the websocket owner and the HTTP transport.
 
 ``tests/test_socket_owner.py`` walks the happy paths against a scripted

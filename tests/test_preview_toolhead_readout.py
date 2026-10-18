@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-07 [7dcacc4] Refresh 5.3.0 screenshots and cover motion guard failures
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+
 """Physical readouts never invent zeros or confer a movement permission."""
 import importlib.util
 from pathlib import Path

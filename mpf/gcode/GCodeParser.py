@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+
 """G-code token and marker recognition shared by scanning and hydration."""
 from __future__ import annotations
 

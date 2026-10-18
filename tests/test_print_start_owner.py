@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-18 [503ed4b] 4.5.0: the print-start owner and remote-job service suites, and the metadata latch's
+#   empty-history fix — an unattestable reply is None, never a permanent refusal
+
 """Pure tests for the print-start operation owner (the 4.3.0
 extraction): the awaited-transition verdicts, the moot-differing
 state, the error hold and the timeout failure."""

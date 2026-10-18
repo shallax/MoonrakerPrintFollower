@@ -1,3 +1,11 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-09-13 [e2ef237] 4.0.0 live-test round: the locked preview card, camera auto-start, controls nudge, dwell
+//   fix, dialog and pane fixes
+
 import QtQuick 2.15
 import UM 1.5 as UM
 

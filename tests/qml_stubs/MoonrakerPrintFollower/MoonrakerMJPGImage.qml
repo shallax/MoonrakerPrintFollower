@@ -1,3 +1,12 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
+// 2026-09-28 [e1105e4] Poll webcam snapshots at low FPS to save bandwidth
+// 2026-09-08 [0f363ac] Deterministic captures: vendored Cura assets, capture harness, committed screenshots
+
 import QtQuick 2.15
 
 Item {

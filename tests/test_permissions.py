@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-15 [ed4bbfb] 4.2.0 permissions policy: the rulings table — can_jog (jog_gate's shipped mapping,
+#   pause-first mode), per-device can_power, can_restart, can_start_print, can_macro, can_z_offset and
+#   can_set_absolute over the frozen observation record, with the fail-closed prelude and reason constants
+
 """Pure tests for the 4.2.0 permissions policy (MonitorPermissions).
 
 The table is the consolidation's contract: one derivation, every

@@ -1,3 +1,16 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-18 [28bc4ab] 4.5.0: the coverage wave's live finds — three defects and one dead branch
+# 2026-09-18 [687c7b1] 4.5.0: the re-points — the console's shard writes, the facade-backed binding, the
+#   chrome's global document and the removal hook
+# 2026-09-15 [0cbae23] 4.3.0: the UI-state store and the erase paths — UiStateStore becomes the state file's
+#   second consumer and owns the sections map's writes (the model's save payload stops rewriting it); the chart
+#   migration merges and deletes only its own legacy key, the full-document replace is gone; the flat-map
+#   heuristic recognises only all-bool documents; the .tmp write hardens (O_NOFOLLOW, 0o600, allow_nan=False)
+
 """The UI-state store (4.3.0): the state file's second consumer.
 
 The Monitor's save payload rewrites eight whole top-level keys per

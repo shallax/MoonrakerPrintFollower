@@ -1,3 +1,14 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-09-27 [c277e08] Polish monitor controls and legends and allow slow print resume
+// 2026-09-19 [a595e54] base: Ubuntu 26.04 — pinned images, runner labels, toolchain pins, and the 6.10-canonical
+//   QML
+// 2026-09-17 [ce2db69] 4.4.0 popup: the shared configure row and the pane popover — handle drag via a proxy with
+//   commit-once, the drawn checkbox, the arrow pair kept as the precise path, and the sectionLayoutFor accessor
+
 import QtQuick 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM

@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-12 [48fdc0f] Finish shared path indices and cropped lighting output
+# 2026-09-19 [41924ff] 4.5.0: narrow the chart retirement, pin the matrix, settle the captures
+
 """The release-matrix parity gate: the GitHub PR CI workflow's
 logical units must match the local canonical release gate's units —
 the 4.5.0 drift class where units existed in one place and never ran

@@ -1,3 +1,15 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-21 [065c09f] 4.6.0: the file-backed prepared cold store — the pass's encodings persist per print with
+#   random access and atomic finalisation, a reopened print skips the whole preparation walk (the real 467 MB
+#   print measures 197 MB prepared), the size policy evicts whole prints by recency, and the seek debounce drops
+#   to 80 ms
+
 """The file-backed prepared store's current format contract: the
 layout, the per-layer states (EMPTY / CACHED / UNCACHEABLE), random
 access, identity gating, atomic completion, the size policy, the

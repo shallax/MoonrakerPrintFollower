@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-09-07 [febe761] Reorganize test suite into domain files for 3.2.0
+
 """The architecture contract: document assertions, source laws and composition.
 
 Every rule in ARCHITECTURE.md that can be checked mechanically is checked
@@ -8,7 +17,7 @@ import json
 import pathlib
 import re
 import unittest
-from tests.source_root import SourceRoot
+from tests.source_root import SourceRoot, without_source_notice
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = SourceRoot(ROOT / "mpf")
@@ -492,7 +501,8 @@ class SourceContractTests(unittest.TestCase):
         # (v3.0.0) is not a nickname and is always written X.Y.Z.
         for path in PLUGINS.rglob("*"):
             if path.suffix in {".py", ".qml"}:
-                self.assertIsNone(re.search(r"\bv3\b(?!\.\d)", path.read_text(encoding="utf-8"), re.I), path.name)
+                source = without_source_notice(path.read_text(encoding="utf-8"))
+                self.assertIsNone(re.search(r"\bv3\b(?!\.\d)", source, re.I), path.name)
 
     def test_qt_imports_name_the_module_that_owns_the_class(self):
         # QHostAddress broke the plugin on Cura 5.13's bundled PyQt6:
@@ -689,7 +699,7 @@ class CompositionStructureTests(unittest.TestCase):
         facade = (PLUGINS / "MoonrakerPrintFollower.py").read_text(encoding="utf-8")
         root = (PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8")
         coordinator = (PLUGINS / "PrintCoordinator.py").read_text(encoding="utf-8")
-        self.assertLess(len(facade.splitlines()), 85)
+        self.assertLess(len(without_source_notice(facade).splitlines()), 85)
         self.assertIn("class MoonrakerPrintFollower(QObject, Extension)", facade)
         for token in (
             "RemoteFileService", "GCodeIndexService", "PreviewFollower", "PauseController", "CuraIntegration",

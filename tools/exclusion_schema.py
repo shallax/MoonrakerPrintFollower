@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-03 [8b8ac48] Give the pixel settle and the exclusion schema one owner each
+
 """The one exclusion schema shared by every audited exclusion table.
 
 Two tables carry justified exclusions — the harness surface map

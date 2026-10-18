@@ -1,3 +1,14 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-04 [95512c0] Polish monitor mini beds and refresh release screenshots
+// 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
+// 2026-09-20 [01aab4a] 4.6.0: the plate map — the exclude surface end to end: the restore-grace owner with the
+//   exact cursor rule, the name-targeted dispatch with the guarded restore verb, the plate canvas with the
+//   triple-click gesture, the Objects readout rework, and the dual-lane plate feed
+
 import QtQuick 2.15
 import UM 1.5 as UM
 import MoonrakerPrintFollower 1.0

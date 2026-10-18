@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-29 [1facb26] Give temperature presentation its own configuration and projection owner
+# 2026-09-19 [41924ff] 4.5.0: narrow the chart retirement, pin the matrix, settle the captures
+# 2026-09-19 [d49ec5a] 4.5.0: only the current machine's monitor may be active — ownership gates the shared
+#   reconnect re-arm and the Preview presentation routes through the current monitor alone
+
 """The 4.5.0 multi-printer ownership battery (the pre-release review): a
 cached monitor must never reactivate after a shared-client reconnect, and
 the Preview presentation routes through the current machine's monitor

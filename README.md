@@ -10,6 +10,8 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
 - **Release:** 6.0.0
 - **Target:** Cura 5.7–5.14 beta 1 / SDK 8.7–8.13
+- **Copyright:** 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+- **Licence:** [GNU GPLv3, version 3 only](LICENSE) (`GPL-3.0-only`)
 
 ## What changed in 6.0.0
 

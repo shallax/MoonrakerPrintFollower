@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [4be23c8] Fix slow-link source recovery and stream wakeups
+# 2026-10-01 [1866243] Persist print sources and publish live download progress
+
 import errno
 import os
 import tempfile

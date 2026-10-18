@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
+# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
+# 2026-09-03 [0ff5092] Update to v1.0.3.
+
 """Build a layer/motion index from a G-code source file in one bounded scan."""
 from __future__ import annotations
 

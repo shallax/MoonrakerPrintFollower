@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [1866243] Persist print sources and publish live download progress
+# 2026-09-27 [bed0492] Harden RC networking, cache lifecycle, motion coordinates and UI diagnostics
+# 2026-09-22 [4db7d92] 4.6.0: the cleanup pass — Windows liveness, true-LRU eviction, the structural work bound,
+#   and the per-machine cache size
+
 """Shared print-folder LRU for raw sources, indexes and prepared layers."""
 from __future__ import annotations
 

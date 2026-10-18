@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-26 [c9839b9] Keep scrub frames stable and prepare current-layer rewind checkpoints
+
 """Allow only tiny CPU rounding differences in committed capture comparisons.
 
 Repeated captures on the same host are still checked byte-for-byte separately.

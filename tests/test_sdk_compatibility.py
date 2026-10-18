@@ -1,8 +1,17 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
+# 2026-09-04 [81f5b92] Fix v2.0.0.
+
 import json
 import pathlib
 import re
 import unittest
-from tests.source_root import SourceRoot
+from tests.source_root import SourceRoot, without_source_notice
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = SourceRoot(ROOT / "mpf")
@@ -144,7 +153,7 @@ class SdkCompatibilityTests(unittest.TestCase):
         for name in QML_FILES:
             # A singleton opens with its pragma; the QtQuick import is
             # still the first thing after it.
-            self.assertRegex(QML_SOURCES[name], r"^(pragma \w+\n)?import QtQuick 2\.15", name)
+            self.assertRegex(without_source_notice(QML_SOURCES[name]), r"^(pragma \w+\n)?import QtQuick 2\.15", name)
         for qml in (CONFIG_QML, MONITOR_QML, UPLOAD_QML):
             self.assertIn("import QtQuick.Controls 2.15", qml)
 

@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
+# 2026-10-06 [8da5d38] Update UI probes for cached toolhead rendering and larger settings tree
+# 2026-09-13 [4fe5590] the panel round's harness hardening: honest evidence, real semantics, closed gaps
+
 """Structural checks on the suite specs — the host-side guard the
 probe-code-in-string-constants pattern lacked: a bad escape or a
 typo'd op used to surface only inside the container, forty minutes

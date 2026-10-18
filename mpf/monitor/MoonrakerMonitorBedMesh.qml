@@ -1,3 +1,13 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-09-18 [53afbd7] 4.5.0: the reviewer-attribution phrasing goes from the codebase
+// 2026-09-16 [84d9672] 4.3.0 snapshot round: the baked-pause list, the M117 fragment merge, and the card's
+//   pause-list rework
+// 2026-09-06 [5db0260] Add Monitor bed mesh height map
+
 import QtQuick 2.15
 
 // Component-rooted DELIBERATELY: Cura's monitor-view loader

@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-30 [1f78aec] The driver's probe and interaction families get owners
+# 2026-09-27 [4e7fdc5] Use a consistent 1840x900 UI baseline and document macOS presentation findings
+# 2026-09-12 [1fcf985] harness: Phase-A skeleton — driver, runner, wrapper, first live run
+
 """Test-only observation driver for the real-Cura UI harness.
 
 A loopback TCP listener served on Cura's GUI thread. Verbs are generic

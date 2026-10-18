@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+
 """Reproduce the owned synthetic CAD material/occurrence fixture with OCP."""
 from pathlib import Path
 import sys

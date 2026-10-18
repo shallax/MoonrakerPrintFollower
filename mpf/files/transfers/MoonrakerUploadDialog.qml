@@ -1,3 +1,13 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-09-13 [e2ef237] 4.0.0 live-test round: the locked preview card, camera auto-start, controls nudge, dwell
+//   fix, dialog and pane fixes
+// 2026-09-08 [c217114] 3.4.0 feature set: toolhead control, Monitor rework and review fixes
+// 2026-09-05 [f2ad2a6] v3: add integrated Moonraker upload dialog
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3

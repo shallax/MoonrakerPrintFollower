@@ -1,3 +1,14 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+// 2026-09-30 [f425547] mpf's subpackages are capitalised
+// 2026-09-16 [efdb56d] 4.3.0 extraction: the System and MCUs sections — SystemInfoSection.qml owns the host
+//   readouts and the Reconnect, McusSection.qml the per-MCU rows; the host keeps the MCU capability gate; pins
+//   retarget same-pass
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3

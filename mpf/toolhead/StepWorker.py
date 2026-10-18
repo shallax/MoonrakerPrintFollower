@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+
 """Standalone, stdlib-only STEP helper; executed with an isolated pinned Python.
 
 No Qt, Cura, NumPy or parent-process module imports. Native faults and opaque

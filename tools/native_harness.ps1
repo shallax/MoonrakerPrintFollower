@@ -1,4 +1,13 @@
 #Requires -Version 5.1
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-09-28 [9887e49] Keep native Windows harness RPC files in its temp work directory
+# 2026-09-24 [bf703bf] gate: every unit runs on every platform - 17 units x 3 OS
+
 # The Windows half of the UI harness host: install Cura, seed its config,
 # move the display, stage the plugin and the driver, start the simulator the
 # plugin talks to, launch Cura and leave both running so tests/harness/runner.py
