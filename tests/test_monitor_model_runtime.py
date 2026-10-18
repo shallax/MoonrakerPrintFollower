@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Verify toolhead cooldown arming without a wall-clock race.
 # 2026-10-18 — 6.0.0: Verify stable projections after heater discovery and freshness overlays.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -10,6 +11,7 @@
 
 """Executable monitor model runtime contracts."""
 import time
+from unittest.mock import patch
 from tests import monitor_test_support as harness
 
 class MonitorQtTests(harness.MonitorQtTests):
@@ -1139,20 +1141,26 @@ class MonitorQtTests(harness.MonitorQtTests):
         # release unreachable and hold the urgent floor forever.
         model = self.monitor()
         self.deliver_state("standby")
-        model._toolhead._guard_cooldown.setInterval(500)
+        cooldown = model._toolhead._guard_cooldown
         model.setJogDistance(1)
         model.jog("x", 1)
         client = self.follower.client
         self.assertTrue(client._session.toolhead_guard)
         scripts = [r for r in self.transport.requests if r.path == "printer/gcode/script"]
-        scripts[0].callback({}, None)
-        self.qt.events(10)
-        for _ in range(3):
-            self.deliver_state("standby")
+        # Control expiry instead of assuming three polled updates will run
+        # within 500 ms on a busy CI host. The real timeout signal still
+        # exercises the production guard-release connection.
+        with patch.object(cooldown, "start") as arm:
+            scripts[0].callback({}, None)
             self.qt.events(10)
-        self.assertTrue(client._session.toolhead_guard)  # settling, not re-armed
-        self.qt.events(700)
-        self.assertFalse(client._session.toolhead_guard)  # released on schedule
+            arm.assert_called_once_with()
+            for _ in range(3):
+                self.deliver_state("standby")
+                self.qt.events(10)
+            self.assertTrue(client._session.toolhead_guard)
+            arm.assert_called_once_with()  # polling did not re-arm expiry
+            cooldown.timeout.emit()
+        self.assertFalse(client._session.toolhead_guard)  # released by timeout
 
     def test_jog_keeps_its_place_behind_queued_one_shots(self):
         # The toolhead sends on the shared command lane. A jog tapped
