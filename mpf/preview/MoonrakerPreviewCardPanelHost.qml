@@ -3,6 +3,7 @@
 // Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 //
 // Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-18 — 6.0.0: Preserve overflow hit testing when Cura replaces the action row.
 // 2026-10-18 — 6.0.0: Restore rendered controls after Cura replaces a stage host.
 // 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 // 2026-10-05 [228f698] Finish Preview object banners for 5.1.0
@@ -57,9 +58,18 @@ Item {
     width: card.panelVisible ? externalGap + bannerWidth + bannerGap + card.panelWidth : 0
     height: card.panelVisible ? 4 * verticalPadding : 0
 
+    // Keep the Row's measured strip height while making its direct child's
+    // overflow explicit. Qt can otherwise cache the new Row as containing
+    // every input target and reject clicks above it, overlooking the card's
+    // already-cached overflow farther down the item tree. This transform and
+    // the top anchor preserve the card's original bottom-aligned scene position.
+    transform: Translate {
+        y: host.height - card.height
+    }
+
     MoonrakerPreviewCard {
         id: card
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
+        anchors.top: parent.top
     }
 }

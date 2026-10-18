@@ -520,9 +520,14 @@ no transport, command owner or extra poller.
 `MoonrakerPreviewCardPanelHost.qml` participates in Cura's `saveButton` row.
 When Cura replaces a stage, it reparents this persistent card into the new row.
 The host renews visibility on the next animation tick after the old row's
-teardown; newer Qt releases otherwise retain visible geometry without rendering
-or accepting clicks. A real-QML regression checks pixels and mouse delivery
-through repeated Loader replacements, alongside the installed-Cura UI sweep.
+teardown; newer Qt releases otherwise retain visible geometry without rendering.
+The host keeps the row's measured strip height, but translates its visual bounds
+upward and top-anchors the card, preserving its bottom-aligned scene position.
+This makes the overflow visible in the row's direct child bounds, avoiding Qt's
+cached descendant-bounds optimization rejecting clicks above a replacement row.
+A real-QML regression checks live input readiness, pixels, unchanged docking and
+single-click delivery through repeated Loader replacements, alongside the
+installed-Cura UI sweep.
 
 `PreviewToolheadHost.qml` anchors at the top left below Cura's actual stage
 menu, reserving the lower-left perspective controls, job summary and object

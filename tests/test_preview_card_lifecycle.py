@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release history (newest first):
+# 2026-10-18 — 6.0.0: Wait for live button visibility and geometry before one real click.
 # 2026-10-18 — 6.0.0: Load fixture QML from a real local file without holding the loader GIL.
 # 2026-10-18 — 6.0.0: Prove real Preview card rendering and clicks survive stage replacement.
 
@@ -13,7 +14,7 @@ import tempfile
 from tests import qml_engine_support as harness
 
 if harness.QT_AVAILABLE:
-    from PyQt6.QtCore import QPointF, Qt, QUrl
+    from PyQt6.QtCore import QPointF, QRectF, Qt, QUrl
     from PyQt6.QtQml import QQmlComponent
     from PyQt6.QtQuick import QQuickItem, QQuickWindow
     from PyQt6.QtTest import QTest
@@ -81,6 +82,21 @@ Item {
                        for y in range(0, crop.height(), 4)
                        for x in range(0, crop.width(), 4)) > 100
 
+        def input_state():
+            rect = self.rect(button, window.contentItem())
+            return {
+                "live_parent": host.parentItem() == self.find(loader.property("item"), "row"),
+                "host_visible": host.isVisible(),
+                "button_visible": button.isVisible(),
+                "button_enabled": button.isEnabled(),
+                "attached_window": button.window() == window,
+                "button_in_window": (rect.width() > 0 and rect.height() > 0
+                                     and QRectF(0, 0, window.width(), window.height()).contains(rect)),
+            }
+
+        def ready(image):
+            return all(input_state().values()) and painted(image)
+
         for cycle in range(4):
             with self.subTest(cycle=cycle):
                 if cycle:
@@ -93,12 +109,20 @@ Item {
                         card.setProperty("gateVisible", True)
                     root.setProperty("preview", True)
                     card.setProperty("gateVisible", True)
-                # Drain Loader teardown and the next animation tick before
-                # sampling: the old scene can still paint its last frame.
-                self._pump_ms(80)
-                image = self._wait_until(window, painted, timeout=2)
+                # A retained frame alone does not prove the replacement host
+                # has completed its deferred visibility reset. Wait for the
+                # live input target as well, rather than a fixed frame delay.
+                image = self._wait_until(window, ready, timeout=2)
+                self.assertTrue(all(input_state().values()), input_state())
                 self.assertTrue(painted(image), "visible card has no rendered pixels after stage change")
+                row = host.parentItem()
+                self.assertAlmostEqual(row.height(), host.height())
+                self.assertAlmostEqual(self.rect(card, window.contentItem()).bottom(),
+                                       row.mapToScene(QPointF(0, host.height())).y())
                 point = button.mapToScene(QPointF(button.width() / 2, button.height() / 2)).toPoint()
+                before = len(clicked)
                 QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=point)
                 self.pump()
-                self.assertEqual(len(clicked), cycle + 1, "rendered Detach button rejected real input")
+                self.assertEqual(len(clicked), before + 1,
+                                 f"rendered Detach button rejected real input: {input_state()}, "
+                                 f"point={point}, grabber={window.mouseGrabberItem()}")
