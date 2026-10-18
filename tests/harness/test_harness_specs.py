@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Require the actual final Preview path in playback evidence.
 # 2026-10-18 — 6.0.0: Check presentation probe arguments without rejecting optional failure policy.
 # 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
 # 2026-10-06 [8da5d38] Update UI probes for cached toolhead rendering and larger settings tree
@@ -140,6 +141,32 @@ class HarnessSpecTests(unittest.TestCase):
                 self.assertEqual(namespace["result"]["native_restored"], expected)
                 self.assertEqual(namespace["result"]["compatibility_mode"], compatibility)
 
+    def test_penguin_preview_completion_requires_the_actual_final_path(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        for layer, expected, actual, maximum, finished in (
+                (2, 123.65, 123.65, 1548, False),
+                (2, 1548, 1548, 1548, True),
+                (2, 1548, 0, 1548, False),
+                (1, 1548, 1548, 1548, False),
+                (2, 1, 1, 0, False)):
+            with self.subTest(layer=layer, expected=expected, actual=actual, maximum=maximum):
+                view = SimpleNamespace(getLayerData=lambda: object(), getMaxLayers=lambda: 2,
+                    getCurrentLayer=lambda layer=layer: layer, getMaxPaths=lambda maximum=maximum: maximum,
+                    getCurrentPath=lambda actual=actual: actual)
+                state = SimpleNamespace(attached=True, expected_layer=layer, expected_path=expected)
+                runtime = SimpleNamespace(preview=SimpleNamespace(_state=state, _motion=object()),
+                    presentation=SimpleNamespace(reported_position=False))
+                extension = type("MoonrakerPrintFollower", (), {"_runtime": runtime})()
+                app = SimpleNamespace(getController=lambda view=view: SimpleNamespace(getActiveView=lambda: view),
+                    getExtensions=lambda extension=extension: [extension])
+                namespace = {}
+                with patch.dict(sys.modules, {"UM.Application": SimpleNamespace(
+                        Application=SimpleNamespace(getInstance=lambda app=app: app))}):
+                    exec(_scenarios.PENGUIN_PREVIEW_READ, namespace)
+                self.assertEqual(namespace["result"]["finished"], finished)
+
     def test_scheduled_pause_scenarios_hold_the_exact_layer_before_ui_waits(self):
         # The v5.1.0 macOS gate observed layer 5 while p7 waited for layer 1:
         # arming the hold after that wait cannot repair a missed transient.
@@ -154,7 +181,7 @@ class HarnessSpecTests(unittest.TestCase):
                 self.assertEqual(steps[seed_index]["layer_clock_interval_s"], 3600)
                 self.assertFalse(any(step["op"].startswith("wait_") for step in steps[:seed_index]))
                 scheduled_index = next(index for index, step in enumerate(steps)
-                                       if step["op"] == "wait_exec" and '"End of layer 2' in step.get("contains", ""))
+                                       if step["op"] == "wait_exec" and '"End of layer 1' in step.get("contains", ""))
                 release_index = next(index for index, step in enumerate(steps)
                                      if step["op"] == "sim_arm" and step.get("arms", {}).get("layer_clock_interval_s") == 6)
                 self.assertGreater(release_index, scheduled_index)

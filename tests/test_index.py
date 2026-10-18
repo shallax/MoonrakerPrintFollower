@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
 # 2026-09-03 [0ff5092] Update to v1.0.3.
@@ -167,11 +168,11 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(index.layer_count(), 2)
         self.assertEqual([index.motion_count(0), index.motion_count(1)], [1, 1])
 
-    def test_orcaslicer_numeric_markers_map_actual_values(self):
+    def test_orcaslicer_numeric_markers_define_layers_without_firmware_mapping(self):
         data = b"""; layer num/total_layer_count: 1/2\nG1 X1\n; layer num/total_layer_count: 2/2\nG1 X2\n"""
         index = build_index_from_bytes(data)
         self.assertEqual(index.layer_count(), 2)
-        self.assertEqual(index.current_layer_map, {1: 0, 2: 1})
+        self.assertEqual(index.current_layer_map, {})
 
     def test_time_elapsed_values_are_retained_per_layer(self):
         data = b""";LAYER:0\nG1 X1\n;TIME_ELAPSED:12.5\n;LAYER:1\nG1 X2\n;TIME_ELAPSED:31.75\n"""
@@ -780,7 +781,7 @@ G1 X5 Y0 Z0.2
         self.assertEqual(cura.current_layer_map, {1: 0, 2: 1, 3: 2})
         self.assertEqual(cura.layer_elapsed_times, [120.0, 420.0, 900.0])
         orca = build_index_from_file(str(FIXTURES / "orca.gcode"), compact=False)
-        self.assertEqual(orca.current_layer_map, {1: 0, 2: 1, 3: 2})
+        self.assertEqual(orca.current_layer_map, {})
         self.assertEqual(build_index_from_file(str(FIXTURES / "prusa.gcode"), compact=False).layer_count(), 3)
         variable = build_index_from_file(str(FIXTURES / "variable_layers.gcode"), compact=False)
         self.assertEqual(variable.layer_elapsed_times, [10.0, 22.0, 45.0])

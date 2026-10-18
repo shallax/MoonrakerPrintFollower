@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
 # 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
 # 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
 # 2026-09-03 [0ff5092] Update to v1.0.3.
@@ -58,12 +59,11 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         except OSError:
             compact = False
 
-    winner, captures, filament_diameter, filament_diameters = read_header(path)
+    winner, _captures, filament_diameter, filament_diameters = read_header(path)
 
     blocks: List[dict] = []
     current: Optional[dict] = None
     stats_values: List[int] = []
-    marker_values: List[int] = []
     pause_offsets: List[int] = []
     absolute_xyz = True
     units_scale = 1.0
@@ -141,10 +141,8 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
             # still takes over retroactively (its pass would have
             # found this line before any later marker's pass ran).
             boundary = False
-            matched = None
             if fast is None and winner is not None and winner.search(stripped) is not None:
                 boundary = True
-                matched = captures[winner]
             if boundary:
                 if current is not None and current["end"] is None:
                     current["end"] = offset
@@ -209,13 +207,6 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                         "start_speed": features.start_speed, "start_tool": features.start_tool,
                     }
                     blocks.append(current)
-                if matched is not None:
-                    capture_match = matched.search(stripped)
-                    if capture_match is not None:
-                        try:
-                            marker_values.append(int(capture_match.group(1)))
-                        except (TypeError, ValueError):
-                            pass
             elif current is not None and current["end"] is None:
                 elapsed_match = None if fast is not None else _ELAPSED.search(stripped)
                 if elapsed_match is not None:
@@ -379,7 +370,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
             current["motion_total"] = features.count
 
     return assemble_index(
-        blocks, file_end, stats_values, marker_values, pause_offsets, type_names, filament_diameter, filament_diameters, compact, cancel_event,
+        blocks, file_end, stats_values, pause_offsets, type_names, filament_diameter, filament_diameters, compact, cancel_event,
         object_work.finish(), printed_top_z,
     )
 

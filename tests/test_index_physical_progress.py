@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
 # 2026-10-01 [1866243] Persist print sources and publish live download progress
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
@@ -155,10 +156,23 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
         data, rows = penguin_playback()
         index = harness.build_index_from_bytes(data)
         self.service._view = self.qt.load("IndexView").IndexView(self.job, index)
+        from mpf.printing.PrintState import LayerResolver
+        from mpf.settings.PrinterConfig import PrinterConfig
+        resolver, config = LayerResolver(), PrinterConfig()
+        # Seed the first physical layer before download, then provide an
+        # older Cura's all-zero height table once its index becomes ready.
+        self.assertEqual(resolver.resolve({"print_stats": {"info": {
+            "current_layer": 1}}}, config).index, 0)
+        first = playback_sample(rows, 0)
+        self.service.observe_motion(0, first["offset"], first["position"][:3], extruding=False)
         best = [0.0, 0.0, 0.0]
         for tick in range(1, 81):
             sample = playback_sample(rows, tick / 80)
-            motion = self.service.observe_motion(sample["layer"], sample["offset"],
+            physical = resolver.resolve({"print_stats": {"info": {
+                "current_layer": sample["layer"] + 1}}}, config,
+                self.service._view, heights=(0, 0, 0), nozzle=sample["position"][:3])
+            self.assertEqual(physical.index, sample["layer"])
+            motion = self.service.observe_motion(physical.index, sample["offset"],
                 sample["position"][:3], extruding=sample["extruder_velocity"] > 1e-6)
             best[sample["layer"]] = max(best[sample["layer"]], motion.fraction)
         for layer, progress in enumerate(best):

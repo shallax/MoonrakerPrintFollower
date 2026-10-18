@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Expect the seeded one-based printer layer in pause checks.
 # 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
 # 2026-10-06 [8da5d38] Update UI probes for cached toolhead rendering and larger settings tree
 # 2026-09-30 [67f0fe4] The scenario suite becomes a package, by group
@@ -139,6 +140,7 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set_current_print", "current_layer": 1, "layer_clock_interval_s": 3600},
          {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 30},
+         # Raw CURRENT_LAYER=1 is human layer 1, not Cura marker 1.
          # The same POST seeded layer 1 and held the clock before waiting
          # for the UI. Even an 8+ second startup cannot skip that layer.
          {"op": "wait_sim", "path": "print_stats.info.current_layer", "value": 1, "budget": 20},
@@ -147,7 +149,7 @@ SCENARIOS = [
          # The row the click made, not any row: the baked row also
          # reads "End of layer", and matching it hid a refused click
          # (the 2026-09-18 flake's false positive).
-         {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true, "label": "End of layer 2', "budget": 20},
+         {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true, "label": "End of layer 1', "budget": 20},
          # The row is read: the pause now has to fire, and it fires
          # by the print crossing the layer.
          {"op": "sim_arm", "arms": {"layer_clock_interval_s": 6}},
@@ -169,7 +171,7 @@ SCENARIOS = [
          {"op": "wait_sim", "path": "print_stats.info.current_layer", "value": 1, "budget": 20},
          {"op": "wait_seconds", "seconds": 3},
          {"op": "exec_code", "verbs": ['clicked.emit'], "code": P_PAUSE_CLICK},
-         {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true, "label": "End of layer 2', "budget": 20},
+         {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true, "label": "End of layer 1', "budget": 20},
          {"op": "sim_arm", "arms": {"layer_clock_interval_s": 6}},
          {"op": "wait_exec", "code": P_MISSED, "contains": '"missed": true', "budget": 60},
          {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},

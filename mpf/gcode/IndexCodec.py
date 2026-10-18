@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
 # 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
 # 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
 # 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
@@ -54,7 +55,9 @@ _MAX_CACHE_ARC_ENTRIES = 200_000
 # counts may read zero for never-hydrated layers, which is exactly
 # the resumed-session dead-slider report; refusing them rebuilds.
 # Version 15 adds bounded per-object work checkpoints and XY bounds.
-_CACHE_VERSION = 16
+# 17: layer maps contain only explicit firmware stats, never slicer comments.
+# Rebuild older indexes rather than restoring an invented numbering scheme.
+_CACHE_VERSION = 17
 
 
 def _read_exact(handle: BinaryIO, size: int) -> bytes:

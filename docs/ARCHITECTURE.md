@@ -485,8 +485,10 @@ parked nozzle cannot reset its progress identity. After RESUME, an off-model
 nozzle still holds that layer until its queued return reaches a resolvable
 printing height. Resetting the resolver clears this print-local hold.
 
-Resolution prefers exact G-code current-layer mapping, then reported layer numbering,
-then indexed file position. Configured Z fallback requires extrusion advancement,
+Resolution prefers exact `SET_PRINT_STATS_INFO CURRENT_LAYER` mapping, then reported
+layer numbering using the configured zero/one-based convention, then indexed file
+position. Slicer comments delimit layer ranges but never declare firmware numbering.
+Cache format 17 rebuilds older indexes that inferred firmware mappings from comments. Configured Z fallback requires extrusion advancement,
 so a temporary Z-hop does not move the physical layer. Available metadata/geometry
 can supply height/count information. A byte-progress percentage is not treated as
 a reliable layer number. Local geometry never clamps the physical observation;

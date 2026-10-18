@@ -907,7 +907,7 @@ Monitor displays:
   commanded volumetric flow rate (mm³/s, negative on retraction)
 - Pause, Resume and Cancel controls while a print is active
 
-The Monitor layer resolver uses the same interpretation as the Preview follower. It prefers explicit `CURRENT_LAYER` values mapped from the active G-code, then uses the indexed G-code layer ranges with `virtual_sdcard.file_position`, and finally uses the configured Z-height fallback when necessary. This avoids requiring every Klipper setup to populate `print_stats.info.current_layer`.
+The Monitor layer resolver uses the same interpretation as the Preview follower. It prefers explicit `SET_PRINT_STATS_INFO CURRENT_LAYER` values mapped from the active G-code, then applies the configured zero/one-based printer numbering, and then uses the indexed G-code layer ranges with `virtual_sdcard.file_position`, and finally uses the configured Z-height fallback when necessary. Slicer layer comments define the indexed ranges, not the printer’s numbering. This avoids requiring every Klipper setup to populate `print_stats.info.current_layer`.
 
 ### Temperatures, fans and filament
 

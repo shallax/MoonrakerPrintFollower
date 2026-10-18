@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
 # 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
 # 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
 # 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
@@ -377,9 +378,9 @@ G1 X3
             b";LAYER_CHANGE\nSET_PRINT_STATS_INFO CURRENT_LAYER=4\nG1 X2\n"
             b";LAYER_CHANGE\nSET_PRINT_STATS_INFO CURRENT_LAYER=3\nG1 X3\n")
         self.assertEqual(repeated.current_layer_map, {})
-        # Cura/Orca numeric markers supply the map when no stats exist.
+        # Numeric comments delimit layers but cannot declare firmware numbering.
         markers = build_index_from_bytes(b";LAYER:1\nG1 X1\n;LAYER:2\nG1 X2\n")
-        self.assertEqual(markers.current_layer_map, {1: 0, 2: 1})
+        self.assertEqual(markers.current_layer_map, {})
         # Repeated markers are as unusable as repeated stats values: the
         # numbering restarted, so no layer can be trusted to a marker.
         restarted = build_index_from_bytes(b";LAYER:1\nG1 X1\n;LAYER:1\nG1 X2\n")
@@ -636,6 +637,8 @@ class CacheTests(unittest.TestCase):
         identity = self._identity()
         cache = PersistentIndexCache(self.directory)
         self._write_raw(identity, b"", magic=b"NOTMAGIC")
+        self.assertIsNone(cache.load(identity))
+        self._write_raw(identity, self._body(), header=self._header(identity, version=16))
         self.assertIsNone(cache.load(identity))
         self._write_raw(identity, self._body(), header=self._header(identity, version=_CACHE_VERSION + 1))
         self.assertIsNone(cache.load(identity))

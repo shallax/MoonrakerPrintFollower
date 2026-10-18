@@ -4,6 +4,10 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 6.0.0
 
+- Respect configured printer layer numbering when G-code contains only slicer
+  layer comments. Avoid following one layer ahead on older Cura versions;
+  rebuild cached indexes that inferred firmware numbering from comments.
+
 - Use raster camera painting on macOS to avoid a native OpenGL framebuffer
   crash with newer Qt versions. Preserve native crash evidence and stop UI
   tests promptly when Cura exits.

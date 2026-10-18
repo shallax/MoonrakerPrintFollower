@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Require the actual final Preview path in playback evidence.
 # 2026-10-06 [8da5d38] Update UI probes for cached toolhead rendering and larger settings tree
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 # 2026-09-30 [67f0fe4] The scenario suite becomes a package, by group
@@ -1396,6 +1397,11 @@ for extension in app.getExtensions():
         result["layer"] = state.expected_layer
         result["path"] = state.expected_path
         result["moving"] = bool(result["ready"] and state.expected_path is not None and state.expected_path > 0 and view.getCurrentLayer() == state.expected_layer)
-        result["finished"] = result["moving"] and state.expected_layer == 2
+        result["maximum_path"] = view.getMaxPaths() if result["ready"] else 0
+        result["actual_path"] = view.getCurrentPath() if result["ready"] else None
+        result["finished"] = bool(result["moving"] and state.expected_layer == 2
+            and result["maximum_path"] > 0
+            and abs(state.expected_path - result["maximum_path"]) < .5
+            and abs(result["actual_path"] - state.expected_path) < .5)
         break
 """
