@@ -62,7 +62,8 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 - Add Cura 5.14 beta 1 / SDK 8.13 support. Run the primary CI UI gate
   on 5.14 beta 1, retain 5.13 as secondary, and include the beta in the
-  full supported-version UI sweep.
+  full supported-version UI sweep. Match harness QtTest wheels to the exact
+  bundled runtime across both older lowercase and newer display-name metadata.
 
 - Dismiss the Print Follower zoom bar after two idle seconds.
 - Clarify what source setup and transparent macro selections allow the recovery

@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Normalize bundled distribution names across supported Cura versions.
 # 2026-10-16 [1d52947] Handle multiple compatible PyQt wheels deterministically
 # 2026-10-16 [10580bf] Match harness QtTest wheels to Cura embedded runtime metadata
 # 2026-09-13 [433ee88] harness: Cura version selection, swap proven, release-gate wiring
@@ -116,25 +117,32 @@ def discover(root: pathlib.Path) -> tuple[str, str, str]:
                 for target in node.targets:
                     if isinstance(target, ast.Name) and target.id in {"PythonInstalls", "ConanInstalls"}:
                         values[target.id] = ast.literal_eval(node.value)
-    installs = values.get("PythonInstalls", {})
-    binding = installs.get("PyQt6", {}).get("version")
-    qt = installs.get("PyQt6-Qt6", {}).get("version")
+    # Older Cura builds use lowercase wheel names; newer builds use display names.
+    def package_name(name):
+        return re.sub(r"[-_.]+", "-", name).lower()
+
+    installs = {package_name(name): item
+                for name, item in values.get("PythonInstalls", {}).items()}
+    binding = installs.get("pyqt6", {}).get("version")
+    qt = installs.get("pyqt6-qt6", {}).get("version")
     python = find_one(str(root / "usr/bin/python3.*")) or find_one(str(root / "bin/python3.*"))
     match = re.search(r"python(\d\.\d+)", python or "")
     pyv = match.group(1) if match else values.get("ConanInstalls", {}).get("cpython", {}).get("version")
     if pyv:
         pyv = ".".join(pyv.split(".")[:2])
     # Older bundles may retain wheel metadata instead of build metadata.
-    for package, current in (("PyQt6", binding), ("PyQt6_Qt6", qt)):
+    for package, current in (("pyqt6", binding), ("pyqt6-qt6", qt)):
         if current:
             continue
-        dist = find_one(str(root / f"**/{package}-*.dist-info"))
-        match = re.search(r"-([\d.]+)\.dist-info$", dist or "")
-        if match:
-            if package == "PyQt6":
-                binding = match.group(1)
+        for dist in sorted(root.rglob("*.dist-info")):
+            match = re.fullmatch(r"(.+)-([\d.]+)\.dist-info", dist.name)
+            if not match or package_name(match.group(1)) != package:
+                continue
+            if package == "pyqt6":
+                binding = match.group(2)
             else:
-                qt = match.group(1)
+                qt = match.group(2)
+            break
     if not all((pyv, binding, qt)):
         raise RuntimeError(f"Cannot determine bundled Python/PyQt6/Qt versions from {root}; refusing guessed QtTest wheels")
     return pyv, binding, qt

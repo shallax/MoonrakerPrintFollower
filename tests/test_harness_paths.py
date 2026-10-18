@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Cover older Cura metadata casing and normalized wheel names.
 # 2026-10-16 [1d52947] Handle multiple compatible PyQt wheels deterministically
 # 2026-10-16 [10580bf] Match harness QtTest wheels to Cura embedded runtime metadata
 # 2026-09-14 [e168ec7] harness: fix the doubled evidence path, with tests
@@ -140,6 +141,42 @@ class CuraProfileVersionTests(unittest.TestCase):
             metadata.unlink()
             with self.assertRaisesRegex(RuntimeError, "refusing guessed QtTest"):
                 fetch_cura.discover(root)
+
+    def test_older_cura_lowercase_metadata_keeps_independent_runtime_pins(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "cura").mkdir()
+            metadata = root / "cura/CuraVersion.py"
+            # Cura 5.7's AppImage spells these keys in lowercase.
+            metadata.write_text("PythonInstalls = {'pyqt6': {'version': '6.6.0'}, "
+                                "'pyqt6-qt6': {'version': '6.6.0'}}\n"
+                                "ConanInstalls = {'cpython': {'version': '3.10.4'}}\n",
+                                encoding="utf-8")
+            self.assertEqual(fetch_cura.discover(root), ("3.10", "6.6.0", "6.6.0"))
+            metadata.write_text("PythonInstalls = {'pyqt6': {'version': '6.6.0'}, "
+                                "'pyqt6_qt6': {'version': '6.6.1'}}\n"
+                                "ConanInstalls = {'cpython': {'version': '3.10.4'}}\n",
+                                encoding="utf-8")
+            self.assertEqual(fetch_cura.discover(root), ("3.10", "6.6.0", "6.6.1"))
+            metadata.write_text("PythonInstalls = {'pyqt6': {'version': '6.6.0'}}\n"
+                                "ConanInstalls = {'cpython': {'version': '3.10.4'}}\n",
+                                encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "refusing guessed QtTest"):
+                fetch_cura.discover(root)
+
+    def test_wheel_metadata_names_are_case_and_separator_independent(self):
+        for binding, qt in (("PyQt6", "PyQt6_Qt6"), ("pyqt6", "pyqt6_qt6")):
+            with self.subTest(binding=binding), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                (root / "usr/bin").mkdir(parents=True)
+                (root / "usr/bin/python3.10").touch()
+                (root / f"{binding}-6.6.0.dist-info").mkdir()
+                runtime = root / f"{qt}-6.6.1.dist-info"
+                runtime.mkdir()
+                self.assertEqual(fetch_cura.discover(root), ("3.10", "6.6.0", "6.6.1"))
+                runtime.rmdir()
+                with self.assertRaisesRegex(RuntimeError, "refusing guessed QtTest"):
+                    fetch_cura.discover(root)
 
     @unittest.skipIf(os.name == "nt", "POSIX access modes")
     def test_extracted_tools_are_readable_across_uids_without_world_writes(self):
