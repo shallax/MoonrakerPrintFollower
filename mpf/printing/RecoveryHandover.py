@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Return XY before lowering; restore arc/object state and zero bed targets.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [d2db7b8] Clarify source macro choices and update prime defaults
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -26,7 +27,8 @@ COMMAND_OVERRIDES = frozenset({
     "clear_pause", "m23", "m24", "m26", "m104", "m109", "m140", "m190",
     "restore_gcode_state", "m82", "m83", "g92", "m220", "m221",
     "m204", "m106", "m107", "m400", "set_filament_sensor", "set_idle_timeout",
-    "set_gcode_offset", "g4",
+    "set_gcode_offset", "g4", "g0", "g1", "g2", "g3", "g90", "g91", "g17", "g18", "g19",
+    "exclude_object_start", "exclude_object_end",
 })
 
 
@@ -35,6 +37,8 @@ def verify_command_handlers(status):
     names = {str(name).casefold() for name in config}
     if any(f"gcode_macro {name}" in names for name in COMMAND_OVERRIDES):
         raise RecoveryRefused("A command override prevents a verified recovery handover")
+    if "exclude_object" in config and _mapping(status, "exclude_object").get("excluded_objects") != []:
+        raise RecoveryRefused("Recovery cannot reconstruct object-exclusion offsets. Use a fresh file with no excluded objects.")
 
 
 def reviewed_pause_state(status, configured="PAUSE_STATE"):
@@ -102,7 +106,7 @@ def heating_script(status, source_plan, *, hotend_target=None, bed_target=None):
     except UnsafeMotion as error:
         raise RecoveryRefused(str(error)) from error
     lines = []
-    if bed is not None and bed > 0:
+    if bed is not None and "heater_bed" in config:
         lines.append(f"M140 S{command_number(bed)}")
     lines.append(f"M104 S{command_number(nozzle)}")
     if bed is not None and bed > 0:
@@ -272,7 +276,7 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
         raise RecoveryRefused("Extruder minimum temperature is unavailable") from error
     if check_temperature and (measured < min_extrude or setpoint < min_extrude):
         raise RecoveryRefused("Heat the nozzle above its minimum extrusion temperature")
-    if check_temperature and bed is not None and bed > 0:
+    if check_temperature and bed is not None and "heater_bed" in config:
         _temperature(status, "heater_bed", bed)
     def n(value):
         return command_number(value)
@@ -295,6 +299,15 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
     state = source_plan.state
     modal = [f"M220 S{n(state.speed_percent)}", f"M221 S{n(state.flow_percent)}",
              f"G92 E{n(state.e)}"]
+    if state.plane not in (17, 18, 19) or (state.plane != 17 and "gcode_arcs" not in config):
+        raise RecoveryRefused("The selected arc plane requires Klipper G-code arc support")
+    if "gcode_arcs" in config:
+        modal.append(f"G{state.plane}")
+    if "exclude_object" in config:
+        if state.current_object is not None and not re.fullmatch(r"[A-Z0-9_.-]+", state.current_object):
+            raise RecoveryRefused("The selected object name cannot be restored safely")
+        modal.append(f"EXCLUDE_OBJECT_START NAME={state.current_object}"
+                     if state.current_object else "EXCLUDE_OBJECT_END")
     if state.acceleration is not None:
         modal.append(f"M204 S{n(state.acceleration)}")
     if state.fan_speed is not None:

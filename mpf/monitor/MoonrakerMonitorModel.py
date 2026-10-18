@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Clear camera recovery only after a decoded frame and publish cooldown state.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-09-05 [6cd3659] v3: add unified Moonraker Monitor model and webcam discovery
@@ -544,7 +545,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._camera_recovery = CameraRecovery(
             active=lambda: bool(getattr(self._data, "active", False)))
         self._camera.streamFailed.connect(self._on_stream_failed)
-        self._camera.streamRecovered.connect(self._on_stream_recovered)
         # The wake watch (a live report): a stream that survives a
         # suspend shows a FROZEN frame whose image size is already set,
         # so the render watchdog cannot see it — the wake transition
@@ -720,10 +720,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot()
     def cameraRenderStalled(self) -> None:
-        # The render watchdog (a live report): a stream
-        # that CONNECTED but never painted a frame raises no error
-        # signal — the QML pane watches the image's frame size and
-        # reports a stall here. The recovery is the same as a stream
+        # A connected stream can stop decoding without a transport error.
+        # The QML pane watches decoded-frame progress, including streams
+        # with a retained old image. Recovery is the same as a stream
         # failure: the nonce bump reloads the source, cadence-limited
         # by the same 10 s gate.
         self._on_stream_failed()
@@ -1993,6 +1992,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     temperaturePresetNames = value_property(QVariant, "temperaturePresetNames", controlsChanged, [])
     heaterControlItems = value_property(QVariant, "heaterControlItems", typedControlsChanged, [])
     canSetHeaterTemperature = value_property(bool, "canSetHeaterTemperature", typedControlsChanged, False)
+    canHeatersOff = value_property(bool, "canHeatersOff", typedControlsChanged, False)
     temperaturePresetItems = value_property(QVariant, "temperaturePresetItems", typedControlsChanged, [])
     canApplyTemperaturePreset = value_property(bool, "canApplyTemperaturePreset", controlsChanged, False)
     speedFactorPercent = value_property(int, "speedFactorPercent", controlsChanged, 100)
@@ -2316,6 +2316,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def cameraFirstFrameRendered(self):
         from ..diagnostics.CameraTiming import mark_once
         mark_once("T9", "first decoded frame")
+        self._on_stream_recovered()
 
     @pyqtSlot(result=int)
     def cameraPaneInstanceId(self):

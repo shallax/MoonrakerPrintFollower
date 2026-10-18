@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Preserve IPv6 literals when constructing camera bridge URLs.
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-30 [f425547] mpf's subpackages are capitalised
 # 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
@@ -324,9 +325,11 @@ class MonitorCamera(QObject):
         # stream_url on another host/port (a separate webcam box) must
         # not be re-homed onto the Moonraker base.
         parsed = QUrl(url)
-        upstream = f"{parsed.scheme()}://{parsed.host()}"
-        if parsed.port(0) > 0:
-            upstream += f":{parsed.port(0)}"
+        origin = QUrl()
+        origin.setScheme(parsed.scheme())
+        origin.setHost(parsed.host())
+        origin.setPort(parsed.port())
+        upstream = origin.toString()
         if not self._camera_bridge.configure(upstream, config.api_key):
             return url
         path = parsed.path() + (("?" + parsed.query()) if parsed.query() else "")

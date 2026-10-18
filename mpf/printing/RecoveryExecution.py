@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Preserve raw E mode and final restart outcomes; reject invalid priming telemetry.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [d2db7b8] Clarify source macro choices and update prime defaults
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -37,6 +38,7 @@ class RecoveryExecution:
         self._refresh_paused_source = refresh_paused_source
         self._active = False
         self._cancelled = False
+        self._handover_submitted = False
         self._attempt = None
         self._return = None
         self._idle = False
@@ -70,14 +72,15 @@ class RecoveryExecution:
         self._return = None
         self._active = True
         self._cancelled = False
+        self._handover_submitted = False
         self._idle = False
         self._primed = False
         self._advance("checking", self._initial_status)
         return True
 
     def cancel(self):
-        """Stop before another phase; an in-flight script may still finish."""
-        if self._active:
+        """Stop preparation; after SD handover, only confirmation can finish it."""
+        if self._active and not self._handover_submitted:
             self._cancelled = True
 
     def abort_uncertain(self, detail):
@@ -152,6 +155,9 @@ class RecoveryExecution:
         if self._cancelled:
             self._finish("cancelled", "Recovery preparation stopped; inspect the paused print")
             return
+        # Once this script is submitted, cancellation cannot retract M24.
+        # Continue the read-only confirmation instead of claiming a pause.
+        self._handover_submitted = phase == "resuming"
         if not self._send(script, self._guard_callback(callback)):
             self._finish("uncertain", "A printer command could not be submitted; inspect before retrying")
 
@@ -334,11 +340,12 @@ class RecoveryExecution:
             return
         try:
             position = status["gcode_move"]["gcode_position"]
-            if any(abs(float(position[i]) - self._return.prime_target[i]) > 0.05
+            if any(not math.isfinite(float(position[i]))
+                   or abs(float(position[i]) - self._return.prime_target[i]) > 0.05
                    for i in range(3)):
                 raise RecoveryRefused("Nozzle prime position did not confirm")
             self._return = self._prepare(status)
-        except (RecoveryRefused, KeyError, TypeError, ValueError) as reason:
+        except (RecoveryRefused, KeyError, TypeError, ValueError, IndexError) as reason:
             self._finish("refused", str(reason))
             return
         self._primed = True
@@ -407,7 +414,7 @@ class RecoveryExecution:
             self._verify_staging_position(status)
             move = status["gcode_move"]
             if (move.get("absolute_coordinates") is not source.state.absolute_xyz
-                    or move.get("absolute_extrude") is not source.state.absolute_e):
+                    or move.get("absolute_extrude") is not (not source.state.force_relative_e)):
                 raise RecoveryRefused("Klipper did not confirm the selected coordinate modes")
             position = move["gcode_position"]
             if (len(position) < 4 or not math.isclose(float(position[3]), source.state.e,

@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Cover recovery modes, telemetry validation and restart lifecycle regressions.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [52df354] Verify recovery safety paths and release gates
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -21,6 +22,25 @@ from mpf.application.RecoveryPlanning import RecoveryPlanError, scan_source, sug
 
 
 class RecoveryPlanningTests(unittest.TestCase):
+    def test_selected_plane_and_object_survive_later_changes(self):
+        for plane in (17, 18, 19):
+            data = (f"G{plane}\nEXCLUDE_OBJECT_START NAME=part_a\n;LAYER:0\n"
+                    "G1 X1 Y2 Z0.2 F1800\nG1 X2 E1\nEXCLUDE_OBJECT_END\nG17\nG1 X3 E2\n").encode()
+            self.assertEqual(self.plan(data, 0, 1).state.plane, plane)
+            self.assertEqual(self.plan(data, 0, 1).state.current_object, "PART_A")
+            self.assertIsNone(self.plan(data, 0, 2).state.current_object)
+        invalid = b"EXCLUDE_OBJECT_START NAME=bad/name\n;LAYER:0\nG1 X1 F1800\nG1 X2\n"
+        with self.assertRaisesRegex(RecoveryPlanError, "object name"):
+            self.plan(invalid, 0, 1)
+
+    def test_missing_inherited_feedrate_is_refused_but_selected_explicit_f_is_valid(self):
+        data = b";LAYER:0\nG1 X1 Y2 Z0.2\nG1 X2 E1\n"
+        with self.assertRaisesRegex(RecoveryPlanError, "feedrate"):
+            self.plan(data, 0, 1)
+        self.assertEqual(self.plan(data.replace(b"G1 X2 E1", b"G1 X2 E1 F2400"), 0, 1).state.feedrate, 2400)
+        with self.assertRaisesRegex(RecoveryPlanError, "feedrate"):
+            self.plan(data.replace(b"G1 X2 E1", b"G1 X2 E1 F0"), 0, 1)
+
     def plan(self, data, layer, split):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "print.gcode")
@@ -73,7 +93,7 @@ class RecoveryPlanningTests(unittest.TestCase):
         self.assertEqual(plan.state.fan_speed, 128)
 
     def test_m82_does_not_override_g91_relative_extrusion(self):
-        data = (b"G90\nM83\nG92 E0\n;LAYER:0\nG1 X1 E0.2\n"
+        data = (b"G90\nM83\nG92 E0\n;LAYER:0\nG1 X1 E0.2 F1800\n"
                 b"G91\nM82\nG1 X1 E0.3\nG90\nG1 X3 E1.0\n")
         plan = self.plan(data, 0, 2)
         self.assertEqual(plan.state.position, (2.0, 0.0, 0.0))
@@ -82,19 +102,19 @@ class RecoveryPlanningTests(unittest.TestCase):
 
     def test_accumulated_e_and_relative_e_at_rewind_boundaries(self):
         absolute = (b"G90\nM82\nG92 E0\n;LAYER:0\n"
-                    b"G1 X1 E1.25\nG1 X2 E2.50\nG1 X3 E3.75\n")
+                    b"G1 X1 E1.25 F1800\nG1 X2 E2.50\nG1 X3 E3.75\n")
         plan = self.plan(absolute, 0, 2)
         self.assertTrue(plan.state.absolute_e)
         self.assertAlmostEqual(plan.state.e, 2.50)
         relative = (b"G90\nM83\nG92 E0\n;LAYER:0\n"
-                    b"G1 X1 E1.25\nG1 X2 E1.25\nG1 X3 E1.25\n")
+                    b"G1 X1 E1.25 F1800\nG1 X2 E1.25\nG1 X3 E1.25\n")
         plan = self.plan(relative, 0, 2)
         self.assertFalse(plan.state.absolute_e)
         self.assertAlmostEqual(plan.state.e, 2.50)
 
     def test_clearance_scans_printed_geometry_after_earlier_rewind(self):
         data = (b"G90\nM82\nG92 E0\n;LAYER:0\n"
-                b"G1 X1 Z0.2 E0.2\nG1 X2 E0.4\n"
+                b"G1 X1 Z0.2 E0.2 F1800\nG1 X2 E0.4\n"
                 b"G92 E0\nG1 X3 Z12 E0.2\nG1 X4 E0.4\n")
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "print.gcode")
@@ -108,7 +128,7 @@ class RecoveryPlanningTests(unittest.TestCase):
         self.assertEqual(plan.printed_top_z, 12)
 
     def test_explicit_source_macro_contracts_and_acceleration(self):
-        data = (b"PRINT_START BED=60 EXTRUDER=210\nG92 E0\nG0 X1 Y2 Z0.2\nM82\nM204 S700\n"
+        data = (b"PRINT_START BED=60 EXTRUDER=210\nG92 E0\nG0 X1 Y2 Z0.2 F1800\nM82\nM204 S700\n"
                 b";LAYER:0\nG1 X2 E0.2\nTIMELAPSE_TAKE_FRAME\nG1 X3 E0.4\n")
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "print.gcode")
@@ -126,7 +146,7 @@ class RecoveryPlanningTests(unittest.TestCase):
         self.assertAlmostEqual(plan.state.e, 0.2)
 
     def test_latest_temperature_before_restart_overrides_custom_setup_arguments(self):
-        data = (b"PRINT_START TOOL=205 PLATE=55\nG92 E0\nG0 X1 Y2 Z0.2\n"
+        data = (b"PRINT_START TOOL=205 PLATE=55\nG92 E0\nG0 X1 Y2 Z0.2 F1800\n"
                 b"M104 S215\nM140 S65\n;LAYER:0\nG1 X2 E0.2\n"
                 b"M109 S225\nM190 S70\nG1 X3 E0.4\n")
         with tempfile.TemporaryDirectory() as directory:
@@ -158,12 +178,12 @@ class RecoveryPlanningTests(unittest.TestCase):
         for command in (b"PRINT_START", b"SET_GCODE_OFFSET Z=0.2",
                         b"G92 X0", b"G20", b"T1", b"G10"):
             with self.subTest(command=command):
-                data = b";LAYER:0\nG1 X1 E0.1\n" + command + b"\nG1 X2 E0.2\n"
+                data = b";LAYER:0\nG1 X1 E0.1 F1800\n" + command + b"\nG1 X2 E0.2\n"
                 with self.assertRaises(RecoveryPlanError):
                     self.plan(data, 0, 1)
 
     def test_refuses_misaligned_or_mutated_source(self):
-        data = b";LAYER:0\nG1 X1 E0.1\nG1 X2 E0.2\n"
+        data = b";LAYER:0\nG1 X1 E0.1 F1800\nG1 X2 E0.2\n"
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "print.gcode")
             with open(path, "wb") as handle:
@@ -177,7 +197,7 @@ class RecoveryPlanningTests(unittest.TestCase):
                 scan_source(path, boundary)
 
     def test_refuses_replay_across_another_pause(self):
-        data = b";LAYER:0\nG1 X1 E0.1\nG1 X2 E0.2\nPAUSE\nG1 X3 E0.3\n"
+        data = b";LAYER:0\nG1 X1 E0.1 F1800\nG1 X2 E0.2\nPAUSE\nG1 X3 E0.3\n"
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "print.gcode")
             with open(path, "wb") as handle:
@@ -210,12 +230,12 @@ class RecoveryPlanningTests(unittest.TestCase):
         for command in (b"G1 F0", b"M220 S0", b"M221 S-2", b"M204",
                         b"M106 P1", b"M106 S300", b"M104", b"M190 S-1"):
             with self.subTest(command=command):
-                data = b";LAYER:0\nG1 X1 E0.1\n" + command + b"\nG1 X2 E0.2\n"
+                data = b";LAYER:0\nG1 X1 E0.1 F1800\n" + command + b"\nG1 X2 E0.2\n"
                 with self.assertRaises(RecoveryPlanError):
                     self.plan(data, 0, 2 if command.startswith(b"G1") else 1)
 
     def test_boundary_offsets_and_macro_contracts_are_checked(self):
-        data = b";LAYER:0\nG1 X1 E0.1\nG1 X2 E0.2\n"
+        data = b";LAYER:0\nG1 X1 E0.1 F1800\nG1 X2 E0.2\n"
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "print.gcode")
             with open(path, "wb") as handle:
@@ -236,7 +256,7 @@ class RecoveryPlanningTests(unittest.TestCase):
                         scan_source(path, selected, observed, **kwargs)
 
     def test_rewind_cannot_cross_setup_macro_after_printed_geometry(self):
-        data = (b";LAYER:0\nG1 X1 Y1 Z0.2 E0.1\n"
+        data = (b";LAYER:0\nG1 X1 Y1 Z0.2 E0.1 F1800\n"
                 b"PRINT_START BED=60 EXTRUDER=210\nG1 X2 E0.2\n")
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "print.gcode")
@@ -248,10 +268,10 @@ class RecoveryPlanningTests(unittest.TestCase):
                             setup_macros=("PRINT_START",))
 
     def test_unit_and_tool_selection_are_reconstructed_without_changing_position(self):
-        data = b"G21\nT0\n;LAYER:0\nG1 X1 E0.1\nG1 X2 E0.2\n"
+        data = b"G21\nT0\n;LAYER:0\nG1 X1 E0.1 F1800\nG1 X2 E0.2\n"
         plan = self.plan(data, 0, 1)
         self.assertEqual(plan.state.position, (1.0, 0.0, 0.0))
-        invalid = b";LAYER:0\nG1 X1 E0.1\n@UNKNOWN\nG1 X2 E0.2\n"
+        invalid = b";LAYER:0\nG1 X1 E0.1 F1800\n@UNKNOWN\nG1 X2 E0.2\n"
         with self.assertRaises(RecoveryPlanError):
             self.plan(invalid, 0, 1)
 
@@ -271,7 +291,7 @@ class RecoveryPlanningTests(unittest.TestCase):
                     scan_source(path, SimpleNamespace(next_motion_offset=len(prefix), position=(0, 0, 0)))
 
     def test_no_lead_in_exists_before_first_motion(self):
-        data = b";LAYER:0\nG1 X1 E0.1\nG1 X2 E0.2\n"
+        data = b";LAYER:0\nG1 X1 E0.1 F1800\nG1 X2 E0.2\n"
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "print.gcode")
             with open(path, "wb") as handle:

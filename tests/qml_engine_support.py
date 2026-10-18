@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Exercise decoded camera freshness, recovery state and URL handling.
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
@@ -113,6 +114,8 @@ if QT_AVAILABLE:
             self._camera_fps = float(fps)
             self._camera_fps_maximum = float(maximum)
             self._stream_enabled = True
+            self._camera_recovering = False
+            self.camera_stalls = 0
             self._snapshot_available = False
             self._detection_state = "idle"
             self._detection_score = -1
@@ -225,7 +228,7 @@ if QT_AVAILABLE:
 
         @pyqtProperty(bool, notify=cameraRecoveringChanged)
         def cameraRecovering(self):
-            return False
+            return self._camera_recovering
 
         @pyqtProperty(int, notify=cameraRotationChanged)
         def cameraRotation(self):
@@ -257,11 +260,14 @@ if QT_AVAILABLE:
 
         @pyqtSlot()
         def cameraFirstFrameRendered(self):
-            pass
+            self._camera_recovering = False
+            self.cameraRecoveringChanged.emit()
 
         @pyqtSlot()
         def cameraRenderStalled(self):
-            pass
+            self.camera_stalls += 1
+            self._camera_recovering = True
+            self.cameraRecoveringChanged.emit()
 
         @pyqtSlot()
         def refreshWebcams(self):

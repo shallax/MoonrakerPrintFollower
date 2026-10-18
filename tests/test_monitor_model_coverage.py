@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Cover file-manager ordering, invalidation and active-file protection.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
@@ -713,6 +714,32 @@ class PrintConfirmTests(MonitorModelCase):
 
 class FileMutationTests(MonitorModelCase):
     """The delete, rename, upload and view slots over a real listing."""
+
+    def test_upload_confirmation_revalidates_the_active_print(self):
+        self.listing()
+        self.model.fileUpload("/tmp/part.gcode")
+        self.assertTrue(self.value("fileUploadConfirm"))
+        self.printing("part.gcode")
+        with patch.object(self.model._file_manager, "upload_file") as upload:
+            self.model.fileConfirmUpload()
+            upload.assert_not_called()
+        self.assertFalse(self.value("fileUploadConfirm"))
+
+    def test_printer_invalidation_revokes_all_confirmation_drafts(self):
+        self.listing()
+        self.model.fileRequestDeleteDir("old-printer-folder")
+        self.model.fileRequestRename("part.gcode")
+        self.model.fileUpload("/tmp/part.gcode")
+        self.model._file_manager.unbind()
+        self.model._file_manager.bind()
+        before = len(self.channels())
+        self.model.fileConfirmDelete()
+        self.model.fileConfirmRename()
+        self.model.fileConfirmUpload()
+        self.model.fileConfirmPrint()
+        self.assertEqual(len(self.channels()), before)
+        for name in ("fileDeleteConfirm", "fileRenameTarget", "fileUploadConfirm", "filePrintConfirm"):
+            self.assertFalse(self.value(name), name)
 
     def listing(self, files=None, *, dirs=("prints",), history=()):
         self.model_now()

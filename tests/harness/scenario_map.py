@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Map discovered-heater cooldown availability to the controls scenario.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-09-12 [ee78fa4] harness: Phase D — the code-derived coverage matrix + Tier-2 specs
@@ -170,6 +171,8 @@ SCENARIO_MAP = {
     "MoonrakerPrintFollower.toggleFollowingPause": "h3",
     # The interactive items by objectName.
     "moonrakerTemperatureDetail": "v6",
+    "heatersCooldown": "g9b",
+    "cameraStallWatchdog": "e2",
     "moonrakerPlateCanvas": "b11",
     "moonrakerPlateExcludeFace": "b11",
     "moonrakerPlateProgressFace": "b11",
@@ -437,6 +440,7 @@ PREFIX_RULES = [
     ("key", "actionTimestamp", "b10"),
     ("key", "connectionDetail", "a9"),
     ("key", "canApplyTemperaturePreset", "c1"),
+    ("key", "canHeatersOff", "c1"),
     ("key", "temperaturePresetItems", "c1"),
     ("key", "temperaturePresetNames", "c1"),
     ("key", "canRunSetup", "i2"),

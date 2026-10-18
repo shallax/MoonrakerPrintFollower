@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Exercise decoded camera freshness, recovery state and URL handling.
 # 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
 # 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
 # 2026-09-29 [2097457] Separate camera byte parsing, decoding and statistics from Qt presentation
@@ -110,6 +111,21 @@ class RendererPathCoverageTests(unittest.TestCase):
         self.assertEqual(self.item.transportErrors, before)
         self._reply().errorOccurred.emit(1)
         self.assertEqual(self.item.transportErrors, before + 1)
+
+    def test_eof_after_a_decoded_frame_preserves_pixels_but_stops_freshness(self):
+        self._start()
+        self._reply().deliver(_multipart(_jpeg(40, 30)))
+        deadline = time.monotonic() + 4
+        while not self.item.framesDisplayed and time.monotonic() < deadline:
+            self._drain(25)
+        self.assertGreater(self.item.framesDisplayed, 0)
+        self.assertGreater(self.item.imageWidth, 0)
+        frames = self.item.framesDisplayed
+        self._reply().finished.emit()
+        self._drain(100)
+        self.assertFalse(self.item._started)
+        self.assertEqual(self.item.framesDisplayed, frames)
+        self.assertGreater(self.item.imageWidth, 0)
 
     def test_detect_boundary_survives_a_raising_header_and_an_empty_type(self):
         self._start()

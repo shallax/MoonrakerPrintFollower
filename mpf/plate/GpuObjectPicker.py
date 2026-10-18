@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Share extracted CPU strokes with the library renderer.
 # 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
 # 2026-09-27 [5a5719d] Retain object outlines and guard frame-hold transitions
 # 2026-09-27 [43ab36d] Accelerate follower rendering with retained GPU shader geometry
@@ -16,7 +17,8 @@ from PyQt6.QtGui import QColor, QMatrix4x4
 from PyQt6.QtQuick import QQuickItem, QSGNode, QSGTransformNode, QQuickWindow, QSGRendererInterface
 from PyQt6 import sip
 
-from .GpuFollower import GpuFollower, stroke_geometry
+from .GpuFollower import GpuFollower
+from .ToolpathGeometry import stroke_geometry
 
 
 def object_style(scene, row):

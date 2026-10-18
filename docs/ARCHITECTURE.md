@@ -271,7 +271,9 @@ correct package ownership.
 | `FilesViewModel.py` | Stable-identity Qt file-list projection | Networking or file operations |
 | `FollowerColourScheme.py` | Guarded Cura colour-mode, material and theme integration | Geometry or tracking |
 | `FollowerRuntime.py` | Dependency construction and signal wiring at the composition root | Domain policy |
-| `GpuFollower.py` | Retained follower geometry, bounded asynchronous preparation and scene-graph presentation | Motion matching or printer commands |
+| `ToolpathGeometry.py` | Qt-free toolpath preparation, CPU strokes, event markers and optional NumPy vertex packing | Qt, Cura or printer commands |
+| `GpuFollower.py` | Bounded asynchronous geometry work and retained Qt scene-graph presentation, using ToolpathGeometry | Motion matching or printer commands |
+| `qt.py` | Explicit optional Qt library exports for GpuFollower and PlateQt rendering | Cura services or duplicate algorithms |
 | `PlateAxisGeometry.py` | Border-aligned open axis-arrow segments for GPU and warm raster rendering | QML and printer commands |
 | `GpuObjectPicker.py` | Retained object outlines using the shared GPU stroke engine | Exclusion commands |
 | `GpuStrokeMaterial.py` | Shader materials, stroke vertex layout and GPU uniform updates | Print state or networking |
@@ -2389,3 +2391,48 @@ configuration, while temperature profiles remain available during printing.
 scrolled confirmation in light/dark real themes using synthetic source geometry.
 It has no network transport or command slots. It participates in native/container
 capture generation, text contrast auditing and deterministic capture comparison.
+
+
+## Reusable library and whole-product lifecycle contracts
+
+`mpf.gcode` exports the index, hydration, boundary and layer-payload APIs.
+`mpf.plate` exports CPU geometry from `ToolpathGeometry`; it imports no Qt or Cura.
+`mpf.plate.qt` explicitly opts into the existing Qt renderers. Production plugin
+consumers import those same owners. The wheel includes shader/QML resources and
+licence notices; it has no mandatory runtime dependencies. `make library` builds
+and installs it outside the checkout, checks exact source/resource parity and
+version synchronisation, then exercises stdlib-only indexing/vertices and optional
+Qt raster pixels/retained nodes. [LIBRARY.md](LIBRARY.md) defines the public
+contracts; internal adapters/controllers remain application-specific.
+
+Recovery source scanning records the effective feed rate, independent raw E mode,
+arc plane and active EXCLUDE_OBJECT name. Setup macros invalidate feed rate as
+well as coordinates until the file establishes them again. Handover restores
+configured arc/object state and refuses active exclusions whose private offsets
+cannot be reconstructed. It explicitly sends a zero bed target without a cooling
+wait. Both physical and G-code XYZ arrays must be finite before a review is ready;
+unloaded previews retain file X/Y and use physical Z for the new reference.
+After the final restart script is submitted, cancellation cannot withdraw it;
+the controller completes the read-only success/uncertainty check.
+
+`HeaterTargets` discovers writable heater names independently of configured
+presets. `MonitorControls` uses that inventory for cooldown; profile and cooldown
+intents discard pending `MonitorTuning` heater keys so older debounced values cannot
+win later. A control-owned intent revision also invalidates queued group scripts
+after any newer valid temperature choice; the whole group is cancelled because
+it may contain opaque macro G-code. Connection, lock and current-limit checks
+still govern dispatch. Already submitted scripts cannot be withdrawn.
+
+`FileManager` assigns a revision to each resident walk. Failed/incomplete walks
+retain the previous complete listing and finish with an error; superseded callbacks
+cannot publish. Text sorting reverses known values with stable filename ties and
+keeps unknown values last. Start acknowledgements belong to one immutable attempt
+and cannot resurrect an expired or invalidated attempt. Session invalidation clears
+file-browser confirmation drafts, and upload/rename/delete recheck the active file
+and destination immediately before dispatch, including containing directories.
+
+`CameraViewport` compares decoded `framesDisplayed` every eight seconds while
+visible and streaming. A retained image alone does not imply a live camera.
+No progress invokes the existing recovery/retry policy and removes the Live badge;
+only another decoded frame clears recovery, not headers or incoming bytes.
+Bridge origins are constructed with QUrl host/port fields, preserving IPv6 literals.

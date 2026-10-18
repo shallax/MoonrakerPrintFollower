@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Publish cooldown availability independently of saved profiles.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-09-30 [3e5edca] Give the publication one owner
@@ -122,7 +123,7 @@ SIGNAL_GROUPS = (
     # scroll-triggered fetch reply rebuilt the whole payload).
     ("fileManagerThumbsChanged", ("fileManagerThumbs",)),
     ("consoleChanged", ("consoleHistory", "consoleLines", "consoleDropped", "consoleRevisions", "consolePending", "consoleErrorBell")),
-    ("typedControlsChanged", ("heaterControlItems", "canSetHeaterTemperature", "temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
+    ("typedControlsChanged", ("heaterControlItems", "canSetHeaterTemperature", "canHeatersOff", "temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
                               "bedMeshProfileNames", "bedMeshRows", "bedMeshColumns", "bedMeshValues", "bedMeshMinimum",
                               "bedMeshMaximum", "bedMeshRange", "bedMeshXMin", "bedMeshXMax", "bedMeshYMin", "bedMeshYMax",
                               "bedMeshRangeText", "bedMeshPreviewVisible", "bedMeshThresholdLow", "bedMeshThresholdHigh",

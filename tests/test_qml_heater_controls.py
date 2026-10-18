@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Verify cooldown discovery and latest temperature intent across controls.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 
 """Mouse-driven temperature controls connected to real control and tuning owners."""
@@ -40,6 +41,8 @@ if harness.QT_AVAILABLE:
         def heaterControlItems(self): return self.controls.values["heaterControlItems"]
         @pyqtProperty(bool, notify=changed)
         def canSetHeaterTemperature(self): return self.controls.values["canSetHeaterTemperature"]
+        @pyqtProperty(bool, notify=changed)
+        def canHeatersOff(self): return self.controls.values["canHeatersOff"]
         @pyqtProperty(bool, notify=changed)
         def controlsLocked(self): return self.data.observation.controls_locked
         @pyqtProperty("QVariant", notify=changed)
@@ -183,7 +186,26 @@ class HeaterUiTests(harness.RealEngineTestCase):
                 buttons.append(item)
             pending.extend(item.childItems())
         button = next(item for item in buttons if item.metaObject().indexOfSignal(b"clicked()") >= 0)
+        self.click(window, self.find(document, "heaterPlus_extruder"))
         self.click(window, button)
         self.assertEqual(printer.commands.calls[-1][2],
                          "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=215"
                          "\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=60")
+        QTest.qWait(350)
+        self.assertEqual(printer.sent, [], "an older slider adjustment overrode the profile")
+        self.assertNotIn("heater:extruder", printer.tuning._pending)
+
+    def test_cooldown_without_profiles_cancels_pending_heat_and_reaches_every_heater(self):
+        printer, document, window = self.setup_panel()
+        self.click(window, self.find(document, "heaterPlus_extruder"))
+        self.click(window, self.find(document, "heatersCooldown"))
+        QTest.qWait(350)
+        self.assertEqual(printer.sent, [], "the pending bump reheated after Cooldown")
+        self.assertEqual(printer.commands.calls[-1][2],
+                         "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0"
+                         "\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0")
+        self.assertNotIn("heater:extruder", printer.tuning._pending)
+        printer.data.observation = record(controls_locked=True)
+        printer.data.changed.emit()
+        self.pump(20)
+        self.assertFalse(self.find(document, "heatersCooldown").isEnabled())

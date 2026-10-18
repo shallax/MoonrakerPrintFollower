@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Document recovery of established streams whose decoded frames stop.
 # 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-30 [520544b] Give the webcam stream's recovery its own owner
@@ -78,8 +79,8 @@ class CameraRecovery:
 
     def stream_stalled(self) -> bool:
         """A stream failure, or the QML pane's render watchdog reporting a
-        stream that connected but never painted a frame (it raises no
-        error signal of its own).
+        stream whose decoded-frame counter stopped advancing (it may raise
+        no transport error of its own).
 
         The FIRST failure retries immediately: a camera's first fetch can
         die on a cold-start hiccup (DNS or first contact) while the very
@@ -126,8 +127,8 @@ class CameraRecovery:
 
     def application_state_changed(self, state) -> bool:
         """A wake reloads the camera source once, for the ACTIVE monitor
-        only: a stream that survives a suspend shows a frozen frame whose
-        image size is already set, so the watchdog cannot see it."""
+        only. Refresh immediately after suspend rather than waiting for the
+        decoded-frame watchdog to detect a frozen retained image."""
         previous = self._app_state
         self._app_state = state
         if state != Qt.ApplicationState.ApplicationActive:

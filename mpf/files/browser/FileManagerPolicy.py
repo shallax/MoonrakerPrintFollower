@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Correct descending text sorts with stable ties and missing values last.
 # 2026-09-23 [2ac0f5e] 4.6.0: the platform pass, the gesture identity and the camera nonce
 # 2026-09-18 [53afbd7] 4.5.0: the reviewer-attribution phrasing goes from the codebase
 # 2026-09-11 [1c33814] 3.6.0: file manager, console resize, and e-stop reconnect
@@ -305,20 +306,17 @@ def sort_rows(rows: Sequence[FileRow], column: str, ascending: bool) -> List[Fil
     """
     if column not in SORTABLE_COLUMNS:
         column = "name"
-    direction = 1 if ascending else -1
-
     def sort_key(row: FileRow):
         value = _row_value(row, column)
-        if value is None or value == "":
-            return (2, "")
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return (0, direction * value, "")
-        return (1, 0, direction * str(value).casefold())
+            return (0, value)
+        return (1, str(value).casefold())
 
-    def tie(row: FileRow):
-        return row.filename.casefold()
-
-    return sorted(rows, key=lambda row: (sort_key(row), tie(row)))
+    # Stable sorting preserves ascending name ties in either direction.
+    named = sorted(rows, key=lambda row: row.filename.casefold())
+    known = [row for row in named if _row_value(row, column) not in (None, "")]
+    unknown = [row for row in named if _row_value(row, column) in (None, "")]
+    return sorted(known, key=sort_key, reverse=not ascending) + unknown
 
 
 def _value_text(value: Any) -> str:

@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Include the verified reusable Python wheel in future release assets.
 # 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
 # 2026-10-12 [abf18f3] Mirror optional runtime assets on plugin releases
 # 2026-09-06 [683f553] Consolidate release packaging maintenance
@@ -137,15 +138,17 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           CURA="dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
           SOURCE="dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
+          WHEEL="dist/library/moonraker_print_follower-${VERSION}-py3-none-any.whl"
+          test -f "$WHEEL"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             DRAFT="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)"
             if [[ "$DRAFT" != "true" ]]; then
               echo "::error::Refusing to replace assets on a published release"
               exit 1
             fi
-            gh release upload "$GITHUB_REF_NAME" "$CURA" "$SOURCE" "$RUNNER_TEMP/runtime-assets/"* --clobber
+            gh release upload "$GITHUB_REF_NAME" "$CURA" "$SOURCE" "$WHEEL" "$RUNNER_TEMP/runtime-assets/"* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$CURA" "$SOURCE" "$RUNNER_TEMP/runtime-assets/"* \
+            gh release create "$GITHUB_REF_NAME" "$CURA" "$SOURCE" "$WHEEL" "$RUNNER_TEMP/runtime-assets/"* \
               --draft --verify-tag \
               --title "Moonraker Print Follower $GITHUB_REF_NAME" \
               --notes-file /tmp/release-notes.md

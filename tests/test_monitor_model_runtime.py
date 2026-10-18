@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Verify stable projections after heater discovery and freshness overlays.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
@@ -1426,13 +1427,16 @@ class MonitorQtTests(harness.MonitorQtTests):
                 self.deliver_state("standby")
                 self.qt.events(1)
             self.assertEqual(scans, [], "core-only landings must not rescan peripherals")
+            self.assertIs(controls_first, model._controls.values,
+                          "unchanged controls must keep their copy")
             model._data._merge_aux({"extruder": {"temperature": 200.0, "target": 210.0}})
             self.qt.events(1)
             self.assertEqual(len(scans), 1, "an aux landing rescans exactly once")
         self.assertIs(console_first["consoleLines"], model._console.values["consoleLines"],
                       "an unchanged transcript must keep its projection")
-        self.assertIs(controls_first, model._controls.values,
-                      "unchanged controls must keep their copy")
+        self.assertIsNot(controls_first, model._controls.values,
+                         "newly discovered cooldown support is a real control change")
+        self.assertTrue(model._controls.values["canHeatersOff"])
 
     def test_stale_polls_cannot_raise_the_z_projection_between_dispatched_moves(self):
         model = self.monitor()
@@ -3555,6 +3559,7 @@ Item {
             "hoverClockProxy", "root.compact",
         ))
         allowed = {
+            "visible: root.cameraControlLive",  # overlay freshness indicator within the fixed viewport
             # The new Preview dock collapses only on an explicit user request.
             # Its focus outline adds chrome without hiding or moving controls.
             "visible: root.collapsed",
@@ -3623,7 +3628,7 @@ Item {
             # own !major mirror).
             "visible: !line",
             "visible: !root.cameraBarFits && root.cameraControlLive && root.cameraPictureWidth >= 96 * screenScaleFactor && root.cameraPictureHeight >= 96 * screenScaleFactor",
-            "visible: root.configured && root.printerModel != null && root.printerModel.monitorConnected && cameraImage.visible && cameraImage.imageWidth > 0 && root.cameraPictureWidth >= cameraLiveBadge.width + width + 3 * badgeGap",
+            "visible: root.cameraControlLive && root.cameraPictureWidth >= cameraLiveBadge.width + width + 3 * badgeGap",
             # The plate's toolhead dot: scene-graph decoration INSIDE
             # the canvas's reserved slot — it can never shift layout,
             # only its own marker can appear inside the fixed map.

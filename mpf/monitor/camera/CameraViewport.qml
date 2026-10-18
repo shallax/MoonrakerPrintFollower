@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 //
-// Selected Git history (newest first; oldest and latest two content changes):
+// Selected release and Git history (newest first; original provenance retained):
+// 2026-10-18 — 6.0.0: Detect frozen decoded streams and suppress stale Live indicators.
 // 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
 // 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
 // 2026-09-30 [4d989ec] The camera picture and its control bar become their own components
@@ -98,6 +99,16 @@ Item {
     property string _appliedUrl: ""
     property bool _appliedVisible: false
     property bool _appliedSnapshotMode: false
+    property int _watchdogFrames: 0
+    property int _lastFreshFrames: 0
+    function checkCameraFreshness() {
+        if (!cameraStallWatchdog.running)
+            return;
+        var frames = cameraImage.framesDisplayed;
+        if (frames === _watchdogFrames && root.printerModel != null)
+            root.printerModel.cameraRenderStalled();
+        _watchdogFrames = frames;
+    }
     function _queryValue(query, name) {
         // The parameter's value, or null when the query has no such
         // parameter (an empty value is still a value).
@@ -249,7 +260,7 @@ Item {
     // The overlays' shared liveness contract: no model, no camera or a
     // stopped stream has neither a decode rate to show nor a picture to
     // zoom.
-    readonly property bool cameraControlLive: root.configured && root.printerModel != null && root.printerModel.monitorConnected && root.printerModel.webcamStreamEnabled && cameraImage.visible && cameraImage.imageWidth > 0
+    readonly property bool cameraControlLive: root.configured && root.printerModel != null && root.printerModel.monitorConnected && root.printerModel.webcamStreamEnabled && !root.printerModel.cameraRecovering && cameraImage.visible && cameraImage.imageWidth > 0
     // ── the zoom face's own scale ───────────────────────────────────
     // Every 25% from the fit to the 800% ceiling, LOG-positioned: the
     // fine granularity belongs where the low zooms are, which is the
@@ -598,36 +609,27 @@ Item {
                 // reviewer's cold-start diagnostics — the last
                 // hop of the T0-T9 chain). The model marks it
                 // against the shared monotonic origin, once.
-                if (root.traceCameraTiming && imageWidth > 0 && root.printerModel != null) {
+                if (visible && imageWidth > 0 && root.printerModel != null) {
                     root.printerModel.cameraFirstFrameRendered();
                 }
+            }
+            onFramesDisplayedChanged: {
+                if (visible && framesDisplayed > root._lastFreshFrames && root.printerModel != null)
+                    root.printerModel.cameraFirstFrameRendered();
+                root._lastFreshFrames = framesDisplayed;
             }
         }
 
         Timer {
-            // The render watchdog (a live
-            // report): a stream that
-            // CONNECTED but never painted a
-            // frame raises no error signal.
-            // While configured and visible, a
-            // frame-less image reports the
-            // stall every 8 s; the model's
-            // recovery reloads the source on
-            // its usual 10 s cadence, and the
-            // check skips once any frame has
-            // painted.
+            // Watch decoded-frame progress, including an established feed
+            // that ends or freezes while its last image remains visible.
             id: cameraStallWatchdog
+            objectName: "cameraStallWatchdog"
             interval: 8000
             repeat: true
-            running: root.configured && cameraImage.visible
-            onTriggered: {
-                if (cameraImage.imageWidth > 0)
-                    return;
-                if (root.printerModel != null) {
-                    root.printerModel.cameraPaneTrace(root.paneId, "stall watchdog fired (imageWidth=" + cameraImage.imageWidth + ")");
-                    root.printerModel.cameraRenderStalled();
-                }
-            }
+            running: root.configured && cameraImage.visible && root.printerModel != null && root.printerModel.monitorConnected && root.printerModel.webcamStreamEnabled
+            onRunningChanged: root._watchdogFrames = cameraImage.framesDisplayed
+            onTriggered: root.checkCameraFreshness()
         }
 
         Rectangle {
@@ -659,7 +661,7 @@ Item {
             // live (the request).
             id: cameraLiveBadge
             objectName: "cameraLiveBadge"
-            visible: root.configured && root.printerModel != null && root.printerModel.monitorConnected
+            visible: root.cameraControlLive
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.topMargin: UM.Theme.getSize("narrow_margin").height
@@ -708,7 +710,7 @@ Item {
             // never float over the offline veil. (The capture
             // census exempts camera-overlay text: its ground is
             // the feed's arbitrary content.)
-            visible: root.configured && root.printerModel != null && root.printerModel.monitorConnected && cameraImage.visible && cameraImage.imageWidth > 0 && root.cameraPictureWidth >= cameraLiveBadge.width + width + 3 * badgeGap
+            visible: root.cameraControlLive && root.cameraPictureWidth >= cameraLiveBadge.width + width + 3 * badgeGap
             anchors.top: parent.top
             anchors.right: parent.right
             anchors.topMargin: UM.Theme.getSize("narrow_margin").height

@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Cover recovery modes, telemetry validation and restart lifecycle regressions.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -39,6 +40,26 @@ def source():
 
 
 class RecoveryHandoverTests(unittest.TestCase):
+    def test_every_motion_and_coordinate_override_is_refused(self):
+        for name in ("G0", "G1", "G2", "G3", "G90", "G91", "G17", "G18", "G19"):
+            fresh = status()
+            fresh["configfile"]["config"]["gcode_macro " + name] = {"rename_existing": name + ".1"}
+            with self.subTest(command=name), self.assertRaisesRegex(RecoveryRefused, "override"):
+                heating_script(fresh, source())
+
+    def test_arc_plane_requires_support_and_is_restored_before_sd_handover(self):
+        for plane in (17, 18, 19):
+            chosen = replace(source(), state=replace(source().state, plane=plane))
+            fresh = status()
+            fresh["configfile"]["config"]["gcode_arcs"] = {}
+            plan = prepare_return(fresh, chosen, filename="part.gcode", printed_top_z=8)
+            self.assertIn(f"G{plane}", plan.modal_script.splitlines())
+            self.assertIn(f"G{plane}", plan.resume_script.splitlines()[:-1])
+        for plane in (18, 19, 20):
+            with self.subTest(plane=plane), self.assertRaisesRegex(RecoveryRefused, "arc plane"):
+                prepare_return(status(), replace(source(), state=replace(source().state, plane=plane)),
+                               filename="part.gcode", printed_top_z=8)
+
     def test_prime_height_policy_and_ceiling_apply_to_every_travel(self):
         for restart, configured, expected in ((2, 100, 100), (2, 2, 7), (2, 1, 7),
                                                (248, 100, 250), (250, 100, 250),
@@ -212,7 +233,10 @@ class RecoveryHandoverTests(unittest.TestCase):
         self.assertEqual(heating_script(status(), source())[0],
                          "M140 S60\nM104 S210\nM190 S60\nM109 S210")
         self.assertEqual(heating_script(status(), source(), bed_target=0)[0],
-                         "M104 S210\nM109 S210")
+                         "M140 S0\nM104 S210\nM109 S210")
+        bedless = status()
+        del bedless["configfile"]["config"]["heater_bed"]
+        self.assertEqual(heating_script(bedless, source(), bed_target=0)[0], "M104 S210\nM109 S210")
         for targets in ({"hotend_target": 100}, {"hotend_target": 300},
                         {"bed_target": -1}, {"bed_target": 120}):
             with self.subTest(targets=targets):

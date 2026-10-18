@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Verify shared geometry and modular component ownership after extraction.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-09-07 [febe761] Reorganize test suite into domain files for 3.2.0
@@ -245,9 +246,11 @@ class SourceContractTests(unittest.TestCase):
             'GCodeIndex': {'ArcGeometry', 'FeatureTracker', 'GCodeParser', 'IndexAssembly', 'IndexHeader', 'IndexLimits', 'IndexWork', 'MotionIndex', 'ObjectWork'},
             'GCodeIndexService': {'GCodeIndex', 'IndexTasks', 'IndexView', 'LayerCache', 'MotionIndex', 'MotionRefinement', 'ObjectVisitTracker', 'PlateProgress', 'PlateSplitTracker', 'PreparedSession', 'PrintState'},
             'GCodeParser': set(),
-            'GpuFollower': {'GpuStrokeMaterial', 'PlateAxisGeometry', 'PreviewColours', 'TravelStates'},
-            'GpuObjectPicker': {'GpuFollower'},
+            'GpuFollower': {'GpuStrokeMaterial', 'PlateAxisGeometry', 'PreviewColours', 'TravelStates', 'ToolpathGeometry'},
+            'GpuObjectPicker': {'GpuFollower', 'ToolpathGeometry'},
             'GpuStrokeMaterial': {'PluginPaths'},
+            'ToolpathGeometry': {'TravelStates'},
+            'qt': {'GpuFollower', 'PlateQt'},
             'IndexAssembly': {'MotionIndex'},
             'IndexCache': {'ArcGeometry', 'CachePolicy', 'FeatureTracker', 'IndexCodec', 'IndexLimits', 'MoonrakerProtocol', 'MotionIndex', 'MotionRanges', 'ObjectWork'},
             'IndexCodec': {'ArcGeometry', 'IndexLimits'},
@@ -329,7 +332,7 @@ class SourceContractTests(unittest.TestCase):
             'RecoveryPlanning': {'ArcGeometry', 'GCodeParser', 'IndexLimits'},
             'RecoveryHandover': {'PhysicalMotion'},
             'RecoveryExecution': {'RecoveryHandover'},
-            'RecoveryController': {'MoonrakerProtocol', 'RecoveryExecution', 'RecoveryPlanning', 'RecoveryHandover'},
+            'RecoveryController': {'MoonrakerProtocol', 'RecoveryExecution', 'RecoveryPlanning', 'RecoveryHandover', 'PhysicalMotion'},
             'RunoutEvents': set(),
             'RenderSurface': set(),
             'SectionLayoutPolicy': set(),

@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Cover recovery modes, telemetry validation and restart lifecycle regressions.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 
 """Recovery protocol tests with queued replies and a command-level printer model.
@@ -12,6 +13,7 @@ No transport or physical printer is used.
 """
 import copy
 from collections import deque
+from dataclasses import replace
 import unittest
 
 from mpf.printing.RecoveryExecution import RecoveryExecution
@@ -29,6 +31,7 @@ class ProtocolPrinter:
         self.e = 0.
         self.absolute = True
         self.absolute_e = True
+        self.plane = 17
         self.feed = 600.
         self.queue = deque()
         self.scripts = []
@@ -78,6 +81,9 @@ class ProtocolPrinter:
         elif command == 'G91': self.absolute = False
         elif command == 'M82': self.absolute_e = True
         elif command == 'M83': self.absolute_e = False
+        elif command in {'G17', 'G18', 'G19'}: self.plane = int(command[1:])
+        elif command == 'EXCLUDE_OBJECT_START': self.state['exclude_object']['current_object'] = words[1].split('=')[1]
+        elif command == 'EXCLUDE_OBJECT_END': self.state['exclude_object']['current_object'] = None
         elif command == 'G92':
             for i, axis in enumerate('XYZ'):
                 if axis in params: self.base[i] = self.xyz[i] - params[axis]
@@ -86,7 +92,7 @@ class ProtocolPrinter:
             for i, axis in enumerate('XYZ'):
                 if axis in params:
                     self.xyz[i] = params[axis] + self.base[i] if self.absolute else self.xyz[i] + params[axis]
-            if 'E' in params: self.e = params['E'] if self.absolute_e else self.e + params['E']
+            if 'E' in params: self.e = params['E'] if self.absolute and self.absolute_e else self.e + params['E']
             if 'F' in params: self.feed = params['F']
             self.trace.append(tuple(self.xyz))
         elif command in {'M104', 'M109', 'M140', 'M190'}:
@@ -108,10 +114,30 @@ class ProtocolPrinter:
 
 
 class RecoveryProtocolTests(unittest.TestCase):
+    def test_selected_object_is_restored_and_exclusions_refuse_before_commands(self):
+        for idle in (False, True):
+            for name in (None, 'PART_A'):
+                printer = ProtocolPrinter(idle=idle)
+                printer.state['configfile']['config']['exclude_object'] = {}
+                printer.state['exclude_object'] = {'current_object': 'PART_B', 'excluded_objects': []}
+                chosen = replace(source(), state=replace(source().state, current_object=name))
+                execution, events = self.attempt(printer, source=chosen)
+                self.drain(printer)
+                self.assertEqual(execution.phase, 'complete', events[-1])
+                self.assertEqual(printer.state['exclude_object']['current_object'], name)
+        for excluded in (None, ['PART_B']):
+            printer = ProtocolPrinter()
+            printer.state['configfile']['config']['exclude_object'] = {}
+            printer.state['exclude_object'] = {'excluded_objects': excluded}
+            execution, events = self.attempt(printer)
+            self.drain(printer)
+            self.assertEqual(execution.phase, 'refused', events[-1])
+            self.assertEqual(printer.scripts, [])
+
     def attempt(self, printer, **kwargs):
         events = []
         execution = RecoveryExecution(printer.query, printer.send, events.append)
-        execution.start(source=source(), filename='part.gcode', printed_top_z=12, **kwargs)
+        execution.start(source=kwargs.pop('source', source()), filename='part.gcode', printed_top_z=12, **kwargs)
         return execution, events
 
     def drain(self, printer):
@@ -137,6 +163,48 @@ class RecoveryProtocolTests(unittest.TestCase):
                         self.assertTrue(printer.scripts[-1].endswith('M24'))
                         self.assertTrue(printer.absolute_e)
                         self.assertEqual(printer.feed, 1800)
+
+    def test_paused_and_unloaded_recovery_restore_selected_plane_and_coordinate_modes(self):
+        for idle in (False, True):
+            for plane in (17, 18, 19):
+                for absolute, relative_e in ((True, False), (False, False), (False, True)):
+                    with self.subTest(idle=idle, plane=plane, absolute=absolute, relative_e=relative_e):
+                        printer = ProtocolPrinter(idle=idle)
+                        printer.plane = 19 if plane != 19 else 17
+                        printer.state['configfile']['config']['gcode_arcs'] = {}
+                        chosen = replace(source(), state=replace(source().state, plane=plane,
+                                         absolute_xyz=absolute, force_relative_e=relative_e))
+                        execution, events = self.attempt(printer, source=chosen)
+                        self.drain(printer)
+                        self.assertEqual(execution.phase, 'complete', events[-1])
+                        self.assertEqual(printer.plane, plane)
+                        self.assertEqual(printer.absolute, absolute)
+                        self.assertEqual(printer.absolute_e, not relative_e)
+                        printer.command('G1 E1')
+                        self.assertEqual(printer.e, 1 if absolute and not relative_e else 16.25)
+
+    def test_reviewed_bed_off_changes_the_live_target_without_cooling_wait(self):
+        printer = ProtocolPrinter()
+        execution, events = self.attempt(printer, bed_target=0)
+        self.drain(printer)
+        self.assertEqual(execution.phase, 'complete', events[-1])
+        self.assertEqual(printer.state['heater_bed']['target'], 0)
+        self.assertEqual(printer.state['heater_bed']['temperature'], 60)
+        self.assertIn('M140 S0', '\n'.join(printer.scripts))
+        self.assertNotIn('M190', '\n'.join(printer.scripts))
+
+    def test_malformed_prime_position_ends_attempt_without_more_motion(self):
+        for value in ([], [10, 15], None, [10, 15, float('nan')]):
+            printer = ProtocolPrinter()
+            execution, events = self.attempt(printer, prime_enabled=True, prime_xyz=(10, 15, 3))
+            while execution.phase != 'checking_prime': printer.step()
+            _, callback, _ = printer.queue.popleft()
+            printer.state['gcode_move']['gcode_position'] = value
+            submitted = len(printer.scripts)
+            callback(printer.state, None)
+            self.assertEqual(execution.phase, 'refused', events[-1])
+            self.assertFalse(execution.active)
+            self.assertEqual(len(printer.scripts), submitted)
 
     def test_dwell_occurs_after_purge_at_prime_position_before_return(self):
         for dwell in (0, 5, 12.5, 300):
@@ -272,12 +340,14 @@ class RecoveryProtocolTests(unittest.TestCase):
                 printer = ProtocolPrinter()
                 execution, events = self.attempt(printer)
                 for _ in range(cancel_at): printer.step()
+                handed_over = execution.phase in ('resuming', 'checking_resume')
                 execution.cancel()
                 submitted = len(printer.scripts)
-                printer.step()
+                self.drain(printer)
                 self.assertFalse(printer.queue)
                 self.assertEqual(len(printer.scripts), submitted)
-                self.assertEqual(execution.phase, 'cancelled')
+                self.assertEqual(execution.phase, 'complete' if handed_over else 'cancelled')
+                self.assertEqual(printer.state['print_stats']['state'] == 'printing', handed_over)
                 self.assertEqual(sum(e.terminal for e in events), 1)
 
     def test_resume_requires_sd_worker_and_pause_state_to_agree(self):

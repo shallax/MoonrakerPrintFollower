@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Discover writable heater commands independently of slider limits.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 
 """Writable heater inventory and limits from Moonraker's Klipper config."""
@@ -21,6 +22,23 @@ def finite(value):
     except (ValueError, TypeError, OverflowError):
         return None
     return result if math.isfinite(result) else None
+
+
+def target_command(name):
+    """Only writable Klipper object names can become target commands."""
+    if not isinstance(name, str):
+        return None
+    if re.fullmatch(r"extruder\d*|heater_bed|heater_generic [A-Za-z0-9_.-]+", name):
+        return f"SET_HEATER_TEMPERATURE HEATER={name.split()[-1]}"
+    if re.fullmatch(r"temperature_fan [A-Za-z0-9_.-]+", name):
+        return f"SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN={name.split()[-1]}"
+    return None
+
+
+def heater_names(auxiliary):
+    """Cooldown needs live writable targets, even without configured limits."""
+    return [name for name, status in auxiliary.items()
+            if target_command(name) and isinstance(status, Mapping) and "target" in status]
 
 
 def heater_targets(auxiliary):

@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Reconstruct feed rate, arc plane and selected object before recovery.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 
@@ -34,8 +35,7 @@ _S_WORD = re.compile(rb"(?:^|\s)S\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))(?=\s|$)", re.
 _P_WORD = re.compile(rb"(?:^|\s)P\s*(\d+)(?=\s|$)", re.I)
 _MACRO_ARG = re.compile(rb"(?:^|\s)([A-Z][A-Z0-9_]*)=([-+]?(?:\d+(?:\.\d*)?|\.\d+))(?=\s|$)", re.I)
 _IGNORED = frozenset({b"M73", b"M117", b"M118", b"M400", b"G4", b"M0", b"M25",
-                      b"PAUSE", b"SET_PRINT_STATS_INFO", b"EXCLUDE_OBJECT_DEFINE",
-                      b"EXCLUDE_OBJECT_START", b"EXCLUDE_OBJECT_END"})
+                      b"PAUSE", b"SET_PRINT_STATS_INFO"})
 _PAUSE_COMMANDS = frozenset({b"M0", b"M25", b"PAUSE"})
 _MOTIONS = frozenset({b"G0", b"G00", b"G1", b"G01", b"G2", b"G02", b"G3", b"G03"})
 
@@ -68,6 +68,8 @@ class RecoveryModalState:
     hotend_target: float | None
     bed_target: float | None
     acceleration: float | None = None
+    plane: int = 17
+    current_object: str | None = None
 
     @property
     def absolute_e(self):
@@ -189,12 +191,18 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
     preview_count = 0
     preview_stride = 1
     plane = ArcGeometry.PLANE_XY
-    def modal_state():
+    current_object = None
+    def modal_state(next_line):
         if unknown_axes or unknown_e:
             raise RecoveryPlanError("A setup macro needs a full absolute XYZ move and G92 E before this point")
+        selected_feedrate = feedrate
+        if selected_feedrate is None:
+            selected_feedrate = _number(_parse_axes(next_line.split(b";", 1)[0]).get("F"), "restart feedrate; choose a point after an explicit F command")
+            if selected_feedrate <= 0:
+                raise RecoveryPlanError("Invalid restart feedrate")
         return RecoveryModalState(tuple(position), e, absolute_xyz, force_relative_e,
-                                  feedrate, speed_percent, flow_percent, fan_speed,
-                                  hotend_target, bed_target, acceleration)
+                                  selected_feedrate, speed_percent, flow_percent, fan_speed,
+                                  hotend_target, bed_target, acceleration, plane, current_object)
     digest = hashlib.sha256()
     try:
         with open(path, "rb") as handle:
@@ -207,7 +215,7 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                 if offset == target:
                     if not _MOTION.match(line.split(b";", 1)[0]):
                         raise RecoveryPlanError("The indexed offset no longer names a motion command")
-                    selected_state = modal_state()
+                    selected_state = modal_state(line)
                     seen_target = True
                 if handle.tell() > observed_offset:
                     break  # Moonraker may report a position inside the queued line.
@@ -269,6 +277,16 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                         unknown_e = False
                 elif command in {b"G17", b"G18", b"G19"}:
                     plane = int(command[1:])
+                elif command == b"EXCLUDE_OBJECT_START":
+                    name = re.fullmatch(rb"EXCLUDE_OBJECT_START\s+NAME=([A-Z0-9_.-]+)", code)
+                    if name is None:
+                        raise RecoveryPlanError("The source object name cannot be restored safely")
+                    current_object = name.group(1).decode("ascii")
+                elif command == b"EXCLUDE_OBJECT_END":
+                    current_object = None
+                elif command == b"EXCLUDE_OBJECT_DEFINE":
+                    if re.search(rb"\bRESET=1\b", code):
+                        current_object = None
                 elif command == b"G21":
                     pass
                 elif command == b"G20":
@@ -313,6 +331,7 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                         bed_target = arguments[bed_parameter]
                     unknown_axes = set("XYZ")
                     unknown_e = True
+                    feedrate = None
                 elif command in transparent_macros:
                     pass
                 elif command in _PAUSE_COMMANDS and offset >= target:
@@ -326,7 +345,7 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                 line = handle.readline(_MAX_LINE_BYTES + 1)
                 if len(line) > _MAX_LINE_BYTES or not _MOTION.match(line.split(b";", 1)[0]):
                     raise RecoveryPlanError("The indexed offset no longer names a motion command")
-                selected_state = modal_state()
+                selected_state = modal_state(line)
                 digest.update(line)
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)

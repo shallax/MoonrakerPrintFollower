@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Describe final recovery, temperature and whole-product reliability changes.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-09-15 [cf5323d] 4.1.0: the one-time what's-new popup, proven through the harness
@@ -36,14 +37,15 @@ from typing import List, Tuple
 WHATS_NEW: Tuple[dict, ...] = (
     {
         "version": "6.0.0",
-        "headline": "Version 6.0.0 adds reviewed interrupted-print recovery to Print Follower.",
+        "headline": "Version 6.0.0 completes Print Follower with reviewed recovery, heater controls and reliability fixes across the plugin.",
         "items": (
             "Recover a paused print or an unloaded G-code file from an exact layer and move. The live point is pre-filled without detaching; you can also select earlier or future points. Ordinary Resume remains separate.",
             "Check the G-code without moving the printer, then review each action before starting. Angled 3D, top, front and side diagrams show the nozzle, restart point, recorded printed paths and bed bounds to scale, with coloured XYZ axes.",
             "Set return clearance above the selected layer, optional priming XYZ, extrusion amount and speed, and a priming dwell (5 seconds by default). Low prime heights rise to restart Z + 5 mm; travel respects the printer's Z ceiling. After purging, return X/Y before lowering; lift first if below clearance. There is no dwell at the restart point.",
             "Use point selects a stop bookmark; Remove deletes it. Bookmarks and printed paths are estimates, not proof of deposited filament. After starting recovery, Dismiss returns to Print Follower without cancelling it. Reopened dialogs reset their scroll and preview step.",
-            "Adjust each heater in Temperatures with a slider or 1, 5, 10 and 25 degree bumps, within limits read from Moonraker. Temperature profiles remain available while printing.",
-            "Cura 5.14 beta 1 is supported alongside 5.13 in CI and the UI version sweep. Recovery settings discover the printer's sensors and macros; recovery also works without a runout sensor.",
+            "Adjust each heater in Temperatures with a slider or 1, 5, 10 and 25 degree bumps, within limits read from Moonraker. Temperature profiles remain available while printing; cooldown also works without saved profiles.",
+            "Cura 5.14 beta 1 is supported alongside 5.13 in CI and the UI version sweep. Recovery also works without a runout sensor.",
+            "File-manager sorting and stale actions, frozen-camera detection and queued heater adjustments are corrected. Developers can reuse the parser and rendering components through a documented Python library.",
         ),
     },
     {

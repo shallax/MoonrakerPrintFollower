@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Verify cooldown discovery and latest temperature intent across controls.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 
 """Heater discovery, real limits and command validation."""
@@ -10,6 +11,34 @@ from tests.test_monitor_controls import ControlsCase, record
 
 
 class HeaterTargetTests(ControlsCase):
+    def test_cooldown_uses_live_targets_without_presets_or_limits(self):
+        self.data.rebuild(auxiliary={
+            "extruder": {"target": 210}, "heater_generic chamber": {"target": 60},
+            "temperature_fan enclosure": {"target": 40},
+            "temperature_sensor room": {"target": 20}, "heater_bed": "invalid"})
+        self.assertTrue(self.controls.values["canHeatersOff"])
+        self.assertFalse(self.controls.values["canApplyTemperaturePreset"])
+        self.controls.heaters_off()
+        self.assertEqual(self.commands.calls[-1][2].splitlines(), [
+            "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0",
+            "SET_HEATER_TEMPERATURE HEATER=chamber TARGET=0",
+            "SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=enclosure TARGET=0"])
+
+    def test_malformed_profile_values_and_non_heaters_never_form_commands(self):
+        from mpf.monitor.temperature.HeaterTargets import target_command
+        self.assertIsNone(target_command(None))
+        for values in (["bad"], "bad", {"temperature_sensor room": {"bool": True, "value": 20}},
+                       {"extruder\nM112": {"bool": True, "value": 200}},
+                       {"extruder": {"bool": True, "value": float("nan")}}):
+            with self.subTest(values=values):
+                self.data.rebuild(presets={"presets": {"bad": {"values": values}}})
+                self.controls.apply_preset(0)
+                self.assertEqual(self.commands.calls, [])
+        self.data.rebuild(presets={"presets": {"bad": {"values": ["bad"]}}})
+        self.controls.heaters_off()
+        self.assertFalse(self.controls.values["canHeatersOff"])
+        self.assertEqual(self.commands.calls, [])
+
     def load(self, low=5, high=285, name="extruder"):
         self.data.rebuild(auxiliary={
             "configfile": {"settings": {name: {"min_temp": low, "max_temp": high}}},

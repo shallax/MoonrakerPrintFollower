@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 //
-// Selected Git history (newest first; oldest and latest two content changes):
+// Selected release and Git history (newest first; original provenance retained):
+// 2026-10-18 — 6.0.0: Enable cooldown from live writable heaters without saved presets.
 // 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 // 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 // 2026-09-15 [0f92425] 4.3.0 extraction: the Temperature-profiles section — ProfilesSection.qml owns the preset
@@ -146,9 +147,10 @@ Item {
             }
         }
         Cura.SecondaryButton {
+            objectName: "heatersCooldown"
             Layout.fillWidth: true
             text: "Cooldown"
-            enabled: root.printerModel != null && root.printerModel.canApplyTemperaturePreset
+            enabled: root.printerModel != null && root.printerModel.canHeatersOff
             onClicked: root.printerModel.heatersOff()
             UM.ToolTip {
                 visible: parent.hovered

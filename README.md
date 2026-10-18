@@ -15,6 +15,13 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 
 ## What changed in 6.0.0
 
+6.0.0 is the feature-complete stable-release line. Alongside recovery and
+heater controls, this release fixes file-list sorting and stale operations,
+frozen-camera detection, and temperature-command ordering across the product.
+The parser and toolpath geometry are also available as a dependency-free Python
+library, with optional Qt rendering: see [reusing the components](docs/LIBRARY.md)
+for installation, public APIs and a standalone rendering example.
+
 - Add Cura 5.14 beta 1 / SDK 8.13 support, with 5.14 beta 1 as the primary
   CI version, 5.13 as secondary, and the beta included in the UI Version Sweep.
 
@@ -40,7 +47,8 @@ clearance, return speeds, command/status/heat timeouts, and optional nozzle prim
 at a configured XYZ position, extrusion amount and speed are configurable.
 The **Setup macro in the G-code** list is for an early slicer start command such
 as `PRINT_START`. It lets the planner read past that call after the file explicitly
-sets absolute XYZ and resets E with `G92 E`; it does not call the macro again.
+sets absolute XYZ, resets E with `G92 E` and establishes a feed rate with `F`;
+it does not call the macro again.
 Set the nozzle and bed parameter names to match the slicer invocation (for example
 `HOTEND` and `BED`). The **Transparent macro in the G-code** list is for a command
 whose completed call leaves print state unchanged, such as a camera marker with
@@ -56,6 +64,11 @@ the follower's recovery review; the plugin sets a temporary G-code Z origin
 with `G92` and confirms it before moving. Klipper restores its normal origin
 at the next Z homing. Home XYZ safely away from the object first.
 Recovery refuses unsupported G-code, printer state or motion geometry before seeking.
+It restores the selected arc plane and current object when those Klipper modules
+are configured. Active object exclusions are unsupported: use a fresh file with
+no excluded objects, because exclusion-specific coordinate offsets cannot be
+reconstructed from public status. A bed target of zero is explicitly restored
+without waiting for the bed to cool.
 Nozzle priming remains off by default. Its initial values are X0, Y250, Z100,
 50 mm of filament at 5 mm/s; change them for the printer before enabling it.
 The configured priming Z is retained when above the restart layer; otherwise
@@ -86,6 +99,11 @@ reports completion; an interrupted handover needs inspection before another atte
 The renamed **Temperatures** section includes per-heater sliders, Off, and +/- bumps
 of 1, 5, 10 or 25 °C. Limits come from Moonraker's heater configuration and are
 checked again before dispatch. Temperature profiles can be selected during printing.
+Cooldown covers the printer's discovered writable heaters even without saved
+profiles. Selecting a profile or cooldown discards older queued slider/bump
+changes so they cannot overwrite the new targets. A later individual heater
+choice also cancels any older profile or cooldown still waiting in the command
+queue; scripts already submitted to the printer cannot be withdrawn.
 
 
 ## What changed in 5.4.0

@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Keep Qt materials separate from reusable vertex packing.
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-30 [f425547] mpf's subpackages are capitalised
 # 2026-09-27 [43ab36d] Accelerate follower rendering with retained GPU shader geometry
@@ -10,7 +11,6 @@
 """Pixel-width capsule strokes expanded and antialiased by the GPU."""
 
 
-from array import array
 import struct
 from PyQt6.QtGui import QColor
 from PyQt6.QtQuick import QSGMaterial, QSGMaterialType, QSGMaterialShader, QSGGeometry
@@ -94,84 +94,3 @@ ATTR = QSGGeometry.AttributeSet(
     ],
     40,
 )
-
-
-def pack_shader(data, cancel=None):
-    try:
-        import numpy as np
-    except ImportError:
-        return _pack_stdlib(data, cancel)
-    result = []
-    corners = np.array([[-1, 1], [-1, -1], [1, 1], [1, 1], [-1, -1], [1, -1]], dtype=np.float32)
-    for row in data:
-        role, name, motions, packed = row[:4]
-        if name in ("RETRACTION", "UNRETRACTION"):
-            result.append((role, name, motions, packed))
-            continue
-        if cancel is not None and cancel.is_set():
-            return ()
-        points = np.frombuffer(packed, dtype=np.float32).reshape(-1, 4)
-        vertices = np.empty((len(points), 6, 10), dtype=np.float32)
-        for i, corner in enumerate(corners):
-            vertices[:, i, :2] = points[:, :2] if corner[0] < 0 else points[:, 2:]
-        vertices[:, :, 2:4] = (points[:, 2:] - points[:, :2])[:, None, :]
-        vertices[:, :, 4:6] = corners[None, :, :]
-        if len(row) > 4:
-            vertices[:, :, 4] *= np.frombuffer(row[4], dtype=np.float32)[:, None]
-        vertices[:, :, 8:10] = np.frombuffer(row[5], dtype=np.float32).reshape(-1, 2)[:, None, :] if len(row) > 5 else 0
-        motion = np.asarray(motions, dtype=np.float32)
-        starts = np.zeros(len(points), dtype=np.float32)
-        spans = np.ones(len(points), dtype=np.float32)
-        if len(motion) > 1 and np.any(motion[1:] == motion[:-1]):
-            boundaries = np.r_[0, np.flatnonzero(motion[1:] != motion[:-1]) + 1]
-            lengths = np.linalg.norm(points[:, 2:] - points[:, :2], axis=1)
-            cumulative = np.r_[0.0, np.cumsum(lengths, dtype=np.float64)]
-            counts = np.diff(np.r_[boundaries, len(points)])
-            totals = np.repeat(np.add.reduceat(lengths, boundaries), counts)
-            totals = np.maximum(totals, 1e-12)
-            starts = (cumulative[:-1] - np.repeat(cumulative[boundaries], counts)) / totals
-            spans = lengths / totals
-        vertices[:, :, 6] = (motion + starts)[:, None]
-        vertices[:, :, 7] = spans[:, None]
-        result.append((role, name, motions, vertices.tobytes()))
-    return tuple(result)
-
-
-def _pack_stdlib(data, cancel=None):
-    """Development fallback; Cura itself supplies NumPy."""
-    result = []
-    corners = ((-1, 1), (-1, -1), (1, 1), (1, 1), (-1, -1), (1, -1))
-    for row in data:
-        role, name, motions, packed = row[:4]
-        if name in ("RETRACTION", "UNRETRACTION"):
-            result.append((role, name, motions, packed))
-            continue
-        widths = array("f")
-        if len(row) > 4:
-            widths.frombytes(row[4])
-        metrics = array("f")
-        if len(row) > 5:
-            metrics.frombytes(row[5])
-        points, vertices = array("f"), array("f")
-        points.frombytes(packed)
-        ranges = []
-        group = 0
-        while group < len(motions):
-            end = group + 1
-            while end < len(motions) and motions[end] == motions[group]:
-                end += 1
-            lengths = [((points[i * 4 + 2] - points[i * 4]) ** 2 + (points[i * 4 + 3] - points[i * 4 + 1]) ** 2) ** .5 for i in range(group, end)]
-            total = max(sum(lengths), 1e-12)
-            walked = 0.0
-            for length in lengths:
-                ranges.append((motions[group] + walked / total, length / total))
-                walked += length
-            group = end
-        for offset in range(0, len(points), 4):
-            if offset % 4096 == 0 and cancel is not None and cancel.is_set():
-                return ()
-            x, y, ex, ey = points[offset : offset + 4]
-            for cx, cy in corners:
-                vertices.extend((x if cx < 0 else ex, y if cx < 0 else ey, ex - x, ey - y, cx * (widths[offset // 4] if widths else 1.0), cy, *ranges[offset // 4], *(metrics[offset // 2:offset // 2 + 2] if metrics else (0., 0.))))
-        result.append((role, name, motions, vertices.tobytes()))
-    return tuple(result)

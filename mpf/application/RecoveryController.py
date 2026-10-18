@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Validate independent XYZ telemetry and preserve unloaded preview coordinates.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [368df57] Wait for unloaded recovery test before cleanup on Windows
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -18,6 +19,7 @@ import os
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from ..geometry.PhysicalMotion import xyz
 from ..moonraker.MoonrakerProtocol import parse_file_identity
 from ..printing.RecoveryExecution import RecoveryExecution
 from ..printing.RecoveryHandover import RecoveryRefused, reviewed_pause_state
@@ -80,7 +82,7 @@ class RecoveryController(QObject):
 
     OBJECTS = {name: None for name in (
         "print_stats", "virtual_sdcard", "pause_resume", "toolhead", "gcode_move",
-        "configfile", "extruder", "heater_bed")}
+        "configfile", "extruder", "heater_bed", "exclude_object")}
 
     def __init__(self, client, context, parent=None, record=None):
         super().__init__(parent)
@@ -206,15 +208,19 @@ class RecoveryController(QObject):
             if error or not self._same_context(self._context()):
                 self._set("refused", "Printer state could not be checked or the selection changed. Check the G-code again.")
                 return
-            status = ((payload or {}).get("result") or {}).get("status")
             try:
+                status = ((payload or {}).get("result") or {}).get("status")
                 self._reviewed_saved_state = reviewed_pause_state(
                     status, self._planned_context.saved_state) if not self._planned_context.unloaded else ""
-            except (RecoveryRefused, TypeError, AttributeError) as reason:
+                move = status["gcode_move"]
+                position = xyz(move["gcode_position"])
+                physical = xyz(move["position"])
+                if self._planned_context.unloaded:
+                    position = (*position[:2], physical[2])
+                self._reviewed_position = position
+            except (RecoveryRefused, TypeError, AttributeError, KeyError, ValueError, OverflowError, IndexError) as reason:
                 self._set("refused", str(reason))
                 return
-            move = (status or {}).get("gcode_move") or {}
-            self._reviewed_position = tuple(move.get("position" if self._planned_context.unloaded else "gcode_position", (0.0, 0.0, 0.0))[:3])
             try:
                 maximum = float(status["toolhead"]["axis_maximum"][2])
                 base = float(move["position"][2]) - float(move["gcode_position"][2])

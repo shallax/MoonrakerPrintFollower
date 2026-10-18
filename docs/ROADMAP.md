@@ -1,10 +1,10 @@
 # Moonraker Print Follower roadmap
 
-This is the direction of travel, not an implementation contract. `ARCHITECTURE.md`
-stays the binding description of how the code is organised today; this file says
-what the releases ahead aim to deliver and why they are ordered the way they are.
-Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
-are proposals — each becomes binding only when its release branch exists.
+6.0.0 is the intended feature-complete stable release. Further maintenance focuses
+on correctness, compatibility, documentation and reusable component boundaries.
+`ARCHITECTURE.md` describes the implemented product; version fields and the release
+checklist live in `INSTRUCTIONS.md`. Older plans below are historical proposals,
+not commitments to additional feature releases.
 
 Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
@@ -29,12 +29,17 @@ and reopening resets scrolling and preview steps.
 This release also adds bounded per-heater temperature sliders and selectable
 1/5/10/25 degree bumps, profiles during printing, and Cura 5.14 beta 1 compatibility.
 Package metadata, release notes and What's New stay at 6.0.0 until publication.
+The whole-product audit also corrects file-manager races and sorting, decoded
+camera freshness, heater command ordering and recovery modal-state restoration.
+G-code indexing and CPU geometry now have supported library entry points without
+Cura or Qt, with optional Qt renderers and an independently installed wheel proof.
+The library and Cura plugin share the same implementations and version.
 
 Remaining work is validation rather than a claim of automatic failure detection:
 continue exercising paused/unloaded recovery on real printers and across supported
 Cura versions. Runout markers, parser position and recorded toolpaths cannot prove
 where extrusion physically stopped after a jam. Reliable missing-material detection
-or an automatically chosen restart layer remains future research. Preview diagrams
+or an automatically chosen restart layer remains unscheduled research. Preview diagrams
 are not collision simulation. The older 5.x and initial 6.0 design notes below are
 historical; the implementation contract is in ARCHITECTURE.md.
 

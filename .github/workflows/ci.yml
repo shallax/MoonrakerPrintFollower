@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Verify the reusable wheel with an installed external consumer.
 # 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
 # 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
 # 2026-09-08 [7341f82] Development tooling: pinned container, quality gates and the Makefile
@@ -394,6 +395,9 @@ jobs:
 
       - name: Build and verify packages
         run: python tools/native/dev.py package
+
+      - name: Build and exercise the reusable library outside the checkout
+        run: python tools/native/dev.py library
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v7

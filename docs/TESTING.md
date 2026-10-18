@@ -2,7 +2,7 @@
 
 ## 6.0.0 — current validation
 
-Run `make lint`, `make run_tests`, `make coverage` and `make package` on
+Run `make all` and `make coverage` on
 `release/v6.0.0`. Recovery fixtures cover exact byte boundaries, accumulated
 and relative E, lead-in, sensor pause ownership, printer config discovery,
 paused-state preflight, unloaded-file selection, temperature waits, optional
@@ -12,6 +12,15 @@ Read-only queries of a live Moonraker printer may verify configuration and
 source shape; **do not send printer commands during a live print**. A disposable
 paused virtual-SD printer is still required before claiming physical recovery
 validation.
+
+The 18 October whole-product audit passed **6,220 tests in 273 isolated
+processes**, with **97.57% overall statement coverage** and every required
+in-process module at or above 95%. The extracted `ToolpathGeometry`, public
+library entry points, recovery controller, heater target discovery and tuning
+owner are at 100%. The isolated STEP helper retains its separate mandatory
+95% native-CAD coverage gate in CI. Canonical Linux captures were regenerated;
+all 54 light/dark capture pairs are byte-identical. Native and Docker wheel
+checks pass, including external installation and the rendering example.
 
 ### Recovery regression audit
 
@@ -38,6 +47,32 @@ Run these focused tests with
 These tests run in the normal suite. The Qt tests use Cura component doubles,
 and the protocol model is not Klipper. They do not establish installed-Cura
 compatibility, custom macro correctness or physical print quality.
+
+### Whole-product regression audit and library consumers
+
+The 6.0.0 audit also covers descending file sorts, recursive-list failure/retry
+and stale walk callbacks, active-file destination/directory protection, upload
+confirmation invalidation and late print acknowledgements. Heater tests click real
+QML controls and wait beyond the debounce interval to prove a newly selected
+profile or cooldown cannot be overwritten by older bumps. Cooldown works without
+saved profiles. Real command/tuning-owner tests also hold a Home acknowledgement
+while profiles, cooldown and individual Off commands race; newer choices cancel
+older unsent group scripts, while invalid inputs preserve the valid queued choice.
+Camera tests cover EOF after a decoded frame, stalled frame counters,
+recovery indicators and IPv6 bridge origins.
+
+Recovery protocol tests include independent G90/G91 and M82/M83 modes, configured
+arc planes, selected object state, active-exclusion refusal, missing feed rates,
+zero bed targets, cancellation after restart submission and independently malformed
+physical/G-code coordinates. These augment the click-through workflow tests above.
+
+`make library` verifies every wheel source/resource byte and both plugin versions,
+then installs outside the checkout. A `-I -S` consumer exercises parsing, exact
+boundaries, compact hydration and CPU vertices without site packages. Optional Qt
+probes verify raster pixels, retained geometry and the standalone example; they do
+not claim an installed GPU-shader frame or physical-printer validation. The core
+consumer also runs in the normal test suite. Docker and native commands use their
+selected backend rather than requiring host Qt for Docker builds.
 
 ## 5.4.0 — historical validation
 

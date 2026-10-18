@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Build and verify reusable wheels through the selected native or Docker backend.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
 # 2026-09-26 [2bdf753] Add a native Windows development leg
@@ -1134,6 +1135,17 @@ def cmd_package(args) -> int:
     return record("package", _build_artifacts(root, tool_env()))
 
 
+def cmd_library(args) -> int:
+    root = checkout_root()
+    env = tool_env()
+    ok = run([sys.executable, "-m", "pip", "wheel", "--no-deps", ".",
+              "--wheel-dir", "dist/library"], cwd=root, env=env) == 0
+    if ok:
+        wheel = root / "dist" / "library" / ("moonraker_print_follower-%s-py3-none-any.whl" % _version(root))
+        ok = run([sys.executable, "tools/check_library.py", str(wheel), "--qt"], cwd=root, env=env) == 0
+    return record("library", ok)
+
+
 def cmd_snapshot(args) -> int:
     root = checkout_root()
     if not _build_artifacts(root, tool_env()):
@@ -1217,7 +1229,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("command", choices=(
         "bootstrap", "lint", "format", "test", "coverage", "captures", "refresh", "shaders",
-        "determinism", "package", "snapshot", "copy_snapshot", "gates", "hooks", "hook-check", "clean",
+        "determinism", "package", "library", "snapshot", "copy_snapshot", "gates", "hooks", "hook-check", "clean",
         "dev_up", "dev_down", "exec", "ui_test", "ui_release_gate"))
     parser.add_argument("--jobs", type=int, default=default_jobs(),
                         help="parallel test/diagnostic workers (default: JOBS or 16)")
@@ -1238,7 +1250,7 @@ def main(argv=None) -> int:
         "bootstrap": cmd_bootstrap, "lint": cmd_lint, "format": cmd_format,
         "test": cmd_test, "coverage": cmd_coverage, "captures": cmd_captures,
         "refresh": cmd_refresh, "shaders": cmd_shaders,
-        "determinism": cmd_determinism, "package": cmd_package,
+        "determinism": cmd_determinism, "package": cmd_package, "library": cmd_library,
         "snapshot": cmd_snapshot, "copy_snapshot": cmd_copy_snapshot,
         "gates": cmd_gates, "hooks": cmd_hooks,
         "hook-check": cmd_hook_check, "clean": cmd_clean,

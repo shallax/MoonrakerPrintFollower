@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Verify shared geometry and modular component ownership after extraction.
 # 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-27 [43ab36d] Accelerate follower rendering with retained GPU shader geometry
@@ -96,7 +97,7 @@ class RetainedGeometryTests(unittest.TestCase):
             self.assertEqual(child.geometry().lineWidth(), 3.5)
             GpuFollower._vertices(child, b"", 0, 1.5)
             self.assertEqual(child.geometry().lineWidth(), 1.5)
-            from mpf.plate.GpuFollower import prepare
+            from mpf.plate.ToolpathGeometry import prepare
             self.assertEqual(prepare((("current", None),)), ())
         finally:
             sip.delete(parent)
@@ -157,8 +158,9 @@ Item {
         from PyQt6 import sip
         from PyQt6.QtCore import QObject
         from PyQt6.QtQuick import QQuickWindow
-        from mpf.plate.GpuFollower import GpuFollower, prepare
-        from mpf.plate.GpuStrokeMaterial import pack_shader
+        from mpf.plate.GpuFollower import GpuFollower
+        from mpf.plate.ToolpathGeometry import prepare
+        from mpf.plate.ToolpathGeometry import pack_shader
         window = QQuickWindow(); window.resize(1000, 800)
         source = GpuFollower(window.contentItem())
         consumer = GpuFollower(window.contentItem()); consumer.setWidth(400); consumer.setHeight(300)
@@ -197,8 +199,9 @@ Item {
         sip.delete(node); sip.delete(window)
 
     def test_extruder_events_follow_completed_playback_and_disappear_on_scrub_back(self):
-        from mpf.plate.GpuFollower import GpuFollower, prepare, marker_counts, marker_geometry
-        from mpf.plate.GpuStrokeMaterial import pack_shader
+        from mpf.plate.GpuFollower import GpuFollower
+        from mpf.plate.ToolpathGeometry import prepare, marker_counts, marker_geometry
+        from mpf.plate.ToolpathGeometry import pack_shader
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
         data = pack_shader(prepare((("current", {"motions": 3,
@@ -232,8 +235,9 @@ Item {
     def test_physical_widths_share_fixed_geometry_with_pixel_override_and_zoom(self):
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
-        from mpf.plate.GpuFollower import GpuFollower, prepare
-        from mpf.plate.GpuStrokeMaterial import pack_shader, _pack_stdlib
+        from mpf.plate.GpuFollower import GpuFollower
+        from mpf.plate.ToolpathGeometry import prepare
+        from mpf.plate.ToolpathGeometry import pack_shader, _pack_stdlib
         payload = {"classes": {"SKIN": [[(0, 0, 0.0), (10, 0, 0.0), (20, 0, 1.0)]]}, "widths": (.4, .8)}
         raw = prepare((("current", payload),))
         data = pack_shader(raw)
@@ -263,7 +267,7 @@ Item {
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
         from mpf.plate.GpuFollower import GpuFollower
-        from mpf.plate.GpuStrokeMaterial import pack_shader
+        from mpf.plate.ToolpathGeometry import pack_shader
         window = QQuickWindow()
         item = GpuFollower(window.contentItem())
         item._data = pack_shader((("current", "SKIN", (0, 1),
@@ -282,7 +286,7 @@ Item {
         sip.delete(window)
 
     def test_arc_subedges_partition_one_motion_instead_of_growing_together(self):
-        from mpf.plate.GpuStrokeMaterial import pack_shader, _pack_stdlib
+        from mpf.plate.ToolpathGeometry import pack_shader, _pack_stdlib
         raw = (("current", "SKIN", (0, 0), array("f", (0, 0, 3, 0, 3, 0, 3, 1)).tobytes()),)
         self.assertEqual(pack_shader(raw), _pack_stdlib(raw))
         vertices = array("f")
@@ -292,7 +296,7 @@ Item {
 
     def test_marker_tracks_every_curve_subedge_and_matches_shader_fraction(self):
         from mpf.plate.GpuFollower import GpuFollower
-        from mpf.plate.GpuStrokeMaterial import pack_shader
+        from mpf.plate.ToolpathGeometry import pack_shader
         item = GpuFollower()
         item._data = pack_shader((("current", "SKIN", (0, 0, 1),
                                   array("f", (0, 0, 3, 0, 3, 0, 3, 1, 3, 1, 5, 1)).tobytes()),
@@ -309,8 +313,8 @@ Item {
         self.assertFalse(item.pointAtMotion(.5)["valid"], "retired geometry must not locate the live marker")
 
     def test_event_glyphs_are_small_zoom_dependent_and_thinned_in_screen_cells(self):
-        from mpf.plate.GpuFollower import marker_geometry, prepare
-        from mpf.plate.GpuStrokeMaterial import pack_shader
+        from mpf.plate.ToolpathGeometry import marker_geometry, prepare
+        from mpf.plate.ToolpathGeometry import pack_shader
         payload = {"retractions": [(i * .001, 0, i) for i in range(1000)],
                    "unretractions": [(0, 0, 1000)]}
         data = pack_shader(prepare((("current", payload),)))
@@ -340,7 +344,8 @@ Item {
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
         from mpf.plate import GpuFollower as module
-        from mpf.plate.GpuStrokeMaterial import pack_shader
+        from mpf.plate import ToolpathGeometry as geometry
+        from mpf.plate.ToolpathGeometry import pack_shader
 
         class Layer:
             def geometry_payload(self):
@@ -350,7 +355,7 @@ Item {
         window = QQuickWindow()
         item = module.GpuFollower(window.contentItem())
         item._layers = {"current": Layer()}
-        item._data = pack_shader(module.prepare((("current", item._layers["current"].geometry_payload()),)))
+        item._data = pack_shader(geometry.prepare((("current", item._layers["current"].geometry_payload()),)))
         item.settings = {"split": 2}
         old = item.updatePaintNode(None, None)
         printed = old._groups[0][-1]
@@ -378,24 +383,25 @@ Item {
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
         from mpf.plate import GpuFollower as module
-        from mpf.plate.GpuStrokeMaterial import pack_shader
+        from mpf.plate import ToolpathGeometry as geometry
+        from mpf.plate.ToolpathGeometry import pack_shader
 
         payload = {"classes": {"SKIN": [[(0, 0, 0), (20, 0, 1)]]}, "travels": []}
         class Layer:
             def geometry_payload(self):
                 return payload
         current, ghost, replacement = Layer(), Layer(), Layer()
-        with module._CACHE_LOCK:
-            module._CACHE.clear()
-        prior = module.prepare((("current", payload), ("next", payload)))
-        with patch.object(module, "dashed_edges", side_effect=AssertionError("cached next was rebuilt")):
-            again = module.prepare((("prev", payload), ("current", payload), ("next", payload)))
+        with geometry._CACHE_LOCK:
+            geometry._CACHE.clear()
+        prior = geometry.prepare((("current", payload), ("next", payload)))
+        with patch.object(geometry, "dashed_edges", side_effect=AssertionError("cached next was rebuilt")):
+            again = geometry.prepare((("prev", payload), ("current", payload), ("next", payload)))
         self.assertIs(next(row for row in prior if row[0] == "next"),
                       next(row for row in again if row[0] == "next"))
         window = QQuickWindow()
         item = module.GpuFollower(window.contentItem())
         item._layers = {"current": current}
-        item._data = pack_shader(module.prepare((("current", payload),)))
+        item._data = pack_shader(geometry.prepare((("current", payload),)))
         retained = item._data[0]
         with patch.object(module._POOL, "submit", return_value=Future()):
             item.layers = {"current": current, "next": ghost}
@@ -408,7 +414,7 @@ Item {
         from PyQt6 import sip
         from PyQt6.QtQuick import QQuickWindow
         from mpf.plate.GpuFollower import GpuFollower
-        from mpf.plate.GpuStrokeMaterial import pack_shader, _pack_stdlib
+        from mpf.plate.ToolpathGeometry import pack_shader, _pack_stdlib
         window = QQuickWindow()
         item = GpuFollower(window.contentItem())
         edge = array('f', (0, 0, 10, 0)).tobytes()
@@ -430,7 +436,7 @@ Item {
         sip.delete(empty)
 
     def test_next_dashes_continue_through_short_polyline_edges(self):
-        from mpf.plate.GpuFollower import dashed_edges, prepare
+        from mpf.plate.ToolpathGeometry import dashed_edges, prepare
         points = [[i * .25, 0, i] for i in range(41)]
         edges = list(dashed_edges(points))
         self.assertEqual(sum(edge[3] - edge[1] for edge in edges), 5)
@@ -441,7 +447,7 @@ Item {
         self.assertEqual(len(result[1][2]), 20)
 
     def test_every_width_is_constant_in_pixels_across_zoom_and_has_round_caps(self):
-        from mpf.plate.GpuFollower import stroke_geometry, WIDE_VERTICES
+        from mpf.plate.ToolpathGeometry import stroke_geometry, WIDE_VERTICES
         edge = array('f', (0, 0, 10, 0)).tobytes()
         for scale in (1, 5, 20):
             for width in range(1, 9):
@@ -455,7 +461,7 @@ Item {
                 self.assertAlmostEqual(max(vertices[::2]) * scale, 10 * scale + width / 2, places=4)
 
     def test_wide_next_dashes_keep_flat_ends_and_shared_vertex_stride(self):
-        from mpf.plate.GpuFollower import stroke_geometry, WIDE_VERTICES
+        from mpf.plate.ToolpathGeometry import stroke_geometry, WIDE_VERTICES
         edge = array('f', (0, 0, 3, 0)).tobytes()
         packed = stroke_geometry((('next', 'SKIN', (1,), edge),), 8, 1, 1)[0][3]
         vertices = array('f')
@@ -464,7 +470,7 @@ Item {
         self.assertEqual((min(vertices[::2]), max(vertices[::2])), (0, 3))
 
     def test_dense_preparation_cancels_before_publishing_or_caching(self):
-        from mpf.plate.GpuFollower import prepare
+        from mpf.plate.ToolpathGeometry import prepare
         cancel = threading.Event()
         cancel.set()
         payload = {"classes": {"SKIN": [[[i, 0, i] for i in range(100000)]]}}

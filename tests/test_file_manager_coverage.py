@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Cover file-manager ordering, invalidation and active-file protection.
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-30 [f425547] mpf's subpackages are capitalised
 # 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
@@ -558,10 +559,9 @@ class WalkFailureTests(ServiceCase):
             self.directory("path=gcodes&", [], dirs=("a", "b", "c"))
             self.assertEqual(len(self.all_walk_requests()), 2)
             self.directory("path=gcodes/a", [("a.gcode", {})])
-            self.assertEqual(self.service.resident_directories(), {"a", "b", "c"})
-            # Only the walked child contributed rows.
-            self.assertEqual(self.service.rows_resident, 1)
-            self.assertIsNotNone(self.service.row_for("a/a.gcode"))
+            self.assertIn("2-folder limit", self.service.walk_error)
+            self.assertEqual(self.service.rows_resident, 0)
+            self.assertIsNotNone(self.service.refreshed_at)
 
 
 class LifecycleTests(ServiceCase):

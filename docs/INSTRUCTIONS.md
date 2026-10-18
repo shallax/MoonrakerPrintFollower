@@ -115,7 +115,7 @@ are visible; a Python 3.14 patch release difference is acceptable.
   (the full suite on the selected backend),
   `make test_files FILES="tests.test_a tests.test_b"` (a CHOSEN list of
   test files, one process per file, run in PARALLEL — see below),
-  `make generate_screenshots`, `make package`, `make format`
+  `make generate_screenshots`, `make package`, `make library`, `make format`
   (qmlformat on the selected backend), `make coverage` (mpf/ report,
   the coverage gate), `make snapshot_package` (build + verify + copy to
   `mpf.curapackage` in the host's temporary directory), `make snapshot_quick`
@@ -125,7 +125,7 @@ are visible; a Python 3.14 patch release difference is acceptable.
   driver or the Linux scripts according to the selected backend.
 - For local full validation, `make all` runs shader compilation, lint, the
   full suite, fresh captures, capture determinism, package verification and
-  the local package snapshot in that order. GitHub CI enforces the full suite
+  the local package snapshot and installed-library verification in that order. GitHub CI enforces the full suite
   on pushes and pull requests; the pre-commit hook runs fast checks only.
 - **To run a subset of the tests, use `make test_files`, never one
   `unittest` invocation naming several files.** A single
@@ -452,7 +452,8 @@ When bumping the version (for example 3.1.0 → 3.2.0), every one of these must
 change together:
 
 1. `package.json` — `package_version`
-2. `mpf/plugin.json` — `version`
+2. `mpf/plugin.json` — `version`, and `pyproject.toml` — `project.version`
+   (the Cura plugin and reusable library ship the same release)
 3. `CHANGELOG.md` — a new section at the top, following the existing format
 4. `README.md` — the release header (`**Release:**`) and the "What changed"
    section
@@ -470,8 +471,10 @@ change together:
    tag against both version fields and fails on mismatch
 
 The version test asserts `package_version` and `plugin` `version` stay in
-sync; the release workflow asserts both equal the git tag, so no test edit is
-needed per release.
+sync; `make library` also checks the wheel version against both manifests. The
+release workflow asserts the plugin manifests equal the git tag, so no test edit
+is needed per release. Public library changes must update `docs/LIBRARY.md` and
+the isolated consumer proof in the same change; keep core imports free of Qt/Cura.
 
 `sdk_version` in `package.json` is a compatibility floor, not a release number:
 change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.py`).
@@ -1022,7 +1025,7 @@ transcription drift):
 - Escape-dismiss hand-test on the pop-overs.
 - Multi-hour Canvas/CPU sanity while printing.
 - One old + one current Cura (the README claims Cura 5.7-5.14 beta 1 /
-  SDK 8.7-8.12).
+  SDK 8.7-8.13).
 Once the workflow's tag-built artifacts exist, unpack the curapackage and
 grep the shipped QML/Python for the verification markers — no `BISECT`,
 no `visible: false` console gate, `GET` (not POST) on the endstop query,

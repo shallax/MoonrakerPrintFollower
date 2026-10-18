@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
-# Selected Git history (newest first; oldest and latest two content changes):
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Exercise decoded camera freshness, recovery state and URL handling.
 # 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
 
@@ -25,6 +26,38 @@ class CameraTitleRowTests(harness.CameraTitleRowTests):
 
 
 class CameraOwnershipTests(harness.CameraOwnershipTests):
+    def test_frozen_existing_frame_reports_stall_and_live_waits_for_fresh_frames(self):
+        pane, image = self._mount_pane()
+        model = harness.CameraModelDouble(fps=.5)
+        pane.setProperty("printerModel", model)
+        pane.setProperty("configured", True)
+        self._apply(pane, "http://127.0.0.1:59999/webcam", True)
+        image.setProperty("framesDisplayed", 1)
+        self.pump()
+        watchdog = pane.findChild(harness.QObject, "cameraStallWatchdog")
+        self.assertIsNotNone(watchdog)
+        live = self.find(pane, "cameraLiveBadge")
+        # One fresh frame per eight-second observation is sufficient,
+        # including the supported 0.5 FPS snapshot stream.
+        watchdog.triggered.emit()
+        image.setProperty("framesDisplayed", 5)
+        watchdog.triggered.emit()
+        self.assertEqual(model.camera_stalls, 0)
+        self.assertTrue(live.property("visible"))
+        watchdog.triggered.emit()
+        self.pump()
+        self.assertEqual(model.camera_stalls, 1)
+        self.assertFalse(live.property("visible"))
+        image.setProperty("framesDisplayed", 6)
+        self.pump()
+        self.assertFalse(model.cameraRecovering)
+        self.assertTrue(live.property("visible"))
+        model.set_stream_enabled(False)
+        self.pump()
+        self.assertFalse(live.property("visible"))
+        watchdog.triggered.emit()
+        self.assertEqual(model.camera_stalls, 1)
+
     def test_first_application_starts_the_consumer_exactly_once(self):
         # A: the initial attach applies the settled final state once —
         # exactly one start, one stop, one source assignment. The old
