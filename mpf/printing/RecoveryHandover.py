@@ -236,11 +236,14 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
         # Recovery's selected layer is the physical restart reference. A
         # parked nozzle or dry-running file height must not inflate its lift.
         clear_z = min(target[2] + clearance, maximum_z)
+        traverse_z = max(bounds.gcode[2], clear_z)
         prime_clear_z = min(max(bounds.gcode[2], target[2], prime_target[2]), maximum_z) if prime_target else clear_z
         if idle and reference > 0 and clear_z > bounds.maximum[2]:
             raise UnsafeMotion("Clearance exceeds the original file Z travel after object-top homing")
         bounds.check((bounds.gcode[0], bounds.gcode[1], clear_z))
         bounds.check((target[0], target[1], clear_z))
+        bounds.check((bounds.gcode[0], bounds.gcode[1], traverse_z))
+        bounds.check((target[0], target[1], traverse_z))
         bounds.check(target)
         if prime_target is not None:
             amount = finite(prime_amount_mm)
@@ -282,12 +285,13 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
             f"G1 Z{n(prime_target[2])} F{n(z_speed * 60)}",
             f"G1 E{n(amount)} F{n(speed * 60)}", "M400", f"G4 P{n(dwell * 1000)}",
         ))
-    return_script = "\n".join((
-        "M400", "G90", "M220 S100",
-        f"G1 Z{n(clear_z)} F{n(z_speed * 120)}",
-        f"G1 X{n(target[0])} Y{n(target[1])} F{n(xy_speed * 60)}",
-        "M400",
-    ))
+    return_moves = [f"G1 Z{n(clear_z)} F{n(z_speed * 120)}",
+                    f"G1 X{n(target[0])} Y{n(target[1])} F{n(xy_speed * 60)}"]
+    # Retain a high purge/park position through XY travel; only lift first
+    # when below the selected layer's clearance plane.
+    if bounds.gcode[2] >= clear_z:
+        return_moves.reverse()
+    return_script = "\n".join(("M400", "G90", "M220 S100", *return_moves, "M400"))
     state = source_plan.state
     modal = [f"M220 S{n(state.speed_percent)}", f"M221 S{n(state.flow_percent)}",
              f"G92 E{n(state.e)}"]

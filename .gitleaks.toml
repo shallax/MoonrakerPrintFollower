@@ -18,6 +18,8 @@ entropy = 3.0
 [allowlist]
 description = "Known synthetic fixtures and standard tool tags"
 paths = [
+    # Git metadata contains object/ref identifiers, not distributable source.
+    '''(^|/)\.git/''',
     '''(?i)tools/capture_settings\.py''',
     '''.*CACHEDIR\.TAG''',
     # Build outputs and the Windows leg's virtualenv. Neither is ever

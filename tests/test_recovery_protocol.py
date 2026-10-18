@@ -152,6 +152,28 @@ class RecoveryProtocolTests(unittest.TestCase):
         self.drain(printer)
         self.assertEqual(printer.dwells, [])
 
+    def test_return_keeps_purge_height_until_xy_arrives_and_only_lifts_when_needed(self):
+        for idle, reference in ((False, 0), (True, 0), (True, 2)):
+            for prime_z in (3, 7, 100, 300):
+                with self.subTest(idle=idle, reference=reference, prime_z=prime_z):
+                    printer = ProtocolPrinter(idle=idle, mesh=.18)
+                    execution, events = self.attempt(printer, z_reference_mm=reference,
+                        prime_enabled=True, prime_xyz=(10, 15, prime_z))
+                    while printer.queue and not printer.dwells:
+                        printer.step()
+                    self.assertTrue(printer.dwells, events)
+                    after_prime = len(printer.trace)
+                    self.drain(printer)
+                    self.assertEqual(execution.phase, "complete", events[-1])
+                    height = printer.dwells[-1][1][2]
+                    self.assertLessEqual(height, 250)
+                    clearance = 7 + printer.base[2]
+                    expected = ([(40, 50, height), (40, 50, clearance)]
+                                if height >= clearance else
+                                [(10, 15, clearance), (40, 50, clearance)])
+                    self.assertEqual(printer.trace[after_prime:after_prime + 2], expected)
+                    self.assertEqual(printer.xyz, [40, 50, 2 + printer.base[2]])
+
     def test_all_network_checks_finish_above_print_before_atomic_descent_and_start(self):
         for idle in (False, True):
             printer = ProtocolPrinter(idle=idle, mesh=0)

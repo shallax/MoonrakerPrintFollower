@@ -84,8 +84,13 @@ ColumnLayout {
             add("Lower to Z" + n(primeHeight()) + " at " + n(zSpeed) + " mm/s (about " + n((primeTravelZ - primeHeight()) / zSpeed) + " s).", [point[0], point[1], primeHeight()]);
             add("Purge " + n(plan.primeAmount) + " mm of filament at " + n(plan.primeSpeed) + " mm/s; then dwell for " + n(plan.primeDwell === undefined ? 5 : plan.primeDwell) + " s.");
         }
-        add("Move vertically to Z" + n(travelZ) + " at " + n(zSpeed * 2) + " mm/s.", [point[0], point[1], travelZ]);
-        add("Move to X" + n(plan.x) + " Y" + n(plan.y) + " at Z" + n(travelZ) + " (" + n(xySpeed) + " mm/s).", [Number(plan.x), Number(plan.y), travelZ]);
+        if (point[2] < travelZ) {
+            add("Raise to Z" + n(travelZ) + " at " + n(zSpeed * 2) + " mm/s.", [point[0], point[1], travelZ]);
+            add("Move to X" + n(plan.x) + " Y" + n(plan.y) + " at Z" + n(travelZ) + " (" + n(xySpeed) + " mm/s).", [Number(plan.x), Number(plan.y), travelZ]);
+        } else {
+            add("Move to X" + n(plan.x) + " Y" + n(plan.y) + " at Z" + n(point[2]) + " (" + n(xySpeed) + " mm/s).", [Number(plan.x), Number(plan.y), point[2]]);
+            add("Lower to Z" + n(travelZ) + " at " + n(zSpeed * 2) + " mm/s (about " + n((point[2] - travelZ) / (zSpeed * 2)) + " s).", [point[0], point[1], travelZ]);
+        }
         add("Check the file position and restore extrusion, fan and motion settings while above the print.");
         add("Lower to Z" + n(plan.z) + " at " + n(zSpeed) + " mm/s (about " + n((travelZ - Number(plan.z)) / zSpeed) + " s).", [Number(plan.x), Number(plan.y), Number(plan.z)]);
         add("Immediately resume printing on layer " + plan.resumeLayer + " at move " + plan.resumeMove + " (" + (Number(plan.resumeMove) - 1) + " completed moves on that layer; byte " + plan.offset + ").");

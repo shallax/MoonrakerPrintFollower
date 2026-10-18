@@ -4,6 +4,10 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 6.0.0
 
+- After recovery purging, retain the purge height while returning to the selected
+  X/Y, then lower over the restart point. Lift before XY only when below the
+  configured clearance plane; confirmation steps and diagrams show the same order.
+
 - Recovery retains a configured prime Z above the restart point; otherwise it uses restart Z + 5 mm. Prime and travel heights respect the printer’s Z ceiling, including coordinate offsets, and confirmation diagrams show the capped positions.
 
 - Preview each recovery step in angled 3D and XY/XZ/YZ views with the nozzle, restart

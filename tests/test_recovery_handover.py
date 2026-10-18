@@ -337,8 +337,8 @@ class SelectedLayerClearanceTests(unittest.TestCase):
                                       printed_top_z=100, clearance_mm=clearance)
                 self.assertEqual(plan.clearance_z, 2 + clearance)
                 moves = [line for line in plan.return_script.splitlines() if line.startswith("G1")]
-                self.assertEqual(moves, [f"G1 Z{2+clearance} F600",
-                                        "G1 X40 Y50 F3000"])
+                self.assertEqual(moves, ["G1 X40 Y50 F3000",
+                                        f"G1 Z{2+clearance} F600"])
 
     def test_high_prime_keeps_its_own_travel_but_returns_at_layer_plus_clearance(self):
         plan = prepare_return(status(), source(), filename="part.gcode", printed_top_z=100,

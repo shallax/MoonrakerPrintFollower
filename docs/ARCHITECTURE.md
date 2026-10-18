@@ -2369,7 +2369,9 @@ bounded/simplified and distinguishes recorded progress from actual deposited mat
 Priming chooses the configured Z only when above the restart layer, otherwise
 restart Z + 5 mm, capped at the transformed Z limit. Travel to prime uses the higher
 of current and effective prime Z without an additional lift. Return travel is the
-selected Z plus configured clearance, also capped. The prime-only dwell defaults
+selected Z plus configured clearance, also capped. A nozzle already above that
+plane keeps its height during the XY return, then lowers over the restart point.
+A nozzle below the plane lifts before XY travel. The prime-only dwell defaults
 to 5 seconds and participates in the command timeout. Final descent/modal restoration,
 pause release and SD start share one script without G4, M400 or a network round trip
 at the restart surface. Fresh staging-position checks precede that final script.

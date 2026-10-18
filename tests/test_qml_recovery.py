@@ -168,7 +168,7 @@ class RecoveryReviewTests(harness.RealEngineTestCase):
         self.click(window, self.find(document, "moonrakerRecoveryReview"))
         text = self.find(document, "moonrakerRecoverySteps").property("text")
         phrases = ["Heat and wait", "Z50.00", "X0.00 Y200.00", "Lower to Z10.00",
-                   "Purge 20.00", "dwell for 12.50 s", "Z6.00", "X10.00 Y20.00",
+                   "Purge 20.00", "dwell for 12.50 s", "X10.00 Y20.00 at Z10.00", "Lower to Z6.00",
                    "Lower to Z1.00", "about 1.00 s", "resume printing on layer 3 at move 2 (1 completed moves on that layer; byte 100)"]
         previous = -1
         for phrase in phrases:
@@ -203,6 +203,33 @@ class RecoveryReviewTests(harness.RealEngineTestCase):
         printer.changed.emit()
         self.pump(10)
         self.assertIn("Lower to Z249.00", self.find(document, "moonrakerRecoverySteps").property("text"))
+
+    def test_preview_returns_at_purge_height_before_lowering_or_lifts_to_clearance(self):
+        from PyQt6.QtQml import QQmlEngine, QQmlExpression
+        printer = RecoveryPrinter()
+        printer.plan.update(primeEnabled=True, primeX=0, primeY=200, primeZ=100,
+                            primeAmount=20, primeSpeed=2, clearance=5, currentZ=50)
+        document, _ = self.mount_window("RecoveryControls.qml", 560, 450)
+        document.setProperty("printerModel", printer)
+        self.pump(20)
+        expression = QQmlExpression(QQmlEngine.contextForObject(document), document,
+                                    "recoveryActions()")
+        for height, expected in ((100, [[10, 20, 100], [10, 20, 6]]),
+                                 (3, [[0, 200, 6], [10, 20, 6]]),
+                                 (6, [[10, 20, 6], [10, 20, 6]])):
+            with self.subTest(prime_z=height):
+                printer.plan.update(primeZ=height)
+                printer.changed.emit()
+                self.pump(10)
+                value, undefined = expression.evaluate()
+                self.assertFalse(expression.hasError(), expression.error().toString())
+                self.assertFalse(undefined)
+                actions = value.toVariant()
+                purge = next(i for i, action in enumerate(actions) if action["text"].startswith("Purge"))
+                moves = actions[purge + 1:purge + 3]
+                self.assertEqual([action["position"] for action in moves], expected)
+                self.assertEqual(moves[0]["from"], [0, 200, height])
+                self.assertEqual(moves[1]["from"], expected[0])
 
     def test_bookmark_use_and_remove_do_not_start_printing(self):
         printer = RecoveryPrinter()

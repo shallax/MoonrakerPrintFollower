@@ -62,7 +62,9 @@ The configured priming Z is retained when above the restart layer; otherwise
 priming uses restart Z + 5 mm, capped at the permitted maximum. Travel to the
 prime point uses the higher of current Z and effective prime Z without an extra
 clearance lift. The configurable dwell occurs only after purging (default 5 s,
-0–300 s). File seek, modal restoration and pause cleanup finish above the print;
+0–300 s). After purging, the nozzle moves to the restart X/Y at its current height,
+then lowers to the clearance plane. If below that plane, it lifts before moving
+across. File seek, modal restoration and pause cleanup finish above the print;
 the final descent and restart are sent together without a dwell at the surface.
 
 The confirmation lists exact coordinates, estimated descent time, the restart
