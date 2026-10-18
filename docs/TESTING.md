@@ -49,6 +49,12 @@ attempt. Losing the driver stops the suite and finalizes its partial gallery.
 macOS gate artifacts also retain launcher/configuration logs, Cura's redirected
 Python streams and native crash reports under `native-diagnostics/`, even when
 the scenario process is interrupted before its own cleanup runs.
+For a native macOS crash that lacks useful OS reports, dispatch the `Leg`
+workflow with `native_backtrace=true`; its explicit LLDB launch preserves C++
+thread stacks and loaded-image addresses in `native-backtrace.log`. Ordinary
+release gates use the normal application launch. Debugger setup is restricted to
+disposable GitHub runners; it preserves Cura's entitlements and adds debug access
+to that installation. The diagnostic run does not replace an ordinary gate.
 
 Additional qualification remains necessary before claiming physical recovery
 validation or sustained whole-product performance:

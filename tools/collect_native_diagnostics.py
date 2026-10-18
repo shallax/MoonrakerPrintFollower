@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release history (newest first):
+# 2026-10-18 — 6.0.0: Include opt-in debugger backtraces alongside native logs.
 # 2026-10-18 — 6.0.0: Preserve native crash reports and logs after interrupted UI runs.
 
 """Collect native CI evidence independently of the scenario runner's finally."""
@@ -15,7 +16,8 @@ import shutil
 def collect(work, config, reports, output):
     output.mkdir(parents=True, exist_ok=True)
     sources = [(work / name, output / name) for name in
-               ("cura_run.log", "native_harness.log", "simulator.log")]
+               ("cura_run.log", "native-backtrace.log", "native-debug-setup.log",
+                "native_harness.log", "simulator.log")]
     if config is not None and config.is_dir():
         sources.extend((path, output / "cura" / path.name) for path in config.glob("cura.log*"))
     # Frozen macOS Cura redirects Python streams before enabling its fatal

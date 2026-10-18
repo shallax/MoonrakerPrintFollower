@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Allow explicit macOS native crash backtraces on diagnostic legs.
 # 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
 # 2026-09-27 [869ece5] Keep follower colour legends stable and allow explicit macOS presentation diagnosis
 # 2026-09-24 [be15099] One leg on demand, running the gate's own steps
@@ -58,6 +59,10 @@ on:
         description: "Compare macOS internal frames and desktop capture instead of a gate leg"
         type: boolean
         default: false
+      native_backtrace:
+        description: "Launch macOS Cura under LLDB to retain native crash frames"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -70,6 +75,7 @@ jobs:
     with:
       os: ${{ inputs.os }}
       unit: ${{ inputs.unit }}
+      native_backtrace: ${{ inputs.native_backtrace }}
       # A one-unit declaration in the gate's own shape, so the reusable
       # workflow reads it exactly as it reads the release matrix's.
       UNITS: >-

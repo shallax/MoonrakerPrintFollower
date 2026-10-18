@@ -4,6 +4,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Support opt-in LLDB launch for native crash diagnosis.
 # 2026-10-18 - 6.0.0: Repair root-only QtTest permissions before launching Cura.
 # 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
@@ -976,9 +977,37 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # The launch env the harness needs. HARNESS_RPC_DIR is where the
     # driver writes its port and token; the runner reads the same files.
     export HARNESS_GEOMETRY HARNESS_WINDOW
-    ( cd "$APP/Contents/MacOS" && nohup "$BIN" ) >"$WORK_DIR/cura_run.log" 2>&1 &
+    LAUNCH_LOG="$WORK_DIR/cura_run.log"
+    if [ "${HARNESS_NATIVE_BACKTRACE:-0}" = 1 ]; then
+        [ "${GITHUB_ACTIONS:-}" = true ] || die "native backtrace is restricted to a disposable GitHub runner"
+        DEBUG_ENTITLEMENTS="$WORK_DIR/native-debug-entitlements.plist"
+        DEBUG_SETUP_LOG="$WORK_DIR/native-debug-setup.log"
+        /usr/sbin/DevToolsSecurity -status >"$DEBUG_SETUP_LOG" 2>&1
+        codesign -dv "$APP" >>"$DEBUG_SETUP_LOG" 2>&1
+        codesign -d --entitlements :- "$APP" >"$DEBUG_ENTITLEMENTS" 2>>"$DEBUG_SETUP_LOG"
+        "$PYTHON" - "$DEBUG_ENTITLEMENTS" <<'PY'
+import pathlib
+import plistlib
+import sys
+path = pathlib.Path(sys.argv[1])
+entitlements = plistlib.loads(path.read_bytes())
+entitlements["com.apple.security.get-task-allow"] = True
+path.write_bytes(plistlib.dumps(entitlements))
+PY
+        # Preserve the host's existing permissions and only make this
+        # disposable diagnostic installation available to the debugger.
+        sudo codesign --force --deep --sign - --entitlements "$DEBUG_ENTITLEMENTS" "$APP" \
+            2>&1 | tee -a "$DEBUG_SETUP_LOG"
+        LAUNCH_LOG="$WORK_DIR/native-backtrace.log"
+        note "diagnostic launch under LLDB; ordinary gate launch is unchanged"
+        ( cd "$APP/Contents/MacOS" && nohup xcrun lldb --batch --no-lldbinit \
+            -o run -k 'thread backtrace all' -k 'image list' -k 'register read' -- "$BIN" ) \
+            >"$LAUNCH_LOG" 2>&1 &
+    else
+        ( cd "$APP/Contents/MacOS" && nohup "$BIN" ) >"$LAUNCH_LOG" 2>&1 &
+    fi
     CURA_PID=$!
-    echo "launched $BIN (pid $CURA_PID), output in $WORK_DIR/cura_run.log"
+    echo "launched $BIN (pid $CURA_PID), output in $LAUNCH_LOG"
 
     # The driver's port file is the ready marker: it appears once Cura
     # has loaded the staged plugin, so it is the one signal that says the
@@ -988,6 +1017,10 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         local tick start
         start=$(date +%s)
         for tick in $(seq 1 300); do
+            if [ "${HARNESS_NATIVE_BACKTRACE:-0}" = 1 ] && ! kill -0 "$CURA_PID" 2>/dev/null; then
+                warn "native debugger exited before the driver became ready"
+                return 1
+            fi
             if [ -s "$HARNESS_RPC_DIR/harness_port.txt" ]; then
                 RPC_FILE="$HARNESS_RPC_DIR/harness_port.txt"
                 return 0
@@ -1010,8 +1043,8 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         else
             warn "cura is not running - the boot crashed or exited"
         fi
-        warn "--- $WORK_DIR/cura_run.log (tail) ---"
-        tail -40 "$WORK_DIR/cura_run.log" 2>/dev/null || true
+        warn "--- $LAUNCH_LOG (tail) ---"
+        tail -40 "$LAUNCH_LOG" 2>/dev/null || true
         exit 1
     fi
     note "driver up: $RPC_FILE"

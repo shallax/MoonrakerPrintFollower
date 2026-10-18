@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release history (newest first):
+# 2026-10-18 — 6.0.0: Retain the native debugger's independent crash log.
 # 2026-10-18 — 6.0.0: Verify crash evidence survives missing files and copy failures.
 
 """Exercise diagnostic collection without a running Cura or macOS host."""
@@ -31,7 +32,7 @@ class NativeDiagnosticsTests(unittest.TestCase):
     def test_collects_native_logs_and_only_cura_crashes_including_retired_reports(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ("work/cura_run.log", "work/native_harness.log", "work/simulator.log",
+            for name in ("work/cura_run.log", "work/native-backtrace.log", "work/native_harness.log", "work/simulator.log",
                          "config/cura.log", "config/cura.log.1", "reports/UltiMaker-Cura.ips",
                          "reports/Retired/Cura.crash", "reports/Finder.ips",
                          "cura/stdout.log", "cura/stderr.log"):
@@ -39,7 +40,7 @@ class NativeDiagnosticsTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(name)
             copied = diagnostics.collect(root / "work", root / "config", root / "reports", root / "out")
-            self.assertEqual(len(copied), 9)
+            self.assertEqual(len(copied), 10)
             for path in copied:
                 self.assertTrue(path.read_text())
             self.assertEqual((root / "out/crashes/Retired/Cura.crash").read_text(),
