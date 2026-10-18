@@ -3,9 +3,13 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release history (newest first):
+# 2026-10-18 — 6.0.0: Load fixture QML from a real local file without holding the loader GIL.
 # 2026-10-18 — 6.0.0: Prove real Preview card rendering and clicks survive stage replacement.
 
 """Exercise Cura's Loader/Row reparenting with real QML, pixels and input."""
+from pathlib import Path
+import tempfile
+
 from tests import qml_engine_support as harness
 
 if harness.QT_AVAILABLE:
@@ -17,8 +21,11 @@ if harness.QT_AVAILABLE:
 
 class PreviewCardLifecycleTests(harness.RealEngineTestCase):
     def test_card_remains_drawn_and_clickable_after_repeated_stage_replacement(self):
+        directory = tempfile.TemporaryDirectory(prefix="preview-card-lifecycle-")
+        self.addCleanup(directory.cleanup)
+        source = Path(directory.name) / "preview-card-lifecycle.qml"
         component = QQmlComponent(self.engine)
-        component.setData(b'''import QtQuick 2.15
+        source.write_bytes(b'''import QtQuick 2.15
 Item {
     id: root
     width: 1600; height: 900
@@ -30,7 +37,10 @@ Item {
     }
     Component { id: previewStage; Item { Row { objectName: "row"; x: 600; y: 800 } } }
     Component { id: prepareStage; Item { Row { objectName: "row"; x: 500; y: 750 } } }
-}''', QUrl("file:///preview-card-lifecycle.qml"))
+}''')
+        # loadUrl releases the GIL, allowing loader-thread diagnostics to
+        # reach the Python message handler; synchronous setData does not.
+        component.loadUrl(QUrl.fromLocalFile(str(source)))
         root = component.create()
         self.assertIsNotNone(root, harness.qml_error_report(component))
         self.addCleanup(self._delete_document, root)
