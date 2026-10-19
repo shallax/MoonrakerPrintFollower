@@ -1,6 +1,6 @@
 # Moonraker Print Follower roadmap
 
-6.0.0 completes the planned feature scope. Its merge and tag require passing PR
+6.0.0 adds recovery, heater controls and reliability improvements. Its merge and tag require passing PR
 CI and the full supported-version UI sweep on the final commit, as described in
 TESTING.md alongside the limits of automated validation. Further maintenance focuses
 on correctness, compatibility, documentation and reusable component boundaries.
@@ -274,15 +274,16 @@ the FPS face retains room for its longer readout.
 
 ### Optional runtime hosting
 
-The optional detection and STEP installers now resolve their 27 selectable
-assets from the matching plugin GitHub Release and preserve verified installed
-cache identities. The release workflow stages exact pinned bytes, uploads to a
-draft and verifies GitHub's asset digests. Public release still requires the
-redistribution companion and direct-download verification described in
-[RUNTIME_MIRROR.md](RUNTIME_MIRROR.md).
-Publish unchanged bytes with corresponding source and notices on the current
-plugin release, then download-verify every public asset before shipping. No
-binary payloads enter Git history.
+The optional detection and STEP installers resolve their 27 selectable assets
+from the matching plugin GitHub Release and preserve verified installed cache
+identities. Hosting was implemented and the public `v5.4.0` release was published
+on 12 October 2026 with all 27 assets, their manifest and the source/notices
+companion. It is not outstanding feature work.
+
+Each subsequent release must attach those pinned payloads and its companion to
+its own version tag, then verify the release downloads. This is a release
+procedure for 6.0.0; see [RUNTIME_MIRROR.md](RUNTIME_MIRROR.md). No binary payloads
+enter Git history.
 
 ### Remaining 5.x work — shared tracking already implemented
 

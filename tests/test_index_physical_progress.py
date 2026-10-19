@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-19 — 6.0.0: Prove stopped playback completion after missing late telemetry.
 # 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
 # 2026-10-01 [1866243] Persist print sources and publish live download progress
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
@@ -177,6 +178,23 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
             best[sample["layer"]] = max(best[sample["layer"]], motion.fraction)
         for layer, progress in enumerate(best):
             self.assertGreater(progress, .9, f"layer {layer + 1} never followed: {best}")
+
+    def test_stopped_playback_endpoint_remains_identifiable_after_a_telemetry_gap(self):
+        from tests.harness.gcodegen import penguin_playback, playback_sample
+        data, rows = penguin_playback()
+        index = harness.build_index_from_bytes(data)
+        self.service._view = self.qt.load("IndexView").IndexView(self.job, index)
+        tracker = self.service._split_tracker
+        tracker.begin(self.job, 2)
+        # A missed late update leaves the accepted position at the exact
+        # floor observed in the macOS failure. Stopped velocity supplies no
+        # extrusion evidence: the final geometry itself must disambiguate it.
+        tracker.floor = tracker.refined = 1195
+        endpoint = playback_sample(rows, 1)
+        for _ in range(3):
+            progress = self.service.observe_motion(2, endpoint["offset"],
+                endpoint["position"][:3], extruding=False)
+            self.assertAlmostEqual(progress.fraction, 1.0, places=6)
 
     def test_partial_motion_projects_only_onto_the_accepted_unfinished_move(self):
         from mpf.gcode.MotionIndex import LayerMotionIndex

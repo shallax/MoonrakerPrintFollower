@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-19 — 6.0.0: Reject playback readiness without native legacy mesh vertices.
 # 2026-10-18 — 6.0.0: Require the actual final Preview path in playback evidence.
 # 2026-10-18 — 6.0.0: Check presentation probe arguments without rejecting optional failure policy.
 # 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
@@ -170,6 +171,29 @@ class HarnessSpecTests(unittest.TestCase):
                 # in the raw Cura getters must not force the driver to repr().
                 wire = json.loads(json.dumps(namespace["result"]))
                 self.assertEqual(wire["finished"], finished)
+
+    def test_penguin_ready_rejects_an_empty_legacy_mesh(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        for vertices in (0, 8):
+            with self.subTest(vertices=vertices):
+                mesh = SimpleNamespace(getVertexCount=lambda vertices=vertices: vertices)
+                view = SimpleNamespace(getLayerData=lambda: object(), getMaxLayers=lambda: 2,
+                    getCurrentLayer=lambda: 0, getMaxPaths=lambda: 1548, getCurrentPath=lambda: 0,
+                    getCompatibilityMode=lambda: True, getCurrentLayerMesh=lambda mesh=mesh: mesh)
+                state = SimpleNamespace(attached=True, expected_layer=0, expected_path=0)
+                runtime = SimpleNamespace(preview=SimpleNamespace(_state=state, _motion=object()),
+                    presentation=SimpleNamespace(reported_position=False))
+                extension = type("MoonrakerPrintFollower", (), {"_runtime": runtime})()
+                app = SimpleNamespace(getController=lambda view=view: SimpleNamespace(getActiveView=lambda: view),
+                    getExtensions=lambda extension=extension: [extension])
+                namespace = {}
+                with patch.dict(sys.modules, {"UM.Application": SimpleNamespace(
+                        Application=SimpleNamespace(getInstance=lambda app=app: app))}):
+                    exec(_scenarios.PENGUIN_PREVIEW_READ, namespace)
+                reply = json.loads(json.dumps(namespace["result"]))
+                self.assertEqual(reply["ready"], vertices > 0)
+                self.assertEqual(reply["legacy_mesh_vertices"], vertices)
 
     def test_scheduled_pause_scenarios_hold_the_exact_layer_before_ui_waits(self):
         # The v5.1.0 macOS gate observed layer 5 while p7 waited for layer 1:

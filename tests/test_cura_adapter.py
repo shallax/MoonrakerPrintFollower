@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-19 — 6.0.0: Repair list-backed layer colours in Cura 5.14 beta 1 legacy rendering.
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-30 [f425547] mpf's subpackages are capitalised
 # 2026-09-04 [a99637b] Update to v1.1.0.
@@ -116,6 +117,59 @@ class PreviewViewAccessorTests(unittest.TestCase):
         self.assertEqual(view.minimum, 0)
         set_preview_path(object(), 1.0)  # no setPath: no-op
 
+
+class LegacyLayerColorTests(unittest.TestCase):
+    def _install(self, polygon_type, version="5.14.0-beta.1"):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import sys
+        with patch.dict(sys.modules, {
+                "cura.CuraVersion": SimpleNamespace(CuraVersion=version),
+                "cura.LayerPolygon": SimpleNamespace(LayerPolygon=polygon_type)}):
+            return MODULE.install_legacy_layer_color_fix()
+
+    def test_ragged_beta_colours_keep_numpy_selection_shapes(self):
+        import numpy as np
+        from types import SimpleNamespace
+        class Polygon:
+            def mapLineTypeToColor(self, indices):
+                return self._color_map[indices][0]
+        # Attribute colours have different variant counts per line type.
+        palette = [[(1., 0., 0., 1.)], [(0., 1., 0., 1.), (1., 1., 0., 1.)]]
+        polygon = Polygon()
+        polygon._color_map = palette
+        with self.assertRaises(TypeError):
+            polygon.mapLineTypeToColor(np.array([0, 1]))
+        self.assertTrue(self._install(Polygon))
+        method = Polygon.mapLineTypeToColor
+        self.assertFalse(self._install(Polygon))
+        self.assertIs(Polygon.mapLineTypeToColor, method)
+        for indices, shape in ((np.array([1, 0]), (2, 4)),
+                               (np.array([[0], [1]]), (2, 1, 4)),
+                               (np.array([], dtype=int), (0, 4)),
+                               (np.int64(1), (4,))):
+            with self.subTest(shape=shape):
+                colors = polygon.mapLineTypeToColor(indices)
+                self.assertEqual(colors.shape, shape)
+                np.testing.assert_array_equal(colors, np.asarray([p[0] for p in palette])[indices])
+        with self.assertRaises(IndexError):
+            polygon.mapLineTypeToColor(np.array([.5]))
+        # Existing array-backed paths are delegated, not reinterpreted.
+        sentinel = SimpleNamespace(_color_map=np.zeros((2, 4)))
+        self.assertEqual(method(sentinel, 1), 0.)
+
+    def test_other_versions_and_missing_cura_keep_the_original_method(self):
+        from unittest.mock import patch
+        import sys
+        class Polygon:
+            def mapLineTypeToColor(self, _indices):
+                return "original"
+        original = Polygon.mapLineTypeToColor
+        for version in ("5.13.0", "5.14.0", "5.14.0-beta.2"):
+            self.assertFalse(self._install(Polygon, version))
+            self.assertIs(Polygon.mapLineTypeToColor, original)
+        with patch.dict(sys.modules, {"cura.CuraVersion": None}):
+            self.assertFalse(MODULE.install_legacy_layer_color_fix())
 
 if __name__ == "__main__":
     unittest.main()

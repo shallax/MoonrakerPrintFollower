@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-19 — 6.0.0: Repair list-backed layer colours in Cura 5.14 beta 1 legacy rendering.
 # 2026-09-16 [ada1bfb] 4.3.0: remove the follow render pass, restore the native nozzle lifecycle
 # 2026-09-16 [432ed5c] 4.3.0: the follow pass rides a settings debug toggle, off for the soak
 # 2026-09-04 [a99637b] Update to v1.1.0.
@@ -116,3 +117,34 @@ def reset_preview_layer_data(view) -> None:
     claim about the renderer's per-frame allocations (the review)."""
     if view is not None and hasattr(view, "resetLayerData"):
         view.resetLayerData()
+
+
+def install_legacy_layer_color_fix() -> bool:
+    """Repair 5.14 beta 1's list-backed colours in its legacy mesh builder.
+
+    The beta changed the colour table to ragged attribute variants, but its
+    compatibility renderer still indexes that Python list with a NumPy array.
+    Use each line type's ordinary colour, preserving the old array shape.
+    Other Cura versions and array-backed polygons keep their original method.
+    """
+    try:
+        from cura.CuraVersion import CuraVersion
+        if CuraVersion != "5.14.0-beta.1":
+            return False
+        from cura.LayerPolygon import LayerPolygon
+    except ImportError:
+        return False
+    original = LayerPolygon.mapLineTypeToColor
+    if getattr(original, "_mpf_legacy_color_fix", False):
+        return False
+
+    def map_colors(polygon, line_types):
+        if isinstance(polygon._color_map, list):
+            import numpy as np
+            base_colors = np.asarray([variants[0] for variants in polygon._color_map])
+            return base_colors[line_types]
+        return original(polygon, line_types)
+
+    map_colors._mpf_legacy_color_fix = True
+    LayerPolygon.mapLineTypeToColor = map_colors
+    return True

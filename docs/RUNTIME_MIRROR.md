@@ -7,6 +7,14 @@ requires the corresponding-source and notices companion plus a full direct-URL
 download check. Binary/model payloads stay outside the plugin package and Git
 history.
 
+## Publication record
+
+The public `v5.4.0` release was published on 12 October 2026. Its assets include
+all 27 selectable payloads, `manifest.json`, and
+`runtime-source-and-notices-v5.4.0.tar.gz`. The staging and source-companion gaps
+in the historical audit below were addressed for that publication. Future
+version tags still need their own copies and release-download checks.
+
 ## Inventory
 
 The current pinned matrices contain 27 selectable assets (1,045,150,482 bytes,
@@ -46,13 +54,13 @@ was narrowed to the 27 selectable assets. Source
 archives for Obico (release commit `6f938964`), ONNX Runtime v1.23.2, OCP
 7.9.3.1.1, OCCT V7_9_3, ocp-build-system v7.9.3.1.1 and
 python-build-standalone 20261003 were retrieved for the companion audit.
-These archives do not yet form a complete corresponding-source bundle: the CAD
+At that audit stage, these archives did not yet form a corresponding-source bundle: the CAD
 wheels contain bundled native libraries without their licence files or exact
 source/build records. The Windows release assets are derived from upstream
 archives by removing Microsoft's bundled C++ runtime DLLs and repairing the
 CAD import names to use the system runtime. The original source sizes and hashes,
-derived output pins and transformation script are committed. The release needs
-the completed CAD source/notice companion before publication.
+derived output pins and transformation script are committed. The source/notice companion was subsequently attached to the public release, as
+recorded above.
 
 ## Hosting and migration
 
