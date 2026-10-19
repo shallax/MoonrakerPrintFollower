@@ -4,6 +4,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-19 — 6.0.0: Select modern OpenGL for beta CI without patching Cura classes.
 # 2026-10-18 — 6.0.0: Support opt-in LLDB launch for native crash diagnosis.
 # 2026-10-18 - 6.0.0: Repair root-only QtTest permissions before launching Cura.
 # 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
@@ -733,9 +734,14 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # rewritten and the plugin state and section set the Linux gate seeds
     # stand. disabled_plugins is dropped wherever it is and re-emitted
     # under [general], which is where Uranium reads it.
-    awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" '
+    # This beta has two upstream legacy mesh/colour errors. Use Cura's
+    # supported modern-context preference on this disposable macOS host;
+    # 5.13 keeps the default legacy renderer coverage. No host code is patched.
+    awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" -v modern="$( [ "$CURA_VERSION" = 5.14.0-beta.1 ] && echo 1 || echo 0 )" '
         BEGIN { sec = "" }
-        /^\[/ { sec = $0; print; if (sec == "[general]") print "disabled_plugins = " ids; next }
+        /^\[/ { sec = $0; print; if (sec == "[general]") print "disabled_plugins = " ids;
+            if (sec == "[view]" && modern == 1) print "opengl_version_detect = force_modern"; next }
+        sec == "[view]" && modern == 1 && /^opengl_version_detect[[:space:]]*=/ { next }
         sec == "[general]" && /^disabled_plugins = / { next }
         sec == "[general]" && /^version = / { print "version = " ver; next }
         sec == "[cura]" && /^active_machine = / { print "active_machine = " am; next }
@@ -1050,7 +1056,7 @@ PY
     note "driver up: $RPC_FILE"
 
     # --- 8b. the renderer the boot actually got ---------------------------
-    # Recorded, never fatal. Cura's own probe (UM/View/GL/OpenGLContext.py,
+    # Record and qualify the selected context. Cura's own probe (UM/View/GL/OpenGLContext.py,
     # CURA-6092) declines a software-backed 4.1 core context ON macOS ONLY
     # - the check is gated on Platform.isOSX() rather than on the premise -
     # and this runner's GL is Apple's software renderer, so the boot lands
@@ -1059,10 +1065,17 @@ PY
     # oversized windows remained stale either way, and the forced path is the
     # one Cura calls "much slower", which measured 3.5x on the layer-view
     # unit (group-printing, 2.8 -> 9.7 min) against a 15-minute budget.
-    # The available-desktop bound keeps native presentation live. This
-    # line records the renderer; native capture judges its actual pixels.
+    # Beta 5.14 explicitly uses modern GL to avoid its broken legacy mesh
+    # path; 5.13 retains the default. The available-desktop bound keeps
+    # native presentation live; native capture judges the actual pixels.
     GL_LINE="$(grep -h 'Detected most suitable OpenGL context version:' \
         "$CONFIG_DIR/cura.log" 2>/dev/null | tail -1 || true)"
+    if [ "$CURA_VERSION" = 5.14.0-beta.1 ]; then
+        case "$GL_LINE" in
+            *"4.1 Core profile"*) ;;
+            *) die "Cura beta did not select the requested modern OpenGL context: $GL_LINE" ;;
+        esac
+    fi
     case "$GL_LINE" in
         *"4.1 Core profile"*)
             note "renderer: ${GL_LINE##*: }" ;;

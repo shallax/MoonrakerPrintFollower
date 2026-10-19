@@ -417,6 +417,13 @@ The existing 5.11 loaded-toolpath limitation applies to p8 too; b12 still
 exercises its 2D follower. Static README captures deliberately hold a
 complete layer and do not claim to test smoothing.
 
+On macOS CI, Cura 5.14 beta 1 uses the supported `force_modern` OpenGL
+preference. The Apple software renderer provides a 4.1 core context, but Cura
+normally prefers legacy 2.1 for speed. This beta has two upstream legacy
+mesh/colour bugs; the plugin does not patch either host class. Cura 5.13
+retains its default renderer and the legacy nonempty-mesh assertion. Beta
+legacy Preview remains an upstream limitation, not a qualified rendering path.
+
 The current release gate uses Cura `5.14.0-beta.1` as primary and `5.13.0`
 as secondary. The UI Version Sweep includes every minor from 5.7 through
 5.13 plus 5.14 beta 1 (128 version/unit jobs).

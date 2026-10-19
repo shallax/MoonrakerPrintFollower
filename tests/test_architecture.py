@@ -3,7 +3,6 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
-# 2026-10-19 — 6.0.0: Bound the reviewed beta colour repair to one adapter assignment.
 # 2026-10-18 — 6.0.0: Verify shared geometry and modular component ownership after extraction.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -215,7 +214,7 @@ class SourceContractTests(unittest.TestCase):
             'ConsoleController': {'ConsolePolicy'},
             'ConsolePolicy': set(),
             'CuraAdapter': set(),
-            'CuraIntegration': {'CuraAdapter', 'CuraLifecycleBridge', 'NativeNozzleLifecycle'},
+            'CuraIntegration': {'CuraLifecycleBridge', 'NativeNozzleLifecycle'},
             'CuraLifecycleBridge': set(),
             'CuraOutputWriter': set(),
             'DownloadStream': set(),
@@ -352,7 +351,7 @@ class SourceContractTests(unittest.TestCase):
             'WhatsNewOverlay': {'PluginPaths', 'WhatsNew'},
         }
         # Cura adapters sanctioned to import cura APIs.
-        cura_exceptions = {"CuraAdapter", "CuraOutputWriter", "MoonrakerFollowerMachineAction", "MoonrakerMonitorModel", "MoonrakerOutputDevice", "PrinterBinding", "ToolheadSimulationPass"}
+        cura_exceptions = {"CuraOutputWriter", "MoonrakerFollowerMachineAction", "MoonrakerMonitorModel", "MoonrakerOutputDevice", "PrinterBinding", "ToolheadSimulationPass"}
         # The output plugin and Machine Action receive the follower at the
         # documented composition boundary; PrinterConfig and BedMeshPresenter
         # only contain the string inside preference-key literals.
@@ -378,18 +377,16 @@ class SourceContractTests(unittest.TestCase):
                 self.assertNotIn("from cura.", source, module)
 
     def test_no_monkeypatching_of_cura_or_uranium_classes(self):
-        # Public APIs remain the integration rule. One reviewed exception
-        # repairs the exact 5.14 beta 1 legacy colour-list bug, for which
-        # Cura exposes no callback. Its version/shape/idempotence contracts
-        # are executable in test_cura_adapter; no other class patch is allowed.
-        permitted = ("cura/CuraAdapter.py", "install_legacy_layer_color_fix",
-                     "LayerPolygon", "mapLineTypeToColor")
-        seen = []
+        # The architectural invariant (the review's ruling): production
+        # plugin code never assigns to methods or attributes on classes
+        # imported from Cura/Uranium — the renderer integration rides
+        # the public APIs. The retired patch module must not reappear;
+        # the nozzle lifecycle repair is the sanctioned exception, its
+        # own module, public APIs only.
         self.assertFalse((PLUGINS / "RendererAdaptation.py").is_file())
         self.assertTrue((PLUGINS / "NativeNozzleLifecycle.py").is_file())
         for path in PLUGINS.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
-            parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
             foreign = set()
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom) and node.module and (
@@ -401,22 +398,12 @@ class SourceContractTests(unittest.TestCase):
                     for target in node.targets:
                         if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) \
                                 and target.value.id in foreign:
-                            owner = parents.get(node)
-                            while owner is not None and not isinstance(owner, ast.FunctionDef):
-                                owner = parents.get(owner)
-                            candidate = (path.relative_to(PLUGINS.root).as_posix(),
-                                         owner.name if owner is not None else "", target.value.id, target.attr)
-                            if candidate == permitted:
-                                seen.append(candidate)
-                                continue
                             self.fail(f"{path.name}: assigns to the Cura/Uranium class "
                                       f"{target.value.id}.{target.attr} — the public-API-only invariant")
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
                         and node.func.id == "setattr" and node.args \
                         and isinstance(node.args[0], ast.Name) and node.args[0].id in foreign:
                     self.fail(f"{path.name}: setattr on the Cura/Uranium class {node.args[0].id}")
-
-        self.assertEqual(seen, [permitted])
 
     def test_local_import_graph_is_acyclic(self):
         def dependencies(path):

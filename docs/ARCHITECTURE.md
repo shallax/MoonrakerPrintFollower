@@ -146,7 +146,7 @@ correct package ownership.
 | `GCodeIndex.py` | One bounded G-code scan, delegating header parsing and completed-record assembly | Cache files, hydration or application orchestration |
 | `FollowController.py` | Follow-mode decisions and state precedence | Preview writes or networking |
 | `CuraIntegration.py` | Scene/view/file lifecycle, guarded callbacks and Preview API access | Printer protocol |
-| `CuraAdapter.py` | Typed Cura view access, machine identity, Preview write decisions and the bounded beta colour repair | Policy or networking |
+| `CuraAdapter.py` | Typed Cura view access, machine identity, Preview write decisions | Policy or networking |
 | `CuraLifecycleBridge.py` | Cura-scene generation tokens for stale-work rejection | Scene contents |
 | `NativeNozzleLifecycle.py` | Cura native-nozzle repair during exact following | Scene mesh semantics |
 | `PreviewFollower.py` | Frozen `PreviewState`, attachment, expected positions, path progress and ETA | Downloads or workers |
@@ -754,7 +754,7 @@ Source mesh XYZ is Z-up millimetres; its anchor is subtracted before the single
 Cura rotation (x,z,-y). Automatic alignment centres the XY bounds at minimum Z,
 including an annular nozzle face; manual XYZ or surface picking overrides it.
 
-STEP styles inherit through compound/solid/shell/face topology with instance placement, visibility and sRGB conversion. Four white sources on the top perimeter of the build volume aim 45° inward/down. View Options persists whole-model opacity as a global view preference; an independent scene-lighting uniform fades attached illumination with the same opacity without changing saved light intensities. Per-printer configuration persists up to eight attached emitters with model-local position, outward normal, RGB colour, brightness and range. Picking uses the visible surface normal and offsets the source outside the face; the shader excludes the inward hemisphere. Add/colour/brightness/remove edits share the settings Save/Cancel draft. An owned additive pass lights the native plate geometry and the visible G-code prefix using the installed SimulationView vertex/geometry sources and an owned lighting fragment. A depth prepass prevents bed illumination leaking through rendered paths. Its unchanged lower-layer depth is cached in an owned framebuffer and invalidated by camera, viewport, layer bounds, visibility filters or receiver changes; the current path prefix is drawn separately on every frame. Owned path indices are uploaded once, sharing Cura’s public cached vertex buffer. Conservative block bounds and a geometry-stage sphere check skip distant paths before tubular extrusion, and depth-only fragments skip lighting calculations. Toolhead-only position changes request cached composition without propagating scene-transform changes through Cura’s native G-code rendering. Zero opacity or disabling both receiving surfaces bypasses scene lighting entirely. Native receiver batches are retained across QtRenderer cached redraws, whose getBatches list is empty after endRendering; a full frame replaces them and scene/view/dimension changes invalidate them. Native shaders are not patched. The sole class-method compatibility exception is the version-bounded Cura 5.14 beta 1 legacy colour repair described below. Brightness uses 0–100% UI values mapped to the existing 0–5 intensity; a renderer-only draft signal gives live updates without rebuilding the lights list. The custom head crop is seeded from the owned simulation pass’s complete visible depth, including fractional paths, plus public solid batches. Transparent bed and printer-frame geometry does not write that occlusion depth. Transparent model surfaces participate alongside the bed and frame; the head depth and coverage mask preserve opaque printed paths and prevent double blending outside the head. Geometry is not excluded merely because it belongs to a sliceable model. Its native shaders blend only foreground surfaces into a separate cropped image; a premultiplied resolve preserves the head’s coverage and opacity without double-drawing those surfaces outside it. Unchanged compositions reuse the result. Matching camera, viewport, source, path and depth-format checks prevent stale occluders; cache identity includes that depth revision. Warm/native fallback frames retain the previous overlay behaviour until compatible owned depth is available. Destination depth is cleared after composition so Qt controls stay above the head; line overlays do not occlude it. The transparency helper reuses native vertex buffers and never rerenders G-code. Native True-position nozzles still use the simpler native-mesh overlay without this custom-head depth seed.
+STEP styles inherit through compound/solid/shell/face topology with instance placement, visibility and sRGB conversion. Four white sources on the top perimeter of the build volume aim 45° inward/down. View Options persists whole-model opacity as a global view preference; an independent scene-lighting uniform fades attached illumination with the same opacity without changing saved light intensities. Per-printer configuration persists up to eight attached emitters with model-local position, outward normal, RGB colour, brightness and range. Picking uses the visible surface normal and offsets the source outside the face; the shader excludes the inward hemisphere. Add/colour/brightness/remove edits share the settings Save/Cancel draft. An owned additive pass lights the native plate geometry and the visible G-code prefix using the installed SimulationView vertex/geometry sources and an owned lighting fragment. A depth prepass prevents bed illumination leaking through rendered paths. Its unchanged lower-layer depth is cached in an owned framebuffer and invalidated by camera, viewport, layer bounds, visibility filters or receiver changes; the current path prefix is drawn separately on every frame. Owned path indices are uploaded once, sharing Cura’s public cached vertex buffer. Conservative block bounds and a geometry-stage sphere check skip distant paths before tubular extrusion, and depth-only fragments skip lighting calculations. Toolhead-only position changes request cached composition without propagating scene-transform changes through Cura’s native G-code rendering. Zero opacity or disabling both receiving surfaces bypasses scene lighting entirely. Native receiver batches are retained across QtRenderer cached redraws, whose getBatches list is empty after endRendering; a full frame replaces them and scene/view/dimension changes invalidate them. Native shaders are not patched. Native Cura and Uranium classes are not patched. Brightness uses 0–100% UI values mapped to the existing 0–5 intensity; a renderer-only draft signal gives live updates without rebuilding the lights list. The custom head crop is seeded from the owned simulation pass’s complete visible depth, including fractional paths, plus public solid batches. Transparent bed and printer-frame geometry does not write that occlusion depth. Transparent model surfaces participate alongside the bed and frame; the head depth and coverage mask preserve opaque printed paths and prevent double blending outside the head. Geometry is not excluded merely because it belongs to a sliceable model. Its native shaders blend only foreground surfaces into a separate cropped image; a premultiplied resolve preserves the head’s coverage and opacity without double-drawing those surfaces outside it. Unchanged compositions reuse the result. Matching camera, viewport, source, path and depth-format checks prevent stale occluders; cache identity includes that depth revision. Warm/native fallback frames retain the previous overlay behaviour until compatible owned depth is available. Destination depth is cleared after composition so Qt controls stay above the head; line overlays do not occlude it. The transparency helper reuses native vertex buffers and never rerenders G-code. Native True-position nozzles still use the simpler native-mesh overlay without this custom-head depth seed.
 
 Scene-light receivers use the native display material: older shadowed paths use
 Cura’s grey and alpha, while current and unshadowed paths retain line colours.
@@ -2478,20 +2478,20 @@ No progress invokes the existing recovery/retry policy and removes the Live badg
 only another decoded frame clears recovery, not headers or incoming bytes.
 Bridge origins are constructed with QUrl host/port fields, preserving IPv6 literals.
 
-### Cura 5.14 beta 1 legacy layer colours
+### Cura 5.14 beta 1 renderer qualification
 
-`CuraAdapter.install_legacy_layer_color_fix` installs before file-loading workers.
-That exact beta stores attribute colour variants in a ragged Python list while
-its compatibility mesh renderer still attempts NumPy-array indexing into it.
-The adapter maps each line type to its base colour with NumPy indexing, preserving
-selection shape, and delegates array-backed maps to the original method. Installation
-is idempotent and other Cura versions retain their implementation. The native Preview
-playback gate requires nonempty legacy mesh geometry as well as completed path tracking.
+The plugin does not replace Cura or Uranium class methods. Cura 5.14 beta 1
+has two upstream legacy renderer defects: `LayerPolygon.mapLineTypeToColor`
+indexes a Python list with a NumPy array, and `MeshData.getColors` evaluates
+an array as a boolean instead of returning the colour array. The former
+workaround was removed because it could not repair the whole rendering path.
 
-This is the sole reviewed exception to the foreign-class mutation guard:
-`LayerPolygon.mapLineTypeToColor` inside that helper. Cura exposes no public
-callback for its internal legacy colour lookup, and affected OpenGL contexts
-cannot use the modern renderer. The architecture test permits only this exact
-assignment; version, shape, delegation and repeat-install tests constrain it.
-Remove the adapter when support for this beta is retired; other versions never
-receive it. Shader replacement and general renderer monkeypatching remain prohibited.
+On disposable macOS CI hosts, the harness seeds Cura's supported
+`view/opengl_version_detect = force_modern` preference for that exact beta
+and requires the resulting 4.1 core context. Software OpenGL supports this
+context, although Cura normally selects legacy mode for performance. Cura
+5.13 retains default context selection and legacy mesh coverage. Native
+Preview probes require nonempty mesh geometry when using legacy mode.
+Users of this beta's legacy renderer may encounter blank Preview geometry;
+this plugin does not repair that upstream defect or change users' graphics
+preferences.

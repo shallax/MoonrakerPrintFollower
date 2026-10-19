@@ -4,7 +4,7 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-19 — 6.0.0: Describe shipped changes without claiming product finality.
-# 2026-10-19 — 6.0.0: Mention the Cura beta legacy Preview rendering repair.
+# 2026-10-19 — 6.0.0: Qualify beta support without claiming an upstream renderer repair.
 # 2026-10-18 — 6.0.0: Mention camera stability and corrected printer layer numbering.
 # 2026-10-18 — 6.0.0: Describe final recovery, temperature and whole-product reliability changes.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
@@ -48,7 +48,7 @@ WHATS_NEW: Tuple[dict, ...] = (
             "Use point selects a stop bookmark; Remove deletes it. Bookmarks and printed paths are estimates, not proof of deposited filament. After starting recovery, Dismiss returns to Print Follower without cancelling it. Reopened dialogs reset their scroll and preview step.",
             "Adjust each heater in Temperatures with a slider or 1, 5, 10 and 25 degree bumps, within limits read from Moonraker. Temperature profiles remain available while printing; cooldown also works without saved profiles.",
             "Cura 5.14 beta 1 is supported alongside 5.13 in CI and the UI version sweep. Recovery also works without a runout sensor.",
-            "Printer layer numbering, file-manager sorting and stale actions, frozen-camera detection, macOS camera stability, legacy Preview rendering and queued heater adjustments are corrected. Developers can reuse the parser and rendering components through a documented Python library.",
+            "Printer layer numbering, file-manager sorting and stale actions, frozen-camera detection, macOS camera stability and queued heater adjustments are corrected. Developers can reuse the parser and rendering components through a documented Python library.",
         ),
     },
     {

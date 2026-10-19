@@ -4,9 +4,10 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 6.0.0
 
-- Repair Cura 5.14 beta 1’s legacy Preview colour lookup so loaded G-code
-  renders on compatibility OpenGL systems, including macOS software rendering.
-  Verify native mesh geometry and use an unambiguous stopped endpoint in UI tests.
+- Test Cura 5.14 beta 1 using its modern renderer on macOS CI, avoiding two
+  upstream legacy Preview defects without patching Cura classes. Retain default
+  rendering coverage on 5.13. Verify native legacy mesh geometry and use an
+  unambiguous stopped endpoint in UI tests.
 
 - Respect configured printer layer numbering when G-code contains only slicer
   layer comments. Avoid following one layer ahead on older Cura versions;

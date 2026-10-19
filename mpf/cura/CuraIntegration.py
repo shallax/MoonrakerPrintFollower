@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-19 — 6.0.0: Repair list-backed layer colours in Cura 5.14 beta 1 legacy rendering.
+# 2026-10-19 — 6.0.0: Retain public host APIs without a beta class-method workaround.
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 # 2026-10-05 [228f698] Finish Preview object banners for 5.1.0
 # 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
@@ -20,7 +20,6 @@ from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
 from UM.Logger import Logger
 from UM.Backend.Backend import BackendState
 
-from .CuraAdapter import install_legacy_layer_color_fix
 from .CuraLifecycleBridge import CuraLifecycleBridge
 from .NativeNozzleLifecycle import keep_native_nozzle_visible
 
@@ -47,8 +46,6 @@ class CuraIntegration(QObject):
     def __init__(self, application, parent=None):
         super().__init__(parent)
         self.application = application
-        if install_legacy_layer_color_fix():
-            Logger.log("i", "Repaired Cura 5.14 beta 1 legacy layer colour mapping")
         self.controller = application.getController()
         self.lifecycle = CuraLifecycleBridge()
         self._connections = []

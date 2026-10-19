@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-19 — 6.0.0: Rehearse the beta-only modern renderer preference seed.
 # 2026-10-18 — 6.0.0: Keep invalid inline probe serialization visible.
 # 2026-10-18 — 6.0.0: Prove bounded RPCs, no command replay and crash evidence finalization.
 # 2026-10-18 — 6.0.0: Prove failed startup stops scenarios and keeps its gallery.
@@ -1748,6 +1749,35 @@ class CaptureGateTests(unittest.TestCase):
         self.assertNotIn("export HARNESS_CAPTURE='off'", script)
         self.assertIn("export HARNESS_CAPTURE_REASON=%q", script)
         self.assertIn("${HARNESS_CAPTURE_REASON:-}", script)
+
+    @unittest.skipUnless(sys.platform != "win32" and shutil.which("bash") and shutil.which("awk"),
+                         "macOS config seed requires bash and awk")
+    def test_macos_beta_modern_context_seed_preserves_other_versions_and_preferences(self):
+        import configparser
+        import subprocess
+        import tempfile
+        script = (ROOT / "tools/native_harness.sh").read_text(encoding="utf-8")
+        start = script.index('    awk -v ver="$PREF_VER"')
+        end = script.index('    mv "$CONFIG_DIR_FILE.tmp"', start)
+        seed = script[start:end]
+        fixture = (ROOT / "tests/harness/config/config/cura/5.13/cura.cfg").read_text()
+        for version in ("5.13.0", "5.14.0-beta.1", "5.14.0-beta.2", "5.14.0"):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as temp:
+                path = Path(temp) / "cura.cfg"
+                # An existing value must be replaced once, not duplicated.
+                path.write_text(fixture.replace("[view]", "[view]\nopengl_version_detect = automatic"))
+                env = dict(os.environ, CURA_VERSION=version, CONFIG_DIR_FILE=str(path),
+                           PREF_VER="7", IDS="network-plugin", MACHINE="Seeded printer")
+                done = subprocess.run(["bash", "-eu", "-c", seed], env=env,
+                                      capture_output=True, text=True, timeout=10)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                parsed = configparser.ConfigParser()
+                parsed.read(str(path) + ".tmp")
+                self.assertEqual(parsed["view"]["opengl_version_detect"],
+                                 "force_modern" if version == "5.14.0-beta.1" else "automatic")
+                self.assertEqual(parsed["cura"]["active_machine"], "Seeded printer")
+                self.assertEqual(parsed["general"]["disabled_plugins"], "network-plugin")
+                self.assertEqual(parsed["moonrakerprintfollower"]["printer_configs_migrated_v1"], "True")
 
     @unittest.skipUnless(sys.platform != "win32" and shutil.which("bash"), "macOS shell harness requires bash")
     def test_native_harness_refuses_non_disposable_host_before_mutation(self):

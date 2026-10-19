@@ -805,6 +805,12 @@ After verifying the integrated plugin with your printers, the separate Moonraker
 
 The plugin targets **Cura 5.7 / SDK 8.7** through **Cura 5.14 beta 1 / SDK 8.13**. The package declares SDK 8.7 as its minimum package SDK, and `plugin.json` records the SDKs 8.7 through 8.13 — a deliberate product boundary; the 5.7 floor is not an API dependency.
 
+Cura 5.14 beta 1 has upstream defects in its legacy Preview renderer. The
+macOS beta CI runs use Cura's supported modern OpenGL preference; Cura 5.13
+retains default-renderer coverage. The plugin does not patch Cura classes or
+change users' graphics preferences. See [renderer qualification](docs/TESTING.md)
+for this beta limitation.
+
 The implementation stays on APIs present across Cura 5.7–5.14 beta 1: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
 
 Cura 4.x / SDK 7.x is not supported, and neither is Cura 5.6 or older. On Cura 5.11 alone the preview integration is limited by a 5.11 SimulationView bug: that version rebuilds its view layers only when the Preview stage is re-entered, and the plugin's load lands while Preview is already open — so the live print does not appear in the view and the layer slider stays hidden after a load until you switch tabs and come back (the follower's card, state and pause scheduling still work throughout).
