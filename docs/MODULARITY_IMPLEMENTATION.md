@@ -87,3 +87,9 @@ verified plugin/source packages and isolated installed core/raster/Qt consumers.
 regular production module clears its 95% floor; the existing isolated native
 STEP worker retains its separate mandatory CAD-runtime coverage gate in CI.
 Final-head PR CI and supported-version UI sweep remain pending.
+
+The cold-start harness follow-up passed full `make all JOBS=8` with 6,342
+tests in 295 isolated processes and the same capture/package/library gates.
+Only the initial read-only handshake uses the 90-second window-startup budget;
+normal action deadlines and no-replay failure handling remain qualified.
+Production code and the coverage measurement above are unchanged.

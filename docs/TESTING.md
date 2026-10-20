@@ -46,6 +46,12 @@ cancelled CI jobs retain their per-file logs. `tools/native/test_worker.py` keep
 the same isolated module/script and coverage invocation under that watchdog.
 UI-driver RPCs have one total deadline and never replay a command after a send
 attempt. Losing the driver stops the suite and finalizes its partial gallery.
+The first harness handshake has a bounded 90-second cold-start budget, shared
+with window discovery: the driver listener can exist while Cura still builds
+its initial QML tree. Subsequent RPCs retain the ordinary 20-second deadline
+unless their operation declares another bound. A sent command is never replayed;
+a lost driver still fails the scenario and preserves its gallery.
+
 macOS gate artifacts also retain launcher/configuration logs, Cura's redirected
 Python streams and native crash reports under `native-diagnostics/`, even when
 the scenario process is interrupted before its own cleanup runs.

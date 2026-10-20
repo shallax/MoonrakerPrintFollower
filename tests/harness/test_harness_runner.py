@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Prove cold-boot handshake and normal action deadlines remain distinct.
 # 2026-10-19 — 6.0.0: Rehearse the beta-only modern renderer preference seed.
 # 2026-10-18 — 6.0.0: Keep invalid inline probe serialization visible.
 # 2026-10-18 — 6.0.0: Prove bounded RPCs, no command replay and crash evidence finalization.
@@ -129,6 +130,26 @@ class RpcDeadlineTests(unittest.TestCase):
                          [2, 2, 1.25, 0.5])
         self.sock.sendall.assert_called_once()
 
+    def test_cold_start_handshake_waits_for_gui_without_extending_action_deadlines(self):
+        def receive(_size):
+            self.advance(21)
+            return b'{"ok":true}\n'
+        self.sock.recv.side_effect = receive
+        self.assertEqual(runner.startup_hello(), {"ok": True})
+        self.assertEqual(self.sock.settimeout.call_args.args[0], 90)
+        self.sock.sendall.assert_called_once()
+        self.sock.reset_mock()
+        self.clock = 0
+        # Each next receive still has to fit the ordinary action budget.
+        def slow_receive(_size):
+            self.advance(21)
+            return b'{'
+        self.sock.recv.side_effect = slow_receive
+        with self.assertRaisesRegex(runner.DriverRPCError, "deadline"):
+            runner.rpc({"cmd": "stage"})
+        self.assertEqual(self.sock.settimeout.call_args.args[0], 20)
+        self.sock.sendall.assert_called_once()
+
     def test_exited_cura_stops_before_any_command_is_sent(self):
         self.connect.side_effect = ConnectionRefusedError()
         with patch.object(runner, "cura_process_alive", return_value=False):
@@ -148,7 +169,7 @@ class BootEvidenceTests(unittest.TestCase):
         specs = [{"id": "dead", "name": "dead", "steps": []},
                  {"id": "later", "name": "must not run", "steps": []}]
 
-        def reply(request):
+        def reply(request, **kwargs):
             if request["cmd"] == {"hello": "hello", "prelude": "hide_update_toast"}.get(phase):
                 raise runner.DriverRPCError("Cura process exited")
             return {}

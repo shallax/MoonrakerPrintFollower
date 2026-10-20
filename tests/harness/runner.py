@@ -4,6 +4,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Give the first handshake the bounded window-startup budget.
 # 2026-10-18 — 6.0.0: Report invalid probe JSON instead of hiding the failed reply.
 # 2026-10-18 — 6.0.0: Bound RPC transactions and stop suites when the driver is lost.
 # 2026-10-18 — 6.0.0: Require the restored seed and preserve evidence on failed boot gates.
@@ -252,6 +253,17 @@ def rpc(request, timeout=20.0):
         raise DriverRPCError(f"driver RPC failed after connecting; command not replayed: {exc}") from exc
 
 
+# The TCP listener is published before Cura finishes its synchronous QML boot.
+# On a cold Windows runner the GUI thread can be occupied beyond the ordinary
+# action deadline. This first read-only handshake uses the same startup budget
+# as wait_window; later commands retain their shorter deadlines and never replay.
+STARTUP_DEADLINE_S = 90.0
+
+
+def startup_hello():
+    return rpc({"id": 1, "cmd": "hello"}, timeout=STARTUP_DEADLINE_S)
+
+
 def _png_size(path):
     """The PNG header's declared dimensions, or None when the file is
     not a readable PNG. A capture must BE what shot() asked for — a
@@ -425,7 +437,7 @@ def ensure_ready(require_aux=True):
     return False
 
 
-def wait_window(timeout_s=90.0):
+def wait_window(timeout_s=STARTUP_DEADLINE_S):
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         reply = rpc({"id": 1, "cmd": "window"})
@@ -438,7 +450,7 @@ def wait_window(timeout_s=90.0):
 def discover():
     """Boot-assisted discovery: dump the window and the stage-menu items."""
     os.makedirs(RUN_DIR, exist_ok=True)
-    reply = rpc({"id": 1, "cmd": "hello"})
+    reply = startup_hello()
     print(json.dumps(reply, indent=2))
     window = wait_window()
     print(json.dumps(window, indent=2))
@@ -457,7 +469,7 @@ def scenario(expect_fail=False):
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1583,7 +1595,7 @@ def scenario9():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1645,7 +1657,7 @@ def scenario8():
     video = start_recorder(video_path, framerate=5)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1722,7 +1734,7 @@ def scenario10():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1786,7 +1798,7 @@ def scenario11():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1853,7 +1865,7 @@ def scenario7():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1914,7 +1926,7 @@ def scenario6():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1995,7 +2007,7 @@ def scenario5():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -2080,7 +2092,7 @@ def scenario4():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -2154,7 +2166,7 @@ def scenario3():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -2217,7 +2229,7 @@ def scenario2(expect_fail=False):
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -2300,7 +2312,7 @@ def scenario1(expect_fail=False):
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -2520,7 +2532,7 @@ def first_install1():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         # The aux half of the gate is skipped by construction: a clean
         # install has no printer to discover, so the chain it checks
@@ -2643,7 +2655,7 @@ def first_install2():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         # This boot has a printer: the saved record points at the
         # simulator, so the full gate applies.
@@ -2882,7 +2894,7 @@ def migration1():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: the pre-migration machine is restored",
@@ -2976,7 +2988,7 @@ def migration2():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: the migrated machine is restored",
@@ -3090,7 +3102,7 @@ def suite_run(group_id):
     steps = []
     active_spec = {"id": group_id}
     try:
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         _boot = boot_step(hello)
         steps.append(_boot)
         EVIDENCE.append(_evidence_entry({"id": group_id}, -1, {"op": "hello"},
@@ -3430,7 +3442,7 @@ def real_run():
     video = start_recorder(video_path, framerate=15)
     steps = []
     try:
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, discovery chain live",
