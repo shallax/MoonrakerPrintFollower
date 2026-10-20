@@ -1003,8 +1003,12 @@ though lint is intentionally skipped.
 The tag workflow prepares a draft GitHub release after those gates. It stages
 and hashes all optional runtime assets, copies them from `v5.4.0` for later
 versions, uploads the plugin and runtime files, and compares GitHub's stored
-digests to the pins. Attach the corresponding-source and notices companion,
-then run `python tools/verify_runtime_release.py vX.Y.Z --require-companion`
+digests to the pins. It also stages the pinned corresponding-source and notices
+companion from `v5.4.0`, verifies that its covered runtime payloads are unchanged,
+and requires its exact size and digest before the draft job succeeds. The archive
+stays outside Git. If runtime pins change, audit and pin a new matching companion
+in `tools/stage_runtime_companion.py`; never reuse the old bundle merely to pass
+the gate. Run `python tools/verify_runtime_release.py vX.Y.Z --require-companion`
 before making the draft public. After publication, run it again with
 `--require-companion --public-downloads` to hash the direct URLs used by the
 plugin. Never publish a release whose companion or selected assets are missing.
