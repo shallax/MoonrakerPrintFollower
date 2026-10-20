@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
-# 2026-10-20 — 6.0.0: Describe narrower reusable APIs and the modular component boundaries.
+# 2026-10-20 — 6.0.0: Describe narrower reusable APIs and keep the release summary within the default view.
 # 2026-10-19 — 6.0.0: Explain batch macro review and clearer setup section headings.
 # 2026-10-19 — 6.0.0: Describe shipped changes without claiming product finality.
 # 2026-10-19 — 6.0.0: Qualify beta support without claiming an upstream renderer repair.
@@ -50,7 +50,7 @@ WHATS_NEW: Tuple[dict, ...] = (
             "Use point selects a stop bookmark; Remove deletes it. Bookmarks and printed paths are estimates, not proof of deposited filament. After starting recovery, Dismiss returns to Print Follower without cancelling it. Reopened dialogs reset their scroll and preview step.",
             "Adjust each heater in Temperatures with a slider or 1, 5, 10 and 25 degree bumps, within limits read from Moonraker. Temperature profiles remain available while printing; cooldown also works without saved profiles.",
             "Cura 5.14 beta 1 is supported alongside 5.13 in CI and the UI version sweep. Recovery also works without a runout sensor.",
-            "Printer layer numbering, file-manager sorting and stale actions, frozen-camera detection, macOS camera stability and queued heater adjustments are corrected. Developers can reuse indexing, cache/residency, geometry and separate raster/scene-graph APIs through the documented Python library.",
+            "Fixes cover printer layer numbering, file ordering/stale actions, frozen-camera detection, macOS camera stability and queued heater changes. Developers can reuse indexing, caches, geometry and raster/scene-graph APIs through the documented Python library.",
         ),
     },
     {
