@@ -171,8 +171,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                 "scale": 1.0, "lineScale": 8.0, "compact": False,
                 "panX": 0.0, "panY": 0.0, "backing": 4.0,
                 "bedWidth": 250.0, "bedDepth": 250.0}
-        from mpf.plate.PlateQt import (png_file, render_layer_prefix,
-                                     render_navigation_layer)
+        from mpf.plate.RasterFiles import png_file
+        from mpf.plate.PlateRaster import render_layer_prefix, render_navigation_layer
         nav = render_navigation_layer(
             {"prev": None, "next": None, "current": payload}, plot, view,
             split=18)
@@ -433,7 +433,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         layer = self._native_layer(payload, face, prefix_split=10)
         # The warm interaction raster: a real flattened composite at
         # 4x, its URL on the double (the model's role).
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateRaster import render_navigation_layer
+        from mpf.plate.RasterFiles import png_file
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
             plot_value = plot_value.toVariant()
@@ -852,7 +853,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             "motions": 21,
         }
         layer = self._native_layer(payload, face, prefix_split=10)
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateRaster import render_navigation_layer
+        from mpf.plate.RasterFiles import png_file
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
             plot_value = plot_value.toVariant()

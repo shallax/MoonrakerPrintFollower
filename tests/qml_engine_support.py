@@ -78,7 +78,8 @@ if QT_AVAILABLE:
 
     from mpf.gcode.GCodeIndex import build_index_from_bytes
     from mpf.geometry.Polygons import point_in_polygon, polygon_bounds
-    from mpf.plate.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO, qml_geometry
+    from mpf.plate.PlateRaster import _PLATE_TRAVEL_VISUAL_RATIO
+    from mpf.plate.PlateQt import qml_geometry
     from mpf.gcode.PlateProgress import layer_polylines
 
     class CuraApplicationDouble(QObject):
@@ -1915,7 +1916,9 @@ class PlateFaceRenderTests(RealEngineTestCase):
         scrub vector's fallback cannot rescue a missing blit.
         `grey=False` leaves the base sibling unset — the pre-arrival
         wrapper the fallback exists for."""
-        from mpf.plate.PlateQt import PlateLayer, png_file, render_layer_prefix, render_layer_raster
+        from mpf.plate.PlateQt import PlateLayer
+        from mpf.plate.RasterFiles import png_file
+        from mpf.plate.PlateRaster import render_layer_prefix, render_layer_raster
         raster_dir = "/tmp/mpf/raster-probe"
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
@@ -2528,7 +2531,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
                 "bedXMin": float(plot_value["bed"]["bedXMin"]),
                 "bedYMax": float(plot_value["bed"]["bedYMax"])}
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateRaster import render_navigation_layer
+        from mpf.plate.RasterFiles import png_file
         nav = render_navigation_layer(
             {"prev": None, "next": None, "current": payload}, plot,
             {"width": int(face.width()), "height": int(face.height()),
@@ -2564,7 +2568,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "bedYMax": float(plot_value["bed"]["bedYMax"])}
 
     def _prefix_for(self, payload, face, split, stem):
-        from mpf.plate.PlateQt import render_layer_prefix, png_file
+        from mpf.plate.PlateRaster import render_layer_prefix
+        from mpf.plate.RasterFiles import png_file
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": 1.0, "lineScale": 8.0, "compact": False,
                 "panX": 0.0, "panY": 0.0, "dpr": 1.0}
@@ -2576,7 +2581,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
         """The 4x interaction raster at the size the model publishes
         it — the transport whose decode is 66 ms at the face's own
         geometry."""
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateRaster import render_navigation_layer
+        from mpf.plate.RasterFiles import png_file
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": 1.0, "lineScale": 8.0, "compact": False,
                 "panX": 0.0, "panY": 0.0, "backing": 4.0,

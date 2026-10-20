@@ -23,7 +23,7 @@ MODULES = {
     "moonraker_toolpath.geometry": ("__init__", "Polygons"),
     "moonraker_toolpath.plate": (
         "__init__", "ToolpathGeometry", "qt", "GpuFollower", "GpuStrokeMaterial",
-        "PlateAxisGeometry", "PlateQt", "PreviewColours",
+        "PlateAxisGeometry", "PlateQt", "PlateRaster", "raster", "scenegraph", "PreviewColours",
     ),
     "moonraker_toolpath.resources": ("__init__", "PluginPaths"),
 }

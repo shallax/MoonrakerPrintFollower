@@ -7,7 +7,8 @@
 
 """Optional PyQt6 renderers. Create a QGuiApplication before using them."""
 from .GpuFollower import GpuFollower
-from .PlateQt import PlateLayer, render_layer_raster, render_layer_prefix, render_navigation_layer
+from .PlateQt import PlateLayer
+from .PlateRaster import render_layer_raster, render_layer_prefix, render_navigation_layer
 
 __all__ = ["GpuFollower", "PlateLayer", "render_layer_raster", "render_layer_prefix",
            "render_navigation_layer"]

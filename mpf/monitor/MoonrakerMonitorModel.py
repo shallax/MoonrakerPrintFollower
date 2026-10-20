@@ -54,7 +54,7 @@ def _british_spelling() -> bool:
 from .MonitorDetection import MonitorDetection
 from .camera.CameraRecovery import CameraRecovery
 from .camera.MonitorCamera import MonitorCamera
-from ..plate.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO
+from ..plate.PlateRaster import _PLATE_TRAVEL_VISUAL_RATIO
 from ..plate.PlateRenderController import PlateRenderController, SceneInputs
 from .controls.MonitorCommands import MonitorCommands
 from .controls.MonitorControls import MonitorControls, _exclude_status

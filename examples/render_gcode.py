@@ -10,7 +10,7 @@ import argparse
 import math
 from PyQt6.QtGui import QGuiApplication
 from moonraker_toolpath import GCodeDocument
-from moonraker_toolpath.plate.qt import render_layer_raster
+from moonraker_toolpath.plate.raster import render_layer_raster
 
 
 def main():

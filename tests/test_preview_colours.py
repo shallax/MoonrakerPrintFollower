@@ -221,7 +221,7 @@ class ColourMetricsTests(unittest.TestCase):
         from mpf.plate.GpuFollower import GpuFollower
         from mpf.plate.ToolpathGeometry import prepare
         from mpf.plate.ToolpathGeometry import pack_shader
-        from mpf.plate.PlateQt import _travels_pen
+        from mpf.plate.PlateRaster import _travels_pen
         app=QGuiApplication.instance() or QGuiApplication([])
         window=QQuickWindow();item=GpuFollower(window.contentItem())
         item._data=pack_shader(prepare((("current",{"travels":[[(0,0,0),(10,0,0)]]}),)))

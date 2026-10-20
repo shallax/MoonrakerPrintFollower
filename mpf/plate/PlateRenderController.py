@@ -36,11 +36,10 @@ from typing import NamedTuple
 from PyQt6.QtCore import QObject, QThreadPool, QTimer, QUrl, pyqtSlot
 from PyQt6.QtGui import QImage
 
-from .PlateQt import (
-    PlateLayer, RasterBridge, _RasterJob, _CheckpointBudget, _bridge_emit, png_file,
-    qml_geometry, render_layer_prefix, render_layer_raster,
-    render_navigation_layer,
-)
+from .PlateQt import PlateLayer, qml_geometry
+from .RasterJobs import RasterBridge, _RasterJob, _CheckpointBudget, _bridge_emit
+from .RasterFiles import png_file
+from .PlateRaster import render_layer_prefix, render_layer_raster, render_navigation_layer
 from .PlateSceneIdentity import (
     NavigationSceneKey, navigation_compatible, navigation_hard_key, navigation_zoom,
 )

@@ -618,7 +618,8 @@ def main():
         model.plateProgressChanged.emit()
         # Offscreen Qt has no native GPU surface. Feed the real fallback's
         # prepared raster, painted from exactly the same indexed layer.
-        plate_qt = qt.load("PlateQt")
+        plate_raster = qt.load("PlateRaster")
+        raster_files = qt.load("RasterFiles")
         plot_value = face.property("plot").toVariant()
         bed = plot_value["bed"]
         plot = {"offsetX": bed["offsetX"], "offsetY": bed["offsetY"],
@@ -627,9 +628,9 @@ def main():
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": 1.0, "lineWidthPx": 2.0, "lineScale": 2.0,
                 "colourScheme": model.followerColourScheme}
-        coloured, _, _ = plate_qt.render_layer_raster(payload, plot, view)
+        coloured, _, _ = plate_raster.render_layer_raster(payload, plot, view)
         layer.set_expected_key("capture-penguin")
-        layer.set_raster(coloured, "capture-penguin", plate_qt.png_file(
+        layer.set_raster(coloured, "capture-penguin", raster_files.png_file(
             coloured, os.path.join(output_dir, ".layers"), "penguin"))
         # A fixed observation of the indexed layer prevents the synthetic
         # transport's unrelated dashboard job from replacing this illustration.

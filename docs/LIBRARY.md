@@ -161,3 +161,5 @@ The library and plugin are GPLv3-only; see [LICENSE](../LICENSE). Reusing or
 redistributing them remains subject to that licence. Upstream notices are
 retained in the repository’s third-party notice file; camera components are not
 part of this standalone distribution.
+
+Raster-only consumers can import `moonraker_toolpath.plate.raster` without loading Qt Quick, QML asset wrappers or worker scheduling. The retained renderer and its layer adapter are available from `moonraker_toolpath.plate.scenegraph`; `plate.qt` continues to provide the combined public API.

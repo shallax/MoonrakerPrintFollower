@@ -65,6 +65,30 @@ assert not any(name.split('.')[0] in {'PyQt6', 'UM', 'cura', 'numpy', 'mpf'} for
 print('Core: installed imports, exact boundaries, hydration and stdlib vertices passed')
 '''
 
+RASTER_PROBE = r'''
+import sys
+from pathlib import Path
+from importlib.abc import MetaPathFinder
+sys.path.insert(0, sys.argv[1])
+class RasterOnly(MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if (fullname.startswith(('UM', 'cura', 'mpf', 'PyQt6.QtQuick', 'PyQt6.QtQml'))
+                or fullname.rsplit('.', 1)[-1] in {'PlateQt', 'RasterJobs', 'RasterFiles', 'GpuFollower'}):
+            raise ImportError('Raster consumer cannot import ' + fullname)
+sys.meta_path.insert(0, RasterOnly())
+from PyQt6.QtGui import QGuiApplication
+from moonraker_toolpath import GCodeDocument
+from moonraker_toolpath.plate.raster import render_layer_raster
+app = QGuiApplication([])
+payload = GCodeDocument.from_file(sys.argv[2]).geometry(0)
+image, grey, _ = render_layer_raster(payload,
+    dict(sx=4, sy=4, offsetX=0, offsetY=0, bedXMin=0, bedYMax=50),
+    dict(width=200, height=200, dpr=1))
+assert not image.isNull() and grey.size() == image.size()
+assert any(image.pixelColor(x, y).alpha() for y in range(200) for x in range(200))
+print('Raster: image rendering with scene graph, host and worker imports blocked passed')
+'''
+
 QT_PROBE = r'''
 import sys, time
 from pathlib import Path
@@ -137,6 +161,7 @@ def main():
         sample.write_bytes(SAMPLE)
         run_probe(CORE_PROBE, installation, sample, pure=True, cwd=work)
         if args.qt:
+            run_probe(RASTER_PROBE, installation, sample, cwd=work)
             run_probe(QT_PROBE, installation, sample, cwd=work)
             example = ROOT / "examples/render_gcode.py"
             code = ("import sys, runpy; sys.path.insert(0, sys.argv[1]); "

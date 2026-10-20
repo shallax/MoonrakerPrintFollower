@@ -283,7 +283,12 @@ correct package ownership.
 | `MoonrakerPrintFollower.py` | Stable Cura extension facade and runtime ownership | Domain algorithms |
 | `PlateProgress.py` | Prepared layer geometry, motion ranges and display payload construction | Qt scene graph or commands |
 | `PlateRenderController.py` | The native renderer: per-surface render contexts, bounded demand scheduling, raster workers and their tickets, cache assets and decoded pins | Print state, presentation settings or Qt publication |
-| `PlateQt.py` | Qt-facing layer assets and preparation adapters | Printer tracking policy |
+| `PlateQt.py` | Qt-facing layer assets and immutable geometry conversion | Painting, workers and printer tracking policy |
+| `PlateRaster.py` | Image-value toolpath painting | QML objects, worker scheduling or file publication |
+| `RasterFiles.py` | Atomic raster image publication | Painting and scheduling |
+| `RasterJobs.py` | Raster worker execution and guarded owner handoff | Rendering policy |
+| `raster.py` | Standalone raster API | Scene-graph imports |
+| `scenegraph.py` | Standalone retained rendering API | Cura services |
 | `PreparedSession.py` | The prepared store's session for the file being served: the adopted table, the incremental writer and its retirement, the coverage census, the completeness/published latches and the identity strength gate | The store's format, the RAM tiers or worker scheduling |
 | `PreparedStore.py` | Validated random-access prepared-layer files and resumable preparation | Networking or UI |
 | `PreviewColours.py` | Pure print-wide ranges and Cura-compatible gradient projection | Cura API access |
