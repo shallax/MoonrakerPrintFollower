@@ -1605,7 +1605,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # Preview selection: the model wires the committed anchor in,
         # and the projection reads it live, falling back to the plate's
         # own anchor only for a popover that has never been slid.
-        self.assertIn("anchor=lambda: self._follower_layer_anchor", harness.MONITOR_MODEL)
+        self.assertIn("anchor=lambda: self._selection.anchor", harness.MONITOR_MODEL)
         self.assertIn("index = self._anchor()", harness.PAUSE_PRESENTATION)
         self.assertIn("index = anchor", harness.PAUSE_PRESENTATION)
         for token in (

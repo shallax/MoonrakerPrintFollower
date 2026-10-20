@@ -6,6 +6,7 @@
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
 # 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+# 2026-10-20 — 6.0.0: Compose the recovery-source workflow with index and download services.
 
 """Cross-domain orchestration with explicit dependencies; not a shared state bag."""
 from __future__ import annotations
@@ -36,7 +37,7 @@ from ..printing.PrintState import LayerResolver, PrintSnapshot
 from ..printing.RemoteJobService import RemoteJobService
 from .RecoveryController import RecoveryContext, RecoveryController
 from .RecoveryPlanning import suggest_lead_in
-from ..files.browser.FileManagerPolicy import is_gcode_name
+from .RecoverySources import RecoverySources
 
 
 def _merge_object_tag_definitions(definitions, metrics):
@@ -250,13 +251,11 @@ class PrintCoordinator(QObject):
         # nothing shows it (the reviewer's C).
         self._popover_open = False
         self._recovery_suggestion = {}
-        self._offline_recovery_job = None
-        self._recovery_file_options = []
-        self._recovery_files_loading = False
-        self._recovery_files_error = ""
-        self._recovery_files_generation = 0
         self.recovery = RecoveryController(client, self._recovery_context, self,
                                            record=self._record_recovery_phase)
+        self._recovery_sources = RecoverySources(
+            send=client.transport.send_json, max_bytes=lambda: self._files.MAX_DOWNLOAD_BYTES,
+            changed=self.recovery.changed.emit)
         self._publish_at = 0.0
         self._processing = self._closed = False
         self._had_toolpath = False
@@ -324,10 +323,8 @@ class PrintCoordinator(QObject):
             stats, sd = stats if isinstance(stats, Mapping) else {}, sd if isinstance(sd, Mapping) else {}
             transition = self._jobs.observe(stats, sd)
             active = self._jobs.printer_state in {"printing", "paused"}
-            if active and self._offline_recovery_job is not None:
-                self._offline_recovery_job = None
-                self._recovery_files_generation += 1
-            job = transition.key if active else self._offline_recovery_job
+            self._recovery_sources.observe_active(active)
+            job = transition.key if active else self._recovery_sources.job
             if transition.new_job or not active:
                 if transition.new_job:
                     self.recovery.job_changed(stats, sd)
@@ -444,7 +441,7 @@ class PrintCoordinator(QObject):
         each other). Compare against the print's own filename.
         """
         stats = status.get("print_stats") or {}
-        filename = (self._offline_recovery_job[0] if self._offline_recovery_job is not None
+        filename = (self._recovery_sources.job[0] if self._recovery_sources.job is not None
                     and stats.get("state") not in {"printing", "paused"}
                     else str(stats.get("filename") or ""))
         job = self._files.job_key
@@ -899,11 +896,7 @@ class PrintCoordinator(QObject):
             self._status = {}
             self._frame = {}
             self._preview_block = None
-            self._offline_recovery_job = None
-            self._recovery_file_options = []
-            self._recovery_files_loading = False
-            self._recovery_files_error = ""
-            self._recovery_files_generation += 1
+            self._recovery_sources.reset()
             self._jobs.reset()
             self._layers.reset()
             self._snapshot = PrintSnapshot()
@@ -972,7 +965,7 @@ class PrintCoordinator(QObject):
         index_view = self._index.view
         if index_view is None: return None
         if not index_view.job_key: return index_view
-        filename = (self._offline_recovery_job[0] if self._offline_recovery_job is not None
+        filename = (self._recovery_sources.job[0] if self._recovery_sources.job is not None
                     and (status.get("print_stats") or {}).get("state") not in {"printing", "paused"}
                     else str((status.get("print_stats") or {}).get("filename") or ""))
         return index_view if index_view.job_key[0] == filename else None
@@ -1152,79 +1145,17 @@ class PrintCoordinator(QObject):
 
     @property
     def recovery_files_state(self):
-        return {"available": not self._snapshot.active,
-                "loading": self._recovery_files_loading,
-                "error": self._recovery_files_error,
-                "selected": self._offline_recovery_job[0] if self._offline_recovery_job else "",
-                "options": list(self._recovery_file_options)}
+        return self._recovery_sources.state(active=self._snapshot.active)
 
     def refresh_recovery_files(self):
-        """List selectable root G-code without touching the virtual SD worker."""
-        if self._snapshot.active or not self._binding.configured:
-            return False
-        self._recovery_files_generation += 1
-        generation = self._recovery_files_generation
-        self._recovery_files_loading = True
-        self._recovery_files_error = ""
-        self.recovery.changed.emit()
-
-        def received(payload, error):
-            if generation != self._recovery_files_generation or self._closed:
-                return
-            self._recovery_files_loading = False
-            result = (payload or {}).get("result") or {}
-            rows = result.get("files") if isinstance(result, Mapping) else None
-            if error or not isinstance(rows, list):
-                self._recovery_files_error = "Could not list G-code files on the printer."
-                self._recovery_file_options = []
-            else:
-                found = {}
-                for row in rows:
-                    if not isinstance(row, Mapping):
-                        continue
-                    name = row.get("filename")
-                    try:
-                        size = int(row.get("size"))
-                    except (TypeError, ValueError):
-                        continue
-                    if (isinstance(name, str) and name == name.strip()
-                            and "/" not in name and "\\" not in name
-                            and not any(char in name for char in ";\r\n\x00")
-                            and is_gcode_name(name) and 0 < size <= self._files.MAX_DOWNLOAD_BYTES):
-                        def timestamp(value):
-                            try:
-                                value = float(value or 0)
-                                return value if 0 < value < float("inf") else 0
-                            except (TypeError, ValueError, OverflowError):
-                                return 0
-                        found[name] = {"name": name, "size": size,
-                                       "lastPrinted": timestamp(row.get("print_start_time")),
-                                       "modified": timestamp(row.get("modified"))}
-                self._recovery_file_options = sorted(found.values(), key=lambda item: (
-                    -item["lastPrinted"], -item["modified"], item["name"].casefold()))
-                if not found:
-                    self._recovery_files_error = "No root G-code files are available for unloaded recovery."
-            self.recovery.changed.emit()
-
-        started = self._client.transport.send_json(
-            "recovery-files", "root-directory", "GET",
-            "server/files/directory?path=gcodes&extended=true", received,
-            category="metadata")
-        if not started:
-            self._recovery_files_loading = False
-            self._recovery_files_error = "Could not request the printer's G-code list."
-            self.recovery.changed.emit()
-        return bool(started)
+        return self._recovery_sources.refresh(
+            active=self._snapshot.active, configured=self._binding.configured)
 
     def select_recovery_file(self, filename):
-        if self._snapshot.active or self.recovery.state["active"]:
+        job = self._recovery_sources.select(
+            filename, active=self._snapshot.active, recovering=self.recovery.state["active"])
+        if job is None:
             return False
-        row = next((item for item in self._recovery_file_options
-                    if item["name"] == filename), None)
-        if row is None:
-            return False
-        job = (row["name"], row["size"], 0)
-        self._offline_recovery_job = job
         self._recovery_suggestion = {}
         self.recovery.invalidate()
         self._index.bind(job)
@@ -1248,7 +1179,7 @@ class PrintCoordinator(QObject):
         snapshot = self._snapshot
         view = self._index.view
         path = self._files.path
-        offline_job = getattr(self, "_offline_recovery_job", None)
+        offline_job = self._recovery_sources.job
         offline = offline_job is not None and not snapshot.active
         anchor, split = self._plate_anchor, self._plate_split
         if anchor is None and snapshot.motion_progress is not None:
@@ -1283,7 +1214,7 @@ class PrintCoordinator(QObject):
         boundary = self.selected_recovery_boundary()
         snapshot = self._snapshot
         identity = self._files.identity
-        offline = self._offline_recovery_job is not None and not snapshot.active
+        offline = self._recovery_sources.job is not None and not snapshot.active
         if (boundary is None or identity is None
                 or (not offline and (snapshot.observation is None or not snapshot.active))):
             return None
@@ -1589,6 +1520,7 @@ class PrintCoordinator(QObject):
         })
 
     def close(self):
+        self._recovery_sources.close()
         self.recovery.close()
         self._closed = True
         self._object_tag_metric_key = self._object_tag_metric_owner = None

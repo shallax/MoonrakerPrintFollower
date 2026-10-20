@@ -421,7 +421,7 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertIn('"memory_diagnostics_log": memoryDiagnosticsBox.checked', config)
         self.assertIn('"memory_diagnostics_trace": memoryDiagnosticsTraceBox.checked', config)
         self.assertIn('"camera_disabled": cameraDisabledBox.checked', config)
-        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
+        action = (PLUGINS / "ConfigValidation.py").read_text(encoding="utf-8")
         self.assertIn('"trace_layer": bool(raw.get("trace_layer", False))', action)
         self.assertIn('"trace_http": bool(raw.get("trace_http", False))', action)
         self.assertIn('"memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False))', action)

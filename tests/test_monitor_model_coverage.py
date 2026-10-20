@@ -219,7 +219,7 @@ class RecoveryModelTests(MonitorModelCase):
             {name: {"filament_detected": True, "enabled": True}}, at=time.time(), selected=(name,))
         event = self.model._runout_events.observe(self.print_state.job_key,
             {name: {"filament_detected": False, "enabled": True}}, at=time.time(), selected=(name,))[0]
-        self.model._pause_for_runout(event, self.print_state)
+        self.model._runout_pause.request(event, self.print_state)
         request = self.sent("printer/objects/query")[-1]
         self.assertEqual(request.options["body"]["objects"][name], ["filament_detected", "enabled"])
         status = {"print_stats": {"state": "printing", "filename": "part.gcode"},
@@ -229,7 +229,7 @@ class RecoveryModelTests(MonitorModelCase):
         request.callback({"result": {"status": status}}, None)
         self.assertFalse(self.sent("printer/gcode/script"))
         status["configfile"]["config"][name]["pause_on_runout"] = "false"
-        self.model._pause_for_runout(event, self.print_state)
+        self.model._runout_pause.request(event, self.print_state)
         self.sent("printer/objects/query")[-1].callback({"result": {"status": status}}, None)
         self.assertEqual(self.sent("printer/gcode/script")[-1].options["body"]["script"], "PAUSE")
 
@@ -270,9 +270,9 @@ class RecoveryModelTests(MonitorModelCase):
         self.print_state = self.qt.load("PrintState").PrintSnapshot(
             job_key=("part.gcode", 100, 1), history_job_id="job-001")
         self.model = self.build(persistence=store)
-        self.model._follower_attached = False
-        self.model._follower_layer_anchor = 0
-        self.model._follower_layer_split = 2
+        self.model._selection.attached = False
+        self.model._selection.anchor = 0
+        self.model._selection.split = 2
         self.model.markRecoveryStop()
         rows = store.get_machine_state("A")["recoveryEvents"]["events"]
         self.assertEqual((rows[0]["kind"], rows[0]["layer"], rows[0]["split"]),
@@ -1451,9 +1451,9 @@ class ModuleCoercionSlotTests(MonitorModelCase):
 
     def test_an_unparseable_anchor_and_scale_fall_back(self):
         module = self.qt.load("MoonrakerMonitorModel")
-        self.assertEqual(module._coerce_anchor(None), -1)
-        self.assertEqual(module._coerce_anchor("junk"), -1)
-        self.assertEqual(module._coerce_anchor("7"), 7, "a stored digit is a layer")
+        self.assertEqual(self.qt.load("FollowerSelection").coerce_anchor(None), -1)
+        self.assertEqual(self.qt.load("FollowerSelection").coerce_anchor("junk"), -1)
+        self.assertEqual(self.qt.load("FollowerSelection").coerce_anchor("7"), 7, "a stored digit is a layer")
         view = module._follower_view_state({"lineScale": "junk", "showNext": "yes"})
         self.assertEqual(view["lineScale"], 1.0, "an unparseable stroke fell through")
         self.assertTrue(view["showNext"], "a non-bool flag must keep its default")
@@ -1608,7 +1608,7 @@ class FollowerViewSlotTests(MonitorModelCase):
     def test_live_exact_publications_continue_while_the_warm_image_is_latched(self):
         self.model = self.build()
         self.model.setFollowerPopoverOpen(True)
-        self.model._follower_attached = True
+        self.model._selection.attached = True
         self.model.setFollowerInteracting(True)
         from dataclasses import replace
         initial = {"layers": {"current": None, "prev": None, "next": None},
@@ -1721,9 +1721,9 @@ class FollowerSeekSlotTests(MonitorModelCase):
         # Detached on a frozen split: the repeat is a republish only. The
         # flag is set directly — the detach's own publish re-attaches
         # against the fresh (job-less) snapshot.
-        model._follower_attached = False
+        model._selection.attached = False
         frozen = min(5, model._values.get("plateLayerMotionCount", 0) or 0)
-        model._follower_layer_split = frozen
+        model._selection.split = frozen
         model.setFollowerLayerProgress(frozen)
         self.assertEqual(self.splits, [], "a repeated scrub re-asked for the same split")
 
@@ -1835,7 +1835,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
                    "travels": [], "travelStarts": [], "travelEnds": []}
         layers = {"current": payload, "prev": None, "next": None}
         model.setFollowerPopoverOpen(True)
-        model._follower_attached = True
+        model._selection.attached = True
         self.print_state = replace(self.print_state, job_key=("job-a",),
                                    plate_progress={"layers": layers,
                                                    "anchor": 0, "split": 3,

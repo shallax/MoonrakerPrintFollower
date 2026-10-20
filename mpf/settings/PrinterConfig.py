@@ -6,10 +6,13 @@
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [d2db7b8] Clarify source macro choices and update prime defaults
 # 2026-09-04 [a99637b] Update to v1.1.0.
+# 2026-10-20 — 6.0.0: Share recovery limits and follow choices with strict draft validation.
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from .ConfigConstraints import RECOVERY_NUMBER_LIMITS
+from ..printing.FollowMode import FollowMode
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 import json
@@ -366,16 +369,7 @@ class PrinterConfig:
             data["recovery_auto_pause"] = True
         if type(data.get("recovery_prime_enabled")) is not bool:
             data["recovery_prime_enabled"] = False
-        for key, lo, hi in (("recovery_lead_in_mm", 0.1, 50.0),
-                            ("recovery_clearance_mm", 1.0, 30.0),
-                            ("recovery_xy_speed_mm_s", 1.0, 200.0),
-                            ("recovery_z_speed_mm_s", 0.5, 20.0),
-                            ("recovery_prime_x", 0.0, 1000.0),
-                            ("recovery_prime_y", 0.0, 1000.0),
-                            ("recovery_prime_z", 0.0, 1000.0),
-                            ("recovery_prime_amount_mm", 0.1, 200.0),
-                            ("recovery_prime_speed_mm_s", 0.1, 20.0),
-                            ("recovery_prime_dwell_s", 0.0, 300.0)):
+        for key, lo, hi in RECOVERY_NUMBER_LIMITS:
             try:
                 number = float(data[key])
                 data[key] = number if isfinite(number) and lo <= number <= hi else getattr(defaults, key)
@@ -517,8 +511,8 @@ class PrinterConfig:
             if not isinstance(item, bool):
                 data[key] = str(item).strip().lower() in ("1", "true", "yes", "on")
 
-        if data["follow_mode"] not in {"exact", "completed", "lookahead", "window"}:
-            data["follow_mode"] = "exact"
+        if data["follow_mode"] not in {mode.value for mode in FollowMode}:
+            data["follow_mode"] = FollowMode.EXACT.value
         if data["output_format"].lower() not in {"gcode", "ufp"}:
             data["output_format"] = "gcode"
         else:

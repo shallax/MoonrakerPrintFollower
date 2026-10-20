@@ -38,7 +38,7 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
             with open(path, "wb") as handle:
                 handle.write(data)
             job = ("cube.gcode", len(data), 0)
-            parts.coordinator._offline_recovery_job = job
+            parts.coordinator._recovery_sources.job = job
             parts.files.bind(job)
             parts.files.path = path
             parts.files.identity = RemoteFileIdentity("cube.gcode", len(data), 123.0)
@@ -104,7 +104,7 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
             path = harness.os.path.join(directory, "part.gcode")
             with open(path, "wb") as handle: handle.write(data)
             job = ("part.gcode", len(data), 0)
-            parts.coordinator._offline_recovery_job = job
+            parts.coordinator._recovery_sources.job = job
             parts.files.bind(job)
             parts.files.path = path
             parts.files.identity = RemoteFileIdentity("part.gcode", len(data), 123.)
@@ -186,7 +186,7 @@ class CoordinatorCoverageTests(harness.CoordinatorCoverageTests):
                 _snapshot=PrintSnapshot(job_key=key,
                     observation=PrintObservation("paused", "cube.gcode", len(data), 20, 30)),
                 _index=harness.SimpleNamespace(view=view), _files=files,
-                _plate_anchor=0, _plate_split=1)
+                _plate_anchor=0, _plate_split=1, _recovery_sources=harness.SimpleNamespace(job=None))
             files.request_file = Mock()
             files.path = None
             self.assertIsNone(PrintCoordinator.selected_recovery_boundary(selection))

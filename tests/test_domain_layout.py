@@ -63,7 +63,7 @@ RULES = {
     "mpf.storage": (("mpf.storage",), ()),
     "mpf.printing": (("mpf.printing", "mpf.geometry"), ()),
     "mpf.gcode": (("mpf.gcode", "mpf.geometry", "mpf.storage"), ()),
-    "mpf.settings": (("mpf.settings",), ("mpf.geometry.DetectionRegions", "mpf.geometry.ToolheadLighting", "mpf.geometry.ToolheadMaterials", "mpf.geometry.ToolheadOpacity", "mpf.geometry.ToolheadRotors")),
+    "mpf.settings": (("mpf.settings",), ("mpf.printing.FollowMode", "mpf.geometry.DetectionRegions", "mpf.geometry.ToolheadLighting", "mpf.geometry.ToolheadMaterials", "mpf.geometry.ToolheadOpacity", "mpf.geometry.ToolheadRotors")),
     "mpf.moonraker": (("mpf.moonraker",), ("mpf.diagnostics.CameraTiming",)),
     "mpf.files.browser": (("mpf.files.browser",), ("mpf.moonraker.MoonrakerProtocol",)),
     "mpf.files.transfers": (("mpf.files.transfers", "mpf.moonraker"),

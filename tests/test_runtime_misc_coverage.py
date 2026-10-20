@@ -47,7 +47,8 @@ from mpf.cura.CuraAdapter import (active_machine_identity, apply_preview_decisio
 from mpf.cura.CuraLifecycleBridge import CuraLifecycleBridge
 from mpf.cura.CuraOutputWriter import CuraOutputWriter
 from mpf.files.transfers.DownloadStream import DownloadOperation, DownloadTarget
-from mpf.preview.FollowController import FollowController, FollowMode, FollowState, decide_layers
+from mpf.printing.FollowMode import FollowMode
+from mpf.preview.FollowController import FollowController, FollowState, decide_layers
 from mpf.settings.PrinterConfig import PrinterConfig
 
 if QT_AVAILABLE:

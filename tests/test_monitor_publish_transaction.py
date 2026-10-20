@@ -45,7 +45,7 @@ class MonitorPublishTransactionTests(harness.MonitorQtTests):
         self.qt.events()
         seen = []
         model.followerViewChanged.connect(lambda: seen.append(model.followerLayerAnchor))
-        model._follower_layer_anchor = 17
+        model._selection.anchor = 17
         model._publish()
         self.assertEqual(seen, [17],
                          "the notification fired before the frame committed")

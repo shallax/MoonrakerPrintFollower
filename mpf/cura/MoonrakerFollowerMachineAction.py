@@ -6,6 +6,7 @@
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-09-04 [2f1de9e] Update to v2.0.0.
+# 2026-10-20 — 6.0.0: Validate settings before publishing toolhead assets; keep host persistence at the adapter.
 
 """Native Cura Machine Action for unified per-printer Moonraker settings."""
 
@@ -30,10 +31,10 @@ from UM.Resources import Resources
 from UM.Settings.DefinitionContainer import DefinitionContainer
 
 from ..application.indexing.CacheNamespaces import CACHE_DIRECTORY_NAME
-from ..preview.FollowController import FollowMode
 from ..moonraker.MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
 from ..moonraker.MoonrakerSession import RequestCategory
 from ..moonraker.MoonrakerTransport import MoonrakerHttpTransport
+from ..settings.ConfigValidation import ConfigDiscovery, ConfigValidationError, validate_config
 from ..settings.PrinterConfig import PrinterConfig, normalise_url
 
 from ..settings.MigrationPresentation import migration_banner_text, migration_diagnostics_text
@@ -819,232 +820,29 @@ class MoonrakerFollowerMachineAction(MachineAction):
             if not isinstance(raw, dict):
                 return False
 
-            # The sliders deliver JS numbers (e.g. 250.0); the legacy
-            # text fields delivered digit strings. Accept both. Every
-            # refusal names its reason in the log — a save that fails
-            # validation must never fail silently (the toggle-revert
-            # report: the dialog accepted nothing and said nothing).
-            try:
-                interval = int(float(str(raw.get("poll_interval_ms", "")).strip()))
-                aux_interval = int(float(str(raw.get("aux_interval_ms", "")).strip()))
-                console_interval = int(float(str(raw.get("console_interval_ms", "")).strip()))
-                tolerance = float(str(raw.get("z_tolerance", "")).strip())
-                retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
-                raw_cache = str(raw.get("cache_max_mb") or "").strip()
-                cache_max = int(raw_cache) if raw_cache \
-                    else getattr(self._config(), "cache_max_mb", 2048)
-            except ValueError as exc:
-                Logger.log("w", "Moonraker settings save refused: unparsable field (%s)", exc)
-                return False
-            url = normalise_url(str(raw.get("url", "")))
-            enabled = bool(raw.get("enabled", False))
-            if not (250 <= interval <= 3_600_000):
-                Logger.log("w", "Moonraker settings save refused: poll interval out of range")
-                return False
-            if not (250 <= aux_interval <= 60_000) or not (250 <= console_interval <= 60_000):
-                Logger.log("w", "Moonraker settings save refused: aux/console interval out of range")
-                return False
-            if not (0.005 <= tolerance <= 0.250):
-                Logger.log("w", "Moonraker settings save refused: z tolerance out of range")
-                return False
-            if not (0.1 <= retry_interval <= 60.0):
-                Logger.log("w", "Moonraker settings save refused: retry interval out of range")
-                return False
-            if not (16 <= cache_max <= 4096):
-                Logger.log("w", "Moonraker settings save refused: cache size out of range")
-                return False
-            if enabled and not self._url_is_usable(url):
-                Logger.log("w", "Moonraker settings save refused: the URL is not usable")
-                return False
-
-            trans_input = str(raw.get("filename_translate_input") or "")
-            trans_output = str(raw.get("filename_translate_output") or "")
-            if len(trans_input) != len(trans_output):
-                Logger.log("w", "Moonraker settings save refused: translate input/output lengths differ")
-                return False
-
-            mode = str(raw.get("follow_mode") or FollowMode.EXACT.value)
-            if mode not in {item.value for item in FollowMode}:
-                mode = FollowMode.EXACT.value
-
             current = self._config()
-            recovery_sensors = raw.get("recovery_sensor_names", current.recovery_sensor_names)
-            if not isinstance(recovery_sensors, list) or any(
-                not isinstance(name, str) or
-                not name.startswith(("filament_switch_sensor ", "filament_motion_sensor "))
-                for name in recovery_sensors):
-                Logger.log("w", "Moonraker settings save refused: invalid recovery sensor selection")
-                return False
-            permitted_sensors = set(self._recovery_sensors) | set(current.recovery_sensor_names)
-            if not set(recovery_sensors) <= permitted_sensors:
-                Logger.log("w", "Moonraker settings save refused: recovery sensor was not discovered")
-                return False
-            recovery_state = str(raw.get("recovery_saved_state", current.recovery_saved_state)).strip().upper()
-            recovery_macro = str(raw.get("recovery_prepare_macro", current.recovery_prepare_macro)).strip().upper()
-            nozzle_parameter = str(raw.get("recovery_nozzle_parameter", current.recovery_nozzle_parameter)).strip().upper()
-            bed_parameter = str(raw.get("recovery_bed_parameter", current.recovery_bed_parameter)).strip().upper()
-            if (not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", nozzle_parameter)
-                    or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", bed_parameter)):
-                return False
-            setup_macros = raw.get("recovery_setup_macros", current.recovery_setup_macros)
-            transparent_macros = raw.get("recovery_transparent_macros", current.recovery_transparent_macros)
-            permitted_macros = set(self._recovery_prepare_macros) | set(current.recovery_setup_macros) | set(current.recovery_transparent_macros)
-            if (not isinstance(setup_macros, list) or not isinstance(transparent_macros, list)
-                    or len(setup_macros) > 32 or len(transparent_macros) > 32
-                    or any(not isinstance(name, str) or name not in permitted_macros
-                           for name in setup_macros + transparent_macros)
-                    or set(setup_macros) & set(transparent_macros)):
-                Logger.log("w", "Moonraker settings save refused: invalid source macro selection")
-                return False
-            if (not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", recovery_state)
-                    or recovery_state not in set(self._recovery_saved_states) | {current.recovery_saved_state}
-                    or (recovery_macro and
-                        (not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", recovery_macro)
-                         or recovery_macro not in set(self._recovery_prepare_macros) | {current.recovery_prepare_macro}))):
-                Logger.log("w", "Moonraker settings save refused: recovery macro or state was not discovered")
-                return False
-            recovery_numbers = {}
-            recovery_mode = raw.get("recovery_lead_in_mode", current.recovery_lead_in_mode)
-            if recovery_mode not in {"mm", "moves"}:
-                return False
+            enabling_detection = raw.get("detection_enabled", current.detection_enabled) is True and not current.detection_enabled
+            discovery = ConfigDiscovery(
+                sensors=tuple(self._recovery_sensors),
+                saved_states=tuple(self._recovery_saved_states),
+                macros=tuple(self._recovery_prepare_macros),
+                detection_global_enabled=self.detectionGlobalEnabled,
+                detection_camera_ready=self.detectionCameraReady if enabling_detection else False)
             try:
-                recovery_moves = int(raw.get("recovery_lead_in_moves", current.recovery_lead_in_moves))
-            except (TypeError, ValueError):
-                return False
-            if not 1 <= recovery_moves <= 100:
-                return False
-            if type(raw.get("recovery_auto_pause", current.recovery_auto_pause)) is not bool:
-                Logger.log("w", "Moonraker settings save refused: recovery auto-pause must be a checkbox value")
-                return False
-            if type(raw.get("recovery_prime_enabled", current.recovery_prime_enabled)) is not bool:
-                Logger.log("w", "Moonraker settings save refused: prime enable must be a checkbox value")
-                return False
-            for key, minimum, maximum in (("recovery_lead_in_mm", 0.1, 50.0),
-                                          ("recovery_clearance_mm", 1.0, 30.0),
-                                          ("recovery_xy_speed_mm_s", 1.0, 200.0),
-                                          ("recovery_z_speed_mm_s", 0.5, 20.0),
-                                          ("recovery_prime_x", 0.0, 1000.0),
-                                          ("recovery_prime_y", 0.0, 1000.0),
-                                          ("recovery_prime_z", 0.0, 1000.0),
-                                          ("recovery_prime_amount_mm", 0.1, 200.0),
-                                          ("recovery_prime_speed_mm_s", 0.1, 20.0),
-                            ("recovery_prime_dwell_s", 0.0, 300.0)):
-                try:
-                    value = float(raw.get(key, getattr(current, key)))
-                except (TypeError, ValueError):
-                    return False
-                if not minimum <= value <= maximum:
-                    Logger.log("w", "Moonraker settings save refused: %s out of range", key)
-                    return False
-                recovery_numbers[key] = value
-            try:
-                recovery_timeout = int(raw.get("recovery_command_timeout_s", current.recovery_command_timeout_s))
-            except (TypeError, ValueError):
-                return False
-            if not 10 <= recovery_timeout <= 600:
-                Logger.log("w", "Moonraker settings save refused: recovery command timeout out of range")
-                return False
-            try:
-                recovery_heating_timeout = int(raw.get("recovery_heating_timeout_s", current.recovery_heating_timeout_s))
-            except (TypeError, ValueError, OverflowError):
-                return False
-            if not 60 <= recovery_heating_timeout <= 3600:
-                Logger.log("w", "Moonraker settings save refused: recovery heating timeout out of range")
-                return False
-            try:
-                recovery_status_timeout = int(raw.get("recovery_status_timeout_s", current.recovery_status_timeout_s))
-            except (TypeError, ValueError, OverflowError):
-                return False
-            if not 3 <= recovery_status_timeout <= 60:
-                Logger.log("w", "Moonraker settings save refused: recovery status timeout out of range")
-                return False
-            warning_threshold = raw.get("detection_warning_threshold", current.detection_warning_threshold)
-            failure_threshold = raw.get("detection_failure_threshold", current.detection_failure_threshold)
-            if (type(warning_threshold) is not int or type(failure_threshold) is not int
-                    or not 0 <= warning_threshold < failure_threshold <= 100):
-                Logger.log("w", "Moonraker settings save refused: detection thresholds must be ordered percentages")
-                return False
-            detection_enabled = raw.get("detection_enabled", current.detection_enabled)
-            if not isinstance(detection_enabled, bool):
-                Logger.log("w", "Moonraker settings save refused: detection_enabled must be a checkbox value")
-                return False
-            if detection_enabled and not current.detection_enabled \
-                    and (not self.detectionGlobalEnabled or not self.detectionCameraReady
-                         or bool(raw.get("camera_disabled", current.camera_disabled))):
-                self._detection_refusal = (
-                    "Enable local detection in Settings and select a working camera before enabling this printer."
-                )
-                self.detectionChanged.emit()
-                Logger.log("w", "Moonraker settings save refused: %s", self._detection_refusal)
+                config = validate_config(raw, current, discovery,
+                                         url_is_usable=self._url_is_usable)
+            except ConfigValidationError as error:
+                if error.field == "detection_enabled":
+                    self._detection_refusal = error.message
+                    self.detectionChanged.emit()
+                Logger.log("w", f"Moonraker settings save refused: {error.message}")
                 return False
             self._detection_refusal = ""
             self.detectionChanged.emit()
-            # The mode is a validated two-literal choice: an unknown value
-            # keeps the current one — never a silent default (UX-M7).
-            feed_mode = str(raw.get("feed_mode") or "").strip().lower()
-            if feed_mode not in ("websocket", "http"):
-                feed_mode = str(getattr(current.feed_mode, "value", current.feed_mode))
-            data = asdict(current)
-            data.update({
-                "enabled": enabled,
-                "url": url,
-                "api_key": str(raw.get("api_key") or "").strip(),
-                "poll_interval_ms": interval,
-                "aux_interval_ms": aux_interval,
-                "console_interval_ms": console_interval,
-                "cache_max_mb": cache_max,
-                "cache_max_mb_explicit": bool(raw_cache) or current.cache_max_mb_explicit,
-                "moonraker_layer_is_one_based": bool(raw.get("moonraker_layer_is_one_based", True)),
-                "auto_preview": bool(raw.get("auto_preview", False)),
-                "z_fallback": bool(raw.get("z_fallback", True)),
-                "z_tolerance": tolerance,
-                "path_follow": bool(raw.get("path_follow", True)),
-                "path_smoothing": bool(raw.get("path_smoothing", True)),
-                "eta_learn": bool(raw.get("eta_learn", False)),
-                "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
-                "trace_layer": bool(raw.get("trace_layer", False)),
-                "seek_trace": bool(raw.get("seek_trace", False)),
-                "trace_http": bool(raw.get("trace_http", False)),
-                "memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False)),
-                "memory_diagnostics_trace": bool(raw.get("memory_diagnostics_trace", False)),
-                "camera_disabled": bool(raw.get("camera_disabled", False)),
-                "detection_enabled": detection_enabled,
-                "recovery_sensor_names": list(dict.fromkeys(recovery_sensors)),
-                "recovery_auto_pause": raw.get("recovery_auto_pause", current.recovery_auto_pause),
-                "recovery_prime_enabled": raw.get("recovery_prime_enabled", current.recovery_prime_enabled),
-                "recovery_saved_state": recovery_state,
-                "recovery_prepare_macro": recovery_macro,
-                "recovery_setup_macros": list(dict.fromkeys(setup_macros)),
-                "recovery_transparent_macros": list(dict.fromkeys(transparent_macros)),
-                "recovery_nozzle_parameter": nozzle_parameter,
-                "recovery_bed_parameter": bed_parameter,
-                "recovery_lead_in_mode": recovery_mode,
-                "recovery_lead_in_moves": recovery_moves,
-                **recovery_numbers,
-                "recovery_command_timeout_s": recovery_timeout,
-                "recovery_heating_timeout_s": recovery_heating_timeout,
-                "recovery_status_timeout_s": recovery_status_timeout,
-                "detection_warning_threshold": warning_threshold,
-                "detection_failure_threshold": failure_threshold,
-                "software_follower_renderer": bool(raw.get("software_follower_renderer", False)),
-                "feed_mode": feed_mode,
-                "follow_mode": mode,
-                "frontend_url": str(raw.get("frontend_url") or "").strip(),
-                "output_format": str(raw.get("output_format") or "gcode").lower(),
-                "upload_dialog": bool(raw.get("upload_dialog", True)),
-                "upload_path": str(raw.get("upload_path") or "").strip().strip("/"),
-                "upload_start_print": bool(raw.get("upload_start_print", False)),
-                "upload_remember_state": bool(raw.get("upload_remember_state", False)),
-                "upload_autohide_message": bool(raw.get("upload_autohide_message", False)),
-                "power_devices": str(raw.get("power_devices") or "").strip(),
-                "ready_retry_interval_s": retry_interval,
-                "filename_translate_input": trans_input,
-                "filename_translate_output": trans_output,
-                "filename_translate_remove": str(raw.get("filename_translate_remove") or ""),
-            })
             if self._toolhead_models is not None:
+                data = asdict(config)
                 data.update(self._toolhead_models.fields())
-            config = PrinterConfig.from_dict(data)
+                config = PrinterConfig.from_dict(data)
             saved = self._follower.apply_printer_config(config)
             if saved is False:
                 # A refused persistence write is not a saved setting: the

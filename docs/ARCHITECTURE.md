@@ -120,6 +120,9 @@ correct package ownership.
 | `PluginPaths.py` | Installed-plugin-root-relative filenames for explicit QML and shader resources | Application state or resource-loading lifecycle |
 | `RuntimeMirror.py` | Direct optional-download URLs tied to the packaged plugin version and GitHub release tag | Network transfers, payload pins or cache identity |
 | `PrinterBinding.py` | Per-printer configuration, migration triggers, active-machine transitions | Preview, files, uploads |
+| `ConfigValidation.py` | Strict, composed connection/recovery/detection draft validation with field-specific refusals | Qt, persistence or asset publication |
+| `ConfigConstraints.py` | Numeric limits shared by strict drafts and tolerant persisted loading | Refusal or migration policy |
+| `FollowMode.py` | Persisted print-follow mode values shared by settings and Preview | Host or UI state |
 | `PrinterConfig.py` | Per-machine settings schema and coercion (the records, the bounds, the normalisers) | Networking, Qt or the settings file (the persistence facade owns the files) |
 | `PluginPersistence.py` | The two plugin-owned stores: the settings document and the per-machine state shards, the typed key-scoped operations and the in-memory document — one instance per file per process, constructed at the composition root and handed down | Schema, coercion or networking |
 | `PersistenceMigration.py` | The one-shot migration's control flow: the strict source read, the backup gate, the verify-by-re-read interlock and the clean-as-commit-point | Qt, Resources or the stores |
@@ -297,6 +300,9 @@ correct package ownership.
 | `PreparedSession.py` | The prepared store's session for the file being served: the adopted table, the incremental writer and its retirement, the coverage census, the completeness/published latches and the identity strength gate | The store's format, the RAM tiers or worker scheduling |
 | `PreparedStore.py` | Validated random-access prepared-layer files and resumable preparation | Networking or UI |
 | `PreviewColours.py` | Pure print-wide ranges and Cura-compatible gradient projection | Cura API access |
+| `FollowerSelection.py` | Follower attachment, layer selection and within-layer scrub state over explicit demand callbacks | Qt properties or renderer lifetime |
+| `RunoutPause.py` | Fresh sensor/job checks, runout pause dispatch and callback-generation fences | Uranium messages or Monitor publication |
+| `RecoverySources.py` | Recovery source listing, validation, ordering, selection and request lifetime | Index/file adoption or printer start commands |
 | `PrintCoordinator.py` | Cross-domain orchestration over injected services and immutable observations | Protocol or geometry algorithms |
 | `PrintIdentity.py` | Pure current-print identity checks | I/O or mutable lifecycle |
 | `PrintStartOwner.py` | Print-start acknowledgement and operation lifetime | HTTP transport |
@@ -2550,3 +2556,11 @@ rejects writes after closure and removes a directory recreated by an in-flight
 publication. Reference/hold changes and pruning run on the renderer owner thread;
 workers can discard only their own unpublished outputs. `RasterTicket` names the
 existing nine queued-signal identity fields without changing their wire values.
+
+`FollowerSelection` owns attachment and manual selection state. The Monitor supplies
+live/displayed layer values and routes demand callbacks; renderer print epochs
+remain with the render controller. `RunoutPause` owns its generation and pending
+command state; connection and print changes invalidate callbacks before they can
+dispatch PAUSE. Recovery marker storage and its history keys remain a separate
+persistence concern. `RecoverySources` owns file-list requests and the selected
+unloaded source; the coordinator binds that source to index/download services.

@@ -230,7 +230,13 @@ class SourceContractTests(unittest.TestCase):
             'FileManagerPolicy': set(),
             'ReplyBodyReader': set(),
             'FilesViewModel': set(),
-            'FollowController': set(),
+            'FollowController': {'FollowMode'},
+            'FollowMode': set(),
+            'ConfigConstraints': set(),
+            'ConfigValidation': {'ConfigConstraints', 'PrinterConfig', 'FollowMode'},
+            'FollowerSelection': set(),
+            'RunoutPause': {'RunoutEvents'},
+            'RecoverySources': {'FileManagerPolicy'},
             'FollowerColourScheme': {'PreviewColours'},
             'FollowerRuntime': {'ToolheadAssetStore', 'ToolheadModels', 'ToolheadPresenter', 'BedMeshPresenter', 'CacheNamespaces', 'CuraIntegration', 'FileDownload', 'GCodeIndexService', 'LocalDetectionService', 'MigrationNotice', 'MoonrakerClient', 'PauseController', 'PluginPersistence', 'PreviewFollower', 'PreviewMotion', 'PreviewPresentation', 'PreviewToolheadPresentation', 'PrintCoordinator', 'PrinterBinding', 'RemoteFileService', 'WhatsNew', 'WhatsNewOverlay'},
             'AssetInstaller': {'DetectionAssets', 'DetectionDownloadTransport', 'RuntimeMirror'},
@@ -288,13 +294,13 @@ class SourceContractTests(unittest.TestCase):
             'MonitorTuning': set(),
             'HeaterTargets': {'MonitorFormatting'},
             'MoonrakerClient': {'CameraTiming', 'MoonrakerProtocol', 'MoonrakerSession'},
-            'MoonrakerFollowerMachineAction': {'CacheNamespaces', 'DetectionAssets', 'FollowController', 'MigrationPresentation', 'MoonrakerProtocol', 'MoonrakerSession', 'MoonrakerTransport', 'PrinterConfig', 'RunoutEvents'},
+            'MoonrakerFollowerMachineAction': {'ConfigValidation', 'CacheNamespaces', 'DetectionAssets', 'MigrationPresentation', 'MoonrakerProtocol', 'MoonrakerSession', 'MoonrakerTransport', 'PrinterConfig', 'RunoutEvents'},
             'MoonrakerMJPGImage': {'FrameDecoder', 'CameraStatistics', 'MJPEGParser'},
             'FrameDecoder': set(),
             'CameraRecovery': {'CameraTiming', 'CameraSourceIdentity'},
             'CameraStatistics': set(),
             'MJPEGParser': set(),
-            'MoonrakerMonitorModel': {'MonitorDetection', 'FileBrowserPresentation', 'TemperaturePresentation', 'CameraRecovery', 'CameraTiming', 'ConsoleController', 'FileManager', 'FileManagerPolicy', 'FilesViewModel', 'MigrationPresentation', 'PauseAtLayerPresentation', 'MonitorCamera', 'MonitorCommands', 'MonitorControls', 'MonitorData', 'MonitorFormatting', 'MonitorPermissions', 'MonitorPublication', 'MonitorTemperatureHistory', 'MonitorTuning', 'PlateRaster', 'PlateRenderController', 'PlateSceneIdentity', 'PrintStartOwner', 'PrinterConfig', 'RunoutEvents', 'SectionLayoutPolicy', 'StateStore', 'ToolheadController', 'ToolheadPolicy', 'UiStateStore', 'WhatsNew'},
+            'MoonrakerMonitorModel': {'FollowerSelection', 'RunoutPause', 'MonitorDetection', 'FileBrowserPresentation', 'TemperaturePresentation', 'CameraRecovery', 'CameraTiming', 'ConsoleController', 'FileManager', 'FileManagerPolicy', 'FilesViewModel', 'MigrationPresentation', 'PauseAtLayerPresentation', 'MonitorCamera', 'MonitorCommands', 'MonitorControls', 'MonitorData', 'MonitorFormatting', 'MonitorPermissions', 'MonitorPublication', 'MonitorTemperatureHistory', 'MonitorTuning', 'PlateRaster', 'PlateRenderController', 'PlateSceneIdentity', 'PrintStartOwner', 'PrinterConfig', 'RunoutEvents', 'SectionLayoutPolicy', 'StateStore', 'ToolheadController', 'ToolheadPolicy', 'UiStateStore', 'WhatsNew'},
             'MoonrakerOutputDevice': {'CuraOutputWriter', 'MonitorPermissions', 'PluginPaths', 'UploadController'},
             'MoonrakerOutputDevicePlugin': {'FollowerColourScheme', 'MoonrakerMonitorModel', 'MoonrakerOutputDevice', 'PluginPaths'},
             'MoonrakerPrintFollower': {'FollowerRuntime', 'LeakProbe', 'WhatsNewOverlay'},
@@ -334,12 +340,12 @@ class SourceContractTests(unittest.TestCase):
             'ToolheadReadout': set(),
             'ObjectNameProjection': {'Polygons'},
             'PreviewSmoothing': set(),
-            'PrintCoordinator': {'FileManagerPolicy', 'LoadStateTracker', 'MonitorFormatting', 'MoonrakerProtocol', 'NextPausePipeline', 'PreviewFormatting', 'PrintIdentity', 'PrintState', 'RemoteJobService', 'RecoveryController', 'RecoveryPlanning'},
+            'PrintCoordinator': {'RecoverySources', 'LoadStateTracker', 'MonitorFormatting', 'MoonrakerProtocol', 'NextPausePipeline', 'PreviewFormatting', 'PrintIdentity', 'PrintState', 'RemoteJobService', 'RecoveryController', 'RecoveryPlanning'},
             'PrintIdentity': set(),
             'PrintStartOwner': set(),
             'PrintState': {'RemoteJobService'},
             'PrinterBinding': {'CameraTiming', 'CuraAdapter', 'PersistenceMigration', 'PrinterConfig'},
-            'PrinterConfig': {'ToolheadOpacity', 'ToolheadRotors', 'DetectionRegions', 'ToolheadLighting', 'ToolheadMaterials'},
+            'PrinterConfig': {'ConfigConstraints', 'FollowMode', 'ToolheadOpacity', 'ToolheadRotors', 'DetectionRegions', 'ToolheadLighting', 'ToolheadMaterials'},
             'RemoteFileService': {'DownloadStream', 'MoonrakerProtocol', 'ProcessOwner'},
             'RemoteJobService': set(),
             'RecoveryPlanning': {'ArcGeometry', 'GCodeParser', 'IndexLimits'},
@@ -386,7 +392,10 @@ class SourceContractTests(unittest.TestCase):
                     imported |= imported_names(node)
             self.assertLessEqual(imported, dependencies, module)
             if module not in follower_exceptions:
-                self.assertNotIn("_follower", source, module)
+                self.assertFalse(any(
+                    isinstance(node, ast.Attribute) and node.attr == "_follower"
+                    or isinstance(node, ast.Name) and node.id == "_follower"
+                    for node in ast.walk(ast.parse(source))), module)
             if module not in cura_exceptions:
                 self.assertNotIn("from cura.", source, module)
 

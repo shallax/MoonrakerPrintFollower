@@ -22,8 +22,15 @@ Version remains 6.0.0. Merge/tag and a live Cura restart are not authorized here
   belongs to `IndexMotionTracking`. Full `make all` passed with 6,280 tests;
   coverage is 97.57%, with every production file at least 95%. Cache API exports
   use `gcode.cache` to preserve unambiguous implementation-module imports.
-- [ ] Extract runout-pause, follower-selection and recovery-source workflows.
-- [ ] Extract settings validation and shared constraints from the Cura adapter.
+- [x] Extract runout-pause, follower-selection and recovery-source workflows.
+  The three owners accept explicit capabilities and can be exercised without
+  constructing the Monitor; adapters retain rendering epochs, publication and
+  index/download service adoption.
+- [x] Extract settings validation and shared constraints from the Cura adapter.
+  `ConfigValidation` accepts a draft, current values and discovered choices;
+  field refusals precede publication/persistence. Shared recovery limits and
+  follow modes have portable owners; strict drafts retain their own refusal
+  policy, independently of tolerant stored-setting migration.
 - [ ] Separate follower gesture, render-delivery and overlay QML ownership.
 - [ ] Separate toolhead import jobs and typed appearance edit transactions.
 - [ ] Separate detection action state and effects from host notifications.
