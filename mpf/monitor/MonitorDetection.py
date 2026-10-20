@@ -6,18 +6,18 @@
 # 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
 # 2026-10-04 [31f1629] Align release introduction with durable pause protection
 # 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-10-20 — 6.0.0: Delegate attestation and action state to portable effect-driven owners.
 
-"""Own local detection observations, tuning, per-run actions and evidence.
+"""Qt bridge for detection observations, tuning, evidence and host effects.
 
-The Qt monitor facade forwards intents and presentation. This owner receives
-explicit camera, transport, configuration, storage and publication capabilities.
+Explicit run and action owners supply history attestation and per-run decisions.
+The bridge applies persistence/command effects and constructs host notifications.
 """
 
 import time
 from dataclasses import replace
 from hashlib import sha256
 from math import isfinite
-from uuid import uuid4
 from urllib.parse import parse_qsl, urlsplit
 
 from PyQt6.QtCore import QObject, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
@@ -30,11 +30,8 @@ from ..detection.DetectionPolicy import DetectionPolicy
 from ..detection import EvidenceStore
 from ..detection.DetectionObservation import FRESH_SECONDS
 from ..geometry.DetectionRegions import validate_regions, fingerprint
-from ..printing.PrintRunIdentity import attest_active_run, PrintRunIdentity
-
-DETECTION_ALERT_REPEAT_SECONDS = 300.0
-DETECTION_ALERT_MAX_PER_PRINT = 3
-
+from ..detection.DetectionRun import DetectionRun, DetectionRunInput
+from ..detection.DetectionActions import DetectionActions
 
 class MonitorDetection(QObject):
     detectionChanged = pyqtSignal()
@@ -52,6 +49,10 @@ class MonitorDetection(QObject):
         self._commands, self._store = commands, store
         self._publish, self._schedule_publish = publish, schedule_publish
         self._published_values, self._printer_name = published_values, printer_name
+        self._actions = DetectionActions(self._detection_effect)
+        self._run = DetectionRun(current=self._detection_run_input, request=data.request,
+            changed=self._on_detection_run_transition, monotonic=self._now, wall_time=time.time)
+        self.destroyed.connect(self._run.close)
         self._detection_epoch = 0
         self._detection_editing = False
         self._detection_edit_camera = None
@@ -61,41 +62,22 @@ class MonitorDetection(QObject):
         self._detection_result_at = None
         self._detection_message = None
         self._detection_message_token = None
-        self._detection_run_context = None
-        self._detection_notice_identity = None
-        self._detection_run_identity = None
-        self._detection_history_pending = False
-        self._detection_history_retry_at = 0.0
-        self._detection_history_next_at = 0.0
-        self._detection_attested_at = None
         self._detection_sample_error = ""
         self._detection_regions_cache = None
-        self._detection_retired_history = None
-        self._detection_muted = False
-        self._detection_pause_attempt = None
         self._detection_policy = DetectionPolicy()
         self._detection_context_seen = None
         self._detection_thresholds_seen = (38, 78, 300)
-        self._detection_action_context = None
-        self._detection_alerted_at = None
-        self._detection_acknowledged_at = None
-        self._detection_alert_count = 0
-        self._detection_alert_level = ""
         self._detection_frame = None
-        self._detection_paused_for_print = False
-        self._detection_pause_pending = False
-        self._detection_pause_uncertain = False
         self._detection_baseline_printer = identity()[0] if identity is not None else None
         self._detection_baseline_camera = None
         self._detection_baselines = {}
-        self._detection_action_saved = {}
         self._detection_camera_seen = None
         if hasattr(store, "get_machine_state") and identity is not None:
             saved = store.get_machine_state(self._detection_baseline_printer) or {}
             baselines = saved.get("detectionBaselines")
             if isinstance(baselines, dict):
                 self._detection_baselines = baselines
-            self._detection_action_saved = saved.get("detectionActions") or {}
+            self._actions.load_printer(saved.get("detectionActions") or {})
         if detection is not None:
             if hasattr(detection, "observationReady"):
                 detection.observationReady.connect(self._on_detection_observation)
@@ -128,81 +110,43 @@ class MonitorDetection(QObject):
         return saved.get(self._detection_camera_id(), ())
 
     def _potential_saved_mute(self):
-        saved = self._detection_action_saved
+        saved = self._actions.state.saved
         run = saved.get("run") if isinstance(saved, dict) else None
         stats = (self._data.snapshot.core or {}).get("print_stats") or {}
         return (isinstance(run, dict) and saved.get("muted") is True
                 and run.get("filename") == stats.get("filename")
                 and run.get("binding") == sha256(self._config().url.encode()).hexdigest())
 
-    def _ensure_detection_run(self, *, force=False):
+    def _detection_run_input(self):
         stats = (self._data.snapshot.core or {}).get("print_stats") or {}
         job = getattr(self._print_state(), "job_key", None)
-        printer = self._detection_printer_id()
-        key = (printer, self._client.session.generation, job, self._config().url, stats.get("state") in ("printing", "paused"))
-        if key != self._detection_run_context:
-            old = self._detection_run_context
-            if old is not None and old[0] == printer and old[1] == key[1] and (old[2] != job or old[4] and not key[4]):
-                self._detection_retired_history = self._detection_run_identity
-            self._detection_run_context = key
-            self._detection_run_identity = None
-            self._detection_attested_at = None
-            self._detection_notice_identity = PrintRunIdentity(uuid4().hex, time.time(), str(stats.get("filename") or ""), "session")
-            self._detection_action_context = None
-            self._detection_history_pending = False
-            self._detection_history_retry_at = 0
-            self._detection_history_next_at = 0
-            self._detection_muted = bool(key[4] and self._potential_saved_mute())
+        config = self._config()
+        key = (self._detection_printer_id(), self._client.session.generation,
+               job, config.url, stats.get("state") in ("printing", "paused"))
+        eligible = (config.detection_enabled and self.detectionCameraReady
+                    and self._detection is not None and self._detection.enabled)
+        return DetectionRunInput(key, str(stats.get("filename") or ""), bool(eligible))
+
+    def _on_detection_run_transition(self, transition):
+        if transition.kind == "reset":
+            self._actions.run_changed(active=self._run.context[4], potential_saved_mute=self._potential_saved_mute())
             self._hide_detection_message()
-        clock = self._now()
-        if (self._detection_history_pending
-                or stats.get("state") not in ("printing", "paused") or job is None
-                or not self._config().detection_enabled or not self.detectionCameraReady
-                or self._detection is None or not self._detection.enabled or not printer
-                or clock < self._detection_history_retry_at
-                or (not force and clock < self._detection_history_next_at)):
             return
-        self._detection_history_pending = True
-        self._detection_attested_at = None
-        self._detection_history_retry_at = self._now() + 5
-        filename = stats.get("filename")
-        binding = sha256(self._config().url.encode()).hexdigest()
-        def finished(payload, error):
-            current = (self._detection_printer_id(), self._client.session.generation,
-                       getattr(self._print_state(), "job_key", None), self._config().url,
-                       ((self._data.snapshot.core or {}).get("print_stats") or {}).get("state") in ("printing", "paused"))
-            if key != self._detection_run_context or key != current:
-                return
-            self._detection_history_pending = False
-            identity = attest_active_run(payload, filename, binding) if not error else None
-            if identity is not None and identity != self._detection_retired_history:
-                previous = self._detection_run_identity
-                self._detection_run_identity = identity
-                self._detection_attested_at = clock
-                self._detection_history_retry_at = 0 if self._attestation_fresh(2) else self._now() + 5
-                self._detection_history_next_at = self._now() + 10
-                if identity != previous:
-                    self._invalidate_detection()
-                    self._detection_context_seen = self._detection_context()
-                self._sync_detection_action_context((printer, identity), time.time())
-                context = self._detection_context()
-                state = self._detection_policy.state(now=self._now(), context=context, active=context is not None)
-                if identity == previous and context is not None and state.name in ("warning", "failure"):
-                    self._handle_detection_action(context, state.name, time.time())
-                self.detectionChanged.emit()
-                self._schedule_publish()
-            else:
-                self._detection_attested_at = None
-                if not error and self._detection_run_identity is not None:
-                    self._detection_run_identity = None
-                    self._detection_action_context = None
-                    self._detection_muted = self._potential_saved_mute()
-                    self._invalidate_detection()
-                    self._detection_context_seen = self._detection_context()
-                self.detectionChanged.emit()
-                self._schedule_publish()
-        if not self._data.request("detectionHistory", "GET", "server/history/list?limit=1&order=desc", finished):
-            self._detection_history_pending = False
+        if transition.kind == "admitted":
+            if self._run.identity != transition.previous:
+                self._invalidate_detection()
+                self._detection_context_seen = self._detection_context()
+            self._actions.sync((self._run.context[0], self._run.identity), time.time())
+            context = self._detection_context()
+            state = self._detection_policy.state(now=self._now(), context=context, active=context is not None)
+            if self._run.identity == transition.previous and context is not None and state.name in ("warning", "failure"):
+                self._handle_detection_action(context, state.name, time.time())
+        elif transition.kind == "lost":
+            self._actions.run_changed(potential_saved_mute=self._potential_saved_mute())
+            self._invalidate_detection()
+            self._detection_context_seen = self._detection_context()
+        self.detectionChanged.emit()
+        self._schedule_publish()
 
     def _detection_context(self):
         if self._detection_editing or self._active_detection_regions() is None \
@@ -233,7 +177,7 @@ class MonitorDetection(QObject):
                 self._config().detection_notify_enabled,
                 self._config().detection_pause_enabled,
                 self._config().detection_sensitivity, self._regions_fingerprint(),
-                self._detection_run_identity or "unresolved", self._detection_epoch)
+                self._run.identity or "unresolved", self._detection_epoch)
 
     def _detection_source_key(self):
         return source_key(self._camera.url)
@@ -247,10 +191,6 @@ class MonitorDetection(QObject):
             cached = (saved, camera, fingerprint(regions) if regions is not None else "invalid")
             self._detection_regions_cache = cached
         return cached[2]
-
-    def _attestation_fresh(self, seconds):
-        return (self._detection_run_identity is not None and self._detection_attested_at is not None
-                and 0 <= self._now() - self._detection_attested_at <= seconds)
 
     def _detection_printer_id(self):
         if self._identity is None:
@@ -282,19 +222,13 @@ class MonitorDetection(QObject):
             self._detection_baseline_printer = printer_id
             self._detection_baseline_camera = None
             self._detection_baselines = {}
-            self._detection_action_context = None
-            self._detection_alerted_at = None
-            self._detection_acknowledged_at = None
-            self._detection_paused_for_print = False
-            self._detection_pause_pending = False
-            self._detection_pause_uncertain = False
-            self._detection_action_saved = {}
+            self._actions.load_printer({})
             if printer_id is not None and hasattr(self._store, "get_machine_state"):
                 saved = self._store.get_machine_state(printer_id) or {}
                 baselines = saved.get("detectionBaselines")
                 if isinstance(baselines, dict):
                     self._detection_baselines = baselines
-                self._detection_action_saved = saved.get("detectionActions") or {}
+                self._actions.load_printer(saved.get("detectionActions") or {})
         camera_id = self._detection_camera_id() if printer_id is not None else None
         if camera_id is not None:
             # Cropped input has a different score distribution from the old
@@ -329,7 +263,7 @@ class MonitorDetection(QObject):
                                        or not self.detectionEnabled):
             self._detection_editing = False
             self._invalidate_detection()
-        self._ensure_detection_run()
+        self._run.ensure()
         context = self._detection_context()
         if context != self._detection_context_seen:
             self._invalidate_detection()
@@ -364,9 +298,9 @@ class MonitorDetection(QObject):
             }[state.name]
         if context is not None and self._detection_sample_error:
             reason = self._detection_sample_error
-        if context is not None and self._detection_muted:
+        if context is not None and self._actions.state.muted:
             reason += " — alerts and automatic pause muted for this print"
-        elif context is not None and not self._attestation_fresh(30):
+        elif context is not None and not self._run.fresh(30):
             reason += " — pause and mute waiting for print identity"
         return {"detectionState": state.name if context is not None else "idle",
                 "detectionScore": state.score if state.score is not None else -1,
@@ -442,7 +376,7 @@ class MonitorDetection(QObject):
             return None
 
     def _detection_evidence_key(self):
-        return self._detection_run_identity or self._detection_notice_identity
+        return self._run.identity or self._run.notice_identity
 
     def _queue_detection_io(self, key, callback):
         enqueue = getattr(self._detection, "enqueue_io", None)
@@ -501,7 +435,7 @@ class MonitorDetection(QObject):
         self._hide_detection_message()
         message = Message(summary, 60, True)
         self._detection_message = message
-        self._detection_message_token = self._detection_action_context
+        self._detection_message_token = self._actions.state.context
         message.setTitle("Moonraker — local failure detection")
         # The alert's own acknowledgement: it repeats while nobody
         # acknowledges it (bounded per print), and this button is the
@@ -513,7 +447,7 @@ class MonitorDetection(QObject):
 
     def _on_detection_alert_action(self, message, action_id) -> None:
         if (action_id != "detectionAcknowledge" or message is not self._detection_message
-                or self._detection_message_token != self._detection_action_context):
+                or self._detection_message_token != self._actions.state.context):
             return
         self.acknowledgeDetectionAlert()
         if not self.detectionAlertPending:
@@ -528,151 +462,44 @@ class MonitorDetection(QObject):
         self._detection_message = None
         self._detection_message_token = None
 
-    def _handle_detection_action(self, context, level: str, now: float) -> None:
-        if context is None or context != self._detection_context():
-            return
-        identity = self._detection_run_identity or self._detection_notice_identity
-        if identity is None:
-            return
-        if self._detection_run_identity is None and self._potential_saved_mute():
-            return
-        print_key = (context[0], identity)
-        self._sync_detection_action_context(print_key, now)
-        if self._detection_muted or level not in ("warning", "failure"):
-            return
-        escalated = level == "failure" and self._detection_alert_level == "warning"
-        config = self._config()
-        pause_candidate = (self._detection_run_identity is not None and level == "failure" and config.detection_pause_enabled
-                           and not self._detection_paused_for_print and not self._detection_pause_pending
-                           and not self._detection_pause_uncertain)
-        if pause_candidate and not self._attestation_fresh(2):
-            self._ensure_detection_run(force=True)
-            if context != self._detection_context():
-                return
-        if pause_candidate and self._attestation_fresh(2):
-            if (not escalated and self._detection_acknowledged_at is not None
-                    and now - self._detection_acknowledged_at < 90):
-                return
+    def _detection_effect(self, effect):
+        if effect.kind == "hide":
+            self._hide_detection_message()
+        elif effect.kind == "persist":
+            return (hasattr(self._store, "set_machine_state")
+                    and self._store.set_machine_state(effect.context[0], {"detectionActions": effect.record}))
+        elif effect.kind == "refresh_run":
+            self._run.ensure(force=True)
+            return effect.context == self._detection_context(), self._run.fresh(2)
+        elif effect.kind == "pause_gate":
             observation = getattr(self._data, "observation", None)
             verdict = can_pause(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
-            if verdict.mode == "allowed":
-                self._detection_pause_pending = True
-                self._detection_pause_attempt = uuid4().hex
-                if not self._save_detection_actions():
-                    self._detection_pause_pending = False
-                    self._commands.report_status("Automatic pause blocked: its durable safety record could not be saved")
-                    return
-                if not self._commands.send("Pause", "printer/print/pause", command_id=self._detection_pause_attempt):
-                    self._detection_pause_pending = False
-                    self._detection_pause_uncertain = True
-                    self._save_detection_actions()
-                    self._commands.report_status("Automatic pause was not sent; check the printer and pause manually if needed")
-            else:
-                self._commands.report_status(f"Automatic pause was not sent: {verdict.reason}")
-        if not config.detection_notify_enabled:
-            return
-        if (not escalated and self._detection_acknowledged_at is not None and now - self._detection_acknowledged_at < 90):
-            return
-        # An unacknowledged failure retains its severity until acknowledged.
-        if self.detectionAlertPending and self._detection_alert_level == "failure":
-            level = "failure"
-        if self._detection_alerted_at is not None and not escalated:
-            unacknowledged = (self._detection_acknowledged_at is None
-                              or self._detection_acknowledged_at < self._detection_alerted_at)
-            if unacknowledged:
-                # A missed toast must not mean a missed failure, so an
-                # unacknowledged alert repeats on a long interval — and
-                # stops after a few: nagging forever trains the user to
-                # ignore it, and the print is capped either way.
-                if (now - self._detection_alerted_at < DETECTION_ALERT_REPEAT_SECONDS
-                        or self._detection_alert_count >= DETECTION_ALERT_MAX_PER_PRINT):
-                    return
-            elif now - self._detection_alerted_at < 90:
-                return
-        if (self._detection_acknowledged_at is not None and self._detection_alerted_at is not None
-                and self._detection_acknowledged_at >= self._detection_alerted_at):
-            self._detection_alert_count = 0
-        self._detection_alerted_at = now
-        self._detection_alert_level = level
-        self._detection_alert_count = min(DETECTION_ALERT_MAX_PER_PRINT, self._detection_alert_count + 1)
-        self._save_detection_actions()
-        self.detectionChanged.emit()
-        # Queue the exact triggering frame before the message without
-        # blocking the GUI on JPEG compression or app-data storage.
-        self._retain_detection_evidence(level, context)
-        self._notify_detection(level, False)
+            return verdict.mode, verdict.reason
+        elif effect.kind == "pause":
+            return self._commands.send("Pause", "printer/print/pause", command_id=effect.command_id)
+        elif effect.kind == "status":
+            self._commands.report_status(effect.message)
+        elif effect.kind == "changed":
+            self.detectionChanged.emit()
+        elif effect.kind == "retain":
+            self._retain_detection_evidence(effect.level, effect.context)
+        elif effect.kind == "notify":
+            self._notify_detection(effect.level, False)
+
+    def _handle_detection_action(self, context, level, now):
+        config = self._config()
+        stats = (self._data.snapshot.core or {}).get("print_stats") or {}
+        self._actions.consider(
+            context=context, current_context=self._detection_context(),
+            run_identity=self._run.identity, notice_identity=self._run.notice_identity,
+            potential_saved_mute=self._potential_saved_mute(), level=level, now=now,
+            pause_enabled=config.detection_pause_enabled, notify_enabled=config.detection_notify_enabled,
+            attestation_fresh=self._run.fresh(2), print_state=stats.get("state"))
 
     def _on_detection_pause_command(self, event):
-        if (not self._detection_pause_pending or event.get("name") != "Pause" or not event.get("terminal")
-                or event.get("commandId") != self._detection_pause_attempt
-                or self._detection_action_context is None
-                or self._detection_run_identity != self._detection_action_context[1]
-                or self._detection_run_context is None
-                or getattr(self._print_state(), "job_key", None) != self._detection_run_context[2]):
-            return
-        if event.get("outcome") == "confirmed":
-            self._detection_pause_pending = False
-            self._detection_paused_for_print = True
-            if not self._save_detection_actions():
-                self._commands.report_status("Print paused, but the one-pause-per-print record could not be saved")
-        elif event.get("outcome") == "timed_out" or str(event.get("detail", "")).startswith("outcome unknown:"):
-            self._detection_pause_uncertain = True
-            self._save_detection_actions()
-            self._commands.report_status("Automatic pause unconfirmed; check the printer and pause manually if needed")
-        else:
-            self._detection_pause_pending = False
-            self._save_detection_actions()
-        self.detectionChanged.emit()
-
-    def _sync_detection_action_context(self, print_key, now):
-        if print_key == self._detection_action_context:
-            return
-        self._hide_detection_message()
-        self._detection_action_context = print_key
-        self._detection_pause_pending = False
-        self._detection_pause_uncertain = False
-        saved = self._detection_action_saved
-        if isinstance(saved, dict) and saved.get("run") == print_key[1].as_dict():
-            alerted = saved.get("alertedAt")
-            acknowledged = saved.get("acknowledgedAt")
-            count = saved.get("alertCount")
-            self._detection_alerted_at = alerted if type(alerted) in (int, float) and 0 <= alerted <= now and isfinite(alerted) else None
-            self._detection_acknowledged_at = acknowledged if type(acknowledged) in (int, float) and 0 <= acknowledged <= now and isfinite(acknowledged) else None
-            self._detection_alert_count = count if type(count) is int and 0 <= count <= DETECTION_ALERT_MAX_PER_PRINT else 0
-            self._detection_alert_level = saved.get("alertLevel") if saved.get("alertLevel") in ("warning", "failure") else ""
-            self._detection_paused_for_print = saved.get("paused") is True
-            self._detection_pause_uncertain = saved.get("pausePending") is True or saved.get("pauseUncertain") is True
-            self._detection_pause_attempt = saved.get("pauseAttempt")
-            self._detection_muted = saved.get("muted") is True
-        else:
-            self._detection_alerted_at = None
-            self._detection_acknowledged_at = None
-            self._detection_alert_count = 0
-            self._detection_alert_level = ""
-            self._detection_paused_for_print = False
-            self._detection_muted = False
-
-    def _save_detection_actions(self) -> bool:
-        if self._detection_action_context is None or self._detection_run_identity is None:
-            return True
-        record = {
-            "run": self._detection_action_context[1].as_dict(),
-            "muted": self._detection_muted,
-            "pausePending": self._detection_pause_pending,
-            "pauseUncertain": self._detection_pause_uncertain,
-            "pauseAttempt": self._detection_pause_attempt,
-            "alertedAt": self._detection_alerted_at,
-            "acknowledgedAt": self._detection_acknowledged_at,
-            "alertCount": self._detection_alert_count,
-            "alertLevel": self._detection_alert_level,
-            "paused": self._detection_paused_for_print,
-        }
-        if not hasattr(self._store, "set_machine_state"):
-            return False
-        if not self._store.set_machine_state(self._detection_action_context[0], {"detectionActions": record}):
-            return False
-        self._detection_action_saved = record
-        return True
+        self._actions.pause_result(event, run_identity=self._run.identity,
+            run_job=self._run.context[2] if self._run.context is not None else None,
+            current_job=getattr(self._print_state(), "job_key", None))
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionNotifyEnabled(self):
@@ -713,15 +540,9 @@ class MonitorDetection(QObject):
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionAlertPending(self):
-        if self._detection_action_context is None:
-            return False
         stats = (self._data.snapshot.core or {}).get("print_stats") or {}
-        if stats.get("state") not in ("printing", "paused") \
-                or (self._detection_run_identity or self._detection_notice_identity) != self._detection_action_context[1] or self._detection_muted:
-            return False
-        return self._detection_alerted_at is not None and (
-            self._detection_acknowledged_at is None
-            or self._detection_acknowledged_at < self._detection_alerted_at)
+        return self._actions.pending_alert(print_state=stats.get("state"),
+                                          identity=self._run.identity or self._run.notice_identity)
 
     @pyqtProperty(str, notify=detectionChanged)
     def detectionAlertLevel(self):
@@ -730,7 +551,7 @@ class MonitorDetection(QObject):
         than guessing a severity."""
         if not self.detectionAlertPending:
             return ""
-        return self._detection_alert_level
+        return self._actions.state.alert_level
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionPauseRearmable(self):
@@ -741,13 +562,13 @@ class MonitorDetection(QObject):
         printer = self._detection_printer_id()
         if stats.get("state") not in ("printing", "paused") or job is None or printer is None:
             return False
-        if self._detection_run_identity is None:
+        if self._run.identity is None:
             return False
-        print_key = (printer, self._detection_run_identity)
-        if print_key == self._detection_action_context:
-            return (self._detection_paused_for_print or self._detection_pause_uncertain)
-        saved = self._detection_action_saved
-        return (isinstance(saved, dict) and saved.get("run") == self._detection_run_identity.as_dict()
+        print_key = (printer, self._run.identity)
+        if print_key == self._actions.state.context:
+            return (self._actions.state.paused or self._actions.state.pause_uncertain)
+        saved = self._actions.state.saved
+        return (isinstance(saved, dict) and saved.get("run") == self._run.identity.as_dict()
                 and any(saved.get(key) is True for key in ("paused", "pausePending", "pauseUncertain")))
 
     @pyqtSlot()
@@ -756,24 +577,8 @@ class MonitorDetection(QObject):
             self._commands.report_status("Re-arm unavailable: enable automatic pause during an active print with a used pause latch")
             self._publish()
             return
-        self._sync_detection_action_context((self._detection_printer_id(), self._detection_run_identity), time.time())
-        previous = (self._detection_paused_for_print, self._detection_pause_pending,
-                    self._detection_pause_uncertain, self._detection_alerted_at,
-                    self._detection_acknowledged_at, self._detection_alert_count,
-                    self._detection_alert_level, self._detection_action_saved)
-        self._detection_paused_for_print = False
-        self._detection_pause_pending = False
-        self._detection_pause_uncertain = False
-        self._detection_alerted_at = None
-        self._detection_acknowledged_at = None
-        self._detection_alert_count = 0
-        self._detection_alert_level = ""
-        if not self._save_detection_actions():
-            (self._detection_paused_for_print, self._detection_pause_pending,
-             self._detection_pause_uncertain, self._detection_alerted_at,
-             self._detection_acknowledged_at, self._detection_alert_count,
-             self._detection_alert_level, self._detection_action_saved) = previous
-            self._commands.report_status("Could not save automatic pause re-arm; the pause latch is unchanged")
+        self._actions.sync((self._detection_printer_id(), self._run.identity), time.time())
+        if not self._actions.rearm(self._run.identity):
             self._publish()
             return
         self._invalidate_detection()
@@ -846,18 +651,11 @@ class MonitorDetection(QObject):
     def acknowledgeDetectionAlert(self):
         stats = (self._data.snapshot.core or {}).get("print_stats") or {}
         if (not self.detectionEnabled or not self.detectionAlertPending or not self._data.active
-                or self._data.connection_state != "yes" or not self._detection.enabled or self._detection_muted
-                or self._detection_run_context is None or stats.get("state") not in ("printing", "paused")
-                or getattr(self._print_state(), "job_key", None) != self._detection_run_context[2]):
+                or self._data.connection_state != "yes" or not self._detection.enabled or self._actions.state.muted
+                or self._run.context is None or stats.get("state") not in ("printing", "paused")
+                or getattr(self._print_state(), "job_key", None) != self._run.context[2]):
             return
-        previous = self._detection_acknowledged_at
-        self._detection_acknowledged_at = time.time()
-        if not self._save_detection_actions():
-            self._detection_acknowledged_at = previous
-            self._commands.report_status("Could not save acknowledgement for this print")
-            return
-        self._hide_detection_message()
-        self.detectionChanged.emit()
+        self._actions.acknowledge(time.time(), self._run.identity)
 
     def acceptDetectionFrame(self, image, captured_at=None, source_url=None):
         self._detection_values()
@@ -928,21 +726,18 @@ class MonitorDetection(QObject):
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionMuted(self):
-        return self._detection_muted
+        return self._actions.state.muted
 
     @pyqtProperty(bool, notify=detectionChanged)
     def detectionMuteAvailable(self):
         stats = (self._data.snapshot.core or {}).get("print_stats") or {}
-        return self.detectionCameraReady and self.detectionEnabled and self._attestation_fresh(30) and stats.get("state") in ("printing", "paused") and self._data.active and self._data.connection_state == "yes"
+        return self.detectionCameraReady and self.detectionEnabled and self._run.fresh(30) and stats.get("state") in ("printing", "paused") and self._data.active and self._data.connection_state == "yes"
 
     @pyqtSlot(bool)
     def setDetectionMuted(self, muted):
         if type(muted) is not bool or not self.detectionMuteAvailable:
             return
-        previous = self._detection_muted
-        self._detection_muted = muted
-        if not self._save_detection_actions():
-            self._detection_muted = previous
+        if not self._actions.mute(muted, self._run.identity):
             self._commands.report_status("Could not save mute for this print")
             self._publish()
             return

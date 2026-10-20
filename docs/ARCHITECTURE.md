@@ -256,7 +256,9 @@ correct package ownership.
 | `DetectionObservation.py` | Immutable sampled frame, capture timestamp, result and bounding boxes. |
 | `DetectionDownloadTransport.py` | HTTPS socket abort during headers, chunk framing and body receipt. |
 | `PrintRunIdentity.py` | Attests active Moonraker history identity independently of local follower serials. |
-| `MonitorDetection.py` | Owns detection tuning, per-run mute and pause guard, history resolution and bounded evidence submission. |
+| `DetectionActions.py` | Per-run alert/pause/acknowledgement state and explicit persistence, command and notification effects | Qt, Uranium messages or inference |
+| `DetectionRun.py` | History attestation, run identity, freshness, retry cadence and request fences | Camera UI or pause decisions |
+| `MonitorDetection.py` | Detection observation/configuration bridge, bounded evidence submission and host effect adapters | Run attestation or per-run action policy |
 | `DetectionPolicy.py` | Freshness, context reset and sustained evidence transitions | Qt, native inference or printer commands |
 | `LocalDetectionService.py` | Single background setup, benchmark and inference lane; global consent, readiness and persisted enable state. Disabling retires queued/in-flight results while retaining per-printer settings | Camera transport or printer commands |
 | `EvidenceStore.py` | The alert's bounded evidence on disk: the triggering frame and a per-print score timeline, pruned by count | Qt, policy or printer commands |
@@ -1837,9 +1839,12 @@ retires outstanding results and owned alerts, and requires fresh analysis on
 return. Advanced and region editing are explicit user modes; neither changes
 the shared collapse/lock contracts.
 
-`MonitorDetection.py` owns policy, immutable observations, run attestation,
-camera-local settings, alerts, evidence and automatic-pause guards. The Qt
-Monitor facade forwards explicit properties/intents and composes that owner.
+`DetectionRun` owns history attestation and freshness over immutable printer/job
+inputs. `DetectionActions` owns alert repetition, acknowledgements, mute and
+pause latches; it emits explicit persistence, command, status, evidence and
+notification effects. `MonitorDetection.py` applies those effects and adapts
+observations, camera-local settings and evidence to host UI. The Qt Monitor
+facade forwards explicit properties/intents and composes that bridge.
 The 0.00–1.00 signal maps adaptive boundaries to the chosen Advanced bounds;
 it is not a calibrated probability. Sensitivity scales the adaptive gap, with
 1.00 preserving the original defaults. The long baseline belongs to the printer,
@@ -2608,3 +2613,11 @@ values to printer definitions, applies metric/height progress and exclusion,
 and builds G-code-only fallback anchors/footprints. `PreviewPresentation`
 retains scene invalidation, caching, vector adaptation, panel lifecycle and hover
 routing. The projection algorithms need neither Cura nodes nor Qt vectors.
+
+Detection actions require a successful durable-record effect before a pause
+request. The run owner preserves request-time attestation age, retry cadence and
+printer/session/job fences; late or delayed history replies cannot authorize a
+fresh pause. Action refresh rechecks the pause latch after synchronous effects,
+preventing a reentrant history completion from requesting the same pause twice.
+Qt message creation remains in the Monitor bridge. Runout and scheduled-pause
+workflows retain their distinct evidence and acknowledgement rules.

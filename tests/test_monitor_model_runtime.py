@@ -98,8 +98,8 @@ class MonitorQtTests(harness.MonitorQtTests):
         if owner._detection is None or not owner._detection.ready:
             from types import SimpleNamespace
             owner._detection = SimpleNamespace(ready=True, enabled=True, reset=lambda: None)
-        owner._detection_attested_at = time.monotonic()
-        owner._detection_run_identity = PrintRunIdentity("active-job", 1000.0, "sample.gcode", "test-binding")
+        owner._run.attested_at = time.monotonic()
+        owner._run.identity = PrintRunIdentity("active-job", 1000.0, "sample.gcode", "test-binding")
 
     def test_detection_controls_refuse_changes_until_enabled_for_the_printer(self):
         from PyQt6.QtCore import QObject, pyqtSignal
@@ -259,15 +259,15 @@ class MonitorQtTests(harness.MonitorQtTests):
             notify.assert_called_with("failure", False)
             model._failure_detection._handle_detection_action(context, "failure", now + 95)
             pause.assert_called_once()
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            self.assertFalse(model._failure_detection._actions.state.paused)
             self.assertFalse(self.follower.persistence.get_machine_state(context[0])
                              ["detectionActions"]["paused"])
             notify.assert_called_with("failure", False)
             model._data.commandChanged.emit({
-                "commandId": model._failure_detection._detection_pause_attempt,
+                "commandId": model._failure_detection._actions.state.pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "confirmed",
             })
-            self.assertTrue(model._failure_detection._detection_paused_for_print)
+            self.assertTrue(model._failure_detection._actions.state.paused)
             self.assertTrue(self.follower.persistence.get_machine_state(context[0])
                             ["detectionActions"]["paused"])
             model._failure_detection._handle_detection_action(context, "failure", now + 200)
@@ -284,8 +284,8 @@ class MonitorQtTests(harness.MonitorQtTests):
     def test_an_unacknowledged_alert_repeats_on_a_bounded_budget(self):
         import time
         from unittest.mock import patch
-        from mpf.monitor.MonitorDetection import (
-            DETECTION_ALERT_MAX_PER_PRINT, DETECTION_ALERT_REPEAT_SECONDS)
+        from mpf.detection.DetectionActions import (
+            ALERT_MAX_PER_PRINT, ALERT_REPEAT_SECONDS)
         config = self.follower.current_printer_config()
         self.follower.apply_printer_config(harness.replace(
             config, detection_enabled=True, detection_notify_enabled=True,
@@ -310,23 +310,23 @@ class MonitorQtTests(harness.MonitorQtTests):
             self.assertEqual(model.detectionAlertLevel, "failure")
             # A missed toast must not mean a missed failure: the alert
             # re-raises on the long interval, and stops at the cap.
-            model._failure_detection._handle_detection_action(context, "failure", now + DETECTION_ALERT_REPEAT_SECONDS - 1)
+            model._failure_detection._handle_detection_action(context, "failure", now + ALERT_REPEAT_SECONDS - 1)
             notify.assert_called_once()
-            for step in (0, 1, DETECTION_ALERT_MAX_PER_PRINT * 2):
+            for step in (0, 1, ALERT_MAX_PER_PRINT * 2):
                 model._failure_detection._handle_detection_action(
-                    context, "warning", now + DETECTION_ALERT_REPEAT_SECONDS + 1 + step * DETECTION_ALERT_REPEAT_SECONDS)
-            self.assertEqual(notify.call_count, DETECTION_ALERT_MAX_PER_PRINT,
+                    context, "warning", now + ALERT_REPEAT_SECONDS + 1 + step * ALERT_REPEAT_SECONDS)
+            self.assertEqual(notify.call_count, ALERT_MAX_PER_PRINT,
                              "the repeat budget must be the cap, not the attempts")
             self.assertEqual(model.detectionAlertLevel, "failure")
         # The budget is per print and survives a restart: it rides the
         # record, not the process.
         record = self.follower.persistence.get_machine_state(printer_id)["detectionActions"]
-        self.assertEqual(record["alertCount"], DETECTION_ALERT_MAX_PER_PRINT)
+        self.assertEqual(record["alertCount"], ALERT_MAX_PER_PRINT)
         self.assertEqual(record["alertLevel"], "failure")
         restored = self.monitor()
         restored._failure_detection._sync_detection_thresholds()
-        restored._failure_detection._sync_detection_action_context((context[0], model._failure_detection._detection_run_identity), time.time())
-        self.assertEqual(restored._failure_detection._detection_alert_count, DETECTION_ALERT_MAX_PER_PRINT)
+        restored._failure_detection._actions.sync((context[0], model._failure_detection._run.identity), time.time())
+        self.assertEqual(restored._failure_detection._actions.state.alert_count, ALERT_MAX_PER_PRINT)
         # Acknowledging ends the repeat: the next alert is a fresh,
         # immediate one.
         with patch.object(model._failure_detection, "_notify_detection") as notify:
@@ -567,21 +567,21 @@ class MonitorQtTests(harness.MonitorQtTests):
         with patch.object(model._commands, "send", return_value=True) as pause:
             model._failure_detection._handle_detection_action(context, "failure", time.time())
             model._data.commandChanged.emit({
-                "commandId": model._failure_detection._detection_pause_attempt,
+                "commandId": model._failure_detection._actions.state.pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "confirmed",
             })
             self.assertTrue(model.detectionPauseRearmable)
             model.rearmDetectionPause()
             self.assertFalse(model.detectionPauseRearmable)
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
-            self.assertIsNone(model._failure_detection._detection_acknowledged_at)
+            self.assertFalse(model._failure_detection._actions.state.paused)
+            self.assertIsNone(model._failure_detection._actions.state.acknowledged_at)
             self.assertFalse(self.follower.persistence.get_machine_state(printer_id)
                              ["detectionActions"]["paused"])
             self.assertEqual(pause.call_count, 1, "re-arm must not command the printer")
             context = model._failure_detection._detection_context()
             model._failure_detection._handle_detection_action(context, "failure", time.time() + 10)
             self.assertEqual(pause.call_count, 2)
-            self.assertTrue(model._failure_detection._detection_pause_pending)
+            self.assertTrue(model._failure_detection._actions.state.pause_pending)
 
     def test_rearm_works_while_paused_with_a_restored_latch_and_refuses_failed_save(self):
         import time
@@ -600,8 +600,8 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.attest(model)
         job = model._print_state().job_key
         self.assertIsNotNone(job)
-        model._failure_detection._detection_action_saved = {
-            "run": model._failure_detection._detection_run_identity.as_dict(), "paused": True,
+        model._failure_detection._actions.state.saved = {
+            "run": model._failure_detection._run.identity.as_dict(), "paused": True,
             "alertedAt": time.time(), "acknowledgedAt": time.time(),
         }
         self.assertTrue(model.detectionPauseRearmable)
@@ -612,7 +612,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         model.rearmDetectionPause()
         self.assertFalse(model.detectionPauseRearmable)
         saved = self.follower.persistence.get_machine_state(printer_id)["detectionActions"]
-        self.assertEqual(saved["run"], model._failure_detection._detection_run_identity.as_dict())
+        self.assertEqual(saved["run"], model._failure_detection._run.identity.as_dict())
         self.assertFalse(saved["paused"])
 
     def test_automatic_pause_is_not_latched_when_dispatch_fails_or_state_is_unconfirmed(self):
@@ -636,34 +636,34 @@ class MonitorQtTests(harness.MonitorQtTests):
         with patch.object(model._commands, "send", return_value=False) as pause:
             model._failure_detection._handle_detection_action(context, "failure", now)
             pause.assert_called_once()
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
-            self.assertFalse(model._failure_detection._detection_pause_pending)
+            self.assertFalse(model._failure_detection._actions.state.paused)
+            self.assertFalse(model._failure_detection._actions.state.pause_pending)
             self.assertFalse((self.follower.persistence.get_machine_state(context[0]) or {})
                              .get("detectionActions", {}).get("paused", False))
-        self.assertTrue(model._failure_detection._detection_pause_uncertain)
+        self.assertTrue(model._failure_detection._actions.state.pause_uncertain)
         model.rearmDetectionPause()
         with patch.object(model._commands, "send", return_value=True) as pause:
             context = model._failure_detection._detection_context()
             model._failure_detection._handle_detection_action(context, "failure", now + 10)
             pause.assert_called_once()
-            self.assertTrue(model._failure_detection._detection_pause_pending)
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            self.assertTrue(model._failure_detection._actions.state.pause_pending)
+            self.assertFalse(model._failure_detection._actions.state.paused)
             model._failure_detection._handle_detection_action(context, "failure", now + 20)
             pause.assert_called_once()
             model._data.commandChanged.emit({
-                "commandId": model._failure_detection._detection_pause_attempt,
+                "commandId": model._failure_detection._actions.state.pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "failed",
             })
-            self.assertFalse(model._failure_detection._detection_pause_pending)
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            self.assertFalse(model._failure_detection._actions.state.pause_pending)
+            self.assertFalse(model._failure_detection._actions.state.paused)
             model._failure_detection._handle_detection_action(context, "failure", now + 21)
             self.assertEqual(pause.call_count, 2)
             model._data.commandChanged.emit({
-                "commandId": model._failure_detection._detection_pause_attempt,
+                "commandId": model._failure_detection._actions.state.pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "timed_out",
             })
-            self.assertTrue(model._failure_detection._detection_pause_pending)
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            self.assertTrue(model._failure_detection._actions.state.pause_pending)
+            self.assertFalse(model._failure_detection._actions.state.paused)
             model._failure_detection._handle_detection_action(context, "failure", now + 30)
             self.assertEqual(pause.call_count, 2)
         self.deliver_state("complete")

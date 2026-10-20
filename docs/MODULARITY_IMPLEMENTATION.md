@@ -37,7 +37,12 @@ Version remains 6.0.0. Merge/tag and a live Cura restart are not authorized here
   `AppearanceDraft` owns editable values, model reset and identity/mesh-bound
   checkpoints. Publication and active-printer adoption remain with the Qt
   presenter. Standalone owner and real-QML editor tests preserve both paths.
-- [ ] Separate detection action state and effects from host notifications.
+- [x] Separate detection action state and effects from host notifications.
+  `DetectionRun` owns attestation and history request fences. `DetectionActions`
+  owns per-run latches/alerts and emits named effects with durable-save barriers.
+  The Monitor bridge applies effects and owns Qt notifications; portable tests
+  cover repeat/escalation, acknowledgement, uncertainty, failed persistence and
+  reentrant refresh without constructing Uranium UI.
 - [x] Consolidate process-liveness, streaming multipart uploads, printer object
   classification and recovery lexical/refusal interfaces. `MultipartUpload` owns
   streaming file devices, bounded response bytes, cancellation/progress and
