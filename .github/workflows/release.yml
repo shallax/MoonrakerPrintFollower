@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — Automatically stage and require the pinned runtime source/notices companion.
 # 2026-10-18 — 6.0.0: Include the verified reusable Python wheel in future release assets.
 # 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
 # 2026-10-12 [abf18f3] Mirror optional runtime assets on plugin releases
@@ -52,6 +53,7 @@ jobs:
           import json
           import os
           import pathlib
+          from tools.stage_runtime_companion import SOURCE_TAG
 
           expected = os.environ["GITHUB_REF_NAME"].removeprefix("v")
           package = json.loads(pathlib.Path("package.json").read_text(encoding="utf-8"))
@@ -115,6 +117,11 @@ jobs:
           fi
           python tools/stage_runtime_mirror.py "$RUNNER_TEMP/runtime-assets" --verify-only
 
+      - name: Stage verified runtime source and notices
+        run: |
+          python tools/stage_runtime_companion.py "$RUNNER_TEMP/runtime-assets" "$GITHUB_REF_NAME"
+          python tools/stage_runtime_companion.py "$RUNNER_TEMP/runtime-assets" "$GITHUB_REF_NAME" --verify-only
+
       - name: Extract release notes from changelog
         run: |
           python - <<'PY' > /tmp/release-notes.md
@@ -129,6 +136,12 @@ jobs:
           section = text.split(marker, 1)[1]
           section = section.split("\n## ", 1)[0].strip()
           print(section)
+          print("\nOptional runtime source, build material and third-party notices: "
+                f"[runtime-source-and-notices-{os.environ['GITHUB_REF_NAME']}.tar.gz]"
+                f"(https://github.com/shallax/MoonrakerPrintFollower/releases/download/"
+                f"{os.environ['GITHUB_REF_NAME']}/runtime-source-and-notices-"
+                f"{os.environ['GITHUB_REF_NAME']}.tar.gz). "
+                f"The unchanged archive retains its original {SOURCE_TAG} directory provenance.")
           PY
 
       - name: Create or update draft GitHub release
@@ -157,4 +170,4 @@ jobs:
       - name: Verify uploaded runtime asset digests
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python tools/verify_runtime_release.py "$GITHUB_REF_NAME"
+        run: python tools/verify_runtime_release.py "$GITHUB_REF_NAME" --require-companion

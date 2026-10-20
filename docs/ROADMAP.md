@@ -286,9 +286,11 @@ on 12 October 2026 with all 27 assets, their manifest and the source/notices
 companion. It is not outstanding feature work.
 
 Each subsequent release must attach those pinned payloads and its companion to
-its own version tag, then verify the release downloads. This is a release
-procedure for 6.0.0; see [RUNTIME_MIRROR.md](RUNTIME_MIRROR.md). No binary payloads
-enter Git history.
+its own version tag, then verify the release downloads. The public 6.0.0 release
+has passed those checks. The tag workflow now automatically stages and verifies
+the audited companion as well as the runtime payloads, refusing companion reuse
+when payload pins change. The public download check remains a publication step;
+see [RUNTIME_MIRROR.md](RUNTIME_MIRROR.md). No binary payloads enter Git history.
 
 ### Remaining 5.x work — shared tracking already implemented
 

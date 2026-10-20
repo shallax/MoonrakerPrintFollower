@@ -8,8 +8,11 @@ downloaded from assets on the matching plugin GitHub release after the user
 enables the relevant feature. Their binaries and model weights are not included
 in the plugin package. If a release download fails, the plugin retries the
 original pinned source. The installers preserve notices supplied in the
-downloaded archives. The public `v5.4.0` release includes its source/notices companion. Each later
-release must attach its own companion before publication; see `RUNTIME_MIRROR.md`. This index
+downloaded archives. The public `v5.4.0` release includes its source/notices
+companion. Each later
+release must attach its own companion before publication; the tag workflow
+automates this while its covered runtime payload pins remain unchanged. See
+`RUNTIME_MIRROR.md`. This index
 links upstream licence texts without relicensing those distributions.
 The plugin's complete GPLv3 text is supplied in the package's `LICENSE` file.
 Windows indexing also uses the pinned CPython helper, installed automatically

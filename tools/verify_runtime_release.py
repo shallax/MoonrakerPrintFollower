@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — Verify the source/notices companion's covered payloads, size and digest.
 # 2026-10-12 [abf18f3] Mirror optional runtime assets on plugin releases
 
 """Check that a GitHub release has every pinned optional runtime asset."""
@@ -21,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from mpf.resources.RuntimeMirror import release_asset_url  # noqa: E402
 from tools.stage_runtime_mirror import HTTPSOnly, inventory  # noqa: E402
+from tools.stage_runtime_companion import companion_asset  # noqa: E402
 from urllib.request import Request, build_opener  # noqa: E402
 
 
@@ -68,9 +70,12 @@ def main():
             verify_download(args.tag, asset)
             print(f"download verified {asset['name']}", flush=True)
     if args.require_companion:
-        companion = f"runtime-source-and-notices-{args.tag}.tar.gz"
-        if companion not in published or published[companion].get("state") != "uploaded":
-            raise ValueError(f"Missing redistribution companion: {companion}")
+        companion = companion_asset(args.tag)
+        record = published.get(companion["name"])
+        if not record or record.get("state") != "uploaded" or \
+                record.get("size") != companion["size"] or \
+                record.get("digest") != "sha256:" + companion["sha256"]:
+            raise ValueError(f"Missing or mismatched redistribution companion: {companion['name']}")
     print(f"Verified {len(pinned)} pinned runtime assets on {args.tag}")
 
 

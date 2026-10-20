@@ -505,7 +505,10 @@ licence options and upstream source references are grouped in
 `docs/THIRDPARTYSOFTWARE.md`, including Obico and the helper interpreter. Both
 package formats include that document at the installed plugin root. Repackaging
 the downloaded binaries requires a corresponding-source and notices companion
-on the release. The source URL in each CAD pin preserves the previous cache
+on the release. Release tooling stages that audited archive from the prior
+release, pins its size and hash, and refuses reuse if its covered runtime
+payloads change. The draft job requires its uploaded digest to match; the large
+archive stays outside Git. The source URL in each CAD pin preserves the previous cache
 identity; network requests always use `RuntimeMirror.py` and the current tag.
 
 ## 5. Physical state and Preview

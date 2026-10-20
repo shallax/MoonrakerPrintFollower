@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — Require automatic companion staging and digest verification in the tag workflow.
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 # 2026-10-04 [e67283c] Require release gate success before publication
 
@@ -70,6 +71,13 @@ class ReleaseVerdictTests(unittest.TestCase):
         self.assertIn("!cancelled() && inputs.tag_release", verdict)
         self.assertIn("run: python tools/release_verdict.py", verdict)
         self.assertIn("needs: ci", job_block(RELEASE, "publish"))
+
+    def test_tag_workflow_stages_and_requires_the_redistribution_companion(self):
+        publish = job_block(RELEASE, "publish")
+        self.assertIn('python tools/stage_runtime_companion.py "$RUNNER_TEMP/runtime-assets" "$GITHUB_REF_NAME"', publish)
+        self.assertIn('python tools/verify_runtime_release.py "$GITHUB_REF_NAME" --require-companion', publish)
+        self.assertLess(publish.index("Stage verified runtime source and notices"),
+                        publish.index("Create or update draft GitHub release"))
 
 
 if __name__ == "__main__":

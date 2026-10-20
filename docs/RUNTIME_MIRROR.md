@@ -12,8 +12,11 @@ history.
 The public `v5.4.0` release was published on 12 October 2026. Its assets include
 all 27 selectable payloads, `manifest.json`, and
 `runtime-source-and-notices-v5.4.0.tar.gz`. The staging and source-companion gaps
-in the historical audit below were addressed for that publication. Future
-version tags still need their own copies and release-download checks.
+in the historical audit below were addressed for that publication. The public
+`v6.0.0` release includes the same verified companion under its own
+asset name. Subsequent tag workflows automatically copy and hash-check that
+audited bundle, and fail if the covered runtime payload pins have changed.
+Future releases still need the public direct-URL download check.
 
 ## Inventory
 
@@ -82,8 +85,16 @@ Use public download URLs without API discovery or an account requirement.
 Workflow artifacts expire and require repository access; they are unsuitable
 as the persistent runtime download endpoint.
 
-Before publishing the draft release, attach the source/notices companion and
-run `python tools/verify_runtime_release.py v5.4.0 --require-companion`.
+The tag workflow stages the companion with `tools/stage_runtime_companion.py`
+and requires its pinned size and SHA-256 in the uploaded-asset verifier. It keeps
+the original archive bytes and internal directory provenance, while naming the
+release asset for the new tag. A changed payload name, size or hash refuses
+reuse: audit a matching companion and update its source tag, archive pins and
+covered inventory fingerprint in that tool. Keep the large archive outside Git;
+only the tool, pins, documentation and tests belong in the source tree.
+
+Before publishing the draft release, run
+`python tools/verify_runtime_release.py vX.Y.Z --require-companion`.
 After publication, run the same command with `--public-downloads` to GET and
 hash every direct URL, including encoded `+` in Python helper names. The plugin
 resolves each pinned ONNX wheel directly on the normal release path.
