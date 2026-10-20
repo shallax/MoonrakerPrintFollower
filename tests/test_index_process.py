@@ -1,6 +1,9 @@
 # Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Release history:
+# 2026-10-20 — 6.0.0: Cover helper bootstrap, interrupted publication and invalid child results.
 
 """Real isolated scanner parity, cancellation and failed-child containment."""
 from dataclasses import fields
@@ -12,7 +15,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from mpf.application.indexing import IndexProcess
 from mpf.gcode.GCodeIndex import build_index_from_file
@@ -120,6 +123,77 @@ class IndexProcessTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "cannot start"):
                 self.builder(self.source, threading.Event())
         self.assertFalse(directories[0].exists())
+
+    def test_verified_python_only_install_is_reused_and_cancelled_bootstrap_is_not_retried(self):
+        builder = IndexProcess.IndexProcessBuilder(self.root)
+        assets = [("cad.whl", {}), ("python.zip", {})]
+        with patch.object(IndexProcess, "runtime_assets", return_value=assets), \
+                patch.object(IndexProcess, "runtime_directory", return_value=str(self.root / "cad")), \
+                patch.object(IndexProcess, "install_runtime", return_value=str(self.root / "helper")) as install:
+            expected = str(self.root / "helper/python/python.exe")
+            self.assertEqual(builder._python(threading.Event()), expected)
+            self.assertEqual(builder._python(threading.Event()), expected)
+            install.assert_called_once()
+            self.assertEqual(install.call_args.kwargs["assets"], assets[-1:])
+            self.assertEqual(install.call_args.kwargs["archive_directory"], self.root / "cad/.archives")
+            install.call_args.args[2]("installing")
+        cancelled = threading.Event()
+        def interrupted(_cancel):
+            cancelled.set()
+            raise ValueError("cancelled install")
+        with patch.object(builder, "_python", side_effect=interrupted):
+            self.assertFalse(builder(self.source, cancelled))
+        with patch.object(builder, "_python", side_effect=ValueError("invalid runtime")):
+            with self.assertRaisesRegex(ValueError, "invalid runtime"):
+                builder(self.source, threading.Event())
+
+    def test_cancellation_during_result_restore_refuses_the_completed_child(self):
+        cancelled = threading.Event()
+        def restored(_identity):
+            cancelled.set()
+            return LayerMotionIndex()
+        with patch.object(self.builder, "_run", return_value=True), \
+                patch.object(IndexProcess.PersistentIndexCache, "load", side_effect=restored):
+            self.assertFalse(self.builder(self.source, cancelled))
+
+    def test_worker_diagnostics_are_bounded_and_a_running_child_is_reaped(self):
+        child = Mock(returncode=0)
+        child.poll.return_value = None
+        def launch(*args, **kwargs):
+            kwargs["stdout"].write(b"x" * (64*1024 + 1))
+            kwargs["stdout"].flush()
+            return child
+        with patch.object(IndexProcess.subprocess, "Popen", side_effect=launch):
+            with self.assertRaisesRegex(ValueError, "excessive diagnostics"):
+                self.builder._run(sys.executable, self.source, self.root, "compact", threading.Event())
+        child.kill.assert_called_once()
+        child.wait.assert_called_once_with(timeout=10)
+        child = Mock(returncode=1)
+        child.poll.return_value = 1
+        with patch.object(IndexProcess.subprocess, "Popen", return_value=child):
+            with self.assertRaisesRegex(ValueError, "Index worker failed"):
+                self.builder._run(sys.executable, self.source, self.root, "compact", threading.Event())
+        child.kill.assert_not_called()
+
+    def test_prelaunch_and_postexit_cancellation_and_invalid_progress_are_contained(self):
+        for postexit in (False, True):
+            cancelled = threading.Event()
+            child = Mock(returncode=0)
+            def launch(*args, cancelled=cancelled, child=child, **kwargs):
+                cancelled.set()
+                return child
+            if not postexit:
+                cancelled.set()
+            child.poll.return_value = 0
+            with patch.object(IndexProcess.subprocess, "Popen", side_effect=launch) as start:
+                self.assertFalse(self.builder._run(sys.executable, self.source, self.root, "compact", cancelled))
+            self.assertEqual(start.call_count, int(postexit))
+        seen = []
+        for raw in ("bad", "nan", "-1", "2", "0.5"):
+            (self.root / "progress").write_text(raw, encoding="ascii")
+            self.builder._progress(self.root, seen.append)
+        self.builder._progress(self.root, None)
+        self.assertEqual(seen, [.5])
 
 
 class IndexProcessPreparationTests(unittest.TestCase):
@@ -233,6 +307,61 @@ class IndexProcessPreparationTests(unittest.TestCase):
         with patch.object(IndexProcess.os, "fstat", return_value=SimpleNamespace(st_size=64*1024*1024+1)):
             with self.assertRaisesRegex(ValueError, "Invalid prepared layer"):
                 self.builder._prepared_result(output, [0])
+
+    def test_preparation_reuses_cached_layers_and_requires_a_lease_only_for_missing_data(self):
+        path = self.root / "part.gcode"
+        path.write_bytes(b";LAYER:0\nG1 X1 Y1 E1\n;LAYER:1\nG1 X2 Y2 E2\n")
+        task = self.task(path)
+        task.failed_layers = frozenset({1})
+        task.packed = SimpleNamespace(peek=lambda layer: b"PPL1")
+        task.store = Mock()
+        task.writer = object()
+        self.assertEqual(self.builder.prepare(task, threading.Event()), (2, {0: b"PPL1"}, set()))
+        task.store.append.assert_called_once_with(task.writer, 0, b"PPL1")
+        task.packed = SimpleNamespace(peek=lambda layer: None)
+        task.lease = None
+        with self.assertRaisesRegex(ValueError, "source lease"):
+            self.builder.prepare(task, threading.Event())
+
+    def test_corrupt_or_inconsistent_prepared_results_are_refused(self):
+        for result in (
+                {"encoded": [0], "uncacheable": [0], "processed": [0]},
+                {"encoded": [0], "uncacheable": [], "processed": []},
+                {"encoded": [], "uncacheable": [], "processed": [1]},
+                {"encoded": "0", "uncacheable": [], "processed": [0]}):
+            with self.subTest(result=result):
+                (self.root / "result.json").write_text(json.dumps(result), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "worker result"):
+                    self.builder._prepared_result(self.root, [0])
+        (self.root / "result.json").write_text(json.dumps({
+            "encoded": [0], "uncacheable": [], "processed": [0]}), encoding="utf-8")
+        (self.root / "layer-0.ppl").write_bytes(b"corrupt")
+        with self.assertRaisesRegex(ValueError, "prepared layer result"):
+            self.builder._prepared_result(self.root, [0])
+
+    def test_failed_child_or_foreground_arrival_never_publishes_speculative_results(self):
+        path = self.root / "part.gcode"
+        path.write_bytes(b";LAYER:0\nG1 X1 Y1 E1\n")
+        for outcome in (False, ValueError("broken child"), "foreground"):
+            with self.subTest(outcome=outcome):
+                task = self.task(path)
+                task.store = Mock()
+                task.writer = object()
+                def run(*args, outcome=outcome, **kwargs):
+                    if isinstance(outcome, Exception):
+                        raise outcome
+                    return outcome is not False
+                def result(*args, task=task):
+                    task.foreground.set()
+                    return {0: b"PPL1"}, [], [0]
+                with patch.object(self.builder, "_run", side_effect=run), \
+                        patch.object(self.builder, "_prepared_result", side_effect=result):
+                    if isinstance(outcome, Exception):
+                        with self.assertRaisesRegex(ValueError, "broken child"):
+                            self.builder.prepare(task, threading.Event())
+                    else:
+                        self.assertEqual(self.builder.prepare(task, threading.Event()), (0, {}, set()))
+                task.store.append.assert_not_called()
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
