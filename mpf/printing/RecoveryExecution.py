@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
 # 2026-10-18 — 6.0.0: Preserve raw E mode and final restart outcomes; reject invalid priming telemetry.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [d2db7b8] Clarify source macro choices and update prime defaults
@@ -14,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
+from .RecoveryActions import same_actions
 from .RecoveryHandover import (RecoveryRefused, heating_script, prepare_return,
                                verify_command_handlers)
 
@@ -61,7 +63,7 @@ class RecoveryExecution:
               hotend_target=None, bed_target=None,
               prime_enabled=False, prime_xyz=(0.0, 250.0, 100.0),
               prime_amount_mm=50.0, prime_speed_mm_s=5.0, prime_dwell_s=5.0,
-              z_reference_mm=0.0):
+              z_reference_mm=0.0, reviewed_route=None):
         if self._active:
             return False
         self._attempt = (source, filename, printed_top_z, saved_state, prepare_macro,
@@ -70,6 +72,7 @@ class RecoveryExecution:
                          hotend_target, bed_target, prime_enabled, prime_xyz,
                          prime_amount_mm, prime_speed_mm_s, z_reference_mm, prime_dwell_s)
         self._return = None
+        self._reviewed_route = reviewed_route
         self._active = True
         self._cancelled = False
         self._handover_submitted = False
@@ -302,6 +305,14 @@ class RecoveryExecution:
         self._begin_return()
 
     def _begin_return(self):
+        reviewed = self._reviewed_route
+        if reviewed is not None:
+            actual = self._return.route
+            expected_actions = reviewed.prime if actual.prime and not self._primed else reviewed.returning
+            actual_actions = actual.prime if actual.prime and not self._primed else actual.returning
+            if not same_actions(expected_actions, actual_actions) or not same_actions((reviewed.descent,), (actual.descent,)):
+                self._finish("refused", "The recovery path changed after review. Inspect the printer and review again.")
+                return
         if self._idle and self._return.z_reference_script:
             self._script("setting_z_reference", self._return.z_reference_script,
                          self._z_reference_done)

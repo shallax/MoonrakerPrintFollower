@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
 # 2026-10-18 — 6.0.0: Return XY before lowering; restore arc/object state and zero bed targets.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [d2db7b8] Clarify source macro choices and update prime defaults
@@ -16,6 +17,7 @@ from dataclasses import dataclass, replace
 import math
 import re
 
+from .RecoveryActions import RecoveryRoute, recovery_route
 from ..geometry.PhysicalMotion import UnsafeMotion, command_number, envelope, finite
 
 
@@ -82,6 +84,7 @@ class ReturnPlan:
     restore_script: str
     finish_script: str
     resume_script: str
+    route: RecoveryRoute
 
 
 def heating_script(status, source_plan, *, hotend_target=None, bed_target=None):
@@ -232,16 +235,16 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
         maximum_z = bounds.maximum[2] - bounds.base[2]
         if idle and reference > 0:
             maximum_z = min(maximum_z, bounds.maximum[2])
-        if prime_target is not None:
-            prime_z = prime_target[2] if prime_target[2] > target[2] else target[2] + 5.0
-            prime_target = (*prime_target[:2], min(prime_z, maximum_z))
+        route = recovery_route(bounds.gcode, target, maximum_z,
+                               clearance=clearance, xy_speed=xy_speed, z_speed=z_speed,
+                               prime_target=prime_target, prime_amount=prime_amount_mm,
+                               prime_speed=prime_speed_mm_s, prime_dwell=prime_dwell_s)
+        prime_target = route.prime_target
         if prime_target is not None and idle and prime_target[2] - reference < bounds.minimum[2] - 0.001:
             raise UnsafeMotion("Prime Z is below the homed object-top reference")
-        # Recovery's selected layer is the physical restart reference. A
-        # parked nozzle or dry-running file height must not inflate its lift.
-        clear_z = min(target[2] + clearance, maximum_z)
+        clear_z = route.clearance_z
         traverse_z = max(bounds.gcode[2], clear_z)
-        prime_clear_z = min(max(bounds.gcode[2], target[2], prime_target[2]), maximum_z) if prime_target else clear_z
+        prime_clear_z = route.prime[0].position[2] if route.prime else clear_z
         if idle and reference > 0 and clear_z > bounds.maximum[2]:
             raise UnsafeMotion("Clearance exceeds the original file Z travel after object-top homing")
         bounds.check((bounds.gcode[0], bounds.gcode[1], clear_z))
@@ -265,7 +268,7 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
             bounds.check((prime_target[0], prime_target[1], prime_clear_z))
             bounds.check((prime_target[0], prime_target[1], clear_z))
             bounds.check(prime_target)
-    except UnsafeMotion as error:
+    except (UnsafeMotion, ValueError) as error:
         raise RecoveryRefused(str(error)) from error
     _, nozzle, bed = heating_script(status, source_plan,
                                      hotend_target=hotend_target, bed_target=bed_target)
@@ -281,21 +284,14 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
     def n(value):
         return command_number(value)
     prime_script = ""
-    if prime_target is not None:
+    if route.prime:
         prime_script = "\n".join((
             "M400", "G90", "M83", "M220 S100", "M221 S100",
-            f"G1 Z{n(prime_clear_z)} F{n(z_speed * 120)}",
-            f"G1 X{n(prime_target[0])} Y{n(prime_target[1])} F{n(xy_speed * 60)}",
-            f"G1 Z{n(prime_target[2])} F{n(z_speed * 60)}",
-            f"G1 E{n(amount)} F{n(speed * 60)}", "M400", f"G4 P{n(dwell * 1000)}",
+            *(action.command for action in route.prime[:-1]),
+            "M400", route.prime[-1].command,
         ))
-    return_moves = [f"G1 Z{n(clear_z)} F{n(z_speed * 120)}",
-                    f"G1 X{n(target[0])} Y{n(target[1])} F{n(xy_speed * 60)}"]
-    # Retain a high purge/park position through XY travel; only lift first
-    # when below the selected layer's clearance plane.
-    if bounds.gcode[2] >= clear_z:
-        return_moves.reverse()
-    return_script = "\n".join(("M400", "G90", "M220 S100", *return_moves, "M400"))
+    return_script = "\n".join(("M400", "G90", "M220 S100",
+                                *(action.command for action in route.returning), "M400"))
     state = source_plan.state
     modal = [f"M220 S{n(state.speed_percent)}", f"M221 S{n(state.flow_percent)}",
              f"G92 E{n(state.e)}"]
@@ -340,11 +336,11 @@ def prepare_return(status, source_plan, *, filename, printed_top_z, clearance_mm
             finish.append(f"SET_IDLE_TIMEOUT TIMEOUT={timeout}")
     # Keep network acknowledgements above the object. The final descent and
     # SD start share one script, without a dwell or a round trip at the surface.
-    resume = ["G90", "M220 S100", f"G1 Z{n(target[2])} F{n(z_speed * 60)}",
+    resume = ["G90", "M220 S100", route.descent.command,
               *modal[:-1]]
     if not idle:
         resume.append("CLEAR_PAUSE")
     resume.append("M24")
     return ReturnPlan(clear_z, target, prime_target, z_reference_script, prime_script,
                       return_script, "\n".join(modal),
-                      restore_script, "\n".join(finish), "\n".join(resume))
+                      restore_script, "\n".join(finish), "\n".join(resume), route)

@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 
 """Real recovery screens with synthetic G-code; no network or printer commands."""
@@ -21,12 +22,13 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from PyQt6.QtCore import QObject, QUrl, QVariant, pyqtProperty, pyqtSignal
+from PyQt6.QtCore import QObject, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlComponent, QQmlEngine, QQmlExpression
 from PyQt6.QtQuick import QQuickWindow
 
 from mpf.application.RecoveryPlanning import scan_source
+from mpf.printing.RecoveryReview import review_recovery
 from tools import capture_contrast, theme_support
 from tools.capture_preview_toolhead import IconProvider
 
@@ -44,6 +46,11 @@ class Printer(QObject):
             primeAmount=20, primeSpeed=5, primeDwell=5, maximumZ=250,
             bedBounds=[0, 0, 0, 250, 250], previewSegments=[list(segment) for segment in source.preview_segments],
             previewCaption="Recorded G-code progress; actual material may be missing")
+
+    @pyqtSlot(QVariant, result=QVariant)
+    def reviewRecovery(self, supplied):
+        supplied = supplied.toVariant() if hasattr(supplied, 'toVariant') else supplied
+        return dict(review_recovery(self.plan, supplied).document(), token="capture-only")
 
     @pyqtProperty(int, constant=True)
     def plateLayerCount(self): return 150

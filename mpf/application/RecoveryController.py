@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
 # 2026-10-18 — 6.0.0: Validate independent XYZ telemetry and preserve unloaded preview coordinates.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [368df57] Wait for unloaded recovery test before cleanup on Windows
@@ -21,6 +22,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from ..geometry.PhysicalMotion import xyz
 from ..moonraker.MoonrakerProtocol import parse_file_identity
+from ..printing.RecoveryReview import review_recovery
 from ..printing.RecoveryExecution import RecoveryExecution
 from ..printing.RecoveryHandover import RecoveryRefused, reviewed_pause_state
 from .RecoveryPlanning import RecoveryPlanError, scan_source
@@ -94,6 +96,8 @@ class RecoveryController(QObject):
         self._closed = False
         self._planned_context = None
         self._source = None
+        self._review = None
+        self._review_token = ""
         self._execution = None
         self._reviewed_saved_state = ""
         self._reviewed_position = (0.0, 0.0, 0.0)
@@ -172,6 +176,8 @@ class RecoveryController(QObject):
         self._generation += 1
         generation = self._generation
         self._planned_context = context
+        self._review = None
+        self._review_token = ""
         self._source = None
         self._set("planning", "Checking the G-code and reconstructing extrusion state…")
 
@@ -246,6 +252,18 @@ class RecoveryController(QObject):
                 timeout_ms=self._planned_context.status_timeout_s * 1000):
             self._set("refused", "The printer profile could not be requested. Check the connection and try again.")
 
+    def review(self, parameters):
+        if not self._same_context(self._context()):
+            return {"error": "The selected print or settings changed. Check the G-code again."}
+        try:
+            self._review = review_recovery(self.state, parameters or {})
+        except (ValueError, TypeError, KeyError) as reason:
+            self._review = None
+            self._review_token = ""
+            return {"error": str(reason)}
+        self._review_token = hashlib.sha256(repr((self._planned_context, self._review)).encode()).hexdigest()
+        return dict(self._review.document(), token=self._review_token)
+
     def start(self, temperatures=None):
         if self._closed or self._phase != "ready" or self._source is None:
             return False
@@ -255,6 +273,12 @@ class RecoveryController(QObject):
             self._set("refused", "The selected print, point or recovery settings changed. Prepare again.")
             return False
         supplied = temperatures if isinstance(temperatures, dict) else {}
+        if "reviewToken" in supplied:
+            token = supplied.get("reviewToken")
+            reviewed = self.review(supplied)
+            if not token or token != reviewed.get("token"):
+                self._set("refused", "The recovery itinerary changed. Review the restart again.")
+                return False
         try:
             nozzle = (None if self._source.state.hotend_target is not None
                       and self._source.state.hotend_target > 0 else
@@ -406,7 +430,8 @@ class RecoveryController(QObject):
                               prime_amount_mm=context.prime_amount_mm,
                               prime_speed_mm_s=context.prime_speed_mm_s,
                               prime_dwell_s=context.prime_dwell_s,
-                              z_reference_mm=self._z_reference_mm)
+                              z_reference_mm=self._z_reference_mm,
+                              reviewed_route=self._review.route if self._review is not None else None)
 
     def cancel(self):
         if self._phase in {"planning", "checking_printer"}:

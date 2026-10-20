@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
 # 2026-10-18 — 6.0.0: Drain cancelled planning workers before deleting test source files.
 # 2026-10-18 — 6.0.0: Cover recovery modes, telemetry validation and restart lifecycle regressions.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
@@ -60,6 +61,38 @@ class FakeClient(QObject):
 
 
 class RecoveryControllerTests(unittest.TestCase):
+    def test_reviewed_restart_refuses_a_fresh_path_change_before_any_travel(self):
+        self.ready()
+        reviewed = self.controller.review({})
+        self.assertTrue(reviewed["actions"])
+        self.transport.printer.state["gcode_move"]["gcode_position"][0] += 10
+        self.transport.printer.state["gcode_move"]["position"][0] += 10
+        self.transport.printer.state["toolhead"]["position"][0] += 10
+        self.assertTrue(self.controller.start({"reviewToken": reviewed["token"]}))
+        self.wait_for(lambda: self.controller.state["phase"] == "refused")
+        self.assertIn("path changed", self.controller.state["detail"])
+        self.assertFalse(any("G1 X" in script for script in self.transport.scripts))
+
+    def test_reviewed_priming_then_return_matches_the_confirmation(self):
+        self.context = replace(self.context, prime_enabled=True, prime_xyz=(10, 15, 3),
+                               prime_amount_mm=20, prime_speed_mm_s=2, prime_dwell_s=5)
+        self.ready()
+        reviewed = self.controller.review({})
+        self.assertTrue(self.controller.start({"reviewToken": reviewed["token"]}))
+        self.wait_for(lambda: self.controller.state["phase"] == "complete")
+        self.assertIn("Purge", " ".join(action["text"] for action in reviewed["actions"]))
+        self.assertTrue(any("G1 E20 F120" in script for script in self.transport.scripts))
+
+    def test_reviewed_restart_completes_and_an_obsolete_token_cannot_start(self):
+        self.ready()
+        reviewed = self.controller.review({})
+        self.assertFalse(self.controller.start({"reviewToken": "obsolete"}))
+        self.assertEqual(self.transport.scripts, [])
+        self.ready()
+        reviewed = self.controller.review({})
+        self.assertTrue(self.controller.start({"reviewToken": reviewed["token"]}))
+        self.wait_for(lambda: self.controller.state["phase"] == "complete")
+
     def test_malformed_profile_positions_are_refused_without_motion(self):
         for unloaded in (False, True):
             for field in ("position", "gcode_position"):

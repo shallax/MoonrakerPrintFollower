@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
 # 2026-10-18 — 6.0.0: Clear camera recovery only after a decoded frame and publish cooldown state.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -337,7 +338,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                  request_load=None, request_monitor_download=None, request_file_download=None,
                  request_plate_anchor=None, request_plate_split=None,
                  recovery_selection=None,
-                 recovery_state=None, recovery_plan=None, recovery_start=None,
+                 recovery_state=None, recovery_plan=None, recovery_start=None, recovery_review=None,
                  recovery_cancel=None, recovery_suggest=None, recovery_changed=None,
                  recovery_files=None, recovery_list_files=None, recovery_select_file=None,
                  request_follower_popover_open=None,
@@ -370,6 +371,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._recovery_selection = recovery_selection
         self._recovery_state = recovery_state
         self._recovery_plan = recovery_plan
+        self._recovery_review = recovery_review
         self._recovery_start = recovery_start
         self._recovery_cancel = recovery_cancel
         self._recovery_suggest = recovery_suggest
@@ -3214,6 +3216,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._recovery_plan is not None:
             self._recovery_plan()
             self._publish()
+
+    @pyqtSlot(QVariant, result=QVariant)
+    def reviewRecovery(self, parameters):
+        if hasattr(parameters, "toVariant"):
+            parameters = parameters.toVariant()
+        if self._recovery_review is None:
+            return {"error": "Recovery review is unavailable. Check the G-code again."}
+        return self._recovery_review(parameters)
 
     @pyqtSlot()
     @pyqtSlot(QVariant)

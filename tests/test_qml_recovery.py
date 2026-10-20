@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 
 """Recovery review keeps real QML submissions and failures visible."""
@@ -23,7 +24,8 @@ if harness.QT_AVAILABLE:
             self.selection = dict(layer=3, completedMotions=1, offset=100, x=10, y=20, z=1)
             self.plan = dict(ready=True, active=False, phase="ready", detail="Ready",
                              unloaded=True, offset=100, resumeLayer=3, resumeMove=2, filename="part.gcode", x=10, y=20, z=1,
-                             e=3, absoluteE=True, hotendTarget=215, bedTarget=60, suggestedTopZ=1)
+                             e=3, absoluteE=True, hotendTarget=215, bedTarget=60, suggestedTopZ=1,
+                             currentX=0, currentY=0, currentZ=0, maximumZ=250)
 
         @pyqtProperty(int, notify=changed)
         def plateLayerCount(self): return 10
@@ -53,6 +55,13 @@ if harness.QT_AVAILABLE:
         def recoveryPreviousAttempt(self): return {}
         @pyqtProperty(str, notify=changed)
         def recoveryPauseNote(self): return ""
+        @pyqtSlot(QVariant, result=QVariant)
+        def reviewRecovery(self, supplied):
+            import hashlib
+            from mpf.printing.RecoveryReview import review_recovery
+            supplied = supplied.toVariant() if hasattr(supplied, 'toVariant') else supplied
+            review = review_recovery(self.plan, supplied)
+            return dict(review.document(), token=hashlib.sha256(repr(review).encode()).hexdigest())
         @pyqtSlot(QVariant)
         def startRecovery(self, supplied):
             self.submitted.append(supplied.toVariant() if hasattr(supplied, 'toVariant') else supplied)
@@ -224,7 +233,7 @@ class RecoveryReviewTests(harness.RealEngineTestCase):
                 value, undefined = expression.evaluate()
                 self.assertFalse(expression.hasError(), expression.error().toString())
                 self.assertFalse(undefined)
-                actions = value.toVariant()
+                actions = value.toVariant() if hasattr(value, "toVariant") else value
                 purge = next(i for i, action in enumerate(actions) if action["text"].startswith("Purge"))
                 moves = actions[purge + 1:purge + 3]
                 self.assertEqual([action["position"] for action in moves], expected)
@@ -444,7 +453,9 @@ class RecoveryReviewTests(harness.RealEngineTestCase):
         self.assertTrue(start.isEnabled())
         self.click(window, start)
         self.pump(20)
-        self.assertEqual(printer.submitted, [{"hotend": 215, "bed": 60, "zReference": 0}])
+        self.assertEqual(len(printer.submitted), 1)
+        self.assertTrue(printer.submitted[0].pop("reviewToken"))
+        self.assertEqual(printer.submitted[0], {"hotend": 215, "bed": 60, "zReference": 0})
         self.assertTrue(popup.property("visible"))
         status = self.find(document, "moonrakerRecoveryAttemptStatus")
         self.assertEqual(status.property("text"), "The printer reports a changed file.")

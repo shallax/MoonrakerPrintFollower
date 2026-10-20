@@ -3,6 +3,7 @@
 // Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 //
 // Selected release and Git history (newest first; original provenance retained):
+// 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
 // 2026-10-18 — 6.0.0: Show XY return before lowering from purge height in the ordered review.
 // 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 // 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
@@ -44,63 +45,29 @@ ColumnLayout {
         confirmScroll.contentItem.contentY = 0;
         stepPreview.resetStep();
     }
-    function cappedZ(value) {
-        return plan.maximumZ == null ? value : Math.min(value, Number(plan.maximumZ));
-    }
-    function primeHeight() {
-        return cappedZ(Number(plan.primeZ) > Number(plan.z) ? Number(plan.primeZ) : Number(plan.z) + 5);
+    property var confirmation: ({})
+    function recoveryParameters() {
+        return {
+            "hotend": hotendTemperature(),
+            "bed": bedTemperature(),
+            "zReference": root.plan.unloaded ? Number(zReferenceField.text) : 0
+        };
     }
     function recoveryActions() {
-        function n(value) {
-            return Number(value).toFixed(2);
-        }
-        var clearance = plan.clearance === undefined ? 5 : Number(plan.clearance);
-        var zSpeed = plan.zSpeed === undefined ? 5 : Number(plan.zSpeed);
-        var xySpeed = plan.xySpeed === undefined ? 50 : Number(plan.xySpeed);
-        var travelZ = cappedZ(Number(plan.z) + clearance);
-        var steps = [];
-        var point = [Number(plan.currentX || 0), Number(plan.currentY || 0), Number(plan.currentZ || 0) + (plan.unloaded ? Number(zReferenceField.text) : 0)];
-        function add(text, nextPoint) {
-            var previous = point.slice();
-            if (nextPoint !== undefined)
-                point = nextPoint;
-            steps.push({
-                "text": text,
-                "from": previous,
-                "position": point.slice()
-            });
-        }
-        if (plan.unloaded)
-            add("Select the file without running its print-start macro.");
-        add("Heat and wait for nozzle " + n(hotendTemperature()) + " °C" + (bedTemperature() > 0 ? " and bed " + n(bedTemperature()) + " °C" : "; turn the bed off") + ". Heating time varies.");
-        if (plan.unloaded && Number(zReferenceField.text) > 0)
-            add("Adjust the Z reference without moving: file Z" + n(plan.z) + " corresponds to printer Z" + n(Number(plan.z) - Number(zReferenceField.text)) + ".");
-        else if (!plan.unloaded)
-            add("Restore the saved print coordinates without moving.");
-        if (plan.primeEnabled) {
-            var primeTravelZ = Math.max(Number(plan.currentZ || 0) + (plan.unloaded ? Number(zReferenceField.text) : 0), Number(plan.z), primeHeight());
-            primeTravelZ = cappedZ(primeTravelZ);
-            add("Move vertically to Z" + n(primeTravelZ) + " at " + n(zSpeed * 2) + " mm/s.", [point[0], point[1], primeTravelZ]);
-            add("Move to X" + n(plan.primeX) + " Y" + n(plan.primeY) + " at Z" + n(primeTravelZ) + " (" + n(xySpeed) + " mm/s).", [Number(plan.primeX), Number(plan.primeY), primeTravelZ]);
-            add("Lower to Z" + n(primeHeight()) + " at " + n(zSpeed) + " mm/s (about " + n((primeTravelZ - primeHeight()) / zSpeed) + " s).", [point[0], point[1], primeHeight()]);
-            add("Purge " + n(plan.primeAmount) + " mm of filament at " + n(plan.primeSpeed) + " mm/s; then dwell for " + n(plan.primeDwell === undefined ? 5 : plan.primeDwell) + " s.");
-        }
-        if (point[2] < travelZ) {
-            add("Raise to Z" + n(travelZ) + " at " + n(zSpeed * 2) + " mm/s.", [point[0], point[1], travelZ]);
-            add("Move to X" + n(plan.x) + " Y" + n(plan.y) + " at Z" + n(travelZ) + " (" + n(xySpeed) + " mm/s).", [Number(plan.x), Number(plan.y), travelZ]);
-        } else {
-            add("Move to X" + n(plan.x) + " Y" + n(plan.y) + " at Z" + n(point[2]) + " (" + n(xySpeed) + " mm/s).", [Number(plan.x), Number(plan.y), point[2]]);
-            add("Lower to Z" + n(travelZ) + " at " + n(zSpeed * 2) + " mm/s (about " + n((point[2] - travelZ) / (zSpeed * 2)) + " s).", [point[0], point[1], travelZ]);
-        }
-        add("Check the file position and restore extrusion, fan and motion settings while above the print.");
-        add("Lower to Z" + n(plan.z) + " at " + n(zSpeed) + " mm/s (about " + n((travelZ - Number(plan.z)) / zSpeed) + " s).", [Number(plan.x), Number(plan.y), Number(plan.z)]);
-        add("Immediately resume printing on layer " + plan.resumeLayer + " at move " + plan.resumeMove + " (" + (Number(plan.resumeMove) - 1) + " completed moves on that layer; byte " + plan.offset + ").");
-        return steps;
+        return (confirmation.token !== undefined ? confirmation : (printerModel != null && plan.ready ? printerModel.reviewRecovery(recoveryParameters()) : ({}))).actions || [];
     }
     function recoverySteps() {
         return recoveryActions().map(function (step, index) {
             return (index + 1) + ". " + step.text;
         }).join("\n\n");
+    }
+    onPlanChanged: {
+        if (finalConfirm.opened && plan.ready) {
+            var updated = printerModel.reviewRecovery(recoveryParameters());
+            if (updated.token !== confirmation.token)
+                reviewed = false;
+            confirmation = updated;
+        }
     }
     onSelectionKeyChanged: {
         reviewed = false;
@@ -206,7 +173,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 visible: plan.ready === true
                 wrapMode: Text.WordWrap
-                text: plan.primeEnabled ? "Prime: " + Number(plan.primeAmount).toFixed(1) + " mm at " + Number(plan.primeSpeed).toFixed(1) + " mm/s, at X" + Number(plan.primeX).toFixed(3) + " Y" + Number(plan.primeY).toFixed(3) + " Z" + primeHeight().toFixed(3) + "." : "Priming off."
+                text: plan.primeEnabled ? "Configured prime: " + Number(plan.primeAmount).toFixed(1) + " mm at " + Number(plan.primeSpeed).toFixed(1) + " mm/s, at X" + Number(plan.primeX).toFixed(3) + " Y" + Number(plan.primeY).toFixed(3) + " Z" + Number(root.plan.primeZ).toFixed(3) + "." : "Priming off."
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -387,6 +354,7 @@ ColumnLayout {
             enabled: root.temperaturesReady && root.zReferenceReady && root.selection.offset === root.plan.offset
             onClicked: {
                 root.reviewed = false;
+                root.confirmation = root.printerModel.reviewRecovery(root.recoveryParameters());
                 finalConfirm.open();
             }
         }
@@ -450,7 +418,7 @@ ColumnLayout {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         objectName: "moonrakerRecoverySteps"
-                        text: (root.plan.skipsForward ? "The selected point is ahead of the reported print position. Restarting here skips the intervening toolpath.\n\n" : "") + root.recoverySteps()
+                        text: (root.confirmation.error || "") + (root.plan.skipsForward ? "The selected point is ahead of the reported print position. Restarting here skips the intervening toolpath.\n\n" : "") + root.recoverySteps()
                     }
                     UM.Label {
                         Layout.fillWidth: true
@@ -494,15 +462,13 @@ ColumnLayout {
                     Layout.fillWidth: true
                     objectName: "moonrakerRecoveryStart"
                     text: root.plan.unloaded ? "Load and restart from point" : "Restart print from point"
-                    enabled: root.reviewed && root.temperaturesReady && root.zReferenceReady && root.selection.offset === root.plan.offset
+                    enabled: root.confirmation.token !== undefined && root.reviewed && root.temperaturesReady && root.zReferenceReady && root.selection.offset === root.plan.offset
                     onClicked: {
                         root.reviewed = false;
                         root.resumeSubmitted = true;
-                        root.printerModel.startRecovery({
-                            "hotend": root.hotendTemperature(),
-                            "bed": root.bedTemperature(),
-                            "zReference": root.plan.unloaded ? Number(zReferenceField.text) : 0
-                        });
+                        var parameters = root.recoveryParameters();
+                        parameters.reviewToken = root.confirmation.token;
+                        root.printerModel.startRecovery(parameters);
                     }
                 }
             }

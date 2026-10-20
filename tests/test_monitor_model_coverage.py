@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
 # 2026-10-18 — 6.0.0: Cover file-manager ordering, invalidation and active-file protection.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -236,15 +237,18 @@ class RecoveryModelTests(MonitorModelCase):
         from PyQt6.QtCore import QUrl
         from PyQt6.QtQml import QQmlEngine, QQmlComponent
         submitted = []
-        self.model = self.build(recovery_start=submitted.append)
+        reviews = []
+        self.model = self.build(recovery_start=submitted.append,
+            recovery_review=lambda values: reviews.append(values) or {"token": "review-token", "actions": []})
         engine = QQmlEngine()
         engine.rootContext().setContextProperty("printer", self.model)
         component = QQmlComponent(engine)
-        component.setData(b'import QtQml 2.15\nQtObject { Component.onCompleted: '
+        component.setData(b'import QtQml 2.15\nQtObject { property var review: printer.reviewRecovery({hotend: 215, bed: 60, zReference: 12.4}); Component.onCompleted: '
                           b'printer.startRecovery({hotend: 215, bed: 60, zReference: 12.4}) }', QUrl())
         item = component.create()
         self.assertIsNotNone(item, [error.toString() for error in component.errors()])
-        self.assertEqual(submitted, [{"hotend": 215, "bed": 60, "zReference": 12.4}])
+        self.assertEqual(reviews, [{"hotend": 215, "bed": 60, "zReference": 12.4}])
+        self.assertEqual(submitted, reviews)
         item.deleteLater()
         self.qt.events()
 

@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
 # 2026-09-01 [1294efa] Initial release
@@ -69,6 +70,7 @@ class MoonrakerPrintFollower(QObject, Extension):
     def recoverySelection(self): return self._runtime.coordinator.selected_recovery_boundary()
     def recoveryState(self): return self._runtime.coordinator.recovery_state
     def recoveryPlan(self): return self._runtime.coordinator.recovery.plan()
+    def recoveryReview(self, parameters): return self._runtime.coordinator.recovery.review(parameters)
     def recoveryStart(self, temperatures=None): return self._runtime.coordinator.recovery.start(temperatures)
     def recoveryCancel(self): return self._runtime.coordinator.recovery.cancel()
     def recoverySuggest(self): return self._runtime.coordinator.suggest_recovery_lead_in()

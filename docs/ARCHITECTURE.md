@@ -132,6 +132,8 @@ correct package ownership.
 | `RemoteJobService.py` | Print observation and same-filename run identity | Preview selection |
 | `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer`/`MotionProgress` and the single `LayerResolver` | QML/Cura writes |
 | `RecoveryPlanning.py` | Read-only scrub lead-in and exact source-modal reconstruction for a supported recovery point | Printer commands or inferred macro state |
+| `RecoveryActions.py` | Immutable recovery route actions shared by command serialization and diagrams | Qt and transport |
+| `RecoveryReview.py` | Confirmation projection of canonical recovery actions | Printer commands or QML ownership |
 | `RecoveryHandover.py` | Pure paused-print, temperature and travel preflight plus staged return script rendering | Network transport, printer mutation or unverified clearance |
 
 | `RecoveryExecution.py` | Sequential one-attempt recovery handover over injected fresh-query and script-send capabilities, with ambiguous results terminal | Blind retries or direct transport ownership |
@@ -2387,6 +2389,13 @@ preview uses bounded deposition segments from the read-only source scan; its
 angled 3D and XY/XZ/YZ projections show the recorded prefix, not measured material.
 The bed outline uses reported XY travel bounds in the same coordinate frame and scale. Each
 step shares its position and text with the ordered confirmation.
+
+`RecoveryActions` defines immutable movement, extrusion and dwell actions;
+`RecoveryHandover` serializes their commands and `RecoveryReview` projects their
+positions and durations into confirmation text. QML does not recalculate travel.
+The confirmation carries a review token tied to the source/context and parameters.
+Freshly prepared travel is compared with the reviewed actions before movement;
+a changed starting point, route or descent refuses handover for a fresh review.
 
 
 Recovery selection defaults to the accepted `PrintSnapshot.motion_progress`

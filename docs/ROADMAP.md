@@ -39,11 +39,12 @@ The `moonraker_toolpath` distribution contains only the shared dependency closur
 and renderer shaders, with an immutable document API and explicit advanced compact
 indexing. The library and Cura plugin share source implementations and version.
 
-Further modularity remains possible: `PlateQt` still combines raster painting with
-QObject asset publication and worker/checkpoint ownership. Separating that lifecycle
-from painting would allow a smaller raster-only import. The compact index also
-retains plugin-oriented retention fields. These are architectural follow-ups, not
-claims that all useful boundaries have already been extracted.
+Raster painting now has an independent import, separate from QML assets and
+worker publication. Recovery commands and confirmation diagrams consume a shared
+action plan. The broader modularity work is tracked in
+[MODULARITY_IMPLEMENTATION.md](MODULARITY_IMPLEMENTATION.md), based on the
+[repository audit](MODULARITY_AUDIT.md); index residency, workflow owners and the
+remaining presentation boundaries are still in progress.
 
 Ongoing qualification includes paused/unloaded recovery on real printers,
 sustained performance measurements and supported Cura versions. Runout markers,
