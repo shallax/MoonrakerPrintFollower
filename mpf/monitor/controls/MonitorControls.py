@@ -7,6 +7,7 @@
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
 # 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+# 2026-10-20 — 6.0.0: Use protocol-owned object families and fan writability.
 
 """Printer-control policy composed with data, command and tuning capabilities."""
 from __future__ import annotations
@@ -16,10 +17,8 @@ import shlex
 import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from ..MonitorFormatting import (
-    FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES,
-    fan_writable, friendly, infer_macro_parameters, number, mesh_profiles,
-)
+from ..MonitorFormatting import friendly, infer_macro_parameters, number, mesh_profiles
+from ...moonraker.PrinterObjects import FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES, fan_writable
 from ..temperature.HeaterTargets import heater_targets, heater_names, target_command, finite
 from ..MonitorPermissions import can_set_temperature, R_UNKNOWN, Verdict, can_apply_temperature_preset, can_exclude, can_macro, can_power, can_restart, can_restore, can_z_offset
 

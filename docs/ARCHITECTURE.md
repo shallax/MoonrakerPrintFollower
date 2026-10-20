@@ -218,6 +218,10 @@ correct package ownership.
 | `ToolheadEnvironmentScene.py` | Owned shaders reading platform/grid/visible bed-height meshes and the visible public LayerData prefix | Native program mutation or recursive renderer calls |
 | `ToolheadSceneNode.py` | Non-selectable lit triangle node; private head depth above final scene composition, cleared before Qt controls; opaque single pass and completed-image opacity | Telemetry or nozzle suppression |
 | `ToolheadPresenter.py` | Reported-position freshness/homing gate, estimated public LayerData adapter and one native-nozzle suppression owner | Print progress matching or native class patches |
+| `BedMeshGeometry.py` | Host-independent mesh sampling, bed-edge extension, colours and NumPy geometry arrays | Uranium scene nodes or draw calls |
+| `PrinterObjects.py` | Klipper object classification and fan writability shared by discovery and control | Labels or Monitor state |
+| `RecoveryRefusal.py` | Structured source refusal codes and complete ordered command evidence | Settings-pane navigation |
+| `RecoveryMessages.py` | Operator guidance for recovery refusals | Parsing or approval of source commands |
 | `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
 | `MonitorData.py` | Monitor request lifetime, category timers, the frozen `MonitorSnapshot` and the observation record's assembly (the tri-state connection, the two push-ins) | QML declarations |
 | `MoonrakerMonitorModel.py` | The single Qt Monitor model: explicit property declarations, collaborator composition and the one publication transaction | Domain policy or networking |
@@ -2564,3 +2568,14 @@ command state; connection and print changes invalidate callbacks before they can
 dispatch PAUSE. Recovery marker storage and its history keys remain a separate
 persistence concern. `RecoverySources` owns file-list requests and the selected
 unloaded source; the coordinator binds that source to index/download services.
+
+Recovery lexical recognition uses public patterns and parsing functions from
+`GCodeParser`; strict recovery refusals remain separate from tolerant geometry
+scanning. `RecoveryPlanError` carries a code and ordered command names. The
+source scanner reports all unclassified commands in the reconstruction range;
+`RecoveryMessages` adds setup-pane guidance only at the presentation boundary.
+
+The Python and JavaScript Preview gradients retain native execution in their
+respective renderers. `tests/fixtures/preview-colours.json` specifies reference
+colours. Real-QML tests run the production JavaScript against those values and
+the Python implementation across clamp, constant-range and piecewise boundaries.

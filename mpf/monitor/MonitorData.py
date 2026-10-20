@@ -6,6 +6,7 @@
 # 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 # 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+# 2026-10-20 — 6.0.0: Use protocol-owned printer-object classification during discovery.
 
 """Active Monitor request/poll lifecycle and immutable data projections."""
 from __future__ import annotations
@@ -18,7 +19,8 @@ from collections.abc import Mapping
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from .console.ConsolePolicy import MAX_LINE
-from .MonitorFormatting import number, preview_block, result, wanted_object
+from .MonitorFormatting import number, preview_block, result
+from ..moonraker.PrinterObjects import wanted_object
 from .MonitorPermissions import Observation
 from ..geometry.ToolheadFanReadings import FanReadings
 from ..moonraker.MoonrakerSession import RequestCategory, FrozenStatus

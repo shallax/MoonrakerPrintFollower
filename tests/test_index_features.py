@@ -208,11 +208,11 @@ class MotionLineFastPathTests(harness.MotionLineFastPathTests):
             fast = harness.gcode_index._fast_motion_line(code)
             if fast is None:
                 continue  # the fallback is always legal
-            match = harness.gcode_index._COMMAND.search(code)
+            match = harness.gcode_index.COMMAND_PATTERN.search(code)
             command = match.group(1).upper() if match else b""
-            axes = harness.gcode_index._parse_axes(code)
+            axes = harness.gcode_index.parse_axes(code)
             self.assertEqual(fast, (command, axes), "%r" % line)
-            self.assertIsNotNone(harness.gcode_index._MOTION.search(line),
+            self.assertIsNotNone(harness.gcode_index.MOTION_PATTERN.search(line),
                                  "%r claimed a motion the motion regex refuses" % line)
 
     def test_a_hydrated_layer_matches_the_full_scan_through_the_fast_path(self):

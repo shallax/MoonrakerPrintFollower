@@ -20,15 +20,14 @@ compile and the vertex upload inside Cura's OpenGL renderer need a real GL
 context, so those calls are asserted against a recording factory; frames
 are the offscreen harness's job, not a unit test's.
 
-Measured on the last run — mpf/bedmesh/BedMeshSceneNode.py 99%,
-mpf/bedmesh/BedMeshPresenter.py 100%. Leftovers, both defensive code that the
-public entry points cannot reach:
+The geometry builder keeps two defensive branches outside the normal valid
+input path:
 
-  BedMeshSceneNode.py:87   the trailing `return [*stops[-1][1], alpha]`:
+  BedMeshGeometry._colour   the trailing `return [*stops[-1][1], alpha]`:
                            `t` is clamped to [0, 1] and the last stop's right
                            edge is exactly 1.0, so the loop always returns
                            from inside.
-  BedMeshSceneNode.py:277  the `length <= 1e-9` guard in
+  BedMeshGeometry.build  the `length <= 1e-9` guard in
                            append_boundary_segment: updateMesh rejects
                            x_max <= x_min and columns < 2, so every ribbon
                            segment has a positive length.
@@ -47,6 +46,7 @@ from qt_runtime_support import QT_AVAILABLE, Preferences, runtime
 
 try:  # the stdlib-only host suite runs without numpy
     import numpy
+    from mpf.geometry.BedMeshGeometry import BedMeshGeometry
 except ImportError:
     numpy = None
 
@@ -298,7 +298,7 @@ class BedMeshSceneNodeTests(BedMeshHarness):
         self.assertAlmostEqual(float(mesh.vertices[0][2]), 75.0, places=4)
 
     def test_axis_with_bed_edges_widens_or_bounds_each_side(self):
-        axis = self.node_class._axis_with_bed_edges
+        axis = BedMeshGeometry._axis_with_bed_edges
         self.assertEqual(axis(40.0, 210.0, 3, 0.0, 250.0), [0.0, 40.0, 125.0, 210.0, 250.0])
         self.assertEqual(axis(40.0, 210.0, 3, 40.0, 210.0), [40.0, 125.0, 210.0])
         # A Cura profile narrower than the configured mesh stays bounded to the
@@ -308,7 +308,7 @@ class BedMeshSceneNodeTests(BedMeshHarness):
 
     def test_sampling_clamps_like_klipper_instead_of_sloping(self):
         matrix = [[0.0, 0.1], [0.2, 0.3]]
-        sample = self.node_class._sample_matrix
+        sample = BedMeshGeometry._sample_matrix
         bounds = (0.0, 100.0, 0.0, 100.0)
         self.assertAlmostEqual(sample(matrix, -50.0, -50.0, *bounds), 0.0)
         self.assertAlmostEqual(sample(matrix, 150.0, 150.0, *bounds), 0.3)
@@ -321,7 +321,7 @@ class BedMeshSceneNodeTests(BedMeshHarness):
         self.assertAlmostEqual(sample(rise, 50.0, 50.0, *bounds), 0.5)
 
     def test_extrapolation_segment_returns_the_cell_and_its_fraction(self):
-        segment = self.node_class._extrapolation_segment
+        segment = BedMeshGeometry._extrapolation_segment
         self.assertEqual(segment(0.5, 1), (0, 0.0))
         self.assertEqual(segment(-2.0, 3), (0, -2.0))
         self.assertEqual(segment(0.0, 3), (0, 0.0))
@@ -332,7 +332,7 @@ class BedMeshSceneNodeTests(BedMeshHarness):
         self.assertEqual(segment(4.0, 3), (1, 3.0))
 
     def test_colour_walks_the_rainbow_stops_and_the_alpha(self):
-        colour = self.node_class._colour
+        colour = BedMeshGeometry._colour
         for value, expected in ((-1.0, (0.10, 0.28, 0.95)), (-0.5, (0.00, 0.72, 1.00)),
                                 (0.0, (0.20, 0.86, 0.38)), (0.5, (1.00, 0.82, 0.12)),
                                 (1.0, (0.92, 0.16, 0.12))):

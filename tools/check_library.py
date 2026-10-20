@@ -4,6 +4,7 @@
 #
 # Release history:
 # 2026-10-18 — 6.0.0: Verify isolated consumer imports, selective distribution boundaries and shared-source parity.
+# 2026-10-20 — 6.0.0: Verify installed bed-mesh arrays alongside narrow rendering consumers.
 
 """Install and exercise a built wheel outside the source checkout."""
 import argparse
@@ -152,7 +153,13 @@ sip.delete(node)
 sip.delete(item)
 sip.delete(window)
 assert not any(name.split('.')[0] in {'UM', 'cura', 'mpf'} for name in sys.modules)
-print('Qt: standalone raster pixels and retained geometry passed')
+from moonraker_toolpath.geometry.BedMeshGeometry import BedMeshGeometry
+arrays = BedMeshGeometry.build(dict(rows=2, columns=2, values=[0, 1, 2, 3],
+    xMin=0, xMax=100, yMin=0, yMax=100, minimum=0, maximum=3), 100, 100, False)
+assert arrays.vertices.shape == (20, 3) and arrays.indices.shape == (10, 3)
+assert all(abs(a-b) < 1e-4 for a,b in zip(arrays.vertices[3], (50, 60.035, -50)))
+assert not any(name.split('.')[0] in {'UM', 'cura', 'mpf'} for name in sys.modules)
+print('Qt: standalone raster pixels, retained geometry and bed-mesh arrays passed')
 '''
 
 

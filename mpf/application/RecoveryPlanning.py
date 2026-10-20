@@ -7,6 +7,7 @@
 # 2026-10-18 — 6.0.0: Reconstruct feed rate, arc plane and selected object before recovery.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-20 — 6.0.0: Consume public lexical definitions and return structured refusal evidence.
 
 """Read-only recovery planning for a paused virtual-SD print.
 
@@ -22,13 +23,10 @@ import math
 import os
 import re
 
+from ..printing.RecoveryRefusal import RecoveryPlanError as _RecoveryPlanError
 from ..gcode import ArcGeometry
-from ..gcode.GCodeParser import _COMMAND, _MOTION, _parse_arc_words, _parse_axes
-from ..gcode.IndexLimits import _MAX_LINE_BYTES
-
-
-class RecoveryPlanError(ValueError):
-    """The source cannot support an exact recovery plan at this boundary."""
+from ..gcode.GCodeParser import COMMAND_PATTERN, MOTION_PATTERN, parse_arc_words, parse_axes
+from ..gcode.IndexLimits import MAX_LINE_BYTES
 
 
 _NAMED_COMMAND = re.compile(rb"^\s*([A-Z_][A-Z_0-9]*)\b")
@@ -54,34 +52,28 @@ def _command_review(handle, first_command, limit, classified):
     commands = {first_command: None}
     known = _SOURCE_COMMANDS | classified
     while handle.tell() < limit:
-        line = handle.readline(_MAX_LINE_BYTES + 1)
-        if not line or len(line) > _MAX_LINE_BYTES:
-            raise RecoveryPlanError("The observed offset is not a valid command boundary")
+        line = handle.readline(MAX_LINE_BYTES + 1)
+        if not line or len(line) > MAX_LINE_BYTES:
+            raise _RecoveryPlanError("The observed offset is not a valid command boundary")
         if handle.tell() > limit:
             break
         code = line.split(b";", 1)[0].strip().upper()
-        match = _COMMAND.match(code) or _NAMED_COMMAND.match(code)
+        match = COMMAND_PATTERN.match(code) or _NAMED_COMMAND.match(code)
         if match and match.group(1) not in known:
             commands.setdefault(match.group(1), None)
-    names = ", ".join(command.decode("ascii", "replace") for command in commands)
-    return (
-        f"Commands before the observed print position need review: {names}. "
-        "For Klipper macros, open Settings > Printer > Manage Printers, select this printer, "
-        "then Configure Moonraker > Recovery > G-code macros. Review every listed macro's definition: "
-        "use 'Setup macro in the G-code' only for a start macro before printed geometry, "
-        "or 'Transparent macro in the G-code' only if it leaves print state unchanged. "
-        "Choose each macro and click Add. When all are classified, click Save and retry Check G-code. "
-        "Leave other commands unlisted; recovery cannot safely skip them."
-    )
+    commands = tuple(command.decode("ascii", "replace") for command in commands)
+    return _RecoveryPlanError(
+        f"Commands before the observed print position need review: {', '.join(commands)}.",
+        code="unreviewed_commands", commands=commands)
 
 
 def _number(value, label):
     try:
         result = float(value)
     except (TypeError, ValueError, OverflowError) as error:
-        raise RecoveryPlanError(f"Invalid {label}") from error
+        raise _RecoveryPlanError(f"Invalid {label}") from error
     if not math.isfinite(result):
-        raise RecoveryPlanError(f"Non-finite {label}")
+        raise _RecoveryPlanError(f"Non-finite {label}")
     return result
 
 
@@ -189,25 +181,25 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
     extrusion, heat, fans or transforms. No prefix is replayed on the printer.
     """
     if boundary is None or not isinstance(boundary.next_motion_offset, int):
-        raise RecoveryPlanError("Choose an exact indexed motion boundary")
+        raise _RecoveryPlanError("Choose an exact indexed motion boundary")
     target = boundary.next_motion_offset
     try:
         size = os.path.getsize(path)
     except OSError as error:
-        raise RecoveryPlanError("The downloaded G-code is unavailable") from error
+        raise _RecoveryPlanError("The downloaded G-code is unavailable") from error
     if target < 0 or target >= size:
-        raise RecoveryPlanError("The selected command is outside the source file")
+        raise _RecoveryPlanError("The selected command is outside the source file")
     if observed_offset is None:
         observed_offset = target
     if type(observed_offset) is not int or not target <= observed_offset <= size:
-        raise RecoveryPlanError("The observed print position is outside the source file")
+        raise _RecoveryPlanError("The observed print position is outside the source file")
     setup_macros = {str(name).upper().encode("ascii") for name in setup_macros}
     transparent_macros = {str(name).upper().encode("ascii") for name in transparent_macros}
     for name in (nozzle_parameter, bed_parameter):
         if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", name):
-            raise RecoveryPlanError("Invalid print-start temperature parameter name")
+            raise _RecoveryPlanError("Invalid print-start temperature parameter name")
     if setup_macros & transparent_macros:
-        raise RecoveryPlanError("A source macro has conflicting recovery contracts")
+        raise _RecoveryPlanError("A source macro has conflicting recovery contracts")
     position = [0.0, 0.0, 0.0]
     e = 0.0
     absolute_xyz = True
@@ -229,12 +221,12 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
     current_object = None
     def modal_state(next_line):
         if unknown_axes or unknown_e:
-            raise RecoveryPlanError("A setup macro needs a full absolute XYZ move and G92 E before this point")
+            raise _RecoveryPlanError("A setup macro needs a full absolute XYZ move and G92 E before this point")
         selected_feedrate = feedrate
         if selected_feedrate is None:
-            selected_feedrate = _number(_parse_axes(next_line.split(b";", 1)[0]).get("F"), "restart feedrate; choose a point after an explicit F command")
+            selected_feedrate = _number(parse_axes(next_line.split(b";", 1)[0]).get("F"), "restart feedrate; choose a point after an explicit F command")
             if selected_feedrate <= 0:
-                raise RecoveryPlanError("Invalid restart feedrate")
+                raise _RecoveryPlanError("Invalid restart feedrate")
         return RecoveryModalState(tuple(position), e, absolute_xyz, force_relative_e,
                                   selected_feedrate, speed_percent, flow_percent, fan_speed,
                                   hotend_target, bed_target, acceleration, plane, current_object)
@@ -243,13 +235,13 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
         with open(path, "rb") as handle:
             while handle.tell() < observed_offset:
                 offset = handle.tell()
-                line = handle.readline(_MAX_LINE_BYTES + 1)
-                if not line or len(line) > _MAX_LINE_BYTES:
-                    raise RecoveryPlanError("The observed offset is not a valid command boundary")
+                line = handle.readline(MAX_LINE_BYTES + 1)
+                if not line or len(line) > MAX_LINE_BYTES:
+                    raise _RecoveryPlanError("The observed offset is not a valid command boundary")
                 digest.update(line)
                 if offset == target:
-                    if not _MOTION.match(line.split(b";", 1)[0]):
-                        raise RecoveryPlanError("The indexed offset no longer names a motion command")
+                    if not MOTION_PATTERN.match(line.split(b";", 1)[0]):
+                        raise _RecoveryPlanError("The indexed offset no longer names a motion command")
                     selected_state = modal_state(line)
                     seen_target = True
                 if handle.tell() > observed_offset:
@@ -257,11 +249,11 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                 code = line.split(b";", 1)[0].strip().upper()
                 if not code:
                     continue
-                match = _COMMAND.match(code) or _NAMED_COMMAND.match(code)
+                match = COMMAND_PATTERN.match(code) or _NAMED_COMMAND.match(code)
                 if match is None:
-                    raise RecoveryPlanError(f"Unsupported G-code at byte {offset}")
+                    raise _RecoveryPlanError(f"Unsupported G-code at byte {offset}")
                 command = match.group(1)
-                axes = _parse_axes(code)
+                axes = parse_axes(code)
                 if command in _MOTIONS:
                     old_position = tuple(position)
                     old_e = e
@@ -282,7 +274,7 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                             points = [old_position, tuple(position)]
                             if command in {b"G2", b"G02", b"G3", b"G03"}:
                                 desc = ArcGeometry.descriptor(plane, command in {b"G2", b"G02"},
-                                                              _parse_arc_words(code), absolute_xyz=absolute_xyz)
+                                                              parse_arc_words(code), absolute_xyz=absolute_xyz)
                                 if desc is not None:
                                     points = [old_position, *ArcGeometry.tessellate(desc, old_position, position)]
                             for start, end in zip(points, points[1:], strict=False):
@@ -295,7 +287,7 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                     if "F" in axes:
                         feedrate = _number(axes["F"], "feedrate")
                         if feedrate <= 0:
-                            raise RecoveryPlanError("Invalid feedrate")
+                            raise _RecoveryPlanError("Invalid feedrate")
                 elif command == b"G90":
                     absolute_xyz = True
                 elif command == b"G91":
@@ -306,7 +298,7 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                     force_relative_e = True
                 elif command == b"G92":
                     if not axes or any(axis in axes for axis in "XYZ"):
-                        raise RecoveryPlanError("G92 XYZ position resets are not supported")
+                        raise _RecoveryPlanError("G92 XYZ position resets are not supported")
                     if "E" in axes:
                         e = _number(axes["E"], "E reset")
                         unknown_e = False
@@ -315,7 +307,7 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                 elif command == b"EXCLUDE_OBJECT_START":
                     name = re.fullmatch(rb"EXCLUDE_OBJECT_START\s+NAME=([A-Z0-9_.-]+)", code)
                     if name is None:
-                        raise RecoveryPlanError("The source object name cannot be restored safely")
+                        raise _RecoveryPlanError("The source object name cannot be restored safely")
                     current_object = name.group(1).decode("ascii")
                 elif command == b"EXCLUDE_OBJECT_END":
                     current_object = None
@@ -325,11 +317,11 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                 elif command == b"G21":
                     pass
                 elif command == b"G20":
-                    raise RecoveryPlanError("Inch-mode G-code is not supported by Klipper")
+                    raise _RecoveryPlanError("Inch-mode G-code is not supported by Klipper")
                 elif command in {b"M220", b"M221"}:
                     value = _word(_S_WORD, code, 100.0, "factor")
                     if value <= 0:
-                        raise RecoveryPlanError("Invalid speed or flow factor")
+                        raise _RecoveryPlanError("Invalid speed or flow factor")
                     if command == b"M220":
                         speed_percent = value
                     else:
@@ -337,27 +329,27 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                 elif command == b"M204":
                     value = _word(_S_WORD, code, None, "acceleration")
                     if value is None or value <= 0:
-                        raise RecoveryPlanError("Unsupported acceleration command")
+                        raise _RecoveryPlanError("Unsupported acceleration command")
                     acceleration = value
                 elif command in {b"M106", b"M107"}:
                     fan = _word(_P_WORD, code, 0, "fan index")
                     if fan != 0:
-                        raise RecoveryPlanError("Multiple fan channels are not supported")
+                        raise _RecoveryPlanError("Multiple fan channels are not supported")
                     value = 0 if command == b"M107" else _word(_S_WORD, code, 255, "fan speed")
                     if not 0 <= value <= 255:
-                        raise RecoveryPlanError("Invalid fan speed")
+                        raise _RecoveryPlanError("Invalid fan speed")
                     fan_speed = int(value)
                 elif command in {b"M104", b"M109", b"M140", b"M190"}:
                     value = _word(_S_WORD, code, None, "temperature")
                     if value is None or value < 0:
-                        raise RecoveryPlanError("Unsupported temperature command")
+                        raise _RecoveryPlanError("Unsupported temperature command")
                     if command in {b"M104", b"M109"}:
                         hotend_target = value
                     else:
                         bed_target = value
                 elif command in setup_macros:
                     if offset >= target or printed_top_z > 0:
-                        raise RecoveryPlanError("A setup macro cannot be crossed during a recovery rewind")
+                        raise _RecoveryPlanError("A setup macro cannot be crossed during a recovery rewind")
                     arguments = {name.decode("ascii"): _number(value, "macro temperature")
                                  for name, value in _MACRO_ARG.findall(code)}
                     if nozzle_parameter in arguments:
@@ -370,25 +362,25 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                 elif command in transparent_macros:
                     pass
                 elif command in _PAUSE_COMMANDS and offset >= target:
-                    raise RecoveryPlanError("The selected replay would cross another pause command")
+                    raise _RecoveryPlanError("The selected replay would cross another pause command")
                 elif command == b"T0" or command in _IGNORED:
                     pass
                 else:
-                    raise RecoveryPlanError(_command_review(
-                        handle, command, observed_offset, setup_macros | transparent_macros))
+                    raise _command_review(
+                        handle, command, observed_offset, setup_macros | transparent_macros)
             if not seen_target:
-                line = handle.readline(_MAX_LINE_BYTES + 1)
-                if len(line) > _MAX_LINE_BYTES or not _MOTION.match(line.split(b";", 1)[0]):
-                    raise RecoveryPlanError("The indexed offset no longer names a motion command")
+                line = handle.readline(MAX_LINE_BYTES + 1)
+                if len(line) > MAX_LINE_BYTES or not MOTION_PATTERN.match(line.split(b";", 1)[0]):
+                    raise _RecoveryPlanError("The indexed offset no longer names a motion command")
                 selected_state = modal_state(line)
                 digest.update(line)
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
     except OSError as error:
-        raise RecoveryPlanError("The downloaded G-code could not be read") from error
+        raise _RecoveryPlanError("The downloaded G-code could not be read") from error
     if size != os.path.getsize(path):
-        raise RecoveryPlanError("The downloaded G-code changed during planning")
+        raise _RecoveryPlanError("The downloaded G-code changed during planning")
     if any(abs(a - float(b)) > 0.001 for a, b in zip(selected_state.position, boundary.position, strict=True)):
-        raise RecoveryPlanError("Indexed and reconstructed positions disagree")
+        raise _RecoveryPlanError("Indexed and reconstructed positions disagree")
     return RecoverySourcePlan(target, size, digest.hexdigest(), selected_state, printed_top_z,
                               tuple(preview_segments))

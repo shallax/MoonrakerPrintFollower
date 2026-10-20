@@ -5,6 +5,7 @@
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Read caller-owned residency demands at hydration completion.
 # 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+# 2026-10-20 — 6.0.0: Consume the public lexical and source-line limit definitions.
 
 """Hydrate one compact index layer, retaining its opening modal state."""
 from __future__ import annotations
@@ -18,8 +19,8 @@ from typing import Callable, Dict, Optional
 from . import ArcGeometry
 
 from .FeatureTracker import _FeatureTracker, _TYPE_NONE, _TYPE_OTHER
-from .GCodeParser import _ARC_CLOCKWISE, _ARC_COUNTER, _COMMAND, _FAST_MOTIONS, _MOTION, _TYPE_COMMENT, _TYPE_PREFIX, _fast_motion_line, _parse_arc_words, _parse_axes
-from .IndexLimits import _MAX_LINE_BYTES, _MAX_MOTIONS_PER_LAYER, _MAX_TYPE_NAME_BYTES
+from .GCodeParser import _ARC_CLOCKWISE, _ARC_COUNTER, COMMAND_PATTERN, _FAST_MOTIONS, MOTION_PATTERN, _TYPE_COMMENT, _TYPE_PREFIX, _fast_motion_line, parse_arc_words, parse_axes
+from .IndexLimits import MAX_LINE_BYTES, _MAX_MOTIONS_PER_LAYER, _MAX_TYPE_NAME_BYTES
 from .IndexWork import HydrationYield, _YIELD_CHECK_MASK, passive_yield
 from .MotionIndex import LayerMotionIndex
 
@@ -98,10 +99,10 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                             # every array it had, which is none of them.
                             raise HydrationYield()
                 offset = handle.tell()
-                line = handle.readline(_MAX_LINE_BYTES + 1)
+                line = handle.readline(MAX_LINE_BYTES + 1)
                 if not line:
                     break
-                if len(line) > _MAX_LINE_BYTES:
+                if len(line) > MAX_LINE_BYTES:
                     line = b""
                 stripped = line.rstrip(b"\r\n")
                 if stripped.lstrip().startswith(_TYPE_PREFIX):
@@ -125,9 +126,9 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                 if fast is not None:
                     command, axes = fast
                 else:
-                    command_match = _COMMAND.search(code)
+                    command_match = COMMAND_PATTERN.search(code)
                     command = command_match.group(1).upper() if command_match else b""
-                    axes = _parse_axes(code)
+                    axes = parse_axes(code)
                 if units_scale != 1.0 and axes:
                     axes = {axis: value * units_scale for axis, value in axes.items()}
                 if command == b"G20":
@@ -158,10 +159,10 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                 elif command == b"G92":
                     x = axes.get("X", x); y = axes.get("Y", y); z = axes.get("Z", z)
                     if "E" in axes: features.e = axes["E"]
-                elif command in _FAST_MOTIONS or _MOTION.search(stripped):
+                elif command in _FAST_MOTIONS or MOTION_PATTERN.search(stripped):
                     arc = None
                     if command in _ARC_CLOCKWISE or command in _ARC_COUNTER:
-                        arc_words = _parse_arc_words(code)
+                        arc_words = parse_arc_words(code)
                         if units_scale != 1.0 and arc_words:
                             arc_words = {word: value * units_scale for word, value in arc_words.items()}
                         arc = ArcGeometry.descriptor(

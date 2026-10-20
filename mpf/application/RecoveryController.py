@@ -8,6 +8,7 @@
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [368df57] Wait for unloaded recovery test before cleanup on Windows
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-20 — 6.0.0: Format structured source refusals as operator guidance at the workflow boundary.
 
 """Qt owner for reviewed recovery plans and a single guarded handover."""
 from __future__ import annotations
@@ -25,7 +26,9 @@ from ..moonraker.MoonrakerProtocol import parse_file_identity
 from ..printing.RecoveryReview import review_recovery
 from ..printing.RecoveryExecution import RecoveryExecution
 from ..printing.RecoveryHandover import RecoveryRefused, reviewed_pause_state
-from .RecoveryPlanning import RecoveryPlanError, scan_source
+from .RecoveryMessages import refusal_text
+from .RecoveryPlanning import scan_source
+from ..printing.RecoveryRefusal import RecoveryPlanError
 
 
 @dataclass(frozen=True)
@@ -192,7 +195,7 @@ class RecoveryController(QObject):
                                      preview_offset=context.observed_offset)
                 self._planned.emit(generation, source, None)
             except (RecoveryPlanError, OSError, ValueError) as error:
-                self._planned.emit(generation, None, str(error))
+                self._planned.emit(generation, None, refusal_text(error))
 
         self._executor.submit(work)
         return True
@@ -379,7 +382,7 @@ class RecoveryController(QObject):
                     self._replanned.emit(generation, updated,
                                          max(context.printed_top_z, updated.printed_top_z), None)
                 except (RecoveryPlanError, OSError, ValueError) as error:
-                    self._replanned.emit(generation, None, None, str(error))
+                    self._replanned.emit(generation, None, None, refusal_text(error))
             self._executor.submit(work)
             return True
 

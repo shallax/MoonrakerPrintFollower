@@ -181,3 +181,19 @@ the freshly hydrated layer's neighbouring window also survives long enough to
 prepare its geometry. Capture one residency owner per source generation so an
 old worker cannot adopt another file's demands. Parsed indexes do not contain
 printer/follower selection fields.
+
+### Lexical consumers and bed meshes
+
+`moonraker_toolpath.gcode.GCodeParser` exposes `COMMAND_PATTERN`,
+`MOTION_PATTERN`, `parse_axes(code)` and `parse_arc_words(code)` for byte-oriented
+lexical recognition. These recognize syntax; each consumer retains its own
+unsupported-command and state-reconstruction policy. `gcode.IndexLimits` exposes
+`MAX_LINE_BYTES` for bounded reads.
+
+With the `fast` extra installed, `geometry.BedMeshGeometry.BedMeshGeometry.build`
+accepts a mesh snapshot, machine width/depth and origin convention, and returns
+`MeshArrays(vertices, indices, colours)` or `None` for invalid dimensions/input.
+Arrays contain Cura-oriented coordinates (Y up, negative printer Y into scene Z),
+probe-boundary ribbon geometry and explicit alpha for unprobed bed extensions.
+The function imports NumPy and has no Cura, Uranium or Qt dependency. The Cura
+scene node converts these arrays to `MeshData` and owns drawing separately.

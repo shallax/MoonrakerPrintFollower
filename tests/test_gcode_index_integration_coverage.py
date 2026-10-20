@@ -27,7 +27,7 @@ returned method name ("motion index" / "byte position" / "held ..." /
 Leftover lines, and why no test reaches them:
 
 GCodeIndex.py
-- 227-228 (_parse_axes): the guard covers a non-numeric axis value, but the
+- 227-228 (parse_axes): the guard covers a non-numeric axis value, but the
   scan regex only matches digits and signs, so float() cannot fail.
 - 349-350, 395-396, 403-404 (stats / marker / elapsed coercions): the same
   shape — each value has already matched a numeric regex, so int()/float()

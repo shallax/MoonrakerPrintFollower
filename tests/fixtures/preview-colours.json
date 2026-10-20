@@ -1,0 +1,20 @@
+{
+  "specification": "Cura Preview gradients: modes 2/4 speed-width, 3 height, 5 flow. Clamp normalized values; ranges narrower than 0.0001 use the midpoint.",
+  "cases": [
+    {"mode": 2, "value": -1, "bounds": [0, 1], "rgba": [0, 0, 1, 1]},
+    {"mode": 2, "value": 0.125, "bounds": [0, 1], "rgba": [0.125, 0.5, 0.5, 1]},
+    {"mode": 2, "value": 0.375, "bounds": [0, 1], "rgba": [0.375, 0.5, 0, 1]},
+    {"mode": 4, "value": 0.5, "bounds": [0, 1], "rgba": [0.5, 0.5, 0, 1]},
+    {"mode": 4, "value": 2, "bounds": [0, 1], "rgba": [1, 0.5, 0, 1]},
+    {"mode": 3, "value": 0, "bounds": [0, 1], "rgba": [0, 0, 0.5, 1]},
+    {"mode": 3, "value": 0.25, "bounds": [0, 1], "rgba": [0, 0.375, 0.75, 1]},
+    {"mode": 3, "value": 0.75, "bounds": [0, 1], "rgba": [1, 0.75, 0.25, 1]},
+    {"mode": 3, "value": 1, "bounds": [0, 1], "rgba": [1, 1, 0, 1]},
+    {"mode": 5, "value": 0, "bounds": [0, 1], "rgba": [0, 0, 0.5, 1]},
+    {"mode": 5, "value": 0.5, "bounds": [0, 1], "rgba": [0.5, 1, 0.5, 1]},
+    {"mode": 5, "value": 1, "bounds": [0, 1], "rgba": [0.5, 0, 0, 1]},
+    {"mode": 2, "value": 10, "bounds": [4, 4], "rgba": [0.5, 0.5, 0, 1]},
+    {"mode": 3, "value": 10, "bounds": [4, 4], "rgba": [0, 0.75, 0.5, 1]},
+    {"mode": 5, "value": 10, "bounds": [4, 4], "rgba": [0.5, 1, 0.5, 1]}
+  ]
+}

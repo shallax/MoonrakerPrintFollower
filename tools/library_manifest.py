@@ -4,6 +4,7 @@
 #
 # Release history:
 # 2026-10-18 — 6.0.0: Declare the standalone distribution's complete source and asset boundary.
+# 2026-10-20 — 6.0.0: Include portable bed-mesh geometry in the shared source distribution.
 
 """One explicit inventory shared by wheel construction and external verification."""
 PACKAGE_DIRS = {
@@ -21,7 +22,7 @@ MODULES = {
         "IndexAssembly", "IndexHeader", "IndexResidency", "IndexHydrator", "IndexLimits", "IndexView",
         "IndexWork", "cache", "IndexCache", "IndexCodec", "CachePolicy", "PreparedStore", "RawSourceCache", "SourceIdentity", "MotionIndex", "MotionRanges", "ObjectWork", "PlateProgress", "TravelStates",
     ),
-    "moonraker_toolpath.geometry": ("__init__", "Polygons"),
+    "moonraker_toolpath.geometry": ("__init__", "Polygons", "BedMeshGeometry"),
     "moonraker_toolpath.plate": (
         "__init__", "ToolpathGeometry", "qt", "GpuFollower", "GpuStrokeMaterial",
         "PlateAxisGeometry", "PlateQt", "PlateRaster", "raster", "scenegraph", "PreviewColours",

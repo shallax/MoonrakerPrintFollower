@@ -17,9 +17,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from mpf.application.RecoveryMessages import refusal_text
 from mpf.gcode.GCodeIndex import build_index_from_file
 from mpf.gcode.IndexView import IndexView
-from mpf.application.RecoveryPlanning import RecoveryPlanError, scan_source, suggest_lead_in
+from mpf.application.RecoveryPlanning import scan_source, suggest_lead_in
+from mpf.printing.RecoveryRefusal import RecoveryPlanError
 
 
 class RecoveryPlanningTests(unittest.TestCase):
@@ -49,7 +51,10 @@ class RecoveryPlanningTests(unittest.TestCase):
             observed = data.index(b"FUTURE_MACRO")
             with self.assertRaises(RecoveryPlanError) as caught:
                 scan_source(path, boundary, observed)
-            text = str(caught.exception)
+            self.assertEqual(caught.exception.code, "unreviewed_commands")
+            self.assertEqual(caught.exception.commands, ("PRINT_START", "TIMELAPSE_TAKE_FRAME", "CAMERA_MARK"))
+            self.assertNotIn("Manage Printers", str(caught.exception))
+            text = refusal_text(caught.exception)
             self.assertIn("PRINT_START, TIMELAPSE_TAKE_FRAME, CAMERA_MARK.", text)
             self.assertEqual(text.count("TIMELAPSE_TAKE_FRAME"), 1)
             for phrase in ("Manage Printers", "Configure Moonraker > Recovery > G-code macros",
@@ -327,8 +332,8 @@ class RecoveryPlanningTests(unittest.TestCase):
 
     def test_scanner_rejects_oversized_and_unparseable_commands(self):
         from types import SimpleNamespace
-        from mpf.gcode.IndexLimits import _MAX_LINE_BYTES
-        for prefix in (b"@UNKNOWN\n", b";" + b"x" * (_MAX_LINE_BYTES + 1) + b"\n"):
+        from mpf.gcode.IndexLimits import MAX_LINE_BYTES
+        for prefix in (b"@UNKNOWN\n", b";" + b"x" * (MAX_LINE_BYTES + 1) + b"\n"):
             with self.subTest(prefix=prefix[:12]), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "bad.gcode"
                 path.write_bytes(prefix + b"G1 X1 E1\n")

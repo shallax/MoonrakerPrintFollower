@@ -36,9 +36,13 @@ Version remains 6.0.0. Merge/tag and a live Cura restart are not authorized here
 - [ ] Separate detection action state and effects from host notifications.
 - [ ] Consolidate process-liveness, streaming multipart uploads, printer object
   classification and recovery lexical/refusal interfaces.
-- [ ] Extract Preview object-tag presentation and bed-mesh sampling/geometry.
-- [ ] Add cross-language preview-colour conformance checks and package-qualified
-  architectural/consumer enforcement with each extraction.
+- [ ] Extract Preview object-tag presentation. Bed-mesh sampling/geometry now
+  belongs to a host-independent NumPy array builder, used by the scene adapter
+  and the installed library consumer.
+- [x] Add cross-language preview-colour conformance checks. Real QML runs the
+  production JavaScript against shared reference values and Python boundary
+  cases. Package-qualified architectural/consumer enforcement accompanies the
+  extractions.
 - [ ] Synchronize architecture, README, roadmap, What's New and changed source
   headers; retain 6.0.0 throughout.
 - [ ] Full local checks, coverage at least 95%, PR CI and UI sweep on final head.
@@ -46,3 +50,12 @@ Version remains 6.0.0. Merge/tag and a live Cura restart are not authorized here
 Every code extraction retains behaviour tests and adds the narrower boundary
 proof appropriate to it. Moving functions without transferring state ownership
 or replacing private/shared-owner access does not satisfy an item.
+
+Shared-primitives progress: object families/fan writability now live in
+`moonraker.PrinterObjects`; source lexical definitions are public; recovery
+refusals carry ordered command evidence independently of setup navigation.
+Streaming multipart ownership remains to be consolidated.
+
+The settings/workflow batch passed full `make all` with 6,300 tests. Coverage
+is 97.72%; every production file clears 95%, and the new validation, workflow,
+residency/tracking and raster-lifetime modules have 100% statement coverage.

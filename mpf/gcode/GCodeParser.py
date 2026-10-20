@@ -4,6 +4,7 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+# 2026-10-20 — 6.0.0: Expose lexical patterns and axis/arc parsing as explicit reusable capabilities.
 
 """G-code token and marker recognition shared by scanning and hydration."""
 from __future__ import annotations
@@ -23,9 +24,9 @@ _STATS_MARKER = re.compile(
     rb"^\s*SET_PRINT_STATS_INFO\b.*\bCURRENT_LAYER\s*=\s*(-?\d+)",
     re.IGNORECASE,
 )
-_MOTION = re.compile(rb"^\s*(?:N\d+\s*)?G0?[0-3](?!\d)", re.IGNORECASE)
+MOTION_PATTERN = re.compile(rb"^\s*(?:N\d+\s*)?G0?[0-3](?!\d)", re.IGNORECASE)
 _ELAPSED = re.compile(rb"^\s*;TIME_ELAPSED:\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
-_COMMAND = re.compile(rb"^\s*(?:N\d+\s*)?([GMT]\d+)(?!\d)", re.IGNORECASE)
+COMMAND_PATTERN = re.compile(rb"^\s*(?:N\d+\s*)?([GMT]\d+)(?!\d)", re.IGNORECASE)
 # XYZE and modal feedrate F are read here: an arc's centre offsets are not
 # positions and never move the XYZ state, so they are parsed separately
 # (_ARC_WORD) and only on a G2/G3 line.
@@ -63,7 +64,7 @@ _PAUSE_COMMAND = re.compile(rb"^\s*(?:PAUSE|M0|M25)\b")
 _MARKER_SNIFF_BYTES = 262144
 
 
-def _parse_axes(code: bytes) -> Dict[str, float]:
+def parse_axes(code: bytes) -> Dict[str, float]:
     values: Dict[str, float] = {}
     for match in _AXIS.finditer(code):
         try:
@@ -119,7 +120,7 @@ def _fast_motion_line(stripped: bytes) -> Optional[Tuple[bytes, Dict[str, float]
     return b"G" + bytes((digit,)), axes
 
 
-def _parse_arc_words(code: bytes) -> Dict[str, float]:
+def parse_arc_words(code: bytes) -> Dict[str, float]:
     """An arc line's I/J/K offsets (and its R, if it carries one).
 
     These are NOT positions: an I or a J describes where the centre sits

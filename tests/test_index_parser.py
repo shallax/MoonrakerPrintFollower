@@ -23,13 +23,13 @@ class TokenRecognitionTests(unittest.TestCase):
         for code in (b"G1 X", b"G1 Y 2", b"G1 Z", b"G1 E", b"G1 F"):
             with self.subTest(code=code):
                 self.assertIsNone(GCodeParser._fast_motion_line(code))
-        self.assertEqual(GCodeParser._parse_axes(b"G1 Y 2 X"), {"Y": 2.0})
+        self.assertEqual(GCodeParser.parse_axes(b"G1 Y 2 X"), {"Y": 2.0})
 
     def test_bad_tokens_do_not_discard_following_valid_tokens(self):
         # Exercise the recogniser/converter boundary directly: a future
         # recogniser accepting a malformed word must retain valid siblings.
-        for function, regex, good in ((GCodeParser._parse_axes, "_AXIS", b"X"),
-                                      (GCodeParser._parse_arc_words, "_ARC_WORD", b"I")):
+        for function, regex, good in ((GCodeParser.parse_axes, "_AXIS", b"X"),
+                                      (GCodeParser.parse_arc_words, "_ARC_WORD", b"I")):
             matches = [Mock(group=Mock(side_effect=lambda n, pair=pair: pair[n - 1]))
                        for pair in ((b"\xff", b"1"), (good, b"invalid"), (good, b"2.5"))]
             with self.subTest(function=function.__name__), patch.object(GCodeParser, regex) as recogniser:
