@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Name queued raster job identity fields without changing receipt values.
 # 2026-10-20 — 6.0.0: Separate raster painting, Qt assets and worker publication.
 # 2026-10-18 — 6.0.0: Convert empty immutable geometry and event markers to Qt-compatible values.
 # 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
@@ -15,6 +16,7 @@
 
 """Worker execution and guarded owner-thread handoff for raster requests."""
 import time
+from typing import NamedTuple
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
 
 class _CheckpointBudget:
@@ -71,3 +73,15 @@ def _bridge_emit(bridge, signal, *args):
         return False
 
 
+
+
+class RasterTicket(NamedTuple):
+    surface: str
+    layer: int
+    token: int
+    generation: int
+    key: object
+    kind: str
+    split: int | None
+    epoch: int
+    serial: int

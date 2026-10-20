@@ -289,6 +289,7 @@ correct package ownership.
 | `PlateRenderController.py` | The native renderer: per-surface render contexts, bounded demand scheduling, raster workers and their tickets, cache assets and decoded pins | Print state, presentation settings or Qt publication |
 | `PlateQt.py` | Qt-facing layer assets and immutable geometry conversion | Painting, workers and printer tracking policy |
 | `PlateRaster.py` | Image-value toolpath painting | QML objects, worker scheduling or file publication |
+| `RasterAssets.py` | Scoped raster file lifetime, publication and independent consumer references | Surface scheduling or QML state |
 | `RasterFiles.py` | Atomic raster image publication | Painting and scheduling |
 | `RasterJobs.py` | Raster worker execution and guarded owner handoff | Rendering policy |
 | `raster.py` | Standalone raster API | Scene-graph imports |
@@ -2541,3 +2542,11 @@ The application supplies its live/manual windows; workers capture the generation
 Hydrated-layer windows remain protected through preparation. `IndexMotionTracking`
 owns accepted physical progress and continuity; the indexing service supplies a
 read-only index view and the prepared payload rather than owning that tracker.
+
+`RasterAssets` owns one render instance's directory and presentation reference
+sets. Surface scheduling supplies URL snapshots rather than sharing its mutable
+records with that owner. Workers publish through the captured asset owner, which
+rejects writes after closure and removes a directory recreated by an in-flight
+publication. Reference/hold changes and pruning run on the renderer owner thread;
+workers can discard only their own unpublished outputs. `RasterTicket` names the
+existing nine queued-signal identity fields without changing their wire values.

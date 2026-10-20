@@ -153,13 +153,13 @@ class PlateRenderControllerTests(harness.NativeRenderSchedulerTests):
         # repeat must not tear down the hold it is reporting.
         model = self.monitor()
         controller = self.controller(model)
-        url = local_url(pathlib.Path(controller._raster_cache_dir) / "held-nav.png")
+        url = local_url(pathlib.Path(controller.assets.directory) / "held-nav.png")
         controller.hold_gesture_raster(url)
-        self.assertEqual(controller._gesture_raster, url)
+        self.assertEqual(controller.assets.held("gesture"), url)
         controller.hold_gesture_raster(url)
-        self.assertEqual(controller._gesture_raster, url)
+        self.assertEqual(controller.assets.held("gesture"), url)
         controller.hold_gesture_raster("")
-        self.assertEqual(controller._gesture_raster, "")
+        self.assertEqual(controller.assets.held("gesture"), "")
 
     def test_the_seek_trace_records_the_slider_debounce(self):
         # The seek's own instrument: the raw tick arms the debounce and
@@ -193,7 +193,7 @@ class PlateRenderControllerTests(harness.NativeRenderSchedulerTests):
         # and only the truly dead file goes.
         model = self.monitor()
         controller = self.controller(model)
-        directory = pathlib.Path(controller._raster_cache_dir)
+        directory = pathlib.Path(controller.assets.directory)
         held = directory / "discard-held.png"
         dead = directory / "discard-dead.png"
         held.write_bytes(b"held")
@@ -233,7 +233,7 @@ class CheckpointWorkerTests(harness.NativeRenderSchedulerTests):
         return False
 
     def rewinds(self, model):
-        directory = pathlib.Path(model.plate_renderer._raster_cache_dir)
+        directory = pathlib.Path(model.plate_renderer.assets.directory)
         return sorted(path.name for path in directory.glob("rewind-*.png"))
 
     def test_a_cancelled_checkpoint_walk_leaves_no_raster_behind(self):
@@ -243,8 +243,7 @@ class CheckpointWorkerTests(harness.NativeRenderSchedulerTests):
         # arrival and must never wait for the generic pruning.
         model = self.monitor()
         surface, wrapped = self.checkpoint_surface(model)
-        module = self.qt.load("PlateRenderController")
-        real_png = module.png_file
+        real_png = self.qt.load("RasterAssets").png_file
         writes = {"n": 0}
 
         def png(image, directory, stem):
@@ -254,7 +253,7 @@ class CheckpointWorkerTests(harness.NativeRenderSchedulerTests):
                 wrapped._rewind_cancel.set()
             return url
 
-        with patch.object(module, "png_file", png):
+        with patch.object(self.qt.load("RasterAssets"), "png_file", png):
             model.plate_renderer._schedule_rewind_checkpoints(surface)
             self.assertTrue(wrapped._rewind_pending, "the checkpoint job never started")
             self.assertTrue(self.await_checkpoints(wrapped), "the cancelled checkpoint job never ended")
@@ -303,7 +302,7 @@ class CheckpointWorkerTests(harness.NativeRenderSchedulerTests):
             # path, and the file never landed at it.
             return local_url(pathlib.Path(directory) / (stem + ".png"))
 
-        with patch.object(module, "render_layer_prefix", render), patch.object(module, "png_file", vanished):
+        with patch.object(module, "render_layer_prefix", render), patch.object(self.qt.load("RasterAssets"), "png_file", vanished):
             model.plate_renderer._schedule_rewind_checkpoints(surface)
             self.assertTrue(wrapped._rewind_pending, "the checkpoint job never started")
             self.assertTrue(self.await_checkpoints(wrapped), "the vanished asset escaped the cleanup")
@@ -325,7 +324,7 @@ class CheckpointWorkerTests(harness.NativeRenderSchedulerTests):
             calls["n"] += 1
             return real(*args, **kwargs)
 
-        with patch.object(module, "render_layer_prefix", render), patch.object(module, "png_file", lambda *args: ""):
+        with patch.object(module, "render_layer_prefix", render), patch.object(self.qt.load("RasterAssets"), "png_file", lambda *args: ""):
             model.plate_renderer._schedule_rewind_checkpoints(surface)
             self.assertTrue(wrapped._rewind_pending, "the checkpoint job never started")
             self.assertTrue(self.await_checkpoints(wrapped), "the unwritable checkpoint job never ended")

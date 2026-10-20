@@ -7,7 +7,11 @@ Version remains 6.0.0. Merge/tag and a live Cura restart are not authorized here
 - [x] Extract raster painting, QML assets, worker handoff and PNG publication;
   expose raster and scene-graph consumer APIs. Commit `fd47a54`; full `make all`
   passed, including 6,264 tests and installed raster-only consumers.
-- [ ] Finish raster asset-lifetime and render-job ownership.
+- [x] Finish raster asset-lifetime and render-job ownership. `RasterAssets` owns
+  publication, references, holds and scoped cleanup; named receipts retain the
+  existing queued-signal values. Late publication cannot recreate a closed
+  owner's directory. Full `make all` passed with 6,287 tests, deterministic
+  captures, package verification and installed consumers.
 - [x] Share recovery itinerary between serialization and confirmation; reject
   changed travel after review. Full `make all` passed (6,271 tests); independent
   command replay covers 60 route combinations, and real-QML review tests pass.

@@ -1818,7 +1818,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         surface.desired = {"current": 6, "ghosts": {}, "split": None}
         ticket = ("popover", 6, 0, 0, surface.render_key(), "checkpoints", None, 0, 42)
         layer._rewind_ticket = ticket
-        path = pathlib.Path(self.model.plate_renderer._raster_cache_dir) / "late-checkpoint.png"
+        path = pathlib.Path(self.model.plate_renderer.assets.directory) / "late-checkpoint.png"
         path.write_bytes(b"retired")
         layer.clear_prefix_checkpoints()
         self.model.plate_renderer._raster_committed(("checkpoints", [(5, self.local_url(str(path)))]), ticket)
@@ -2121,7 +2121,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
                               "epoch": 0, "serial": 4, "backing": 4.0}
         # Inside the cache directory, so the prune is a real test of
         # the hold rather than of a directory it never scans.
-        held = os.path.join(self.model.plate_renderer._raster_cache_dir, "held-nav.png")
+        held = os.path.join(self.model.plate_renderer.assets.directory, "held-nav.png")
         pathlib.Path(held).write_bytes(b"held")
         surface.nav["url"] = self.local_url(held)
         self.model.setFollowerGestureRaster(surface.nav["url"])
@@ -2165,7 +2165,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
 
     def test_presentation_references_survive_arbitrary_prefix_supersedes(self):
         self.model = self.build()
-        directory = pathlib.Path(self.model.plate_renderer._raster_cache_dir)
+        directory = pathlib.Path(self.model.plate_renderer.assets.directory)
         held = directory / "standing-prefix.png"
         full = directory / "held-full.png"
         held.write_bytes(b"prefix")
@@ -2190,7 +2190,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
 
     def test_asset_owners_release_independently_and_cannot_be_resurrected(self):
         self.model = self.build()
-        path = pathlib.Path(self.model.plate_renderer._raster_cache_dir) / "shared.png"
+        path = pathlib.Path(self.model.plate_renderer.assets.directory) / "shared.png"
         path.write_bytes(b"shared")
         url = self.local_url(str(path))
         first = self.model.acquirePlateAssetOwner()
@@ -2201,7 +2201,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         self.model.setPlateAssetReferences(first, [url])
         self.model.plate_renderer._prune_raster_cache(keep=0)
         self.assertTrue(path.exists())
-        self.assertNotIn(first, self.model.plate_renderer._asset_owners)
+        self.assertNotIn(first, self.model.plate_renderer.assets._owners)
         self.model.releasePlateAssetOwner(second)
         self.model.releasePlateAssetOwner(second)
         self.model.plate_renderer._prune_raster_cache(keep=0)
@@ -2213,11 +2213,11 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         owner = self.model.acquirePlateAssetOwner()
         self.model.setPlateAssetReferences(owner, ["", "data:image/png;base64,AA==",
             "https://example.invalid/prefix.png", self.local_url("/tmp/foreign.png")])
-        self.assertEqual(self.model.plate_renderer._asset_owners[owner], frozenset())
+        self.assertEqual(self.model.plate_renderer.assets._owners[owner], frozenset())
 
     def test_discard_cleanup_respects_presentation_and_collects_vanished_jobs(self):
         self.model = self.build()
-        directory = pathlib.Path(self.model.plate_renderer._raster_cache_dir)
+        directory = pathlib.Path(self.model.plate_renderer.assets.directory)
         held = directory / "held.png"
         abandoned = directory / "abandoned.png"
         held.write_bytes(b"held")
@@ -2319,19 +2319,19 @@ class SurfaceLifecycleTests(MonitorModelCase):
 
     def test_the_instance_sweeps_its_own_raster_directory(self):
         self.model = self.build()
-        directory = self.model.plate_renderer._raster_cache_dir
+        directory = self.model.plate_renderer.assets.directory
         pathlib.Path(directory, "leftover.png").write_bytes(b"leftover")
         self.model.plate_renderer.cleanup_raster_cache()
         self.assertFalse(os.path.exists(directory))
         # An un-removable directory must not raise out of the model's
         # own destruction.
-        with patch.object(self.model.plate_renderer, "_raster_cache_dir", directory):
+        with patch.object(self.model.plate_renderer.assets, "directory", directory):
             with patch("shutil.rmtree", side_effect=OSError("no removal")):
                 self.model.plate_renderer.cleanup_raster_cache()
 
     def test_the_memory_accounting_survives_a_hostile_directory(self):
         self.model = self.build()
-        pathlib.Path(self.model.plate_renderer._raster_cache_dir, "kept.png").write_bytes(b"kept")
+        pathlib.Path(self.model.plate_renderer.assets.directory, "kept.png").write_bytes(b"kept")
         self.assertEqual(self.model.memory_accounting()["rasterDirFiles"], 1)
         # A directory that cannot be listed reads as empty, and a file
         # that cannot be stat'ed is skipped rather than raised.
@@ -2342,7 +2342,7 @@ class SurfaceLifecycleTests(MonitorModelCase):
 
     def test_the_prune_survives_a_hostile_directory(self):
         self.model = self.build()
-        stale = os.path.join(self.model.plate_renderer._raster_cache_dir, "r-stale.png")
+        stale = os.path.join(self.model.plate_renderer.assets.directory, "r-stale.png")
         pathlib.Path(stale).write_bytes(b"stale")
         with patch("os.stat", side_effect=OSError("no stat")):
             self.model.plate_renderer._prune_raster_cache(keep=0)

@@ -340,7 +340,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
                     submitted.append(work)
 
         with harness.patch.object(module, "_RasterJob", CountingJob), \
-                harness.patch.object(module, "png_file", return_value=""):
+                harness.patch.object(self.qt.load("RasterAssets"), "png_file", return_value=""):
             model.plate_renderer.window_for(surface, {"prev": payload, "current": payload, "next": None},
                              5, "motion index", 50)
             model._publish()
@@ -463,7 +463,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
         self._window(model, "popover", 5)
-        directory = model.plate_renderer._raster_cache_dir
+        directory = model.plate_renderer.assets.directory
         old = harness.os.path.join(directory, "old.png")
         live = harness.os.path.join(directory, "live.png")
         temp = harness.os.path.join(directory, "job.png.tmp-99")
@@ -497,7 +497,7 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
         model = self.monitor()
         self._feed(model, "popover", width=400, height=300)
         self._window(model, "popover", 5)
-        directory = model.plate_renderer._raster_cache_dir
+        directory = model.plate_renderer.assets.directory
         sub = harness.os.path.join(directory, "sub")
         harness.os.makedirs(sub, exist_ok=True)
         live = harness.os.path.join(directory, "spelled-live.png")
@@ -524,16 +524,16 @@ class NativeRenderSchedulerTests(harness.NativeRenderSchedulerTests):
     def test_two_models_own_independent_raster_directories(self):
         model_a = self.monitor()
         model_b = self.monitor()
-        self.assertNotEqual(model_a.plate_renderer._raster_cache_dir, model_b.plate_renderer._raster_cache_dir)
+        self.assertNotEqual(model_a.plate_renderer.assets.directory, model_b.plate_renderer.assets.directory)
         self._feed(model_a, "popover", width=400, height=300)
         payload = self._payload(100)
         a_surface = model_a.plate_renderer._surfaces["popover"]
         model_a.plate_renderer.window_for(a_surface, {"prev": None, "current": payload,
                                        "next": None}, 5, "motion index", None)
         self._pump_rasters(model_a, "popover")
-        self.assertEqual(harness.os.listdir(model_b.plate_renderer._raster_cache_dir), [],
+        self.assertEqual(harness.os.listdir(model_b.plate_renderer.assets.directory), [],
                          "model A wrote into model B's directory")
-        self.assertGreater(len(harness.os.listdir(model_a.plate_renderer._raster_cache_dir)), 0)
+        self.assertGreater(len(harness.os.listdir(model_a.plate_renderer.assets.directory)), 0)
 
     def test_the_raster_commit_runs_on_the_owner_thread(self):
         # : the worker hands the images through
