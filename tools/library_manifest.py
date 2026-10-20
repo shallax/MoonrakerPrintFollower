@@ -12,13 +12,14 @@ PACKAGE_DIRS = {
     "moonraker_toolpath.geometry": "mpf/geometry",
     "moonraker_toolpath.plate": "mpf/plate",
     "moonraker_toolpath.resources": "mpf/resources",
+    "moonraker_toolpath.storage": "mpf/storage",
 }
 MODULES = {
     "moonraker_toolpath": ("__init__",),
     "moonraker_toolpath.gcode": (
         "__init__", "GCodeDocument", "ArcGeometry", "FeatureTracker", "GCodeIndex", "GCodeParser",
         "IndexAssembly", "IndexHeader", "IndexHydrator", "IndexLimits", "IndexView",
-        "IndexWork", "MotionIndex", "MotionRanges", "ObjectWork", "PlateProgress", "TravelStates",
+        "IndexWork", "IndexCache", "IndexCodec", "CachePolicy", "PreparedStore", "RawSourceCache", "SourceIdentity", "MotionIndex", "MotionRanges", "ObjectWork", "PlateProgress", "TravelStates",
     ),
     "moonraker_toolpath.geometry": ("__init__", "Polygons"),
     "moonraker_toolpath.plate": (
@@ -26,6 +27,7 @@ MODULES = {
         "PlateAxisGeometry", "PlateQt", "PlateRaster", "raster", "scenegraph", "PreviewColours",
     ),
     "moonraker_toolpath.resources": ("__init__", "PluginPaths"),
+    "moonraker_toolpath.storage": ("__init__", "ProcessOwner"),
 }
 RESOURCES = {"moonraker_toolpath.resources": (
     "shaders/stroke.vert", "shaders/stroke.frag",

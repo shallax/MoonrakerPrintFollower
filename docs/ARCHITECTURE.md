@@ -68,12 +68,14 @@ without becoming the owner of that feature's implementation.
 
 | Package | Responsibility |
 | --- | --- |
+| `application/indexing/` | Host indexing jobs, cache binding and prepared-session ownership, separate from reusable parsing and storage. |
+| `storage/` | Read-only process ownership and filesystem primitives shared across domains. |
 | `application/` | Cross-domain print orchestration: coordinator, refresh-side load tracking and next-pause pipeline. These intentionally compose domain and presentation capabilities. |
 | `cura/` | Cura entry points, lifecycle, machine binding, output adapters and host-affine file preparation. |
 | `settings/` | Configuration UI, schema, persistence, migration and shared migration-result presentation. The Machine Action remains a Cura adapter. |
 | `printing/` | Physical print state, run identity, remote job observations, pause scheduling and print-start ownership; independent of the Preview and Monitor screens. |
 | `preview/` | Cura Preview attachment/following, display smoothing, presentation and card hosts. |
-| `gcode/` | Parsing, motion interpretation, indexing, cache lifecycle and immutable prepared geometry. `PlateProgress.py` prepares data; it is not the Qt renderer. |
+| `gcode/` | Parsing, motion interpretation, index/cache formats and immutable prepared geometry. `PlateProgress.py` prepares data; it is not the Qt renderer. |
 | `geometry/` | Pure geometry shared by data processing and presentation. No screen or host dependencies. |
 | `plate/` | Plate/follower rendering, GPU materials, colour projections and interaction. Consumes prepared G-code geometry, never owns parsing primitives. |
 | `bedmesh/` | Mesh presentation and reusable views shared by Preview and Monitor. Screen-specific wrappers remain with the screen. |
@@ -303,6 +305,8 @@ correct package ownership.
 | `FeatureTracker.py` | Slicer feature, extrusion and travel state while scanning a layer | Files, caches or scheduling |
 | `GCodeParser.py` | G-code token/marker parsing and bounded fast-path recognition | Modal state, files or Qt |
 | `IndexAssembly.py` | Projection of completed scan records into a motion index, pause/marker maps and metric ranges | File reads or scheduling |
+| `SourceIdentity.py` | Caller-owned source identity contract and explicit cache keys | Printer protocol or host logging |
+| `ProcessOwner.py` | Conservative read-only process liveness | Printer or UI state |
 | `IndexCache.py` | Persistent index cache files, atomic writes and eviction | Parsing or Qt |
 | `IndexCodec.py` | Cache format, bounds and validation of event/feature/arc columns | File lifetime or scheduling |
 | `IndexHeader.py` | Slicer marker sniffing and filament metadata | Motion state or the hot scan loop |
@@ -2519,3 +2523,11 @@ Preview probes require nonempty mesh geometry when using legacy mode.
 Users of this beta's legacy renderer may encounter blank Preview geometry;
 this plugin does not repair that upstream defect or change users' graphics
 preferences.
+
+The application indexing adapters (`GCodeIndexService`, `IndexTasks`, `PreparedSession` and `CacheNamespaces`) live in `mpf/application/indexing`. The parser/library package does not own host scheduling or printer cache binding.
+
+Cache primitives depend on the `SourceIdentity` protocol, not Moonraker's identity
+implementation. `CacheIdentity` lets an outside consumer supply its own stable
+key and metadata. Prepared-cache diagnostics are an injected callback; the
+application cache namespace supplies Uranium logging. `storage.ProcessOwner`
+provides the single conservative liveness probe used by cache and transfer cleanup.

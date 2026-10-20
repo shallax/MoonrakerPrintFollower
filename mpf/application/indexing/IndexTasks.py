@@ -18,15 +18,12 @@ from typing import Any, Callable
 import time
 
 from UM.Logger import Logger
-from .MotionIndex import LayerMotionIndex
-from .IndexHydrator import hydrate_layer_from_file
-from .IndexWork import HydrationYield, passive_yield
-from .LayerCache import _decoded_charge
-from .PlateProgress import (
-    PreparationYield, decode_layer as _decode_layer,
-    encode_layer as _encode_layer, prepare_layer as _prepare_layer,
-)
-from .PreparedStore import STATE_UNCACHEABLE
+from ...gcode.MotionIndex import LayerMotionIndex
+from ...gcode.IndexHydrator import hydrate_layer_from_file
+from ...gcode.IndexWork import HydrationYield, passive_yield
+from ...gcode.LayerCache import _decoded_charge
+from ...gcode.PlateProgress import PreparationYield, decode_layer as _decode_layer, encode_layer as _encode_layer, prepare_layer as _prepare_layer
+from ...gcode.PreparedStore import STATE_UNCACHEABLE
 
 _FULL_PREP_BATCH_S = 0.12
 

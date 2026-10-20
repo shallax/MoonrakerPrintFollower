@@ -1627,7 +1627,7 @@ class FollowerRuntimeTests(unittest.TestCase):
         self.assertTrue(runtime_instance._closed)
 
     def test_the_smoothing_trace_lands_under_the_cache_directory_when_opted_in(self):
-        from mpf.gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+        from mpf.application.indexing.CacheNamespaces import CACHE_DIRECTORY_NAME
         with patch.dict(os.environ, {"MOONRAKER_FOLLOWER_SMOOTHING_TRACE": "smoothing.csv"}):
             _, follower = self.build()
         trace_path = follower._runtime.motion._trace_path
@@ -1640,7 +1640,7 @@ class FollowerRuntimeTests(unittest.TestCase):
         # replaced package. The cache directory must never match the
         # package ID, and the purge's own walk must leave it alone
         # (the legacy name dies wholesale — that is exactly the bug).
-        from mpf.gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+        from mpf.application.indexing.CacheNamespaces import CACHE_DIRECTORY_NAME
         self.assertNotEqual(CACHE_DIRECTORY_NAME, "MoonrakerPrintFollower")
         with tempfile.TemporaryDirectory() as root:
             legacy = os.path.join(root, "MoonrakerPrintFollower")

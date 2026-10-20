@@ -60,14 +60,14 @@ def underneath(module, package):
 # Moonraker package here would let a core service acquire a screen/transport.
 RULES = {
     "mpf.geometry": (("mpf.geometry",), ()),
+    "mpf.storage": (("mpf.storage",), ()),
     "mpf.printing": (("mpf.printing", "mpf.geometry"), ()),
-    "mpf.gcode": (("mpf.gcode", "mpf.geometry", "mpf.printing"),
-                  ("mpf.moonraker.MoonrakerProtocol",)),
+    "mpf.gcode": (("mpf.gcode", "mpf.geometry", "mpf.storage"), ()),
     "mpf.settings": (("mpf.settings",), ("mpf.geometry.DetectionRegions", "mpf.geometry.ToolheadLighting", "mpf.geometry.ToolheadMaterials", "mpf.geometry.ToolheadOpacity", "mpf.geometry.ToolheadRotors")),
     "mpf.moonraker": (("mpf.moonraker",), ("mpf.diagnostics.CameraTiming",)),
     "mpf.files.browser": (("mpf.files.browser",), ("mpf.moonraker.MoonrakerProtocol",)),
     "mpf.files.transfers": (("mpf.files.transfers", "mpf.moonraker"),
-                           ("mpf.settings.PrinterConfig",)),
+                           ("mpf.settings.PrinterConfig", "mpf.storage.ProcessOwner")),
 }
 
 
@@ -122,7 +122,9 @@ class DomainLayoutTests(unittest.TestCase):
             "printing": ("PrintState.py", "RemoteJobService.py", "PauseScheduleService.py"),
             "settings": ("PrinterConfig.py", "PluginPersistence.py", "MoonrakerFollowerConfiguration.qml"),
             "bedmesh": ("BedMeshPresenter.py", "BedMeshSceneNode.py", "BedMeshMap.qml", "BedMeshRangeSlider.qml"),
-            "gcode": ("GCodeIndex.py", "GCodeIndexService.py", "ArcGeometry.py", "TravelStates.py", "PlateProgress.py", "MotionRanges.py"),
+            "application/indexing": ("GCodeIndexService.py", "IndexTasks.py", "PreparedSession.py", "CacheNamespaces.py"),
+            "storage": ("ProcessOwner.py",),
+            "gcode": ("GCodeIndex.py", "ArcGeometry.py", "TravelStates.py", "PlateProgress.py", "MotionRanges.py"),
         }
         for owner, names in features.items():
             for name in names:

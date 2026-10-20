@@ -913,7 +913,7 @@ class MachineNamespaceTests(unittest.TestCase):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
         unknown_store = owner.index._prepared.store
-        from mpf.gcode.CacheNamespaces import CacheNamespaces
+        from mpf.application.indexing.CacheNamespaces import CacheNamespaces
         self.assertEqual(owner.cache_namespaces.machine_hash,
                          CacheNamespaces._hash("unknown"),
                          "the unresolved runtime never hashed the unknown id")
@@ -1128,7 +1128,7 @@ class WriterOwnershipTests(unittest.TestCase):
         cutover below always races a worker that still owns the
         writer."""
         from mpf.gcode.IndexView import IndexView
-        import mpf.gcode.IndexTasks as task_module
+        import mpf.application.indexing.IndexTasks as task_module
         from tests.test_plate_progress import make_index
 
         service = owner.index

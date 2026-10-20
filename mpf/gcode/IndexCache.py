@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Depend on a neutral source-identity contract and remove unused host logging.
 # 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
 # 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
 # 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
@@ -27,28 +28,13 @@ from typing import Dict, List, Optional
 
 from . import ArcGeometry
 from .MotionRanges import valid_ranges
-from ..moonraker.MoonrakerProtocol import RemoteFileIdentity
+from .SourceIdentity import SourceIdentity
 
 from .FeatureTracker import _TYPE_NONE
 from .IndexCodec import _CACHE_MAGIC, _CACHE_VERSION, _MAX_CACHE_HEADER_BYTES, _arc_columns, _arc_entries, _event_columns, _feature_columns, _read_exact
 from .IndexLimits import _MAX_MOTIONS_PER_LAYER
 from .MotionIndex import LayerMotionIndex
 from .ObjectWork import valid_object_work
-
-try:
-    from UM.Logger import Logger as _Logger
-except ImportError:
-    _Logger = None  # the host stdlib suite has no UM
-
-
-def _log(message, *args):
-    """The persistence diagnostics, at the DECISION points only
-    (never per layer): an INFO line names the reason a restore or an
-    eviction happened. The host stdlib suite runs without UM — the
-    log no-ops there."""
-    if _Logger is not None:
-        _Logger.log("i", message, *args)
-
 
 class PersistentIndexCache:
     def __init__(self, directory: str, *, max_bytes: int = 128 * 1024 * 1024,
@@ -63,7 +49,7 @@ class PersistentIndexCache:
         os.makedirs(self.directory, exist_ok=True)
         sweep_index_temps(self.directory)
 
-    def _path(self, identity: RemoteFileIdentity) -> str:
+    def _path(self, identity: SourceIdentity) -> str:
         digest = hashlib.sha256(identity.stable_key().encode("utf-8")).hexdigest()
         # The per-print folder (the review's unified-persistence
         # finding): the index AND the prepared store live as siblings
@@ -74,7 +60,7 @@ class PersistentIndexCache:
         os.makedirs(print_dir, exist_ok=True)
         return os.path.join(print_dir, "index.mpfi.gz")
 
-    def load(self, identity: Optional[RemoteFileIdentity]) -> Optional[LayerMotionIndex]:
+    def load(self, identity: Optional[SourceIdentity]) -> Optional[LayerMotionIndex]:
         if identity is None:
             return None
         path = self._path(identity)
@@ -341,7 +327,7 @@ class PersistentIndexCache:
         except (OSError, ValueError, json.JSONDecodeError, EOFError, struct.error):
             return None
 
-    def save(self, identity: Optional[RemoteFileIdentity], index: LayerMotionIndex) -> None:
+    def save(self, identity: Optional[SourceIdentity], index: LayerMotionIndex) -> None:
         if identity is None or not index:
             return
         # The hold is the SNAPSHOT, never the encode. The GUI thread

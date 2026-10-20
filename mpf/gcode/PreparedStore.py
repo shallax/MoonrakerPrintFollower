@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Inject cache diagnostics instead of importing the host logger.
 # 2026-10-01 [1866243] Persist print sources and publish live download progress
 # 2026-09-28 [60c7f1a] Use controlled clocks for test timing and remove capture diagnostics
 # 2026-09-21 [065c09f] 4.6.0: the file-backed prepared cold store — the pass's encodings persist per print with
@@ -47,21 +48,6 @@ from typing import Callable, Optional
 
 from .CachePolicy import evict_to_budget, temporary_owner_alive
 
-try:
-    from UM.Logger import Logger as _Logger
-except ImportError:
-    _Logger = None  # the host stdlib suite has no UM
-
-
-def _log(message, *args):
-    """The persistence diagnostics, at the DECISION points only
-    (never per layer): an INFO line names the reason a restore or an
-    eviction happened. The host stdlib suite runs without UM — the
-    log no-ops there."""
-    if _Logger is not None:
-        _Logger.log("i", message, *args)
-
-
 _MAGIC = b"MPFP"
 _FORMAT_VERSION = 6
 _HEADER_FMT = "<4sIHHB"
@@ -89,7 +75,8 @@ class PreparedCache:
     """Per-print prepared-layer files under one directory."""
 
     def __init__(self, directory: str, max_bytes: int = _DEFAULT_MAX_BYTES,
-                 clock_ns: Optional[Callable[[], int]] = None) -> None:
+                 clock_ns: Optional[Callable[[], int]] = None, *, log=None) -> None:
+        self._log = log or (lambda *_args: None)
         self.directory = directory
         self.max_bytes = max(16 * 1024 * 1024, int(max_bytes))
         self._clock_ns = clock_ns or time.time_ns
@@ -225,7 +212,7 @@ class PreparedCache:
         if tmp["complete"] and tmp_resolved == tmp["count"]:
             return "tmp"
         if tmp_resolved > final_resolved:
-            _log("prepared interrupted candidate superseded the older partial "
+            self._log("prepared interrupted candidate superseded the older partial "
                  "(%d > %d resolved layers)", tmp_resolved, final_resolved)
             return "tmp"
         if tmp_resolved < final_resolved:
@@ -575,7 +562,7 @@ class PreparedCache:
             if retained > self.max_bytes:
                 # The only survivor is the protected entry (or an
                 # unremovable folder) — the one acceptable overage.
-                _log("cache print budget unreachable: %d bytes retained "
+                self._log("cache print budget unreachable: %d bytes retained "
                      "with the protected entry", retained)
         except OSError:
             pass

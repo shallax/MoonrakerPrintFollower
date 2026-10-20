@@ -34,7 +34,7 @@ from __future__ import annotations
 from UM.Logger import Logger
 
 from .IndexTasks import PreparedLayerReader
-from .PreparedStore import STATE_CACHED, STATE_EMPTY, STATE_UNCACHEABLE
+from ...gcode.PreparedStore import STATE_CACHED, STATE_EMPTY, STATE_UNCACHEABLE
 
 
 class PreparedSession:

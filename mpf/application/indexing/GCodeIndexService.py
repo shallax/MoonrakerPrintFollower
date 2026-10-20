@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from .IndexTasks import LayerHydrationTask, LayerPreparationTask, LayerArrayTask
 
-from .ObjectVisitTracker import ObjectVisitTracker
-from .MotionRefinement import refine_payload
+from ...gcode.ObjectVisitTracker import ObjectVisitTracker
+from ...gcode.MotionRefinement import refine_payload
 
 from UM.Logger import Logger
 
@@ -24,18 +24,16 @@ import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .MotionIndex import LayerMotionIndex
-from .GCodeIndex import build_index_from_file
-from .PlateProgress import (
-    split_index as _split_index,
-)
-from .PlateSplitTracker import PlateSplitTracker
+from ...gcode.MotionIndex import LayerMotionIndex
+from ...gcode.GCodeIndex import build_index_from_file
+from ...gcode.PlateProgress import split_index as _split_index
+from ...gcode.PlateSplitTracker import PlateSplitTracker
 from .PreparedSession import PreparedSession
-from ..printing.PrintState import MotionProgress
+from ...printing.PrintState import MotionProgress
 
 
-from .IndexView import IndexView
-from .LayerCache import _ByteBoundedLru, _DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES, _FULL_CACHE_MAX_BYTES, _GPU_DECODED_LRU_MAX_BYTES
+from ...gcode.IndexView import IndexView
+from ...gcode.LayerCache import _ByteBoundedLru, _DECODED_LRU_MAX_BYTES, _DECODED_LRU_MIN_ENTRIES, _FULL_CACHE_MAX_BYTES, _GPU_DECODED_LRU_MAX_BYTES
 
 # The progress signal's floor. A pass runs a 120 ms batch back to back,
 # so every batch boundary is a tick; the listeners only redraw a bar,

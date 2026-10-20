@@ -60,6 +60,22 @@ compact = build_index_from_file(sys.argv[2], compact=True)
 assert prepare_layer(compact, 0) is None
 assert hydrate_layer_from_file(compact, sys.argv[2], 0)
 assert prepare_layer(compact, 0)['motions'] == payload['motions']
+from tempfile import TemporaryDirectory
+from moonraker_toolpath.gcode import CacheIdentity, PersistentIndexCache, PreparedCache
+with TemporaryDirectory() as cache_directory:
+    identity = CacheIdentity('consumer-content-sha256', 'sample.gcode', len(data), 123.0)
+    cache = PersistentIndexCache(cache_directory)
+    cache.save(identity, index)
+    restored = cache.load(identity)
+    assert restored is not None and restored.layer_count() == index.layer_count()
+    assert prepare_layer(restored, 0)['motions'] == payload['motions']
+    prepared = PreparedCache(cache_directory)
+    from moonraker_toolpath.gcode.PlateProgress import encode_layer, decode_layer
+    prepared.finalise(identity.stable_key(), [encode_layer(payload)])
+    table = prepared.load_table(identity.stable_key())
+    assert table is not None
+    raw = prepared.read(identity.stable_key(), table['table'], 0)
+    assert decode_layer(raw)['motions'] == payload['motions']
 assert Path(moonraker_toolpath.__file__).is_relative_to(Path(sys.argv[1]))
 assert not any(name.split('.')[0] in {'PyQt6', 'UM', 'cura', 'numpy', 'mpf'} for name in sys.modules)
 print('Core: installed imports, exact boundaries, hydration and stdlib vertices passed')

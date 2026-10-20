@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Share process-owner liveness with persistent cache cleanup.
 # 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
 # 2026-10-01 [0a51955] Keep metadata retries independent of download failures
 # 2026-09-07 [547223f] Establish shared Moonraker session and service runtime
@@ -12,7 +13,6 @@ from __future__ import annotations
 import os
 import math
 import shutil
-import sys
 import tempfile
 import threading
 import time
@@ -22,6 +22,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtNetwork import QNetworkReply
 
 from ...moonraker.MoonrakerProtocol import RemoteFileIdentity
+from ...storage.ProcessOwner import process_alive
 from .DownloadStream import DownloadOperation, DownloadTarget
 from ...moonraker.MoonrakerProtocol import download_endpoint, metadata_endpoint, parse_file_identity
 
@@ -60,69 +61,8 @@ def _owner_pid(entry):
     return None
 
 
-def _pid_alive(pid):
-    """Whether the process that stamped `pid` may still be alive, read
-    NON-DESTRUCTIVELY. On Windows `os.kill(pid, 0)` is a terminate, not
-    a probe: sweeping a root whose pid belongs to a second live Cura
-    instance — or to a recycled pid — killed that instance outright.
-    Windows therefore reads the native process API, and every verdict
-    that cannot PROVE the owner is gone keeps the root.
-
-    The probe mirrors PreparedStore's `_windows_liveness`: the
-    architecture rule keeps this module's imports to DownloadStream
-    and MoonrakerProtocol, so the native reader is duplicated here
-    rather than imported."""
-    # An impossible pid is not an owner: signalling 0 reaches the whole
-    # process group, and a pid beyond the platform's range names no
-    # process at all (a truncated 64-bit value could name another).
-    if pid <= 0 or pid > 0xFFFFFFFF:
-        return False
-    if sys.platform == "win32":
-        return _windows_liveness(pid)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False  # no such process
-    except PermissionError:
-        return True  # access denied cannot disprove the owner
-    except OSError:
-        return True  # indeterminate — keep the root
-    return True
 
 
-def _windows_liveness(pid: int) -> bool:
-    """The Windows owner-liveness verdict through the native process
-    API, dependency-free: a query-limited handle opens only while the
-    process OBJECT exists, and its exit code leaves STILL_ACTIVE once
-    the process is gone. ERROR_INVALID_PARAMETER names no live process
-    (dead); every other failure is indeterminate and keeps the root."""
-    import ctypes
-    from ctypes import wintypes
-    # Explicit Win32 signatures: a HANDLE is pointer-sized, so the
-    # default c_int restype would truncate it; use_last_error makes the
-    # failure verdict read from ctypes.get_last_error() coherently.
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    _STILL_ACTIVE = 259
-    _OpenProcess = kernel32.OpenProcess
-    _OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    _OpenProcess.restype = wintypes.HANDLE
-    _GetExitCodeProcess = kernel32.GetExitCodeProcess
-    _GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-    _GetExitCodeProcess.restype = wintypes.BOOL
-    _CloseHandle = kernel32.CloseHandle
-    _CloseHandle.argtypes = [wintypes.HANDLE]
-    _CloseHandle.restype = wintypes.BOOL
-    handle = _OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-    if not handle:
-        return ctypes.get_last_error() != 87  # 87: no such process
-    try:
-        code = wintypes.DWORD()
-        if not _GetExitCodeProcess(handle, ctypes.byref(code)):
-            return True  # indeterminate — keep the root
-        return code.value == _STILL_ACTIVE
-    finally:
-        _CloseHandle(handle)
 
 
 def _sweep_stale_roots(temp_dir: str, current_root: str) -> None:
@@ -145,7 +85,7 @@ def _sweep_stale_roots(temp_dir: str, current_root: str) -> None:
         path = os.path.join(temp_dir, entry)
         if entry.startswith(_SWEPT_PREFIXES[:4]):
             pid = _owner_pid(entry)
-            if pid is not None and _pid_alive(pid):
+            if pid is not None and process_alive(pid):
                 continue
             shutil.rmtree(path, ignore_errors=True)
             continue

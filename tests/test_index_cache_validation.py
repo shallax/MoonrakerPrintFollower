@@ -14,7 +14,6 @@ from pathlib import Path
 import struct
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import Mock, patch
 
 from mpf.gcode import IndexCache, IndexCodec
 from mpf.gcode.GCodeIndex import build_index_from_bytes
@@ -73,9 +72,3 @@ class PersistentIndexValidationTests(unittest.TestCase):
                 self.cache.save(self.identity, self.index)
                 self.assertEqual(self.path.read_bytes(), before)
                 setattr(self.index, field, original)
-
-    def test_cache_diagnostics_use_the_injected_host_logger(self):
-        logger = Mock()
-        with patch.object(IndexCache, "_Logger", logger):
-            IndexCache._log("cache %s", "restored")
-        logger.log.assert_called_once_with("i", "cache %s", "restored")

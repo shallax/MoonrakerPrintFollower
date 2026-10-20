@@ -25,9 +25,9 @@ from UM.Logger import Logger
 from UM.Resources import Resources
 
 from .bedmesh.BedMeshPresenter import BedMeshPresenter
-from .gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+from .application.indexing.CacheNamespaces import CACHE_DIRECTORY_NAME
 from .cura.CuraIntegration import CuraIntegration
-from .gcode.GCodeIndexService import GCodeIndexService
+from .application.indexing.GCodeIndexService import GCodeIndexService
 from .settings.MigrationNotice import MigrationNotice
 from .whatsnew.WhatsNewOverlay import WhatsNewOverlay
 from .moonraker.MoonrakerClient import MoonrakerClient
@@ -180,7 +180,7 @@ class FollowerRuntime:
         # changed signal (fired after every identity re-apply, the
         # machine switch included) rebinds them, and a worker from
         # the old machine never commits into the new one's cache.
-        from .gcode.CacheNamespaces import CacheNamespaces
+        from .application.indexing.CacheNamespaces import CacheNamespaces
         self.index = GCodeIndexService(self.files, None, parent, None)
         self.cache_namespaces = CacheNamespaces(
             self._cache_root,

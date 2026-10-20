@@ -163,3 +163,12 @@ retained in the repository’s third-party notice file; camera components are no
 part of this standalone distribution.
 
 Raster-only consumers can import `moonraker_toolpath.plate.raster` without loading Qt Quick, QML asset wrappers or worker scheduling. The retained renderer and its layer adapter are available from `moonraker_toolpath.plate.scenegraph`; `plate.qt` continues to provide the combined public API.
+
+The standard-library API also provides `CacheIdentity`, `PersistentIndexCache`,
+`PreparedCache` and `RawSourceCache` from `moonraker_toolpath.gcode`. A
+`CacheIdentity` takes an explicit stable key supplied by its caller, with optional
+filename, size, modification time and revision UUID metadata. Custom identities
+can implement the read-only `SourceIdentity` contract. No Moonraker client is
+needed. `PreparedCache(..., log=callback)` accepts a diagnostics callback with
+`(message, *args)`; logging is silent unless supplied. Application-specific
+scheduling and printer cache binding are excluded from the wheel.

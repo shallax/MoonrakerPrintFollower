@@ -29,7 +29,7 @@ from UM.Logger import Logger
 from UM.Resources import Resources
 from UM.Settings.DefinitionContainer import DefinitionContainer
 
-from ..gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+from ..application.indexing.CacheNamespaces import CACHE_DIRECTORY_NAME
 from ..preview.FollowController import FollowMode
 from ..moonraker.MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
 from ..moonraker.MoonrakerSession import RequestCategory

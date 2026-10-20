@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Use the shared conservative process-owner liveness probe.
 # 2026-10-01 [1866243] Persist print sources and publish live download progress
 # 2026-09-27 [bed0492] Harden RC networking, cache lifecycle, motion coordinates and UI diagnostics
 # 2026-09-22 [4db7d92] 4.6.0: the cleanup pass — Windows liveness, true-LRU eviction, the structural work bound,
@@ -13,8 +14,8 @@ from __future__ import annotations
 
 import os
 import shutil
-import sys
 from typing import Dict, Optional, Tuple
+from ..storage.ProcessOwner import process_alive
 
 
 def active_cache_writer(directory: str) -> bool:
@@ -56,67 +57,13 @@ def evict_to_budget(totals: Dict[str, Tuple[float, int]],
     return retained, entries
 
 
-def _windows_liveness(pid: int) -> bool:
-    """The Windows owner-liveness verdict through the native process
-    API, dependency-free: a query-limited handle opens only while
-    the process OBJECT exists, and its exit code leaves
-    STILL_ACTIVE once the process is gone — so a child that exited
-    and was waited reads dead even while its zombie object lingers
-    in the waiter. ERROR_INVALID_PARAMETER names no live process
-    (dead); every other failure is indeterminate and keeps the tmp
-    (conservative)."""
-    import ctypes
-    from ctypes import wintypes
-    # Explicit Win32 signatures (the review's 64-bit hardening): a
-    # HANDLE is pointer-sized, so the default c_int restype would
-    # truncate it; use_last_error makes the failure verdict read
-    # from ctypes.get_last_error() coherently.
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    _STILL_ACTIVE = 259
-    _OpenProcess = kernel32.OpenProcess
-    _OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    _OpenProcess.restype = wintypes.HANDLE
-    _GetExitCodeProcess = kernel32.GetExitCodeProcess
-    _GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-    _GetExitCodeProcess.restype = wintypes.BOOL
-    _CloseHandle = kernel32.CloseHandle
-    _CloseHandle.argtypes = [wintypes.HANDLE]
-    _CloseHandle.restype = wintypes.BOOL
-    handle = _OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-    if not handle:
-        return ctypes.get_last_error() != 87  # 87: no such process
-    try:
-        code = wintypes.DWORD()
-        if not _GetExitCodeProcess(handle, ctypes.byref(code)):
-            return True  # indeterminate — keep the tmp
-        return code.value == _STILL_ACTIVE
-    finally:
-        _CloseHandle(handle)
-
 def temporary_owner_alive(name: str) -> bool:
     """Keep temporary files unless their writer is provably gone."""
     try:
         pid = int(name.split(".tmp-", 1)[1].split("-", 1)[0])
     except (IndexError, ValueError):
         return False  # no live writer ever stamped this name
-    if pid <= 0:
-        return False  # impossible: writers stamp their real pid
-    if pid > 0xFFFFFFFF:
-        return False  # beyond any platform's pid space
-    if sys.platform == "win32":
-        return _windows_liveness(pid)
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False  # no such process
-    except PermissionError:
-        return True  # cannot disprove the owner — keep the tmp
-    except OverflowError:
-        return False  # beyond the platform's pid space
-    except OSError:
-        return True  # indeterminate — keep the tmp
+    return process_alive(pid)
 
 
 
