@@ -32,7 +32,11 @@ Version remains 6.0.0. Merge/tag and a live Cura restart are not authorized here
   follow modes have portable owners; strict drafts retain their own refusal
   policy, independently of tolerant stored-setting migration.
 - [ ] Separate follower gesture, render-delivery and overlay QML ownership.
-- [ ] Separate toolhead import jobs and typed appearance edit transactions.
+- [x] Separate toolhead import jobs and typed appearance edit transactions.
+  `ToolheadImportJobs` owns worker occupancy, cancellation and named results;
+  `AppearanceDraft` owns editable values, model reset and identity/mesh-bound
+  checkpoints. Publication and active-printer adoption remain with the Qt
+  presenter. Standalone owner and real-QML editor tests preserve both paths.
 - [ ] Separate detection action state and effects from host notifications.
 - [ ] Consolidate process-liveness, streaming multipart uploads, printer object
   classification and recovery lexical/refusal interfaces.

@@ -97,7 +97,7 @@ class ToolheadModelsTests(unittest.TestCase):
                 raise AssertionError("test did not release import")
             return self.replacement
 
-        patched = patch("mpf.toolhead.ToolheadModels.read_stl", side_effect=reader)
+        patched = patch("mpf.toolhead.ToolheadImportJobs.read_stl", side_effect=reader)
         patched.start()
         self.addCleanup(patched.stop)
         self.model.choose(QUrl.fromLocalFile(os.path.join(self.temporary.name, "blocked.stl")).toString())
@@ -120,7 +120,7 @@ class ToolheadModelsTests(unittest.TestCase):
         self.model._mesh=mesh
         self.model.setRotor(dict(body=0,centre=[0,0,0],axis=[0,0,1],rpm=100,direction=1))
         self.assertEqual(len(self.model.rotors),1)
-        self.model._body_opacity={str(index):.5 for index in range(65)}
+        self.model._appearance.body_opacity={str(index):.5 for index in range(65)}
         self.model.setRotor(dict(body=1,centre=[0,0,0],axis=[0,0,1],rpm=100,direction=1))
         self.assertEqual(len(self.model.rotors),1)
         self.assertIn('64 translucent',self.model.status)
@@ -186,7 +186,7 @@ class ToolheadModelsTests(unittest.TestCase):
         self.model._opacity_faces = set(range(count))
         self.assertTrue(self.model.resetSelectedColour())
         self.assertEqual(self.model.faceColours, {})
-        self.model._body_colours = {'0': '#ffffff'}
+        self.model._appearance.body_colours = {'0': '#ffffff'}
         self.assertFalse(self.model.resetSelectedColour())
         self.assertEqual(self.model.faceColours, {})
         self.assertIn('2,048', self.model.status)
@@ -227,7 +227,7 @@ class ToolheadModelsTests(unittest.TestCase):
         self.assertFalse(self.model.acceptColourChoice('#ff0000'))
 
     def test_colour_bulk_overflow_is_atomic_and_invalid_values_do_nothing(self):
-        self.model._body_colours = {str(i): '#ffffff' for i in range(2048)}
+        self.model._appearance.body_colours = {str(i): '#ffffff' for i in range(2048)}
         self.model._opacity_bodies = {2048}
         before = self.model.bodyColours
         self.assertFalse(self.model.setSelectedColour('#123456'))
@@ -545,7 +545,7 @@ class ToolheadModelsTests(unittest.TestCase):
         pins = [("reader.whl", {"size": 100})]
         with patch("mpf.toolhead.ToolheadModels.runtime_assets", return_value=pins), \
                 patch("mpf.toolhead.ToolheadModels.runtime_directory", return_value=os.path.join(self.temporary.name, "absent-reader")), \
-                patch("mpf.toolhead.ToolheadModels.install_runtime") as installer:
+                patch("mpf.toolhead.ToolheadImportJobs.install_runtime") as installer:
             self.model.choose(QUrl.fromLocalFile(os.path.join(self.temporary.name, "head.step")).toString())
             self.assertTrue(self.model.needsDownload)
             self.assertFalse(self.model.valid)
@@ -592,8 +592,8 @@ class ToolheadModelsTests(unittest.TestCase):
 
         with patch("mpf.toolhead.ToolheadModels.runtime_assets", return_value=pins), \
                 patch("mpf.toolhead.ToolheadModels.runtime_directory", return_value=runtime), \
-                patch("mpf.toolhead.ToolheadModels.install_runtime", side_effect=install) as installer, \
-                patch("mpf.toolhead.ToolheadModels.read_step", side_effect=convert) as converter:
+                patch("mpf.toolhead.ToolheadImportJobs.install_runtime", side_effect=install) as installer, \
+                patch("mpf.toolhead.ToolheadImportJobs.read_step", side_effect=convert) as converter:
             path = os.path.join(self.temporary.name, "assembly.STP")
             self.model.choose(QUrl.fromLocalFile(path).toString())
             self.assertTrue(self.model.needsDownload)
@@ -620,8 +620,8 @@ class ToolheadModelsTests(unittest.TestCase):
             marker.write("{}")
         with patch("mpf.toolhead.ToolheadModels.runtime_assets", return_value=[("reader.whl", {"size": 100})]), \
                 patch("mpf.toolhead.ToolheadModels.runtime_directory", return_value=runtime), \
-                patch("mpf.toolhead.ToolheadModels.install_runtime", return_value=runtime), \
-                patch("mpf.toolhead.ToolheadModels.read_step", return_value=self.replacement):
+                patch("mpf.toolhead.ToolheadImportJobs.install_runtime", return_value=runtime), \
+                patch("mpf.toolhead.ToolheadImportJobs.read_step", return_value=self.replacement):
             self.model.choose(QUrl.fromLocalFile(os.path.join(self.temporary.name, "head.step")).toString())
             self.assertFalse(self.model.needsDownload)
             self.until(lambda: not self.model.busy)
@@ -652,10 +652,10 @@ class ToolheadModelsTests(unittest.TestCase):
 
     def test_progress_for_retired_generation_or_closed_draft_cannot_replace_status(self):
         previous = self.model.status
-        self.model._progress(self.model._generation - 1, "stale progress")
+        self.model._progress(self.model._imports.generation - 1, "stale progress")
         self.assertEqual(self.model.status, previous)
         self.model.close()
-        self.model._progress(self.model._generation, "closed progress")
+        self.model._progress(self.model._imports.generation, "closed progress")
         self.assertEqual(self.model.status, previous)
 
     def test_import_elapsed_timer_updates_without_rebuilding_draft_and_stops_on_completion(self):

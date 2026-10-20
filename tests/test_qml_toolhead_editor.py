@@ -45,8 +45,8 @@ class ToolheadImportSettingsTests(harness.RealEngineTestCase):
                     QTest.qWait(10)
                 self.assertTrue(predicate())
             try:
-                with patch('mpf.toolhead.ToolheadModels.install_runtime', return_value=folder), \
-                        patch('mpf.toolhead.ToolheadModels.read_step', side_effect=convert), \
+                with patch('mpf.toolhead.ToolheadImportJobs.install_runtime', return_value=folder), \
+                        patch('mpf.toolhead.ToolheadImportJobs.read_step', side_effect=convert), \
                         patch('mpf.toolhead.ToolheadModels.time', SimpleNamespace(monotonic=lambda: clock[0])):
                     draft._start("fixture.step", True)
                     status = self.find(host, "toolheadImportStatus")
@@ -65,7 +65,7 @@ class ToolheadImportSettingsTests(harness.RealEngineTestCase):
                     window.grabWindow()
                     point = cancel.mapToScene(harness.QPointF(cancel.width()/2, cancel.height()/2)).toPoint()
                     QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=point)
-                    self.assertTrue(draft._cancelled.is_set(), "Cancel did not receive the click")
+                    self.assertTrue(draft._imports.cancelled.is_set(), "Cancel did not receive the click")
                     wait_for(lambda: not draft.busy)
                     self.pump(10)
                     self.assertIs(draft.mesh, original)
@@ -287,7 +287,7 @@ class ToolheadEditorTests(harness.RealEngineTestCase):
                 self._pump_ms(60)
                 slider = self.find('toolheadMaterial' + field)
                 self._nudge_appearance(slider)
-                before = copy.deepcopy(draft._material_overrides)
+                before = copy.deepcopy(draft._appearance.material_overrides)
                 combo.forceActiveFocus()
                 # Native ComboBox keyboard input changes the actual profile.
                 # Do not render/scroll between the nudge and this switch: a
@@ -298,7 +298,7 @@ class ToolheadEditorTests(harness.RealEngineTestCase):
                 self.pump(20)
                 self.assertEqual(combo.property('currentIndex'), 1)
                 self._pump_ms(400)
-                self.assertEqual(draft._material_overrides, before)
+                self.assertEqual(draft._appearance.material_overrides, before)
                 self.assertAlmostEqual(slider.property('value'),
                                        slider.property('modelValue'), places=4)
 
@@ -607,7 +607,7 @@ class ToolheadEditorTests(harness.RealEngineTestCase):
         self.assertEqual(scroll.property("contentWidth"), scroll.property("width"))
         slider = self.find("toolheadLightBrightness0")
         self.assertLess(slider.property("width") + bar.property("width"), scroll.property("width"))
-        self.draft._lights = []
+        self.draft._appearance.lights = []
         self.draft.changed.emit()
         self.pump()
         self.assertGreater(bar.property("width"), 0)

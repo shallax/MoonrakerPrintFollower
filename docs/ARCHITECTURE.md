@@ -186,6 +186,8 @@ correct package ownership.
 | `StepWorker.py` | Stdlib-only isolated native STEP process, flattened millimetre triangles and colours | Cura, Qt, NumPy or parent-process configuration |
 | `CadRuntime.py` | Optional platform-pinned CAD and CPython 3.12 helper downloads, safe extraction and verification of every cached runtime file against retained pinned archives | Printer credentials, model upload or pip |
 | `WindowsRuntimeWithoutRedist.py` | Deterministic removal of bundled Microsoft runtime DLLs from the Windows CAD wheel and Python helper, with CAD import names repaired for the system runtime | Network access, installation or licence decisions |
+| `ToolheadImportJobs.py` | One cancellable model-import worker, progress, named result and owner-thread receipt admission | QObject or saved asset publication |
+| `AppearanceDraft.py` | Named appearance state and identity/mesh-bound edit checkpoints | Qt, imports or asset persistence |
 | `ToolheadModels.py` | One CAD worker and per-active-printer settings draft; retired results never adopt after Cancel or rebind | Live scene rendering |
 | `ToolheadModelPreview.py` | Preview camera, immutable background mesh packing, nearest-surface picking and software-only capture fallback | Printer scene or settings commit |
 | `ToolheadPreviewGL.py` | Qt Quick framebuffer renderer, current-context shader/buffers and depth-tested CAD lighting; camera-only updates reuse uploaded geometry | Cura OpenGL singleton, settings draft writes or imports |
@@ -2579,3 +2581,11 @@ The Python and JavaScript Preview gradients retain native execution in their
 respective renderers. `tests/fixtures/preview-colours.json` specifies reference
 colours. Real-QML tests run the production JavaScript against those values and
 the Python implementation across clamp, constant-range and piecewise boundaries.
+
+`ToolheadImportJobs` occupies one worker slot until its owner-thread receipt,
+including cancelled work. Results are named values; active-printer identity and
+asset publication remain the presenter's adoption checks. `AppearanceDraft`
+contains the editable appearance families, lights, rotors and tip values.
+Checkpoints clone those values and restore only for the same printer identity
+and mesh object. Replacing a model resets local appearance while retaining the
+existing global material/detail preferences.
