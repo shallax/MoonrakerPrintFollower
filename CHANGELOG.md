@@ -4,6 +4,10 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 6.0.0
 
+- List all unclassified recovery commands together, with explicit directions to
+  the macro lists, Add, Save and Check G-code. Give setup tabs bold titles and
+  group recovery controls under named headings.
+
 - Test Cura 5.14 beta 1 using its modern renderer on macOS CI, avoiding two
   upstream legacy Preview defects without patching Cura classes. Retain default
   rendering coverage on 5.13. Verify native legacy mesh geometry and use an

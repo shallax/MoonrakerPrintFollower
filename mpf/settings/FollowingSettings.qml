@@ -3,6 +3,7 @@
 // Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 //
 // Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-19 — 6.0.0: Give setup pages clear titles and grouped section headings.
 // 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 // 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
 // 2026-09-30 [b01dfd8] Decompose settings into persistent feature-owned tabs
@@ -68,6 +69,13 @@ Item {
             id: followingColumn
             width: Math.max(0, parent.width - UM.Theme.getSize("scrollbar").width - 4 * screenScaleFactor)
             spacing: UM.Theme.getSize("default_margin").height
+
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Following"
+                font: UM.Theme.getFont("large_bold")
+            }
 
             UM.CheckBox {
                 id: enabledBox

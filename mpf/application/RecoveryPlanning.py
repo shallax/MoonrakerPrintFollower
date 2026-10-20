@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-19 — 6.0.0: Guide unreviewed macro classification through Recovery setup.
 # 2026-10-18 — 6.0.0: Reconstruct feed rate, arc plane and selected object before recovery.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -38,6 +39,40 @@ _IGNORED = frozenset({b"M73", b"M117", b"M118", b"M400", b"G4", b"M0", b"M25",
                       b"PAUSE", b"SET_PRINT_STATS_INFO"})
 _PAUSE_COMMANDS = frozenset({b"M0", b"M25", b"PAUSE"})
 _MOTIONS = frozenset({b"G0", b"G00", b"G1", b"G01", b"G2", b"G02", b"G3", b"G03"})
+# Commands with a reconstruction branch, including branches that deliberately
+# refuse an unsafe argument or mode. The review scan never approves them.
+_SOURCE_COMMANDS = _MOTIONS | _IGNORED | frozenset({
+    b"G90", b"G91", b"M82", b"M83", b"G92", b"G17", b"G18", b"G19",
+    b"EXCLUDE_OBJECT_START", b"EXCLUDE_OBJECT_END", b"EXCLUDE_OBJECT_DEFINE",
+    b"G21", b"G20", b"M220", b"M221", b"M204", b"M106", b"M107",
+    b"M104", b"M109", b"M140", b"M190", b"T0",
+})
+
+
+def _command_review(handle, first_command, limit, classified):
+    """Collect the rest of this reconstruction range before reporting refusal."""
+    commands = {first_command: None}
+    known = _SOURCE_COMMANDS | classified
+    while handle.tell() < limit:
+        line = handle.readline(_MAX_LINE_BYTES + 1)
+        if not line or len(line) > _MAX_LINE_BYTES:
+            raise RecoveryPlanError("The observed offset is not a valid command boundary")
+        if handle.tell() > limit:
+            break
+        code = line.split(b";", 1)[0].strip().upper()
+        match = _COMMAND.match(code) or _NAMED_COMMAND.match(code)
+        if match and match.group(1) not in known:
+            commands.setdefault(match.group(1), None)
+    names = ", ".join(command.decode("ascii", "replace") for command in commands)
+    return (
+        f"Commands before the observed print position need review: {names}. "
+        "For Klipper macros, open Settings > Printer > Manage Printers, select this printer, "
+        "then Configure Moonraker > Recovery > G-code macros. Review every listed macro's definition: "
+        "use 'Setup macro in the G-code' only for a start macro before printed geometry, "
+        "or 'Transparent macro in the G-code' only if it leaves print state unchanged. "
+        "Choose each macro and click Add. When all are classified, click Save and retry Check G-code. "
+        "Leave other commands unlisted; recovery cannot safely skip them."
+    )
 
 
 def _number(value, label):
@@ -339,8 +374,8 @@ def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transp
                 elif command == b"T0" or command in _IGNORED:
                     pass
                 else:
-                    raise RecoveryPlanError(
-                        f"Command {command.decode('ascii', 'replace')} before the selected point needs review")
+                    raise RecoveryPlanError(_command_review(
+                        handle, command, observed_offset, setup_macros | transparent_macros))
             if not seen_target:
                 line = handle.readline(_MAX_LINE_BYTES + 1)
                 if len(line) > _MAX_LINE_BYTES or not _MOTION.match(line.split(b";", 1)[0]):

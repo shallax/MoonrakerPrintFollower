@@ -53,7 +53,14 @@ Set the nozzle and bed parameter names to match the slicer invocation (for examp
 whose completed call leaves print state unchanged, such as a camera marker with
 parking disabled. Leave either list empty if the file does not contain a qualifying
 macro. An unlisted macro stops planning rather than letting the plugin guess what
-it did. Macros encountered after the restart point run as part of the file.
+it did. The check lists all unclassified commands in the reconstruction range
+together. Open **Settings → Printer → Manage Printers**, select your printer,
+then **Configure Moonraker → Recovery → G-code macros**. Review each macro's
+Klipper definition, select its name in the appropriate list and click **Add**.
+When all qualifying macros have been classified, click **Save**, reopen recovery
+and retry **Check G-code**. If a macro is missing from the choices, connect to
+the printer and click **Refresh** in Recovery. Commands that fit neither
+contract remain blocked. Macros encountered after the restart point run as part of the file.
 The plugin waits for the latest nozzle and bed targets before moving; if it
 cannot derive a target from the file, it asks for one. Return travel uses the
 selected restart layer plus the configured clearance (5 mm by default), capped

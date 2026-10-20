@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-19 — 6.0.0: Fit grouped recovery settings with native and canonical font metrics.
 # 2026-10-13 [34e4039] Capture the recovery settings tab
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 # 2026-09-08 [0f363ac] Deterministic captures: vendored Cura assets, capture harness, committed screenshots
@@ -72,9 +73,9 @@ import capture_settle
 # already taller than the fixed 600-px frame (813 px fitted); a page
 # that outgrows this is a capture failure to look at, never a silently
 # cropped image.
-# Recovery's complete configuration measures about 1860 px; keep the
+# Grouped recovery configuration exceeds 2100 px with native fonts; keep the
 # fitted capture tall enough to inspect every control without clipping.
-CAPTURE_HEIGHT_LIMIT = 2100
+CAPTURE_HEIGHT_LIMIT = 2800
 
 
 # ---------------------------------------------------------------------------

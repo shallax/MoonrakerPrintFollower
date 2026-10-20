@@ -3,6 +3,7 @@
 // Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 //
 // Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-19 — 6.0.0: Group recovery controls and explain macro Add/Save/recheck steps.
 // 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 // 2026-10-13 [d2db7b8] Clarify source macro choices and update prime defaults
 // 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -126,6 +127,13 @@ Item {
                 text: "Interrupted print recovery"
                 font: UM.Theme.getFont("large_bold")
             }
+
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Filament sensors"
+                font: UM.Theme.getFont("medium_bold")
+            }
             UM.Label {
                 width: parent.width
                 wrapMode: Text.WordWrap
@@ -191,13 +199,13 @@ Item {
             }
 
             UM.Label {
-                text: "Pause-state recovery"
+                text: "G-code macros"
                 font: UM.Theme.getFont("medium_bold")
             }
             UM.Label {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: "These lists tell the planner how to read macros already called by the G-code before the chosen restart point. They do not run those macros during recovery. Leave both lists empty if the file calls no custom macros; an unlisted macro makes planning stop rather than guess its effects."
+                text: "These lists tell the planner how to read macros already called by the G-code before the chosen restart point. They do not run those macros during recovery. Review every macro listed by Check G-code. Choose each name in the matching list below and click Add. When all are classified, click Save, reopen recovery and retry Check G-code. If its name is missing, connect to the printer and click Refresh above. Leave unqualified macros unlisted; planning stops rather than guessing their effects."
             }
             UM.Label {
                 width: parent.width
@@ -222,6 +230,7 @@ Item {
             }
             UM.Label {
                 text: "Setup macro in the G-code"
+                font: UM.Theme.getFont("medium_bold")
             }
             UM.Label {
                 width: parent.width
@@ -264,6 +273,7 @@ Item {
             }
             UM.Label {
                 text: "Transparent macro in the G-code"
+                font: UM.Theme.getFont("medium_bold")
             }
             UM.Label {
                 width: parent.width
@@ -304,6 +314,13 @@ Item {
                     }
                 }
             }
+
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Pause-state recovery"
+                font: UM.Theme.getFont("medium_bold")
+            }
             UM.Label {
                 width: parent.width
                 wrapMode: Text.WordWrap
@@ -330,6 +347,12 @@ Item {
                 currentIndex: activeSettings.settingsRecoveryPrepareMacro ? model.indexOf(activeSettings.settingsRecoveryPrepareMacro) : 0
             }
 
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Suggested rewind"
+                font: UM.Theme.getFont("medium_bold")
+            }
             UM.Label {
                 text: "Suggested rewind unit"
             }
@@ -359,6 +382,13 @@ Item {
                 visible: leadInModeBox.currentIndex === 1
                 width: parent.width
                 text: String(activeSettings.settingsRecoveryLeadInMoves)
+            }
+
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Return travel"
+                font: UM.Theme.getFont("medium_bold")
             }
             UM.Label {
                 text: "Travel clearance above selected layer (mm)"
@@ -461,6 +491,13 @@ Item {
                 enabled: primeEnabledBox.checked
                 width: parent.width
                 text: String(activeSettings.settingsRecoveryPrimeDwell)
+            }
+
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Timeouts"
+                font: UM.Theme.getFont("medium_bold")
             }
             UM.Label {
                 text: "Command acknowledgement timeout (seconds)"

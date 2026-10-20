@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-19 — 6.0.0: Verify setup title weight and recovery section hierarchy on Qt.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
@@ -219,6 +220,28 @@ class IntervalSliderGrabTests(harness.IntervalSliderGrabTests):
 
 class SettingsTabCompositionTests(harness.SettingsPageCase):
     """Each persistent tab owns a disjoint part of the saved configuration."""
+
+    def test_setup_pages_have_bold_titles_and_recovery_has_ordered_section_headings(self):
+        document, _window = self.open_settings()
+        pages = self.pages(document)
+        titles = {"Detection": "Failure detection", "Recovery": "Interrupted print recovery"}
+        for name in ("Connection", "Following", "Upload", "Detection", "Recovery", "Diagnostics"):
+            with self.subTest(page=name):
+                title = next((item for item in pages[name + "Settings"].findChildren(harness.QQuickItem)
+                              if item.property("text") == titles.get(name, name)), None)
+                self.assertIsNotNone(title)
+                self.assertTrue(title.property("font").bold())
+        self.show_tab(document, 4)
+        recovery = pages["RecoverySettings"]
+        labels = {item.property("text"): item for item in recovery.findChildren(harness.QQuickItem)
+                  if isinstance(item.property("text"), str)}
+        headings = [labels.get(name) for name in ("Filament sensors", "G-code macros", "Pause-state recovery",
+                    "Suggested rewind", "Return travel", "Nozzle priming before return", "Timeouts")]
+        for heading in headings:
+            self.assertIsNotNone(heading)
+            self.assertTrue(heading.property("font").bold())
+            self.assertGreater(heading.height(), 0)
+        self.assertEqual([heading.y() for heading in headings], sorted(heading.y() for heading in headings))
 
     def test_diagnostics_is_the_last_tab(self):
         document, _window = self.open_settings()

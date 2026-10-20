@@ -2446,6 +2446,16 @@ version synchronisation, then exercises stdlib-only documents/indexing/vertices
 and optional Qt raster pixels/retained nodes. [LIBRARY.md](LIBRARY.md) defines
 consumer contracts and the advanced API's responsibilities.
 
+Recovery source checks report every unclassified command in the reconstruction
+range together, deduplicated in source order. After the first unknown command,
+the read-only review scan collects further names up to the observed offset;
+it never approves a command or publishes a partial recovery plan. Commands after
+that range still run normally from the resumed file. The refusal names the
+Configure Moonraker > Recovery > G-code macros controls and explains Add, Save
+and rechecking. Existing setup/transparent contracts and modal checks remain
+mandatory. Settings pages use bold page titles and named recovery subsections;
+real-Qt tests verify font weight and their settled vertical order.
+
 Recovery source scanning records the effective feed rate, independent raw E mode,
 arc plane and active EXCLUDE_OBJECT name. Setup macros invalidate feed rate as
 well as coordinates until the file establishes them again. Handover restores

@@ -3,6 +3,7 @@
 // Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 //
 // Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-19 — 6.0.0: Give setup pages clear titles and grouped section headings.
 // 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
 // 2026-09-30 [b01dfd8] Decompose settings into persistent feature-owned tabs
 
@@ -48,12 +49,25 @@ Item {
             spacing: UM.Theme.getSize("default_margin").height
 
             UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Upload"
+                font: UM.Theme.getFont("large_bold")
+            }
+
+            UM.Label {
                 text: "A valid Moonraker URL automatically adds an Upload to printer destination to Cura's save/upload menu."
                 wrapMode: Text.WordWrap
                 width: parent.width
                 color: UM.Theme.getColor("text_inactive")
             }
 
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Upload destination"
+                font: UM.Theme.getFont("medium_bold")
+            }
             UM.Label {
                 text: "Frontend URL for Open Browser (optional)"
             }
@@ -114,6 +128,12 @@ Item {
                 checked: settings.settingsUploadAutohideMessage
             }
 
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Printer power"
+                font: UM.Theme.getFont("medium_bold")
+            }
             UM.Label {
                 text: "Moonraker power devices (comma-separated, optional)"
             }

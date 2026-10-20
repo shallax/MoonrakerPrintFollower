@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-19 — 6.0.0: Report all unclassified commands together with setup instructions.
 # 2026-10-18 — 6.0.0: Cover recovery modes, telemetry validation and restart lifecycle regressions.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [52df354] Verify recovery safety paths and release gates
@@ -22,6 +23,50 @@ from mpf.application.RecoveryPlanning import RecoveryPlanError, scan_source, sug
 
 
 class RecoveryPlanningTests(unittest.TestCase):
+    def test_macro_review_includes_numeric_macros_but_not_a_partially_observed_call(self):
+        data = (b"START_A\nG90\n;LAYER:0\nG1 X1 F1800\nM300\nG1 X2\n"
+                b"LATER_MARK\nG1 X3\n")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "print.gcode"
+            path.write_bytes(data)
+            view = IndexView(("print.gcode", len(data), 1), build_index_from_file(path))
+            boundary = view.recovery_boundary(0, 1)
+            with self.assertRaises(RecoveryPlanError) as caught:
+                scan_source(path, boundary, data.index(b"LATER_MARK") + 3)
+            self.assertIn("review: START_A, M300.", str(caught.exception))
+            self.assertNotIn("LATER_MARK", str(caught.exception))
+
+    def test_macro_review_lists_every_relevant_name_once_and_explains_setup(self):
+        data = (b"print_start\nG90\nM83\nG0 X0 Y0 Z0.2 F1800\nG92 E0\n"
+                b";LAYER:0\nG1 X1 E0.2\nTIMELAPSE_TAKE_FRAME\nG1 X2 E0.2\n"
+                b"CAMERA_MARK\nTIMELAPSE_TAKE_FRAME\nM117 not_a_macro\n"
+                b";COMMENT_MACRO\nG1 X3 E0.2\nFUTURE_MACRO\nG1 X4 E0.2\n")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "print.gcode"
+            path.write_bytes(data)
+            view = IndexView(("print.gcode", len(data), 1), build_index_from_file(path))
+            boundary = view.recovery_boundary(0, 1)
+            observed = data.index(b"FUTURE_MACRO")
+            with self.assertRaises(RecoveryPlanError) as caught:
+                scan_source(path, boundary, observed)
+            text = str(caught.exception)
+            self.assertIn("PRINT_START, TIMELAPSE_TAKE_FRAME, CAMERA_MARK.", text)
+            self.assertEqual(text.count("TIMELAPSE_TAKE_FRAME"), 1)
+            for phrase in ("Manage Printers", "Configure Moonraker > Recovery > G-code macros",
+                           "Setup macro in the G-code", "Transparent macro in the G-code",
+                           "click Add", "click Save", "retry Check G-code"):
+                self.assertIn(phrase, text)
+            for absent in ("FUTURE_MACRO", "COMMENT_MACRO", "NOT_A_MACRO", "G90", "G92"):
+                self.assertNotIn(absent, text)
+            with self.assertRaises(RecoveryPlanError) as caught:
+                scan_source(path, boundary, observed, setup_macros=("PRINT_START",),
+                            transparent_macros=("TIMELAPSE_TAKE_FRAME",))
+            self.assertIn("review: CAMERA_MARK.", str(caught.exception))
+            self.assertNotIn("PRINT_START", str(caught.exception))
+            plan = scan_source(path, boundary, observed, setup_macros=("PRINT_START",),
+                               transparent_macros=("TIMELAPSE_TAKE_FRAME", "CAMERA_MARK"))
+            self.assertEqual(plan.boundary_offset, boundary.next_motion_offset)
+
     def test_selected_plane_and_object_survive_later_changes(self):
         for plane in (17, 18, 19):
             data = (f"G{plane}\nEXCLUDE_OBJECT_START NAME=part_a\n;LAYER:0\n"

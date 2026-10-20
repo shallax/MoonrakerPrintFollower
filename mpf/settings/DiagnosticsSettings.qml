@@ -3,6 +3,7 @@
 // Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 //
 // Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-19 — 6.0.0: Give setup pages clear titles and grouped section headings.
 // 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
 // 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
 // 2026-09-30 [b01dfd8] Decompose settings into persistent feature-owned tabs
@@ -45,6 +46,19 @@ Item {
 
             UM.Label {
                 width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Diagnostics"
+                font: UM.Theme.getFont("large_bold")
+            }
+
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Logging"
+                font: UM.Theme.getFont("medium_bold")
+            }
+            UM.Label {
+                width: parent.width
                 text: "Diagnostic logging writes to Cura's log (Help > Show configuration folder). Request failures always log a warning regardless of these toggles."
                 wrapMode: Text.WordWrap
                 color: UM.Theme.getColor("text_inactive")
@@ -82,6 +96,13 @@ Item {
                 // the main toggle is off so the two cannot
                 // be read as independent switches.
                 enabled: memoryDiagnosticsBox.checked
+            }
+
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Rendering and camera"
+                font: UM.Theme.getFont("medium_bold")
             }
             UM.CheckBox {
                 id: softwareFollowerRendererBox
@@ -121,6 +142,12 @@ Item {
                 color: UM.Theme.getColor("text_inactive")
             }
 
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Prompts and optional downloads"
+                font: UM.Theme.getFont("medium_bold")
+            }
             UM.Label {
                 width: parent.width
                 text: "Re-show What's New and the optional local detection offer on the next Cura run. This keeps printer settings and installed model files."
@@ -211,6 +238,12 @@ Item {
                 }
             }
 
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "G-code cache"
+                font: UM.Theme.getFont("medium_bold")
+            }
             UM.Label {
                 width: parent.width
                 text: "Downloads and the G-code index cache keep the Improve-ETA flow fast on a second run. Clear them to watch a full download and index again. The cache size limit is per printer; the clear button wipes the cache for ALL printers."
