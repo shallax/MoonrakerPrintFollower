@@ -164,6 +164,8 @@ correct package ownership.
 | `PreviewToolheadPresentation.py` | Preview Toolhead host, readouts, local chrome and epoch-fenced selected-machine intents | G-code, polling or physical-motion policy |
 | `ToolheadReadout.py` | Pure physical-position, Z offset and firmware-capability readouts | Qt, transport or movement permission |
 | `PhysicalMotion.py` | Pure physical path/travel guard, G92/base-coordinate conversion, inclusive G-code zero bounds and validated manual-move scripts | Qt, telemetry acquisition or command transport |
+| `ObjectTagScene.py` | Scene-node admission and read-only bounds snapshots | Print progress or name matching |
+| `ObjectTagPresentation.py` | Plain-value tag matching, progress fallback, anchors and footprints | Qt vectors, scene traversal or UI lifecycle |
 | `PreviewPresentation.py` | Preview QML objects, displayed values and user-intent signals | Following or scheduling policy |
 | `GraphicsCensus.py` | Opt-in unique graphics-owner metadata and format estimates, with borrowed resources distinguished | GPU residency queries, resource mutation or retained wrappers |
 | `RenderTiming.py` | Opt-in bounded asynchronous GPU queries for plugin draw commands, never system-wide GPU utilisation | Profile settings writes, synchronous GPU waits or native timer ownership |
@@ -2599,3 +2601,10 @@ mapping. Cancellation invalidates the operation before abort, so synchronous
 the file manager retains name/directory policy, and the Cura upload workflow
 retains power/readiness and print-start outcome decisions. `ReplyBodyReader`
 lives in the Moonraker network package and also serves thumbnail responses.
+
+`ObjectTagScene.read_scene_objects` reads admitted node bounds into immutable
+`SceneTagObject` values. `ObjectTagPresentation.object_tag_rows` matches those
+values to printer definitions, applies metric/height progress and exclusion,
+and builds G-code-only fallback anchors/footprints. `PreviewPresentation`
+retains scene invalidation, caching, vector adaptation, panel lifecycle and hover
+routing. The projection algorithms need neither Cura nodes nor Qt vectors.

@@ -43,7 +43,9 @@ Version remains 6.0.0. Merge/tag and a live Cura restart are not authorized here
   streaming file devices, bounded response bytes, cancellation/progress and
   terminal results for both consumers; readiness/start-print policy remains
   with its workflow. Reply-body reading now has one network-domain owner.
-- [ ] Extract Preview object-tag presentation. Bed-mesh sampling/geometry now
+- [x] Extract Preview object-tag presentation and scene reads. Plain-value
+  matching, progress, fallback heights and footprints are independent of host
+  nodes and vectors. Bed-mesh sampling/geometry now
   belongs to a host-independent NumPy array builder, used by the scene adapter
   and the installed library consumer.
 - [x] Add cross-language preview-colour conformance checks. Real QML runs the
