@@ -12,6 +12,9 @@ downloaded archives. The public `v5.4.0` release includes its source/notices com
 release must attach its own companion before publication; see `RUNTIME_MIRROR.md`. This index
 links upstream licence texts without relicensing those distributions.
 The plugin's complete GPLv3 text is supplied in the package's `LICENSE` file.
+Windows indexing also uses the pinned CPython helper, installed automatically
+on the first uncached build. Indexing downloads no CAD libraries and retains
+the same interpreter notices and integrity checks as STEP import.
 
 ## Optional downloads
 

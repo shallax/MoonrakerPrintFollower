@@ -4,6 +4,12 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 6.0.0
 
+- Run Windows scanning and background layer preparation in disposable processes
+  to keep webcam and UI callbacks responsive; preserve progress, foreground
+  priority, cancellation and cache validation. Prepare layers with up to eight
+  parallel workers, size result reads to their actual payloads, and remove
+  per-motion allocation overhead from metric and object summaries.
+
 - Share recovery travel actions between command generation and confirmation;
   refuse an altered itinerary after review. Separate rendering/file lifetime,
   indexing residency/tracking, settings validation and application workflows

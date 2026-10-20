@@ -235,6 +235,20 @@ class ToolheadCadRuntimeTests(unittest.TestCase):
             self.assertEqual((target / ".archives" / name).read_bytes(), payload)
         self.assertEqual(CadRuntime.verify_runtime(str(target), self.assets), str(target))
 
+    def test_python_only_install_reuses_verified_archive_without_cad_or_network(self):
+        assets = self.assets[-1:]
+        archive_root = self.root / "retained"
+        archive_root.mkdir()
+        name, _pin = assets[0]
+        (archive_root / name).write_bytes(self.payloads[name])
+        with patch.object(CadRuntime, "_download_asset") as download:
+            target = Path(CadRuntime.install_runtime(self.root / "python-only", threading.Event(),
+                lambda _text: None, assets=assets, archive_directory=archive_root))
+        download.assert_not_called()
+        self.assertTrue((target / "python/bin/python3.12").is_file())
+        self.assertFalse((target / "OCP").exists())
+        self.assertEqual(CadRuntime.verify_runtime(str(target), assets), str(target))
+
     def test_install_requests_current_release_even_with_legacy_pin_urls(self):
         requested = []
 

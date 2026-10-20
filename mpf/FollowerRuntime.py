@@ -21,6 +21,7 @@ destructive half of the boot runs from Cura's initializationFinished
 from __future__ import annotations
 
 import os
+import sys
 
 from UM.Logger import Logger
 from UM.Resources import Resources
@@ -182,7 +183,9 @@ class FollowerRuntime:
         # machine switch included) rebinds them, and a worker from
         # the old machine never commits into the new one's cache.
         from .application.indexing.CacheNamespaces import CacheNamespaces
-        self.index = GCodeIndexService(self.files, None, parent, None)
+        from .application.indexing.IndexProcess import IndexProcessBuilder
+        index_builder = IndexProcessBuilder(persistence_root) if sys.platform == "win32" else None
+        self.index = GCodeIndexService(self.files, None, parent, None, index_builder=index_builder)
         self.cache_namespaces = CacheNamespaces(
             self._cache_root,
             lambda: self.binding.identity[0] if self.binding.identity else "",

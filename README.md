@@ -17,6 +17,11 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 
 6.0.0 adds interrupted-print recovery and heater controls, alongside fixes for file-list sorting and stale operations,
 frozen-camera detection, and temperature-command ordering across the product.
+On Windows, scanning and background layer preparation run in separate processes
+to keep the webcam and UI responsive. Preparation uses up to eight parallel workers,
+and scan summaries avoid per-motion allocation overhead. The first build installs a verified CPython helper, reusing
+the STEP helper archive if present; CAD packages are not required. Compact layer
+boundaries transfer back to Cura, and visible motion data loads on demand.
 The parser and toolpath geometry are also available as a dependency-free Python
 `moonraker_toolpath` library, with immutable document snapshots and optional Qt rendering: see [reusing the components](docs/LIBRARY.md)
 for installation, public APIs and a standalone rendering example. Raster painting

@@ -184,10 +184,25 @@ class _FeatureTracker:
         if math.isfinite(delta) and delta > 0 and length > 1e-9:
             ratio = delta / length
             if math.isfinite(ratio) and 0 < ratio <= 1e6:
-                limits = self.metric_limits.setdefault(self.tool, [math.inf, -math.inf] * 3)
-                for i, value in enumerate((self.speed, ratio, ratio * self.speed)):
-                    limits[i * 2] = min(limits[i * 2], value)
-                    limits[i * 2 + 1] = max(limits[i * 2 + 1], value)
+                limits = self.metric_limits.get(self.tool)
+                if limits is None:
+                    limits = [math.inf, -math.inf] * 3
+                    self.metric_limits[self.tool] = limits
+                # These three finite metrics are visited for every extrusion.
+                # Avoid a fresh default list and six min/max calls per move.
+                speed, flow = self.speed, ratio * self.speed
+                if speed < limits[0]:
+                    limits[0] = speed
+                if speed > limits[1]:
+                    limits[1] = speed
+                if ratio < limits[2]:
+                    limits[2] = ratio
+                if ratio > limits[3]:
+                    limits[3] = ratio
+                if flow < limits[4]:
+                    limits[4] = flow
+                if flow > limits[5]:
+                    limits[5] = flow
         advance(self.retractions, self.tool, delta if math.isfinite(delta) else 0.0)
         if delta < -1e-9:
             self.extruder_event(True, collect, firmware=False)

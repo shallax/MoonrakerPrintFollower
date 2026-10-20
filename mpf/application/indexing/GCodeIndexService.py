@@ -57,6 +57,7 @@ class GCodeIndexService(QObject):
     progress_changed = pyqtSignal()
     failed = pyqtSignal(str)
     _completed = pyqtSignal(int, str, object, object, object)
+    _preparation_progress = pyqtSignal(int, object, object)
 
     # The printed-object walk's owner-thread budget. A dense layer's
     # mandatory replay (an attach part-way through, a late polygon)
@@ -71,9 +72,11 @@ class GCodeIndexService(QObject):
     # never starve the live delta, whose verdict is the poll's own.
 
 
-    def __init__(self, files, cache, parent=None, prepared=None):
+    def __init__(self, files, cache, parent=None, prepared=None, *, index_builder=None):
         super().__init__(parent)
         self._files, self._cache = files, cache
+        self._index_builder = index_builder
+        self._preparation_progress.connect(self._on_preparation_progress)
         # The file-backed prepared store's SESSION: the adopted table,
         # the incremental writer and the coverage census of the file
         # being served. The encodings persist per print,
@@ -222,6 +225,18 @@ class GCodeIndexService(QObject):
             return
         self._progress_at = now
         self.progress_changed.emit()
+
+    def _on_preparation_progress(self, generation, encoded, refused):
+        # Queued to the owner thread only after the worker has appended these
+        # validated results to its captured writer. Progress follows completed
+        # children rather than waiting for the entire parallel batch.
+        if generation != self._generation or self._closed or self._cancel.is_set():
+            return
+        self._full_cache.update(encoded)
+        self._prepared.note_coverage(encoded.keys())
+        self._prepared.note_coverage(refused)
+        self._prepared.mark_uncacheable(refused)
+        self._notify_changed("fullprep")
 
     def bind(self, job_key):
         if self._job == job_key: return
@@ -873,10 +888,14 @@ class GCodeIndexService(QObject):
                 self._files.request_file()
                 return
             cancel = self._cancel
+            generation = self._generation
             self._progress = 0.0
-            self._submit("build", lambda: build_index_from_file(
+            def report(fraction):
+                if generation == self._generation and not cancel.is_set():
+                    self._progress = fraction
+            self._submit("build", lambda: (self._index_builder or build_index_from_file)(
                 lease.path, cancel,
-                progress=lambda fraction: setattr(self, "_progress", fraction)), lease)
+                progress=report), lease)
             return
         index = self._view._index
         # An index built after the detach (or rebuilt) takes the frozen
@@ -1051,14 +1070,15 @@ class GCodeIndexService(QObject):
         index = self._view._index
         cache = self._full_cache
         start = self._full_next
+        process_prepare = getattr(self._index_builder, "prepare", None)
         # A non-compact index (or a compact suffix already retained/
         # prepared) can rebuild the prepared store without touching
         # the raw G-code. Ask for a lease only when some remaining
         # layer genuinely has no other source.
         needs_raw = False
-        if index.compact:
+        if index.compact or process_prepare is not None:
             for layer in range(start, len(index.ranges)):
-                if layer in index.hydrated_layers or cache.peek(layer) is not None \
+                if (process_prepare is None and layer in index.hydrated_layers) or cache.peek(layer) is not None \
                         or self._prepared.served(layer):
                     continue
                 if self._prepared.uncacheable(layer):
@@ -1093,6 +1113,12 @@ class GCodeIndexService(QObject):
         # interrupts the in-progress dense layer too, not merely
         # the gap between layers.
         self._foreground_pending.clear()
+        cancel = self._cancel
+        generation = self._generation
+
+        def report(encoded, refused):
+            if not cancel.is_set():
+                self._preparation_progress.emit(generation, encoded, refused)
 
         task = LayerPreparationTask(
             index=index,
@@ -1106,6 +1132,7 @@ class GCodeIndexService(QObject):
             writer=prepared_writer,
             foreground=self._foreground_pending,
             failed_layers=frozenset(self._failed_hydrate),
+            isolated=(lambda submitted: process_prepare(submitted, cancel, progress=report)) if process_prepare is not None else None,
         )
 
         self._submit("fullprep", task.run, lease)

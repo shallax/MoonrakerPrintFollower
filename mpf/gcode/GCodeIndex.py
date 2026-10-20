@@ -43,7 +43,8 @@ def _emit_progress(handle: BinaryIO, progress) -> None:
         pass
 
 
-def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] = None, progress=None, stage=None) -> LayerMotionIndex:
+def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] = None, progress=None, stage=None, *, cooperative: bool = True) -> LayerMotionIndex:
+    """Scan once; isolated processes may disable host-thread cooperative sleeps."""
     # ONE pass (the ruling): a single read collects the
     # layer ranges, the marker values, the block stats, the motions
     # AND the pause offsets. The old four-pass build re-read the
@@ -86,7 +87,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         while True:
             if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
                 return LayerMotionIndex()
-            if (line_number & _YIELD_CHECK_MASK) == 0 and line_number:
+            if cooperative and (line_number & _YIELD_CHECK_MASK) == 0 and line_number:
                 # Release the GIL on the workers' own wall-clock gate:
                 # the parse is a tight Python loop, and what starves the
                 # UI thread is the TIME between hand-backs, not the line

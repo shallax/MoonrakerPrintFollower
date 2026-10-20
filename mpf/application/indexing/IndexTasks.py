@@ -174,8 +174,11 @@ class LayerPreparationTask:
     foreground: Any
     failed_layers: frozenset[int]
     retention: Callable[[], frozenset[int]] | None = None
+    isolated: Callable | None = None
 
     def run(self):
+        if self.isolated is not None:
+            return self.isolated(self)
         encoded = {}
         uncacheable = set()
         frontier = self.start

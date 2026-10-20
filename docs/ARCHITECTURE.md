@@ -333,6 +333,8 @@ correct package ownership.
 | `IndexHeader.py` | Slicer marker sniffing and filament metadata | Motion state or the hot scan loop |
 | `IndexHydrator.py` | Hydration of one compact layer from its saved modal seed | Index lifecycle or worker scheduling |
 | `IndexLimits.py` | Input and allocation bounds shared by the scanner and hydrator | Mutable state |
+| `IndexProcess.py` | Disposable Windows scan and preparation batches, verified Python-only helper provisioning, bounded packed handoff and cancellation | Qt publication or persistent print-cache writes |
+| `IndexWorker.py` | Standalone stdlib scan/preparation entry point and temporary index/PPL1 results | Cura imports, networking or printer state |
 | `IndexTasks.py` | Immutable submission records and worker-local hydration/preparation execution | Service lifecycle, signal publication or coordinator references |
 | `IndexView.py` | Read-only query capability over one index and spiral-Z projections | Index lifecycle or workers |
 | `IndexWork.py` | Cooperative cancellation/yield vocabulary and wall-clock gates | Worker pools or Qt |
@@ -960,6 +962,25 @@ desired state rather than an unbounded executor queue. Rebinding cancels the old
 build and waits asynchronously for its completion before scheduling new work.
 Persistent cache restoration, parsing, hydration and cache persistence all run off
 the UI thread. Only generation-valid results are published on the Qt thread.
+
+On Windows, `IndexProcessBuilder` runs the initial scan in a disposable Python
+process so parsing cannot monopolise the interpreter used by the webcam and Qt
+callbacks. The worker uses the same parser and validated index format, disables
+cooperative sleeps only in its own process, and writes solely to a private
+temporary directory. It transfers compact boundaries and modal seeds; existing
+demand hydration supplies visible motions without a full-print decode in Cura.
+The parent polls bounded progress and terminates and joins
+the child on cancellation before releasing the source lease. The existing
+verified runtime installer provisions only the pinned CPython helper, reusing a
+retained CAD-helper archive when available. The full preparation pass uses up to
+eight parallel processes, bounded by the available CPU count (one per four logical
+processors, minimum one). Each child handles at most 32 layers with an 8 MiB
+packed-output target. Foreground demand kills and joins all speculative children;
+only the service-owned session appends
+results to its captured persistent writer. Boundaries and modal seeds cross
+to the child; host motion arrays are never hydrated by background preparation.
+Ordinary library scans and other platforms retain cooperative thread yielding. Runtime installation failure is
+reported; there is no silent return to the CPU-heavy host scan.
 
 `IndexView` exposes immutable ranges/maps/timing and read-only query operations.
 It does not expose mutable motion arrays or worker handles. Compact motion arrays

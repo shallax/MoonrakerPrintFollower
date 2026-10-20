@@ -30,11 +30,11 @@ VERSION = "7.9.3.1.1"
 WINDOWS_RUNTIME_DLLS = ("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "vcomp140.dll")
 
 
-def missing_windows_runtime():
+def missing_windows_runtime(required=WINDOWS_RUNTIME_DLLS):
     """Check the system copy used by both Cura and the isolated STEP helper."""
     if platform.system() != "Windows": return ()
     system32 = Path(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
-    return tuple(name for name in WINDOWS_RUNTIME_DLLS if not (system32 / name).is_file())
+    return tuple(name for name in required if not (system32 / name).is_file())
 
 
 class HttpsOnly(urllib.request.HTTPRedirectHandler):
@@ -177,14 +177,23 @@ def verify_runtime(target, assets):
                 for member in _tar_members(archive):
                     with archive.extractfile(member) as handle: files[member.name] = _digest_file(handle)
     actual, total = {}, 0
-    for path in Path(target).rglob("*"):
-        if path.is_symlink(): raise ValueError("CAD runtime contains a symlink")
-        if not path.is_file(): continue
-        relative = path.relative_to(target).as_posix()
-        if relative == "verified.json" or relative.startswith(".archives/"): continue
-        total += path.stat().st_size
-        if total > 800*1024*1024 or len(actual) >= 10000: raise ValueError("CAD runtime exceeded its size limit")
-        with path.open("rb") as handle: actual[relative] = _digest_file(handle)
+    pending = [(str(target), "")]
+    while pending:
+        directory, prefix = pending.pop()
+        # DirEntry retains Windows enumeration metadata. Path.rglob followed
+        # by is_symlink/is_file/stat made three filesystem queries per entry.
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.is_symlink(): raise ValueError("CAD runtime contains a symlink")
+                relative = prefix + entry.name
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append((entry.path, relative + "/"))
+                    continue
+                if not entry.is_file(follow_symlinks=False): continue
+                if relative == "verified.json" or relative.startswith(".archives/"): continue
+                total += entry.stat(follow_symlinks=False).st_size
+                if total > 800*1024*1024 or len(actual) >= 10000: raise ValueError("CAD runtime exceeded its size limit")
+                with open(entry.path, "rb") as handle: actual[relative] = _digest_file(handle)
     if actual != files: raise ValueError("CAD runtime integrity check failed")
     return target
 
@@ -253,10 +262,11 @@ def _download_asset(opener, name, pin, path, cancelled, progress):
             source.unlink(missing_ok=True)
 
 
-def install_runtime(root, cancelled, progress):
-    if missing_windows_runtime():
-        raise ValueError("STEP import needs the Microsoft Visual C++ x64 runtime. Install it from Microsoft, then retry.")
-    assets = runtime_assets()
+def install_runtime(root, cancelled, progress, *, assets=None, archive_directory=None):
+    assets = runtime_assets() if assets is None else assets
+    required = WINDOWS_RUNTIME_DLLS if any(name.endswith(".whl") for name, _pin in assets) else WINDOWS_RUNTIME_DLLS[:2]
+    if missing_windows_runtime(required):
+        raise ValueError("Python helper needs the Microsoft Visual C++ x64 runtime. Install it from Microsoft, then retry.")
     os.makedirs(root, mode=0o700, exist_ok=True)
     target = runtime_directory(root, assets)
     if os.path.lexists(target):
@@ -271,7 +281,17 @@ def install_runtime(root, cancelled, progress):
             urllib.request.HTTPSHandler(context=_trusted_context()), HttpsOnly())
         for name, pin in assets:
             path = os.path.join(stage, name)
-            _download_asset(opener, name, pin, path, cancelled, progress)
+            retained = Path(archive_directory, name) if archive_directory is not None else None
+            reused = False
+            if retained is not None and retained.is_file() and not retained.is_symlink():
+                with retained.open("rb") as handle:
+                    if os.fstat(handle.fileno()).st_size == pin["size"] and _digest_file(handle) == pin["sha256"]:
+                        handle.seek(0)
+                        with open(path, "wb") as output:
+                            shutil.copyfileobj(handle, output, 128*1024)
+                        reused = True
+            if not reused:
+                _download_asset(opener, name, pin, path, cancelled, progress)
             if name.endswith(".whl"): extract_wheel(path, stage)
             else: extract_helper(path, stage)
             archive_dir = os.path.join(stage, ".archives")

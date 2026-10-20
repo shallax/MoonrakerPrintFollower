@@ -117,7 +117,7 @@ def _fast_motion_line(stripped: bytes) -> Optional[Tuple[bytes, Dict[str, float]
             axes[chr(letter)] = float(tok[1:])
         except ValueError:
             return None
-    return b"G" + bytes((digit,)), axes
+    return _FAST_MOTIONS[digit - 48], axes
 
 
 def parse_arc_words(code: bytes) -> Dict[str, float]:

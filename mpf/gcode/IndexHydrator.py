@@ -27,7 +27,8 @@ from .MotionIndex import LayerMotionIndex
 def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                             keep_anchor: Optional[int] = None,
                             should_stop: Optional[Callable[[], bool]] = None, *,
-                            retention: Optional[Callable[[], frozenset[int]]] = None) -> bool:
+                            retention: Optional[Callable[[], frozenset[int]]] = None,
+                            cooperative: bool = True) -> bool:
     """Populate motion data for one layer of a compact large-file index.
 
     Boundary indexing keeps RAM bounded for huge files. Motion commands are then
@@ -90,7 +91,7 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
             checked = 0
             while handle.tell() < end:
                 checked += 1
-                if (checked & _YIELD_CHECK_MASK) == 0:
+                if cooperative and (checked & _YIELD_CHECK_MASK) == 0:
                     updated = passive_yield(time.monotonic(), yield_at)
                     if updated != yield_at:
                         yield_at = updated
