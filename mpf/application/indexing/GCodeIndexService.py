@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Delegate live matching and consumer residency to explicit owners.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-01 [1866243] Persist print sources and publish live download progress
 # 2026-09-07 [547223f] Establish shared Moonraker session and service runtime
@@ -13,7 +14,6 @@ from __future__ import annotations
 from .IndexTasks import LayerHydrationTask, LayerPreparationTask, LayerArrayTask
 
 from ...gcode.ObjectVisitTracker import ObjectVisitTracker
-from ...gcode.MotionRefinement import refine_payload
 
 from UM.Logger import Logger
 
@@ -26,10 +26,9 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from ...gcode.MotionIndex import LayerMotionIndex
 from ...gcode.GCodeIndex import build_index_from_file
-from ...gcode.PlateProgress import split_index as _split_index
-from ...gcode.PlateSplitTracker import PlateSplitTracker
+from .IndexMotionTracking import IndexMotionTracking
+from ...gcode.IndexResidency import IndexResidency
 from .PreparedSession import PreparedSession
-from ...printing.PrintState import MotionProgress
 
 
 from ...gcode.IndexView import IndexView
@@ -163,6 +162,7 @@ class GCodeIndexService(QObject):
         # The follower's frozen layer (the pop-over's detach): a second
         # demand window beside the live print's own.
         self._manual_anchor = None
+        self._residency = IndexResidency()
         self._manual_anchor_calls = 0
         self._manual_anchor_changes = 0
         # The within-layer scrub (the pop-over's progress slider): the
@@ -172,7 +172,7 @@ class GCodeIndexService(QObject):
         # The boundary already painted for a (file, layer) — the floor
         # the next poll's refinement may not fall below — and the last
         # one a LIVE position established, None while there is none.
-        self._split_tracker = PlateSplitTracker()
+        self._motion = IndexMotionTracking()
         self._objects = ObjectVisitTracker()
 
 
@@ -295,8 +295,9 @@ class GCodeIndexService(QObject):
         self._decoded_sizes = {}
         self._plate_layers_memos = {}
         self._manual_anchor = None
+        self._residency = IndexResidency()
         self._manual_split = None
-        self._split_tracker.reset()
+        self._motion.reset()
         self._objects.reset()
 
 
@@ -400,10 +401,9 @@ class GCodeIndexService(QObject):
         manual = self._manual_anchor
         if manual is not None and manual >= len(view.ranges):
             manual = None
-        if view._index.manual_anchor == manual:
+        if self._residency.anchor("manual") == manual:
             return
-        with view._index.cache_lock:
-            view._index.manual_anchor = manual
+        self._residency.set_window("manual", manual)
         self._update_decoded_protection()
 
     def _update_decoded_protection(self):
@@ -414,10 +414,9 @@ class GCodeIndexService(QObject):
         eviction/redemption thrash (the detached 114% burn)."""
         if self._view is None:
             return
-        index = self._view._index
         protected = set()
-        followed = getattr(index, "followed_layer", None)
-        manual = getattr(index, "manual_anchor", None)
+        followed = self._residency.anchor("live")
+        manual = self._residency.anchor("manual")
         for anchor in (followed, manual):
             if isinstance(anchor, int) and anchor >= 0:
                 protected.update((anchor - 1, anchor, anchor + 1))
@@ -476,7 +475,7 @@ class GCodeIndexService(QObject):
         """
         if not self._gpu_consumers:
             return None
-        anchors = (index.manual_anchor, index.followed_layer)
+        anchors = (self._residency.anchor("manual"), self._residency.anchor("live"))
         if anchors != self._gpu_prefetch_key:
             self._gpu_prefetch_key = anchors
             self._gpu_prefetch_done.clear()
@@ -615,92 +614,14 @@ class GCodeIndexService(QObject):
         return self.observe_motion(anchor, file_position, live_position,
                                    paused=paused, extruding=extruding).split
 
+
+
+
     def observe_motion(self, anchor, file_position, live_position=None, paused=False, extruding=None):
-        """Accept one live observation independently of presentation readiness.
-
-        The coordinator calls this once per frame and publishes the immutable
-        result to both renderers. Manual plate scrubbing never enters here.
-        """
-        if self._view is None or not isinstance(anchor, int) \
-                or not 0 <= anchor < len(self._view.ranges):
-            return MotionProgress(anchor, None, 0, "unavailable")
-        index = self._view._index
-        with index.cache_lock:
-            total = index.motion_count(anchor)
-            split = self._observe_split(anchor, file_position, live_position, paused, extruding)
-            partial = 0.0 if self._split_tracker.awaiting_layer_entry else index.partial_motion(anchor, split, live_position)
-        return MotionProgress(anchor, split, total,
-                              "motion index" if split is not None else "unavailable", partial)
-
-    def _observe_split(self, anchor, file_position, live_position, paused, extruding):
-        if file_position is None:
-            return None
-        memo = self._plate_layers_memos.get(anchor)
-        index = self._view._index
-        with index.cache_lock:
-            coarse = _split_index(index, anchor, file_position)
-            if coarse is None:
-                return None
-            # Resolve geometry in the index; the pure tracker is the ONLY
-            # owner of accepted progress, continuity and overshoot evidence.
-            tracker = self._split_tracker
-            advanced = tracker.begin(self._view.job_key, anchor)
-            floor = tracker.floor
-            if paused and floor is not None:
-                return tracker.accept(coarse, None, None, live_position is not None, paused=True)
-            refined = None
-            raw = None
-            if live_position is not None:
-                # On a monotonic spiral, Z itself orders the motions.
-                # XY repeats around the vase and can match an earlier
-                # seam, holding the first few percent at zero and
-                # truncating the last few percent. Flat layers still
-                # use the geometry search and its overshoot evidence.
-                raw = self._view.spiral_z_split(anchor, live_position[2]) \
-                    if extruding is True else None
-                if raw is None:
-                    # The index uses the previous boundary as a search
-                    # anchor and returns an UNCLAMPED geometric match.
-                    # The tracker needs behind-floor evidence to recover
-                    # an erroneously advanced repeated path.
-                    raw, _method = index.refined_split(
-                        anchor, file_position, live_position,
-                        minimum_split=None, floor_split=floor,
-                        stall=tracker.stall_polls, extruding=extruding)
-                refined = raw if floor is None or raw is None \
-                    else max(raw, floor)
-                if refined is None:
-                    offsets = index.motion_offsets[anchor] \
-                        if anchor < len(index.motion_offsets) else ()
-                    if not len(offsets):
-                        # Compact layers search the prepared payload's geometry;
-                        # they use the same boundary policy as hydrated layers.
-                        refined = refine_payload(
-                            memo[1].get("current"), coarse, live_position,
-                            floor, ahead=tracker.payload_ahead_window,
-                            stall=tracker.stall_polls,
-                            extruding=extruding) if memo is not None else None
-                        raw = refined
-                        tracker.observe_payload_advance(refined)
-            spiral = self._view.continuous_z_at(anchor)
-            entry_confirmed = extruding is not False and index.layer_entry_confirmed(
-                anchor, raw, live_position, previous_z=tracker.entry_previous_z,
-                continuous_z=spiral) \
-                if tracker.awaiting_layer_entry else True
-            # The ordinary first poll is deliberately held: the parser
-            # can claim a flat layer before the nozzle gets there. For a
-            # continuously rising layer, a geometric match at its actual
-            # Z is already physical entry evidence. Discarding it leaves
-            # a visible gap at the start of every short spiral turn.
-            spiral_entry = advanced and raw is not None and entry_confirmed \
-                and spiral
-            result = tracker.accept(
-                coarse, refined, raw, live_position is not None,
-                advanced=advanced and not spiral_entry, entry_confirmed=entry_confirmed)
-            if raw is not None and live_position is not None and not tracker.awaiting_layer_entry:
-                tracker.last_confirmed_z = float(live_position[2])
-            return result
-
+        memo = self._plate_layers_memos.get(anchor) if isinstance(anchor, int) else None
+        payload = memo[1].get("current") if memo is not None else None
+        return self._motion.observe(self._view, payload, anchor, file_position,
+                                    live_position, paused, extruding)
 
     def plate_visited(self, anchor, split, rows):
         return self._objects.observe(self._view, anchor, split, rows)
@@ -797,11 +718,9 @@ class GCodeIndexService(QObject):
         is never the REQUESTED layer (a prefetch would drift the window
         one layer ahead of the print).
         """
-        if not isinstance(layer, int) or layer < 0 or self._view is None:
+        if isinstance(layer, bool) or not isinstance(layer, int) or layer < 0 or self._view is None:
             return
-        index = self._view._index
-        with index.cache_lock:
-            index.followed_layer = layer
+        self._residency.set_window("live", layer)
         self._update_decoded_protection()
         # A moved anchor may have stranded a pending prefetch outside
         # the window; drop it before the worker picks it. The window is
@@ -812,8 +731,8 @@ class GCodeIndexService(QObject):
         # waited a minute for the pass to walk to it).
         self._hydrate = {n for n in self._hydrate
                          if layer - 1 <= n <= layer + 1
-                         or (index.manual_anchor is not None
-                             and index.manual_anchor - 1 <= n <= index.manual_anchor + 1)}
+                         or (self._residency.anchor("manual") is not None
+                             and self._residency.anchor("manual") - 1 <= n <= self._residency.anchor("manual") + 1)}
         self._request_window(layer)
         self._advance()
 
@@ -864,9 +783,10 @@ class GCodeIndexService(QObject):
         self._decoded_sizes = {}
         self._prepared.reset()
         self._manual_anchor = None
+        self._residency = IndexResidency()
         self._manual_anchor_calls = 0
         self._manual_anchor_changes = 0
-        self._split_tracker.reset()
+        self._motion.reset()
         self._objects.reset()
 
 
@@ -900,7 +820,7 @@ class GCodeIndexService(QObject):
         hydration merely selects the cheapest worker source.
         """
         view = self._view
-        anchor = view._index.followed_layer
+        anchor = self._residency.anchor("live")
         for candidate in (layer - 1, layer, layer + 1):
             if not 0 <= candidate < len(view.ranges):
                 continue
@@ -968,11 +888,11 @@ class GCodeIndexService(QObject):
         # hydrates for the physical refinement's arrays, the MANUAL
         # window fills the hot presentation cache (a decoded layer is
         # served — no rehydrate merely to display prepared geometry).
-        manual = index.manual_anchor
+        manual = self._residency.anchor("manual")
         self._hydrate = {n for n in self._hydrate
                          if self._presentation_source(n) not in {"invalid", "decoded", "failed"}
-                         and ((index.followed_layer is None
-                               or index.followed_layer - 1 <= n <= index.followed_layer + 1)
+                         and ((self._residency.anchor("live") is None
+                               or self._residency.anchor("live") - 1 <= n <= self._residency.anchor("live") + 1)
                               or (manual is not None
                                   and manual - 1 <= n <= manual + 1))}
         # The arrays debt is pruned on the same terms: a layer the
@@ -981,8 +901,8 @@ class GCodeIndexService(QObject):
         self._hydrate_arrays = {
             n for n in self._hydrate_arrays
             if 0 <= n < len(index.ranges) and n not in index.hydrated_layers
-            and ((index.followed_layer is None
-                  or index.followed_layer - 1 <= n <= index.followed_layer + 1)
+            and ((self._residency.anchor("live") is None
+                  or self._residency.anchor("live") - 1 <= n <= self._residency.anchor("live") + 1)
                  or (manual is not None and manual - 1 <= n <= manual + 1))}
         prefetch = self._gpu_prefetch_layer(index) if not self._hydrate and not self._hydrate_arrays else None
         if self._hydrate or prefetch is not None:
@@ -1038,7 +958,7 @@ class GCodeIndexService(QObject):
         # soon as it is ready.
         window = sorted(self._hydrate)
         submitted = []
-        for anchor in (manual, index.followed_layer):
+        for anchor in (manual, self._residency.anchor("live")):
             if anchor is not None and anchor in self._hydrate:
                 submitted = [anchor]
                 self._hydrate.remove(anchor)
@@ -1064,8 +984,8 @@ class GCodeIndexService(QObject):
                         for layer in submitted)
         arrays_owed = {layer for layer in submitted
                        if not background and index.compact and layer not in index.hydrated_layers
-                       and (not self._gpu_consumers or index.followed_layer is None
-                            or abs(layer - index.followed_layer) <= 1)}
+                       and (not self._gpu_consumers or self._residency.anchor("live") is None
+                            or abs(layer - self._residency.anchor("live")) <= 1)}
         lease = self._files.lease() if (needs_raw or arrays_owed) else None
         if needs_raw and lease is None:
             self._hydrate.update(submitted)
@@ -1089,9 +1009,8 @@ class GCodeIndexService(QObject):
         prepared_store = self._prepared.store
         decode_cancel = self._cancel
         gpu_decode = bool(self._gpu_consumers)
-        # No anchor argument: the worker reads the index's
-        # followed_layer at COMPLETION, so a worker that finishes
-        # after an anchor change applies the latest policy.
+        # The worker reads this generation's residency at completion,
+        # so a late layer applies the current consumer windows.
         # The WHOLE demanded window rides ONE task: a seek's three
         # layers arrive together instead of through three chained
         # round-trips. The worker owns its own ENCODINGS — they enter
@@ -1104,6 +1023,7 @@ class GCodeIndexService(QObject):
         # of re-reading the file and re-walking the geometry.
         task = LayerHydrationTask(
             index=index,
+            retention=self._residency.layers,
             layers=tuple(submitted),
             packed=cache,
             lease=lease,
@@ -1176,6 +1096,7 @@ class GCodeIndexService(QObject):
 
         task = LayerPreparationTask(
             index=index,
+            retention=self._residency.layers,
             packed=cache,
             start=start,
             lease=lease,
@@ -1222,6 +1143,7 @@ class GCodeIndexService(QObject):
 
         task = LayerArrayTask(
             index=index,
+            retention=self._residency.layers,
             layers=tuple(owed),
             lease=lease,
             foreground=self._foreground_pending,
@@ -1297,9 +1219,8 @@ class GCodeIndexService(QObject):
                     # nothing and the slider stayed disabled).
                     self._apply_manual_anchor()
                     self._request_manual_window()
-                    index = self._view._index
-                    if index.followed_layer is not None:
-                        self._request_window(int(index.followed_layer))
+                    if self._residency.anchor("live") is not None:
+                        self._request_window(int(self._residency.anchor("live")))
                 elif kind == "build":
                     self._error = error or "Remote G-code contains no supported layer markers"
                     self.failed.emit(self._error)

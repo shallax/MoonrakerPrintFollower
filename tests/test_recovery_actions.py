@@ -12,7 +12,7 @@ import unittest
 
 from mpf.printing.RecoveryActions import RecoveryAction, recovery_route, same_actions
 from mpf.printing.RecoveryHandover import prepare_return
-from mpf.printing.RecoveryReview import review_recovery
+from mpf.printing.RecoveryReview import review_recovery, action_document
 from tests.test_recovery_handover import source, status
 
 
@@ -70,6 +70,20 @@ class RecoveryActionsTests(unittest.TestCase):
             hotendTarget=210, bedTarget=60, resumeLayer=1, resumeMove=2, offset=300), {'zReference':2})
         self.assertEqual(review.route, plan.route)
         self.assertIn('G92 Z12', plan.z_reference_script)
+
+    def test_prime_step_duration_includes_dwell_and_actions_keep_their_command_values(self):
+        values = dict(ready=True, unloaded=True, x=40, y=50, z=2,
+            currentX=0, currentY=0, currentZ=10, maximumZ=250,
+            hotendTarget=210, bedTarget=60, resumeLayer=1, resumeMove=2, offset=300,
+            primeEnabled=True, primeX=0, primeY=200, primeZ=100,
+            primeAmount=20, primeSpeed=2, primeDwell=12.5)
+        review = review_recovery(values, {})
+        prime = next(row for row in review.actions if row['kind'] == 'purge')
+        self.assertEqual(prime['seconds'], 22.5)
+        self.assertEqual(prime['commands'], ['G1 E20 F120', 'M400', 'G4 P12500'])
+        dwell = action_document(review.route.prime[-1])
+        self.assertEqual(dwell['seconds'], 12.5)
+        self.assertEqual(dwell['text'], 'Dwell for 12.50 s.')
 
     def test_invalid_review_inputs_never_produce_a_route(self):
         values = dict(ready=True, unloaded=True, x=40, y=50, z=2,

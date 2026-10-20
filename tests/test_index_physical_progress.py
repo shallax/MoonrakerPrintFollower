@@ -146,7 +146,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
         first = self.service.observe_motion(1, 140, (3.5, 0, 1.65), extruding=True)
         self.assertGreater(first.fraction, 0, "physical spiral entry must publish on its first poll")
         self.assertEqual(first.split, view.spiral_z_split(1, 1.65))
-        self.service._split_tracker.reset()
+        self.service._motion.tracker.reset()
         self.service.observe_motion(0, 50, (0, 0, 1.6), extruding=True)
         missed_xy = self.service.observe_motion(1, 140, (3.5, 4, 1.65), extruding=True)
         self.assertGreater(missed_xy.fraction, 0, "rising Z must recover a missed XY match")
@@ -184,7 +184,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
         data, rows = penguin_playback()
         index = harness.build_index_from_bytes(data)
         self.service._view = self.qt.load("IndexView").IndexView(self.job, index)
-        tracker = self.service._split_tracker
+        tracker = self.service._motion.tracker
         tracker.begin(self.job, 2)
         # A missed late update leaves the accepted position at the exact
         # floor observed in the macOS failure. Stopped velocity supplies no
@@ -219,20 +219,20 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
         # for a layer. Holding a snapshot must not require a decoded canvas.
         motion = self.service.observe_motion(0, offsets[19], (5.0, 0.0, 0.2))
         self.assertEqual((motion.split, motion.motion_total, motion.fraction), (6, 20, 0.3))
-        floor = self.service._split_tracker.floor
+        floor = self.service._motion.tracker.floor
         with patch.object(self.service, "observe_motion", side_effect=AssertionError("double match")):
             payload = self.service.plate_progress(0, offsets[19], (5.0, 0.0, 0.2), motion=motion)
         self.assertEqual(payload["split"], motion.split)
-        self.assertEqual(self.service._split_tracker.floor, floor)
+        self.assertEqual(self.service._motion.tracker.floor, floor)
         self.service.set_manual_anchor(0)
         self.service.set_manual_split(2)
         self.assertEqual(self.service.plate_progress(0)["split"], 2)
-        self.assertEqual(self.service._split_tracker.floor, floor, "manual scrubbing must not change physical tracking")
+        self.assertEqual(self.service._motion.tracker.floor, floor, "manual scrubbing must not change physical tracking")
 
     def test_excluded_object_entry_travel_cannot_seed_a_future_boundary(self):
         for compact in (False, True):
             with self.subTest(compact=compact):
-                self.service._split_tracker.reset()
+                self.service._motion.tracker.reset()
                 offsets = self._bind(layers=3)
                 index = self.service._view._index
                 if compact:
@@ -245,10 +245,10 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
                 for x in (10.0, 12.0, 8.0, 5.0):
                     self.assertEqual(self.service.plate_progress(
                         1, offsets[19], (x, 0.0, 0.2), extruding=False)["split"], 0)
-                self.assertTrue(self.service._split_tracker.awaiting_layer_entry)
+                self.assertTrue(self.service._motion.tracker.awaiting_layer_entry)
                 self.assertEqual(self.service.plate_progress(
                     1, offsets[19], (2.0, 0.0, 0.2), extruding=True)["split"], 2 if compact else 3)
-                self.assertFalse(self.service._split_tracker.awaiting_layer_entry)
+                self.assertFalse(self.service._motion.tracker.awaiting_layer_entry)
                 # Ordinary travel after entry can still advance printed history.
                 self.assertEqual(self.service.plate_progress(
                     1, offsets[19], (5.0, 0.0, 0.2), extruding=False)["split"], 5 if compact else 6)
@@ -314,7 +314,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
                                  (index.motion_z, "f")):
             column[:] = [harness.array(typecode) for _ in column]
         self.service._decoded_lru[1] = payload
-        self.service._split_tracker.reset()
+        self.service._motion.tracker.reset()
         self.service.plate_layers(1)
         self.service.observe_motion(1, second_offset, (10.001, 0, 0.4), extruding=True)
         first = self.service.observe_motion(1, second_offset, (10.001, 0, 0.4),
@@ -448,7 +448,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
     def test_parser_layer_advance_waits_for_physical_height_in_both_geometry_paths(self):
         for compact in (False, True):
             with self.subTest(compact=compact):
-                self.service._split_tracker.reset()
+                self.service._motion.tracker.reset()
                 self._bind(layers=3)
                 index = self.service._view._index
                 index.layer_start_positions = [(0.0, 0.0, 0.0),
@@ -523,7 +523,7 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
         self.assertEqual(splits[0], 950, "the fill moved before the evidence landed")
         self.assertLess(splits[-1], 55, "three physical matches never corrected the floor")
         self.assertGreater(splits[-1], 49, "the fill lost the head's own stroke")
-        self.assertEqual(self.service._split_tracker.floor, splits[-1])
+        self.assertEqual(self.service._motion.tracker.floor, splits[-1])
         # ...and tracks the nozzle from there, on the pass it is on.
         self.assertEqual(
             self.service.plate_progress(0, 90, (60.0, 0.0, 0.2))["split"], 60)
@@ -593,10 +593,10 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
         self.assertEqual(self.service.plate_progress(0, 50, (15.0, 0.0, 0.2))["split"], 15)
         for _poll in range(2):
             self.assertEqual(self.service.plate_progress(0, 50, (6.0, 0.0, 0.2))["split"], 15)
-            self.assertEqual(self.service._split_tracker.floor, 15,
+            self.assertEqual(self.service._motion.tracker.floor, 15,
                              "the floor stepped back before the third below-floor verdict")
         self.assertEqual(self.service.plate_progress(0, 50, (6.0, 0.0, 0.2))["split"], 6)
-        self.assertEqual(self.service._split_tracker.floor, 6, "the overshoot lock never released")
+        self.assertEqual(self.service._motion.tracker.floor, 6, "the overshoot lock never released")
         # Resumed: the truth is the floor now, and the fill follows the
         # nozzle forward from it again.
         self.assertEqual(self.service.plate_progress(0, 50, (12.0, 0.0, 0.2))["split"], 12)
@@ -607,10 +607,10 @@ class PlateSplitRefinementTests(harness.PlateSplitRefinementTests):
         # repeated geometry cannot win the match and overshoot the fill.
         self._bind_payload(motions=6000)
         self.assertEqual(self.service.plate_progress(0, 50, (1000.0, 0.0, 0.2))["split"], 1000)
-        self.assertEqual(self.service._split_tracker.advance_max, 512,
+        self.assertEqual(self.service._motion.tracker.advance_max, 512,
                          "the floor-less first poll measured an advance")
         self.assertEqual(self.service.plate_progress(0, 50, (2900.0, 0.0, 0.2))["split"], 2900)
-        self.assertEqual(self.service._split_tracker.advance_max, 1900,
+        self.assertEqual(self.service._motion.tracker.advance_max, 1900,
                          "the observed advance never widened the next window")
 
     def test_a_layer_without_a_motion_count_reads_unavailable(self):
@@ -649,7 +649,7 @@ class RepeatedGeometrySplitTests(harness.RepeatedGeometrySplitTests):
             self.assertGreaterEqual(
                 split, truth - 1, "the fill lost the head's own stroke")
             self.assertLessEqual(
-                self.service._split_tracker.floor, truth, "the floor locked ahead of the head")
+                self.service._motion.tracker.floor, truth, "the floor locked ahead of the head")
 
     def test_the_fill_never_walks_back_across_a_repeated_pass(self):
         # The nozzle finishes pass 0 and starts pass 1 on the same
@@ -703,7 +703,7 @@ class RepeatedGeometrySplitTests(harness.RepeatedGeometrySplitTests):
             split = self._poll(truth, lead=40)
             self.assertLessEqual(split, truth + 1, "the payload search painted ahead")
             self.assertGreaterEqual(split, truth - 1, "the payload search lost the head")
-        floor = self.service._split_tracker.floor
+        floor = self.service._motion.tracker.floor
         # The hydration lands: the arrays are what the split rides from
         # here, and the floor is the continuity between the two halves.
         index.motion_offsets[0] = hydrated
@@ -763,7 +763,7 @@ class RepeatedGeometrySplitTests(harness.RepeatedGeometrySplitTests):
                 self.assertEqual(split, stranded,
                                  "the floor stepped back before the third sample")
         self.assertEqual(split, 14, "the fill stayed stranded on the later pass")
-        self.assertEqual(self.service._split_tracker.floor, 14)
+        self.assertEqual(self.service._motion.tracker.floor, 14)
         # The head keeps printing: the fill follows it from the truth,
         # unhaunted by the pass the stale sample claimed.
         self.assertEqual(self._poll(8.0, lead=1200, live=(50.0, 2.8, 0.2)), 16)

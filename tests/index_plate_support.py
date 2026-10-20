@@ -705,7 +705,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
     def _compact_view(self, layers, hydrated, followed=None):
         index = make_index(layers=layers, motions=20, compact=True)
         index.hydrated_layers = set(hydrated)
-        index.followed_layer = followed
+        self.service._residency.set_window("live", followed)
         self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
         return index

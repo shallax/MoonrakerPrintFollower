@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Read caller-owned residency demands at hydration completion.
 # 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
 
 """Hydrate one compact index layer, retaining its opening modal state."""
@@ -24,20 +25,18 @@ from .MotionIndex import LayerMotionIndex
 
 def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                             keep_anchor: Optional[int] = None,
-                            should_stop: Optional[Callable[[], bool]] = None) -> bool:
+                            should_stop: Optional[Callable[[], bool]] = None, *,
+                            retention: Optional[Callable[[], frozenset[int]]] = None) -> bool:
     """Populate motion data for one layer of a compact large-file index.
 
     Boundary indexing keeps RAM bounded for huge files. Motion commands are then
     loaded only for layers actually viewed during the live print. Byte-position
     following remains available while hydration is pending.
 
-    keep_anchor names the FOLLOWED layer: the eviction window keeps
-    [anchor-1, anchor+1] around it, so a prefetched look-ahead layer
-    survives and the window follows the print rather than whichever
-    layer the background worker picked last. Without keep_anchor the
-    anchor is the index's followed_layer (set by the service, read
-    HERE at completion so a worker finishing after an anchor change
-    applies the latest policy), then the hydrated layer.
+    keep_anchor preserves a caller-selected neighbouring window. Additional
+    consumer windows come from retention(), read at completion under the index
+    lock. The hydrated layer's own window survives until its caller has consumed
+    the arrays; parsed index content carries no consumer selection state.
 
     The parse walks the layer's feature state as well as its geometry:
     the E axis for the travel boundaries and the ;TYPE: markers for the
@@ -219,25 +218,12 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
             # look-ahead layers around the anchor; any reader of an
             # evicted layer sees an empty array (the same degraded
             # fallback as a never-hydrated one).
-            anchor = keep_anchor
-            if anchor is None:
-                anchor = index.followed_layer
-            if anchor is None:
-                anchor = layer
-            # A frozen follower layer is a second anchor: its window
-            # survives the live one's advance (the pop-over's detach
-            # would otherwise evict the very layer it is showing).
-            manual = index.manual_anchor
-            # The freshly hydrated layer's own window is a THIRD
-            # survivor: the background full-cache pass hydrates layers
-            # far outside both anchors and must hold the arrays valid
-            # until its prepare and encode complete — the next pass
-            # hydrate evicts this layer's window, so the union stays
-            # bounded at the live, manual and in-flight windows.
+            retained = set(retention()) if retention is not None else set()
+            anchor = layer if keep_anchor is None else keep_anchor
+            retained.update(range(max(0, anchor - 1), anchor + 2))
+            retained.update(range(max(0, layer - 1), layer + 2))
             for old in sorted(index.hydrated_layers):
-                if (old < anchor - 1 or old > anchor + 1) \
-                        and (manual is None or old < manual - 1 or old > manual + 1) \
-                        and (old < layer - 1 or old > layer + 1):
+                if old not in retained:
                     index.motion_offsets[old] = array("Q")
                     index.motion_x[old] = array("f")
                     index.motion_y[old] = array("f")

@@ -2517,11 +2517,11 @@ if QT_AVAILABLE:
             self.service._view = IndexView(self.job, index)
             self.service._hydrate = {0, 4, 9}
             self.service.set_followed_layer(4)
-            self.assertEqual(index.followed_layer, 4)
+            self.assertEqual(self.service._residency.anchor("live"), 4)
             self.assertEqual(self.service._hydrate, {4})
             # A non-integer anchor and a missing view are no-ops.
             self.service.set_followed_layer("4")
-            self.assertEqual(index.followed_layer, 4)
+            self.assertEqual(self.service._residency.anchor("live"), 4)
             self.service._view = None
             self.service.set_followed_layer(2)
 
@@ -2591,7 +2591,7 @@ if QT_AVAILABLE:
             # back on it, and a stub that rejects the keyword fails the
             # whole batch instead of hydrating the layer.
             with patch("mpf.application.indexing.IndexTasks.hydrate_layer_from_file",
-                       side_effect=lambda index, path, layer, should_stop=None: (
+                       side_effect=lambda index, path, layer, should_stop=None, *, retention=None: (
                            hydrations.append(layer),
                            index.hydrated_layers.add(layer),
                            True)[2]):

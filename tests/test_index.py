@@ -1,3 +1,4 @@
+from mpf.gcode.IndexResidency import IndexResidency
 # Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
 # SPDX-License-Identifier: GPL-3.0-only
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
@@ -462,7 +463,8 @@ G1 X5 Y0 Z0.2
         finally:
             os.remove(path)
 
-    def test_compact_hydration_anchor_reads_the_indexes_followed_layer(self):
+    def test_compact_hydration_anchor_reads_the_consumers_latest_retention(self):
+        residency = IndexResidency()
         # The production connection (the review repro): the service
         # updates the followed layer every poll and the worker reads
         # the LATEST anchor at completion — a prefetch of layer+1 must
@@ -476,15 +478,15 @@ G1 X5 Y0 Z0.2
             handle.write(data)
         try:
             index = build_index_from_file(path, compact=True)
-            index.followed_layer = 3
-            self.assertTrue(hydrate_layer_from_file(index, path, 2))
-            self.assertTrue(hydrate_layer_from_file(index, path, 3))
-            self.assertTrue(hydrate_layer_from_file(index, path, 4))  # the prefetch
+            residency.set_window("live", 3)
+            self.assertTrue(hydrate_layer_from_file(index, path, 2, retention=residency.layers))
+            self.assertTrue(hydrate_layer_from_file(index, path, 3, retention=residency.layers))
+            self.assertTrue(hydrate_layer_from_file(index, path, 4, retention=residency.layers))  # the prefetch
             self.assertEqual(index.hydrated_layers, {2, 3, 4})
             # The print advances; a later worker applies the latest
             # anchor and evicts the stale previous layer.
-            index.followed_layer = 4
-            self.assertTrue(hydrate_layer_from_file(index, path, 5))
+            residency.set_window("live", 4)
+            self.assertTrue(hydrate_layer_from_file(index, path, 5, retention=residency.layers))
             self.assertEqual(index.hydrated_layers, {3, 4, 5})
             # Evicted with its arrays, but the recorded count persists.
             self.assertEqual(index.motion_count(2), 1)

@@ -11,10 +11,13 @@ Version remains 6.0.0. Merge/tag and a live Cura restart are not authorized here
 - [x] Share recovery itinerary between serialization and confirmation; reject
   changed travel after review. Full `make all` passed (6,271 tests); independent
   command replay covers 60 route combinations, and real-QML review tests pass.
-- [ ] Separate index content, residency/demand and application tracking.
-  Host runtime modules have moved to `application/indexing`; neutral cache
-  identity, injected diagnostics and independent installed-cache consumers are
-  implemented. Retention and tracking ownership remain to be extracted.
+- [x] Separate index content, residency/demand and application tracking.
+  Host runtime modules live in `application/indexing`; cache identity and
+  diagnostics are portable. Parsed indexes no longer carry live/manual anchors;
+  workers receive generation-scoped `IndexResidency` capabilities. Live matching
+  belongs to `IndexMotionTracking`. Full `make all` passed with 6,280 tests;
+  coverage is 97.57%, with every production file at least 95%. Cache API exports
+  use `gcode.cache` to preserve unambiguous implementation-module imports.
 - [ ] Extract runout-pause, follower-selection and recovery-source workflows.
 - [ ] Extract settings validation and shared constraints from the Cura adapter.
 - [ ] Separate follower gesture, render-delivery and overlay QML ownership.

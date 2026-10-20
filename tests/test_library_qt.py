@@ -40,7 +40,8 @@ class LibraryQtTests(unittest.TestCase):
         from PyQt6.QtGui import QGuiApplication
         from mpf.gcode import build_index_from_bytes, prepare_layer
         from mpf.gcode.GCodeDocument import GCodeDocument
-        from mpf.plate.qt import GpuFollower, PlateLayer, render_layer_raster
+        from mpf.plate.scenegraph import GpuFollower, PlateLayer
+        from mpf.plate.raster import render_layer_raster
         from tools.check_library import SAMPLE
         app = QGuiApplication.instance() or QGuiApplication([])
         baseline = prepare_layer(build_index_from_bytes(SAMPLE), 0)

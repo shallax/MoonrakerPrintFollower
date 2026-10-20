@@ -18,8 +18,8 @@ MODULES = {
     "moonraker_toolpath": ("__init__",),
     "moonraker_toolpath.gcode": (
         "__init__", "GCodeDocument", "ArcGeometry", "FeatureTracker", "GCodeIndex", "GCodeParser",
-        "IndexAssembly", "IndexHeader", "IndexHydrator", "IndexLimits", "IndexView",
-        "IndexWork", "IndexCache", "IndexCodec", "CachePolicy", "PreparedStore", "RawSourceCache", "SourceIdentity", "MotionIndex", "MotionRanges", "ObjectWork", "PlateProgress", "TravelStates",
+        "IndexAssembly", "IndexHeader", "IndexResidency", "IndexHydrator", "IndexLimits", "IndexView",
+        "IndexWork", "cache", "IndexCache", "IndexCodec", "CachePolicy", "PreparedStore", "RawSourceCache", "SourceIdentity", "MotionIndex", "MotionRanges", "ObjectWork", "PlateProgress", "TravelStates",
     ),
     "moonraker_toolpath.geometry": ("__init__", "Polygons"),
     "moonraker_toolpath.plate": (

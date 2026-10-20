@@ -61,7 +61,7 @@ assert prepare_layer(compact, 0) is None
 assert hydrate_layer_from_file(compact, sys.argv[2], 0)
 assert prepare_layer(compact, 0)['motions'] == payload['motions']
 from tempfile import TemporaryDirectory
-from moonraker_toolpath.gcode import CacheIdentity, PersistentIndexCache, PreparedCache
+from moonraker_toolpath.gcode.cache import CacheIdentity, PersistentIndexCache, PreparedCache, IndexResidency
 with TemporaryDirectory() as cache_directory:
     identity = CacheIdentity('consumer-content-sha256', 'sample.gcode', len(data), 123.0)
     cache = PersistentIndexCache(cache_directory)
@@ -76,6 +76,19 @@ with TemporaryDirectory() as cache_directory:
     assert table is not None
     raw = prepared.read(identity.stable_key(), table['table'], 0)
     assert decode_layer(raw)['motions'] == payload['motions']
+    layered_file = Path(cache_directory) / 'multi.gcode'
+    layered_file.write_bytes(b''.join(b';LAYER:%d\nG1 X%d\n' % (n,n+1) for n in range(6)))
+    compact_view = build_index_from_file(layered_file, compact=True)
+    demands = IndexResidency()
+    demands.set_window('first-reader', 0)
+    demands.set_window('second-reader', 5)
+    for layer in (0, 5, 3):
+        assert hydrate_layer_from_file(compact_view, layered_file, layer, retention=demands.layers)
+    assert compact_view.hydrated_layers == {0, 3, 5}
+    demands.set_window('first-reader', None)
+    assert hydrate_layer_from_file(compact_view, layered_file, 4, retention=demands.layers)
+    assert compact_view.hydrated_layers == {3, 4, 5}
+    assert not hasattr(compact_view, 'followed_layer') and not hasattr(compact_view, 'manual_anchor')
 assert Path(moonraker_toolpath.__file__).is_relative_to(Path(sys.argv[1]))
 assert not any(name.split('.')[0] in {'PyQt6', 'UM', 'cura', 'numpy', 'mpf'} for name in sys.modules)
 print('Core: installed imports, exact boundaries, hydration and stdlib vertices passed')

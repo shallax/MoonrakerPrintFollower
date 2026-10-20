@@ -165,10 +165,19 @@ part of this standalone distribution.
 Raster-only consumers can import `moonraker_toolpath.plate.raster` without loading Qt Quick, QML asset wrappers or worker scheduling. The retained renderer and its layer adapter are available from `moonraker_toolpath.plate.scenegraph`; `plate.qt` continues to provide the combined public API.
 
 The standard-library API also provides `CacheIdentity`, `PersistentIndexCache`,
-`PreparedCache` and `RawSourceCache` from `moonraker_toolpath.gcode`. A
+`PreparedCache` and `RawSourceCache` from `moonraker_toolpath.gcode.cache`. A
 `CacheIdentity` takes an explicit stable key supplied by its caller, with optional
 filename, size, modification time and revision UUID metadata. Custom identities
 can implement the read-only `SourceIdentity` contract. No Moonraker client is
 needed. `PreparedCache(..., log=callback)` accepts a diagnostics callback with
 `(message, *args)`; logging is silent unless supplied. Application-specific
 scheduling and printer cache binding are excluded from the wheel.
+
+For compact indexing, create an `IndexResidency` from `moonraker_toolpath.gcode.cache`, call
+`set_window(reader_token, layer, radius=1)` for each independent reader, and pass
+`retention=residency.layers` to `hydrate_layer_from_file`. The callback is read at
+hydration completion. `set_window(reader_token, None)` releases only that reader;
+the freshly hydrated layer's neighbouring window also survives long enough to
+prepare its geometry. Capture one residency owner per source generation so an
+old worker cannot adopt another file's demands. Parsed indexes do not contain
+printer/follower selection fields.

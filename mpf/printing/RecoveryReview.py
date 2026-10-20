@@ -76,6 +76,7 @@ def review_recovery(plan, supplied):
         if action.kind == 'dwell':
             actions[-1]['text'] = actions[-1]['text'].rstrip('.') + f'; then dwell for {action.seconds:.2f} s.'
             actions[-1]['commands'] = [actions[-1]['command'], 'M400', action.command]
+            actions[-1]['seconds'] += action.seconds
             continue
         actions.append(action_document(action))
         point = action.position

@@ -33,7 +33,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         captured = self._capture_submit()
         self.qt.load("GCodeIndexService")
         self.service._foreground_pending.set()  # A prior foreground demand settled.
-        def hydrate(target, path, layer, should_stop):
+        def hydrate(target, path, layer, should_stop, *, retention=None):
             self.assertIs(target, index)
             self.assertEqual(layer, 5)
             self.assertFalse(should_stop(), "the array worker cancelled on an old demand")
@@ -70,8 +70,8 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
 
     def test_gpu_prefetch_only_uses_nearby_existing_sources_once(self):
         index = self._view(20)
-        index.manual_anchor = 10
-        index.followed_layer = 3
+        self.service._residency.set_window("manual", 10)
+        self.service._residency.set_window("live", 3)
         self.assertIsNone(self.service._gpu_prefetch_layer(index))
         with harness.patch.object(self.service, "_advance"):
             self.service.set_gpu_rendering("popover", True)
@@ -89,8 +89,8 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
     def test_gpu_speculation_decodes_without_file_or_motion_arrays_and_yields_to_seek(self):
         index = self._view(8)
         index.compact = True
-        index.manual_anchor = 3
-        index.followed_layer = 3
+        self.service._residency.set_window("manual", 3)
+        self.service._residency.set_window("live", 3)
         self.service._full_cache.set(5, self._payload(5), 100)
         with harness.patch.object(self.service, "_advance"):
             self.service.set_gpu_rendering("popover", True)
@@ -396,8 +396,8 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # hydrated immediately, while the decoded presentation cache is
         # initially empty. CURRENT must still be prepared, and it must
         # land before either ghost without reacquiring the G-code.
-        index = self._view(5)
-        index.followed_layer = 2
+        self._view(5)
+        self.service._residency.set_window("live", 2)
         self.service._last_save_at = harness.time.monotonic()  # keep index-save out of this ordering test
         self.service._prepared.open(self.files.identity)
         requests = []
@@ -653,7 +653,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # The worker-visible callback must interrupt that same layer and
         # let CURRENT commit before background work resumes.
         index = harness.make_index(layers=40, motions=20000)
-        index.followed_layer = 0
+        self.service._residency.set_window("live", 0)
         self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
         self.service._prepared.open(self.files.identity)
@@ -1451,7 +1451,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # and the slider stayed disabled).
         index = self.qt.load("GCodeIndex").build_index_from_bytes(
             b"".join(b";LAYER:%d\nG1 X0 Y0 E0.1\n" % layer for layer in range(5)))
-        index.followed_layer = 3
+        self.service._residency.set_window("live", 3)
 
         class Cache:
             def load(self, identity):

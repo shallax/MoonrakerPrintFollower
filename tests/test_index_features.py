@@ -8,6 +8,7 @@
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
 
 """Executable index features contracts."""
+from mpf.gcode.IndexResidency import IndexResidency
 from mpf.gcode import IndexCodec as index_codec, IndexCache as index_cache
 from tests import index_plate_support as harness
 
@@ -525,6 +526,7 @@ class FeatureRetentionTests(harness.FeatureRetentionTests):
         self.assertEqual(index.travel_starts[2], [1])
 
     def test_the_frozen_layer_holds_its_own_window_beside_the_live_print(self):
+        residency = IndexResidency()
         data = b"M82\n" + b"".join(b";LAYER:%d\nG1 X%d E1.0\n" % (n, n + 1) for n in range(6))
         path = harness._write_gcode(data)
         self.addCleanup(harness.os.remove, path)
@@ -533,9 +535,9 @@ class FeatureRetentionTests(harness.FeatureRetentionTests):
         # (the pop-over's detach). Every hydration here evicts against
         # the live window alone — the frozen layer and its own
         # neighbours survive on the second anchor.
-        index.manual_anchor = 5
+        residency.set_window("manual", 5)
         for layer in (5, 4, 3, 2):
-            self.assertTrue(harness.hydrate_layer_from_file(index, path, layer, keep_anchor=0))
+            self.assertTrue(harness.hydrate_layer_from_file(index, path, layer, keep_anchor=0, retention=residency.layers))
         # The frozen layer and the neighbour below it hold, and each
         # freshly hydrated layer keeps its own ±1 window until the
         # NEXT hydrate evicts it (the background pass's guarantee:

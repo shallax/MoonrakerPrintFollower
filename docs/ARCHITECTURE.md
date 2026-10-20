@@ -307,6 +307,9 @@ correct package ownership.
 | `IndexAssembly.py` | Projection of completed scan records into a motion index, pause/marker maps and metric ranges | File reads or scheduling |
 | `SourceIdentity.py` | Caller-owned source identity contract and explicit cache keys | Printer protocol or host logging |
 | `ProcessOwner.py` | Conservative read-only process liveness | Printer or UI state |
+| `IndexResidency.py` | Generation-scoped independent consumer windows read by workers at hydration completion | Parsed content and printer selection policy |
+| `IndexMotionTracking.py` | Accepted live motion matching over index and prepared geometry inputs | Build scheduling or cache ownership |
+| `cache.py` | Portable cache and residency consumer API without shadowing implementation modules | Host indexing lifecycle |
 | `IndexCache.py` | Persistent index cache files, atomic writes and eviction | Parsing or Qt |
 | `IndexCodec.py` | Cache format, bounds and validation of event/feature/arc columns | File lifetime or scheduling |
 | `IndexHeader.py` | Slicer marker sniffing and filament metadata | Motion state or the hot scan loop |
@@ -2531,3 +2534,10 @@ implementation. `CacheIdentity` lets an outside consumer supply its own stable
 key and metadata. Prepared-cache diagnostics are an injected callback; the
 application cache namespace supplies Uranium logging. `storage.ProcessOwner`
 provides the single conservative liveness probe used by cache and transfer cleanup.
+
+`IndexResidency` holds independent consumer windows outside parsed motion content.
+The application supplies its live/manual windows; workers capture the generation's
+`layers` capability and read it under the index commit lock at hydration completion.
+Hydrated-layer windows remain protected through preparation. `IndexMotionTracking`
+owns accepted physical progress and continuity; the indexing service supplies a
+read-only index view and the prepared payload rather than owning that tracker.

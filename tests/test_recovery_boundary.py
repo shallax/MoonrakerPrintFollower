@@ -6,6 +6,7 @@
 # 2026-10-13 [3f9fcb5] Begin v6 recovery with exact follower boundary mapping
 
 """Exact scrub-to-file mapping used by the planned print recovery flow."""
+from mpf.gcode.IndexResidency import IndexResidency
 import os
 import tempfile
 import unittest
@@ -54,15 +55,16 @@ class RecoveryBoundaryTests(unittest.TestCase):
         self.assertIsNone(view.recovery_boundary(2, -1))
 
     def test_compact_or_evicted_arrays_never_fall_back_to_estimated_bytes(self):
+        residency = IndexResidency()
         view = self.view(compact=True)
-        view._index.followed_layer = 1  # retain the three-layer window
+        residency.set_window("live", 1)
         self.assertIsNone(view.recovery_boundary(0, 1))
-        self.assertTrue(hydrate_layer_from_file(view._index, self.path, 0))
+        self.assertTrue(hydrate_layer_from_file(view._index, self.path, 0, retention=residency.layers))
         self.assertIsNotNone(view.recovery_boundary(0, 1))
         self.assertIsNone(view.recovery_boundary(0, -1))  # next layer unavailable
-        self.assertTrue(hydrate_layer_from_file(view._index, self.path, 1))
+        self.assertTrue(hydrate_layer_from_file(view._index, self.path, 1, retention=residency.layers))
         self.assertIsNone(view.recovery_boundary(0, -1))  # layer 2 still unavailable
-        self.assertTrue(hydrate_layer_from_file(view._index, self.path, 2))
+        self.assertTrue(hydrate_layer_from_file(view._index, self.path, 2, retention=residency.layers))
         self.assertIsNotNone(view.recovery_boundary(0, -1))
         view._index.motion_offsets[0] = view._index.motion_offsets[0][:0]
         self.assertIsNone(view.recovery_boundary(0, 1))

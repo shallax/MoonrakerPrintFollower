@@ -45,6 +45,7 @@ CuraIntegration.py
   makes that disconnect raise.
 """
 from __future__ import annotations
+from mpf.gcode.IndexResidency import IndexResidency
 
 import mpf.gcode.GCodeIndex as gcode_index
 
@@ -520,21 +521,22 @@ class HydrationTests(unittest.TestCase):
         self.assertEqual(index.motion_count(1), 0)
 
     def test_the_retention_window_follows_the_anchor(self):
+        residency = IndexResidency()
         index, path = self._compact(6)
         for layer in (0, 1, 2):
-            hydrate_layer_from_file(index, path, layer)
+            hydrate_layer_from_file(index, path, layer, retention=residency.layers)
         # The newest hydration sets the anchor, so the window keeps [1, 3]
         # and drops layer 0 rather than growing without bound.
         self.assertEqual(index.hydrated_layers, {1, 2})
-        index.followed_layer = 4
-        hydrate_layer_from_file(index, path, 3)
+        residency.set_window("live", 4)
+        hydrate_layer_from_file(index, path, 3, retention=residency.layers)
         # The live print's layer wins over the worker's pick: the window
         # is [3, 5] around layer 4, not around the hydrated layer 3.
         # The freshly hydrated layer keeps its own ±1 window too (the
         # background pass's prepare window), so the walk's survivor 2
         # stays until the next hydrate evicts it.
         self.assertEqual(index.hydrated_layers, {2, 3})
-        hydrate_layer_from_file(index, path, 5)
+        hydrate_layer_from_file(index, path, 5, retention=residency.layers)
         self.assertEqual(index.hydrated_layers, {3, 5})
         hydrate_layer_from_file(index, path, 0, keep_anchor=0)
         self.assertEqual(index.hydrated_layers, {0})
