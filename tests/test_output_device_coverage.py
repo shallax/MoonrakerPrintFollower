@@ -68,12 +68,14 @@ if QT_AVAILABLE:
     class UploadReply(QObject):
         """The multipart reply: the test owns the body and the terminal."""
 
+        readyRead = pyqtSignal()
         uploadProgress = pyqtSignal(int, int)
         finished = pyqtSignal()
 
         def __init__(self, body=None):
             super().__init__()
             self._body = body or {}
+            self._offset = 0
             self.deleted = 0
 
         def error(self):
@@ -81,7 +83,13 @@ if QT_AVAILABLE:
             return QNetworkReply.NetworkError.NoError
 
         def errorString(self): return ""
-        def readAll(self): return json.dumps(self._body).encode()
+        def setReadBufferSize(self, size): self._read_limit = size
+        def read(self, size):
+            raw = json.dumps(self._body).encode()
+            data = raw[self._offset:self._offset + size]
+            self._offset += len(data)
+            return data
+        def readAll(self): return self.read(len(json.dumps(self._body).encode()))
         def abort(self): pass
         def isRunning(self): return False
         def deleteLater(self): self.deleted += 1

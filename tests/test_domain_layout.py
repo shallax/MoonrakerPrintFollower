@@ -65,7 +65,7 @@ RULES = {
     "mpf.gcode": (("mpf.gcode", "mpf.geometry", "mpf.storage"), ()),
     "mpf.settings": (("mpf.settings",), ("mpf.printing.FollowMode", "mpf.geometry.DetectionRegions", "mpf.geometry.ToolheadLighting", "mpf.geometry.ToolheadMaterials", "mpf.geometry.ToolheadOpacity", "mpf.geometry.ToolheadRotors")),
     "mpf.moonraker": (("mpf.moonraker",), ("mpf.diagnostics.CameraTiming",)),
-    "mpf.files.browser": (("mpf.files.browser",), ("mpf.moonraker.MoonrakerProtocol",)),
+    "mpf.files.browser": (("mpf.files.browser",), ("mpf.moonraker.MoonrakerProtocol", "mpf.moonraker.MultipartUpload", "mpf.moonraker.ReplyBodyReader")),
     "mpf.files.transfers": (("mpf.files.transfers", "mpf.moonraker"),
                            ("mpf.settings.PrinterConfig", "mpf.storage.ProcessOwner")),
 }

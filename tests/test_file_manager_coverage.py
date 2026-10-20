@@ -37,7 +37,7 @@ import shutil
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from qt_runtime_support import QT_AVAILABLE, ScriptedTransport
 
@@ -1188,9 +1188,9 @@ class ThumbnailTests(ServiceCase):
         self.assertEqual(self.service._thumbnails._active, 0)
 
     def test_abort_uploads_survives_replies_that_refuse_to_abort(self):
-        self.service._upload_replies["upload-1"] = (ThumbReply(disposal_raises=True), "a.gcode")
+        self.service._uploads["upload-1"] = (SimpleNamespace(cancel=Mock(side_effect=OSError("busy")), deleteLater=Mock()), "a.gcode")
         self.service._abort_uploads()
-        self.assertEqual(self.service._upload_replies, {})
+        self.assertEqual(self.service._uploads, {})
 
     def test_clear_thumbnails_survives_a_tree_removal_failure(self):
         self.service._thumbnails._entries["a.gcode"] = {"state": "ready", "url": "file:///x.png"}
@@ -1236,14 +1236,14 @@ class UploadTests(ServiceCase):
         self.service.uploadProgress.connect(progress.append)
         self.service.uploadFinished.connect(lambda ok, detail: verdicts.append((ok, detail)))
         self.assertTrue(self.service.upload_file(self.upload_source()))
-        self.assertEqual(len(self.service._upload_replies), 1)
+        self.assertEqual(len(self.service._uploads), 1)
         reply.uploadProgress.emit(1, 2)
         self.assertEqual(progress, [50])
         reply.finished.emit()
         self.assertEqual(verdicts, [(True, "bench.gcode")])
         self.assertEqual([note for note in self.notes if note.startswith("Uploaded")],
                          ["Uploaded bench.gcode."])
-        self.assertFalse(self.service._upload_replies)
+        self.assertFalse(self.service._uploads)
 
     def test_upload_failure_surfaces_the_hosts_words_or_the_transport_text(self):
         self.open_listing()
@@ -1278,7 +1278,7 @@ class UploadTests(ServiceCase):
         self.assertEqual(verdicts[-1], (False, "A file named bench.gcode already exists."))
         self.reply_for(ScriptedReply())
         self.assertTrue(self.service.upload_file(self.upload_source(), overwrite=True))
-        self.assertEqual([relpath for _reply, relpath in self.service._upload_replies.values()],
+        self.assertEqual([relpath for _reply, relpath in self.service._uploads.values()],
                          ["prints/bench.gcode"])
 
     def test_an_upload_that_outlives_its_printer_resolves_with_a_verdict(self):

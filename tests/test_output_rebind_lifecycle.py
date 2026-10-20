@@ -29,7 +29,7 @@ class OutputRebindLifecycleTests(unittest.TestCase):
     def test_deactivation_cancels_transport_and_streaming_upload_work(self):
         cleanup = LIFECYCLE[LIFECYCLE.index("def _finish"):]
         self.assertIn("transport.cancel_owner(self.owner)", cleanup)
-        self.assertLess(cleanup.index("reply, self._reply = self._reply, None"), cleanup.index("reply.abort()"))
+        self.assertLess(cleanup.index("operation, self._upload_operation = self._upload_operation, None"), cleanup.index("operation.cancel(notify=False)"))
         self.assertIn("self._generation += 1", cleanup)
         self.assertIn("QTimer.singleShot(0, terminal)", cleanup)
         self.assertIn("self._upload.terminal_delivered()", BASE)

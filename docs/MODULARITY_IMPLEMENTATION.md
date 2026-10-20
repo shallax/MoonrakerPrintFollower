@@ -38,8 +38,11 @@ Version remains 6.0.0. Merge/tag and a live Cura restart are not authorized here
   checkpoints. Publication and active-printer adoption remain with the Qt
   presenter. Standalone owner and real-QML editor tests preserve both paths.
 - [ ] Separate detection action state and effects from host notifications.
-- [ ] Consolidate process-liveness, streaming multipart uploads, printer object
-  classification and recovery lexical/refusal interfaces.
+- [x] Consolidate process-liveness, streaming multipart uploads, printer object
+  classification and recovery lexical/refusal interfaces. `MultipartUpload` owns
+  streaming file devices, bounded response bytes, cancellation/progress and
+  terminal results for both consumers; readiness/start-print policy remains
+  with its workflow. Reply-body reading now has one network-domain owner.
 - [ ] Extract Preview object-tag presentation. Bed-mesh sampling/geometry now
   belongs to a host-independent NumPy array builder, used by the scene adapter
   and the installed library consumer.
@@ -58,7 +61,8 @@ or replacing private/shared-owner access does not satisfy an item.
 Shared-primitives progress: object families/fan writability now live in
 `moonraker.PrinterObjects`; source lexical definitions are public; recovery
 refusals carry ordered command evidence independently of setup navigation.
-Streaming multipart ownership remains to be consolidated.
+Streaming multipart ownership is shared by both consumers and independently
+qualified for bounded replies, reentrant aborts, shutdown and start failures.
 
 The settings/workflow batch passed full `make all` with 6,300 tests. Coverage
 is 97.72%; every production file clears 95%, and the new validation, workflow,

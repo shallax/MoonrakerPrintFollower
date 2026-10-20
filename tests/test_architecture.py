@@ -232,9 +232,10 @@ class SourceContractTests(unittest.TestCase):
             'FileDownload': {'RemoteFileService'},
             'FileBrowserPresentation': {'FileFormatting', 'FileManagerPolicy', 'FilesViewModel'},
             'FileFormatting': set(),
-            'FileManager': {'FileManagerPolicy', 'MoonrakerProtocol', 'ReplyBodyReader', 'ThumbnailCache'},
+            'FileManager': {'MultipartUpload', 'FileManagerPolicy', 'MoonrakerProtocol', 'ReplyBodyReader', 'ThumbnailCache'},
             'FileManagerPolicy': set(),
             'ReplyBodyReader': set(),
+            'MultipartUpload': {'ReplyBodyReader'},
             'FilesViewModel': set(),
             'FollowController': {'FollowMode'},
             'FollowMode': set(),
@@ -372,7 +373,7 @@ class SourceContractTests(unittest.TestCase):
             'ToolheadPolicy': set(),
             'TravelStates': set(),
             'UiStateStore': set(),
-            'UploadController': {'MoonrakerTransport', 'PrinterConfig'},
+            'UploadController': {'MultipartUpload', 'MoonrakerProtocol', 'PrinterConfig'},
             'WhatsNew': set(),
             'WhatsNewOverlay': {'PluginPaths', 'WhatsNew'},
         }
@@ -768,7 +769,10 @@ class CompositionStructureTests(unittest.TestCase):
         output = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")
         follower_transport = (PLUGINS / "RemoteFileService.py").read_text(encoding="utf-8")
         self.assertIn("transport.send_json", output)
-        self.assertIn("transport.network.post", output)
+        multipart = (PLUGINS / "MultipartUpload.py").read_text(encoding="utf-8")
+        self.assertIn("MultipartUpload(self._client.transport, self)", output)
+        self.assertIn("self._transport.network.post", multipart)
+        self.assertNotIn("QHttpMultiPart(", output)
         self.assertNotIn("QNetworkAccessManager", output)
         self.assertIn("self._transport.send_json", follower_transport)
         self.assertIn("self._transport.request", follower_transport)
@@ -794,7 +798,9 @@ class CompositionStructureTests(unittest.TestCase):
         self.assertIn("self._client.connected", source)
         self.assertIn("self._upload()", source)
         self.assertNotIn("getvalue()", source)
-        self.assertIn("part.setBodyDevice(file)", source)
+        multipart = (PLUGINS / "MultipartUpload.py").read_text(encoding="utf-8")
+        self.assertIn("part.setBodyDevice(source)", multipart)
+        self.assertNotIn("getvalue()", multipart)
 
     def test_active_machine_switch_resets_session_before_new_binding(self):
         source = (PLUGINS / "PrinterBinding.py").read_text(encoding="utf-8")

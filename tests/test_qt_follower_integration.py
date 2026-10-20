@@ -619,11 +619,14 @@ class QtRuntimeTests(harness.QtRuntimeTests):
         completed, errors = [], []
         device.writeFinished.connect(completed.append)
         device.writeError.connect(errors.append)
+        from mpf.moonraker.MultipartUpload import MultipartUpload, UploadResult
         reply = harness.Mock()
-        reply.isRunning.return_value = True
+        operation = MultipartUpload(transport, device._upload)
         generation = device._upload._generation
-        reply.abort.side_effect = lambda: device._upload._uploaded(reply, generation)
-        device._upload._reply = reply
+        operation._reply = reply
+        operation.finished.connect(lambda result: device._upload._uploaded(operation, generation, result))
+        reply.abort.side_effect = lambda: operation.finished.emit(UploadResult(cancelled=True))
+        device._upload._upload_operation = operation
         device.deactivate()
         self.qt.events()
         reply.abort.assert_called_once()

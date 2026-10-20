@@ -7,6 +7,7 @@
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-30 [f425547] mpf's subpackages are capitalised
 # 2026-09-11 [1c33814] 3.6.0: file manager, console resize, and e-stop reconnect
+# 2026-10-20 — 6.0.0: Delegate streaming upload lifetime to the shared multipart operation.
 
 """The file-manager service: resident listing, history and view state.
 
@@ -21,17 +22,15 @@ generation so stale callbacks can never publish.
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import quote
 
-from PyQt6.QtCore import QByteArray, QFile, QIODevice, QObject, QVariant, pyqtSignal
-from PyQt6.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkReply, QNetworkRequest
+from PyQt6.QtCore import QObject, pyqtSignal
 
 from ...moonraker.MoonrakerProtocol import (
-    _moonraker_error_text,
+    moonraker_error_text,
     delete_endpoint,
     directory_create_endpoint,
     directory_delete_endpoint,
@@ -62,11 +61,11 @@ from .FileManagerPolicy import (
     rename_target,
     upload_relpath,
 )
-from .ReplyBodyReader import ReplyBodyReader
+from ...moonraker.ReplyBodyReader import ReplyBodyReader
+from ...moonraker.MultipartUpload import MultipartUpload
 from .ThumbnailCache import ThumbnailCache
 
 MAX_DIRECTORIES = 50
-MAX_UPLOAD_REPLY_BYTES = 1024 * 1024
 
 
 class FileManager(QObject):
@@ -119,7 +118,7 @@ class FileManager(QObject):
         # Upload operations key on their operation id, never the
         # destination path: a second upload of the same name must not
         # orphan the first's reply or let it emit a stale verdict.
-        self._upload_replies: Dict[str, tuple] = {}
+        self._uploads: Dict[str, tuple] = {}
         self._upload_seq = 0
         # Snapshot 3's column config lives HERE, not in the model (the
         # live ruling: the file manager is its own thing, composed
@@ -477,7 +476,7 @@ class FileManager(QObject):
             self.uploadFinished.emit(False, f"A file named {name} already exists.")
             self.note.emit(f"Upload refused: a file named {name} already exists.")
             return False
-        if any(in_flight == relpath for _reply, in_flight in self._upload_replies.values()):
+        if any(in_flight == relpath for _reply, in_flight in self._uploads.values()):
             # The ruling: a second upload of the same name while one
             # runs is refused with a verdict, never queued.
             self.uploadFinished.emit(False, f"An upload of {name} is already running.")
@@ -485,80 +484,46 @@ class FileManager(QObject):
             return False
         transport = self._client.transport
         try:
-            source = QFile(local_path)
-            if not source.open(QIODevice.OpenModeFlag.ReadOnly):
-                raise OSError(source.errorString())
-            multipart = QHttpMultiPart(QHttpMultiPart.ContentType.FormDataType)
-            part = QHttpPart()
-            part.setHeader(QNetworkRequest.KnownHeaders.ContentDispositionHeader,
-                           QVariant(f'form-data; name="file"; filename="{name}"'))
-            part.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, QVariant("application/octet-stream"))
-            part.setBodyDevice(source)
-            multipart.append(part)
             fields = {"root": "gcodes"}
             if self._directory:
                 fields["path"] = "/".join(self._directory)
-            for field, value in fields.items():
-                part = QHttpPart()
-                part.setHeader(QNetworkRequest.KnownHeaders.ContentDispositionHeader,
-                               QVariant(f'form-data; name="{field}"'))
-                part.setBody(QByteArray(value.encode()))
-                multipart.append(part)
-            request = transport.request("server/files/upload", timeout_ms=30000)
-            reply = transport.network.post(request, multipart)
-            # The same raw-reply ownership law as thumbnails: the
-            # reply rides the registry into a bound-method handler;
-            # the multipart and file device live as the reply's
-            # children so nothing dies mid-stream.
-            multipart.setParent(reply)
-            source.setParent(reply)
+            operation = MultipartUpload(transport, self)
             self._upload_seq += 1
             op_id = f"upload-{self._upload_seq}"
-            self._upload_replies[op_id] = (reply, relpath)
-            self._bodies.watch(reply, MAX_UPLOAD_REPLY_BYTES)
-            reply.uploadProgress.connect(
-                lambda sent, total, g=generation: self.uploadProgress.emit(
-                    max(0, min(100, int(sent * 100 / total))))
-                if total > 0 and g == self._generation else None)
-            reply.finished.connect(
-                lambda r=reply, p=op_id, g=generation, n=name: self._upload_finished(p, r, g, n)
-            )
+            self._uploads[op_id] = (operation, relpath)
+            operation.progress.connect(lambda percent, g=generation:
+                self.uploadProgress.emit(percent) if g == self._generation else None)
+            operation.finished.connect(lambda result, op=operation, p=op_id, g=generation, n=name:
+                self._upload_finished(p, op, g, n, result))
+            try:
+                operation.start(local_path, name, fields)
+            except Exception:
+                self._uploads.pop(op_id, None)
+                operation.cancel(notify=False)
+                operation.deleteLater()
+                raise
             return True
         except Exception as error:
             self.uploadFinished.emit(False, str(error))
             self.note.emit(f"Upload refused: {error}")
             return False
 
-    def _upload_finished(self, op_id: str, reply, generation: int, name: str) -> None:
-        reply._mpf_body_finished = True
-        entry = self._upload_replies.get(op_id)
-        if entry is not None and entry[0] is reply:
-            self._upload_replies.pop(op_id, None)
-        try:
-            response_body = self._bodies.take(reply, MAX_UPLOAD_REPLY_BYTES)
-        except ValueError:
-            response_body = b""
+    def _upload_finished(self, op_id, operation, generation, name, result):
+        entry = self._uploads.get(op_id)
+        if entry is not None and entry[0] is operation:
+            self._uploads.pop(op_id, None)
         if generation != self._generation:
-            # The printer changed mid-upload: the popup must resolve
-            # with a verdict, not hang.
             self.uploadFinished.emit(False, "The printer changed during the upload.")
-        elif getattr(reply, "_mpf_body_overflow", False):
+        elif result.overflow:
             self.uploadFinished.emit(False, "Upload response exceeds the size limit.")
             self.note.emit("Upload response exceeds the size limit.")
-        elif reply.error() != QNetworkReply.NetworkError.NoError:
-            detail = reply.errorString()
-            try:
-                body = json.loads(response_body.decode("utf-8", errors="replace"))
-                # The refusal words ride two shapes: flat, or nested
-                # under "error" (Moonraker's newer form — the
-                # transport unwraps the same way).
-                inner = body.get("error") if isinstance(body, dict) else None
-                words = _moonraker_error_text(inner if isinstance(inner, dict)
-                                              else body) if isinstance(body, dict) else ""
-                if words:
-                    detail = words
-            except Exception:
-                pass
+        elif result.network_error or result.cancelled:
+            detail = result.network_error or "Upload cancelled"
+            body = result.payload()
+            inner = body.get("error")
+            words = moonraker_error_text(inner if isinstance(inner, dict) else body)
+            if words:
+                detail = words
             self.uploadFinished.emit(False, detail)
             self.note.emit(f"Upload refused: {detail}")
         else:
@@ -566,26 +531,18 @@ class FileManager(QObject):
             self.note.emit(f"Uploaded {name}.")
             self.changed.emit()
             self.refresh()
-        # Every terminal path disposes the reply exactly once; the
-        # multipart and the source QFile close with it (parented
-        # children of the reply).
-        reply.deleteLater()
+        operation.deleteLater()
 
-    def _abort_uploads(self) -> None:
-        # Ownership is invalidated BEFORE abort: abort() emits finished
-        # synchronously, and the re-entrant handler must find no
-        # registry entry (the ordering rule shared with the thumbnails).
-        pending = list(self._upload_replies.items())
-        self._upload_replies.clear()
-        for _op_id, (reply, _relpath) in pending:
+    def _abort_uploads(self):
+        # Invalidate registry before cancellation's synchronous terminal signal.
+        pending = list(self._uploads.values())
+        self._uploads.clear()
+        for operation, _relpath in pending:
             try:
-                reply.abort()
+                operation.cancel()
             except Exception:
                 pass
-            try:
-                reply.deleteLater()
-            except Exception:
-                pass
+            operation.deleteLater()
 
     def rename_directory(self, directory: str, new_name: Any, overwrite: bool = False, printing_relpath: str = "") -> bool:
         """Snapshot 3: rename a FOLDER (a live request —

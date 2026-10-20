@@ -269,6 +269,7 @@ correct package ownership.
 | `FileFormatting.py` | Pure file-table units and local-time labels | Qt, network or a screen model |
 | `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection and the LOCAL-file upload (its own multipart path) | MoonrakerMonitorModel |
 | `ThumbnailCache.py` | The listing thumbnails' whole lifecycle: the bounded fetch queue, the in-flight reply registry with its identity check, the generation that invalidates both together, the temp tree the bodies land in and the cache the listing rekeys on rename | Rows, the walk or a listing rebuild |
+| `MultipartUpload.py` | Streaming multipart file/reply lifetime, bounded terminal bodies, cancellation and progress | Readiness, power or print-start policy |
 | `ReplyBodyReader.py` | The hard byte cap on the replies the file chrome reads itself: one drain per readyRead, overflow aborts the transfer and drops the bytes, one disposal per reply | Transfer workflows or reply policy beyond the cap |
 | `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
 | `SectionLayoutPolicy.py` | The static pane→section table (Controls 14, Information 4, Status 6), including the Failure Detection controls after Print, and the section-layout normaliser — unknown ids drop, missing ids fill, hidden ids dedupe and sort | Qt, the store, any id vocabulary outside the table |
@@ -2589,3 +2590,12 @@ contains the editable appearance families, lights, rotors and tip values.
 Checkpoints clone those values and restore only for the same printer identity
 and mesh object. Replacing a model resets local appearance while retaining the
 existing global material/detail preferences.
+
+`MultipartUpload` owns one file device, multipart body and reply. Progress is
+clamped once; `UploadResult` carries immutable bounded response bytes, transport
+error and cancellation/overflow flags. Each payload read returns a fresh parsed
+mapping. Cancellation invalidates the operation before abort, so synchronous
+`finished` cannot publish a second result. Both upload workflows use this owner;
+the file manager retains name/directory policy, and the Cura upload workflow
+retains power/readiness and print-start outcome decisions. `ReplyBodyReader`
+lives in the Moonraker network package and also serves thumbnail responses.
