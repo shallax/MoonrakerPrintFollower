@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-20 — 6.0.0: Target application prepared-session ownership during cache reopen.
+# 2026-10-20 — 6.0.0: Verify deferred array ownership during lease-less prepared-cache reopen.
 # 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
 # 2026-10-02 [5253a2f] Make prepared batch yield assertion scheduling independent
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
@@ -482,9 +482,14 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.assertTrue(self.service._prepared.complete,
                         "the complete store never took the fast path")
         submitted = []
+        lease_less_array_requests = []
         original_submit = self.service._submit
-        self.service._submit = lambda kind, work, lease=None: (
-            submitted.append((kind, lease)) or original_submit(kind, work, lease))
+        def submit(kind, work, lease=None):
+            submitted.append((kind, lease))
+            if kind == "hydrate" and lease is None:
+                lease_less_array_requests.append(work.__self__.arrays_owed)
+            return original_submit(kind, work, lease)
+        self.service._submit = submit
 
         # Phase one: no raw file at all. The prepared payload must reach
         # the hot cache anyway — the arrays are the file's business.
@@ -505,6 +510,11 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.assertTrue(all(lease is None for kind, lease in submitted if kind == "hydrate"),
                         "the presentation pass waited on a lease it does not need")
         self.assertNotIn(1, index.hydrated_layers, "an absent file hydrated arrays")
+        self.assertIn(1, self.service._hydrate_arrays,
+                      "the service lost the deferred physical-array demand")
+        self.assertTrue(lease_less_array_requests)
+        self.assertTrue(all(not owed for owed in lease_less_array_requests),
+                        "a cached-geometry worker received array work without its source lease")
 
         # Phase two: the raw file arrives. The arrays hydrate off the
         # recorded demand alone — the layer is already decoded, so

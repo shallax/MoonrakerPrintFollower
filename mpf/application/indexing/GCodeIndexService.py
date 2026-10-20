@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Retain deferred motion-array work until its raw source lease arrives.
 # 2026-10-20 — 6.0.0: Delegate live matching and consumer residency to explicit owners.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-01 [1866243] Persist print sources and publish live download progress
@@ -1012,6 +1013,10 @@ class GCodeIndexService(QObject):
             return
         if arrays_owed and lease is None:
             self._hydrate_arrays.update(arrays_owed)
+            # The service owns this deferred demand. The presentation worker
+            # can decode cached geometry now, but has no source for arrays;
+            # only the later leased array task should receive that work.
+            arrays_owed.clear()
             self._files.request_file()
         self._hydrating = set(submitted)
         cache = self._full_cache
