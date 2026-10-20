@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Inspect actual raster asset/reference lifetime and worker owners.
 # 2026-09-30 [00b0e3e] Spell the discard sweep's URLs the way the renderer spells them
 # 2026-09-30 [1634aac] Cover the controller's seams and drop an accessor nothing called
 

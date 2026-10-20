@@ -3,10 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Use protocol-owned printer-object classification during discovery.
 # 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 # 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
-# 2026-10-20 — 6.0.0: Use protocol-owned printer-object classification during discovery.
 
 """Active Monitor request/poll lifecycle and immutable data projections."""
 from __future__ import annotations

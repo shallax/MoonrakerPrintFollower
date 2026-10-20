@@ -3,10 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Compose cancellable import jobs and named appearance drafts/checkpoints.
 # 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
 # 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-10-20 — 6.0.0: Compose cancellable import jobs and named appearance drafts/checkpoints.
 
 """One optional CAD worker and a transactional settings draft per active printer."""
 from __future__ import annotations

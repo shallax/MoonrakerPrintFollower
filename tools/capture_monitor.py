@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Use the raster painter owner for seeded monitor capture geometry.
 # 2026-10-18 — 6.0.0: Model decoded frame progress in deterministic healthy-camera captures.
 # 2026-10-04 [95512c0] Polish monitor mini beds and refresh release screenshots
 # 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions

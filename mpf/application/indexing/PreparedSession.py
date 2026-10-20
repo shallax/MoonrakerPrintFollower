@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Place prepared-store host lifecycle in application indexing with explicit core imports.
 # 2026-09-30 [f80f51e] Give the prepared store's session its own owner
 
 """The prepared store's session: its table, its writer and its coverage.

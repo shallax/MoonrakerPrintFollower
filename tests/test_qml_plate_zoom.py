@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Keep zoom delivery checks on explicit lifecycle state owners.
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-30 [f425547] mpf's subpackages are capitalised
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
@@ -166,9 +167,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             Qt.ScrollPhase.NoScrollPhase, False)
         QGuiApplication.sendEvent(window, event)
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the zoom gesture never settled")
         self.assertGreater(face.property("viewScale"), 1.0,
                            "the zoom never moved the view")
@@ -336,9 +337,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             Qt.ScrollPhase.NoScrollPhase, False)
         QGuiApplication.sendEvent(window, event)
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the zoom gesture never settled")
         self.assertGreater(face.property("viewScale"), 1.0,
                            "the zoom never moved the view")
@@ -442,17 +443,17 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # Delivery notifications with no intervening paint do not
         # replace pixels. They must preserve the standing receipt.
         for _ in range(100):
-            transaction = face.property("_canvasTransaction").toVariant()
-            standing = face.property("_deliveredComposition").toVariant()
+            transaction = harness.delivery(face).property("transaction").toVariant()
+            standing = harness.delivery(face).property("delivered").toVariant()
             if transaction["count"] == 0 and standing["from"] == 10:
                 break
             self._pump_ms(20)
             window.grabWindow()
-        self.assertEqual(face.property("_canvasTransaction").toVariant()["count"], 0)
-        receipt = face.property("_deliveredComposition").toVariant()
+        self.assertEqual(harness.delivery(face).property("transaction").toVariant()["count"], 0)
+        receipt = harness.delivery(face).property("delivered").toVariant()
         harness.QMetaObject.invokeMethod(face, "_deliverProgressPaint")
         harness.QMetaObject.invokeMethod(face, "_deliverProgressPaint")
-        self.assertEqual(face.property("_deliveredComposition").toVariant(), receipt)
+        self.assertEqual(harness.delivery(face).property("delivered").toVariant(), receipt)
         # The boundary advance: the replacement lands while the
         # canvas still covers [10, 18). Every frame of the handover
         # must keep the interior ink — the standing composition is
@@ -589,25 +590,25 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
 
         def settle():
             deadline = harness.time.monotonic() + 3.0
-            while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+            while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
                 self._pump_ms(30)
-            self.assertFalse(face.property("_interactionActive"),
+            self.assertFalse(harness.view_state(face).property("interactionActive"),
                              "the gesture never settled")
 
         # 1 + 2: at the 100% fit a click and a drag attempt do
         # nothing — no warm raster, no pan (the wheel still zooms).
-        self.assertFalse(face.property("_interactionActive"))
+        self.assertFalse(harness.view_state(face).property("interactionActive"))
         mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseButtonRelease, cx, cy, Qt.MouseButton.NoButton)
         self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "a click at 100% activated the warm raster")
         mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseMove, cx + 30, cy + 15, Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseButtonRelease, cx + 30, cy + 15,
               Qt.MouseButton.NoButton)
         self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "a drag attempt at 100% activated the warm raster")
         self.assertEqual(face.property("displayPanX"), 0.0,
                          "a 100% drag moved the camera")
@@ -616,7 +617,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # raster, and the ease settles back to the exact scene.
         wheel(120)
         self._pump_ms(30)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(harness.view_state(face).property("interactionActive"),
                         "the wheel never entered the interaction")
         settle()
         self.assertGreater(face.property("viewScale"), 1.0,
@@ -627,7 +628,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseButtonRelease, cx, cy, Qt.MouseButton.NoButton)
         self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "a click at zoom activated the warm raster")
 
         # 4: a genuine drag enters and pans normally.
@@ -635,7 +636,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseMove, cx + 40, cy + 20, Qt.MouseButton.LeftButton)
         self._pump_ms(20)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(harness.view_state(face).property("interactionActive"),
                         "a genuine drag never entered the interaction")
         mouse(QEvent.Type.MouseButtonRelease, cx + 40, cy + 20,
               Qt.MouseButton.NoButton)
@@ -684,7 +685,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         mouse(QEvent.Type.MouseButtonPress, cx, cy, Qt.MouseButton.LeftButton)
         mouse(QEvent.Type.MouseMove, cx - 200, cy, Qt.MouseButton.LeftButton)
         self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "a boundary-blocked drag activated the warm raster")
         mouse(QEvent.Type.MouseButtonRelease, cx - 200, cy,
               Qt.MouseButton.NoButton)

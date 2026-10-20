@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Read printer-object families from their protocol owner.
 # 2026-10-18 — 6.0.0: Exercise decoded camera freshness, recovery state and URL handling.
 # 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
 # 2026-10-01 [1866243] Persist print sources and publish live download progress

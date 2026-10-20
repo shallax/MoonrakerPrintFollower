@@ -4,6 +4,7 @@ from mpf.gcode.IndexResidency import IndexResidency
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Qualify hydration through explicit residency demands instead of parsed-index anchors.
 # 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"

@@ -4,6 +4,18 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 6.0.0
 
+- Share recovery travel actions between command generation and confirmation;
+  refuse an altered itinerary after review. Separate rendering/file lifetime,
+  indexing residency/tracking, settings validation and application workflows
+  into independently testable owners. View, delivery and overlay QML components
+  own their lifecycle state through explicit ports.
+- Separate toolhead import jobs and named appearance checkpoints, detection
+  attestation/actions and host effects, streaming multipart ownership, printer
+  object classification and structured recovery refusals. Extend the reusable
+  library with narrow raster/scene-graph imports, portable cache/residency,
+  lexical queries and NumPy bed-mesh arrays. Qualify Python/JavaScript preview
+  colours against shared reference cases.
+
 - List all unclassified recovery commands together, with explicit directions to
   the macro lists, Add, Save and Check G-code. Give setup tabs bold titles and
   group recovery controls under named headings.

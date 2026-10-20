@@ -31,8 +31,13 @@ name is `moonraker-toolpath`, and its Python package is `moonraker_toolpath`.
 | Module | Supported exports | Dependencies |
 | --- | --- | --- |
 | `moonraker_toolpath` | `GCodeDocument`, `LayerInfo` | Standard library |
-| `moonraker_toolpath.gcode` (advanced) | `build_index_from_file`, `build_index_from_bytes`, `hydrate_layer_from_file`, `LayerMotionIndex`, `IndexView`, `RecoveryBoundary`, `prepare_layer`, `motion_edges`, `split_index` | Standard library |
+| `moonraker_toolpath.gcode` (advanced) | `build_index_from_file`, `build_index_from_bytes`, `hydrate_layer_from_file`, `LayerMotionIndex`, `IndexView`, `RecoveryBoundary`, `ExtrusionRun`, `prepare_layer`, `motion_edges`, `split_index` | Standard library |
 | `moonraker_toolpath.plate` | `prepare`, `stroke_geometry`, `marker_counts`, `marker_geometry`, `pack_shader` | Standard library; optional NumPy |
+| `moonraker_toolpath.plate.raster` | `render_layer_raster`, `render_layer_prefix`, `render_navigation_layer` | PyQt6 image painting; no Qt Quick, QML, workers or host services |
+| `moonraker_toolpath.plate.scenegraph` | `GpuFollower`, `PlateLayer` | PyQt6 Quick |
+| `moonraker_toolpath.gcode.cache` | `SourceIdentity`, `CacheIdentity`, `IndexResidency`, `PersistentIndexCache`, `PreparedCache`, `RawSourceCache` | Standard library |
+| `moonraker_toolpath.gcode.GCodeParser` | `COMMAND_PATTERN`, `MOTION_PATTERN`, `parse_axes`, `parse_arc_words` | Standard library |
+| `moonraker_toolpath.geometry.BedMeshGeometry` | `BedMeshGeometry`, `MeshArrays` | NumPy (`fast` extra) |
 | `moonraker_toolpath.plate.qt` | `GpuFollower`, `PlateLayer`, `render_layer_raster`, `render_layer_prefix`, `render_navigation_layer` | PyQt6 |
 | `moonraker_toolpath.geometry.Polygons` | `point_in_polygon`, `polygon_bounds`, `segment_in_polygon` | Standard library |
 
@@ -197,3 +202,10 @@ Arrays contain Cura-oriented coordinates (Y up, negative printer Y into scene Z)
 probe-boundary ribbon geometry and explicit alpha for unprobed bed extensions.
 The function imports NumPy and has no Cura, Uranium or Qt dependency. The Cura
 scene node converts these arrays to `MeshData` and owns drawing separately.
+
+`IndexView.extrusion_run_before(layer, completed_motions, minimum_mm=5,
+minimum_moves=0)` inspects a retained same-layer extrusion run without exposing
+mutable arrays. `ExtrusionRun` contains its exact starting boundary, motion
+count, XY path length and whether a seam limited the run. Missing exact data
+returns `None`; application policy decides whether and how to use that evidence.
+The recovery workflow uses this query rather than reading the index's storage.

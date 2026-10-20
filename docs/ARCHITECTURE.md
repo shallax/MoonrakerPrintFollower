@@ -1350,7 +1350,9 @@ these light/dark scenes. No production render path is altered.
 Canvas delivery transaction, the attached/detached split acceptance rule, the
 exact-picture readiness policy and the layer payload's own asset validity —
 the raster, base and travel predicates those decisions are taken over. The QML
-face now adapts this policy to actual Canvas/Image objects. Its software progress
+delivery owner (`PlateDeliveryState.qml`) applies this policy to render receipts,
+world admission, standing images and model file references. The face adapts
+actual Canvas/Image events to that owner's methods. Its software progress
 surface has two bounded Canvas textures: a committed front and an offscreen
 staging buffer. A staging upload can replace the front only when its receipt
 matches the current demand; receipt, front texture and prefix ownership switch
@@ -1373,12 +1375,15 @@ walk, the travel families and the retraction glyphs. Each painter takes the
 context, the payload, the boundaries and one explicit style record naming the
 camera the pixels are baked at; `drawLayer` repeats the bed transform inline
 because a call per vertex over hundreds of thousands of points was the
-follower's dominant cost. The face keeps the camera STATE, the gestures that
-write it, the canvases and the decision of which picture to draw.
+follower's dominant cost. `PlateViewState.qml` owns target/display camera state, drag/wheel/scope updates
+and focal animation. Its explicit entry/settle signals negotiate renderer
+handoff with the face, which composes Canvas/Image surfaces and supplies input
+snapshots. The public face view properties are aliases to that single owner.
 The webcam accepts left and middle drag for pan; its right drag still changes
 FPS. The Print Follower accepts left, middle and right drag for the same pan
 path. A rapid five-left, five-middle, five-right click sequence on its full
-face starts a presentation-only penguin overlay. Its strokes are generated
+face starts `PlatePenguinOverlay.qml`, which owns the click sequence and animated
+overlay. Its strokes are generated
 from the capture penguin G-code in extrusion order and painted with fixed
 black, white and yellow tool colours, independent of the current line mode.
 The overlay masks the live face, then fades away without changing its print,
@@ -1411,7 +1416,7 @@ the warm-to-exact barrier while an optional prefix is still decoding.
 
 ### Presentation asset lifetimes
 
-Every `PlateProgressFace` acquires an owner token from its model and replaces
+Each face's `PlateDeliveryState` acquires an owner token from its model and replaces
 its set of asset references atomically as Image sources and retained/held
 sources change. The set includes assets loading behind the visible picture,
 the retained prefix, the held full raster and the gesture's entry image.
@@ -2621,3 +2626,19 @@ fresh pause. Action refresh rechecks the pause latch after synchronous effects,
 preventing a reentrant history completion from requesting the same pause twice.
 Qt message creation remains in the Monitor bridge. Runout and scheduled-pause
 workflows retain their distinct evidence and acknowledgement rules.
+
+The delivery owner receives explicit world/view keys and paint receipts; it does
+not read the face's shared context. Painters submit receipts through `painted`
+and `paintBackground`; matching texture events enter through `deliver` and
+`deliverBackground`. Only the owner changes transaction/front/standing state.
+Image status and asset-reference snapshots are explicit input events/ports.
+Independent component tests qualify these protocols without a follower face;
+real-engine frame, gesture, pixel parity and retained-file tests keep their
+original behavioural assertions and inspect the actual owners. QML errors from
+any lifecycle owner fail those real-engine tests.
+
+`IndexView.extrusion_run_before` provides lock-protected, bounded extrusion-run
+evidence as `ExtrusionRun`. Recovery lead-in policy validates user limits and
+maps that query result to its suggestion; it no longer reaches into private
+index arrays or exact-layer helpers. The installed standard-library consumer
+qualifies this query alongside parsing, hydration, cache and geometry APIs.

@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Resolve explicit indexing and renderer owners in runtime composition proofs.
 # 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
 # 2026-10-01 [561e634] Surface file-manager refusal notes in the popup
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains

@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Compose host indexing and cache namespaces from the application package.
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
 # 2026-09-01 [1294efa] Initial release

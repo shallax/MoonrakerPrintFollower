@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Inspect accepted physical progress at the application tracking owner.
 # 2026-10-19 — 6.0.0: Prove stopped playback completion after missing late telemetry.
 # 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
 # 2026-10-01 [1866243] Persist print sources and publish live download progress

@@ -43,8 +43,12 @@ Raster painting now has an independent import, separate from QML assets and
 worker publication. Recovery commands and confirmation diagrams consume a shared
 action plan. The broader modularity work is tracked in
 [MODULARITY_IMPLEMENTATION.md](MODULARITY_IMPLEMENTATION.md), based on the
-[repository audit](MODULARITY_AUDIT.md); index residency, workflow owners and the
-remaining presentation boundaries are still in progress.
+[repository audit](MODULARITY_AUDIT.md). The listed boundaries now have explicit
+owners: index residency/tracking, settings validation, recovery/source selection,
+view/delivery QML state, toolhead drafts/import jobs, detection actions/attestation,
+shared uploads/protocol knowledge and Preview/bed-mesh projections. Independent
+consumer, effect, lifecycle and cross-language conformance tests accompany those
+extractions. The implementation record tracks the final qualification results.
 
 Ongoing qualification includes paused/unloaded recovery on real printers,
 sustained performance measurements and supported Cura versions. Runout markers,

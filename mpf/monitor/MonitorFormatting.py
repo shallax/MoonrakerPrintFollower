@@ -3,10 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Consume printer-object classifications from their protocol owner.
 # 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
-# 2026-10-20 — 6.0.0: Consume printer-object classifications from their protocol owner.
 
 """Pure Monitor projections/parsers. No Qt, networking, timers or mutable owners."""
 from __future__ import annotations

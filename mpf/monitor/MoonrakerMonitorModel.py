@@ -4,11 +4,11 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
+# 2026-10-20 — 6.0.0: Route runout pause and follower selection through explicit workflow owners.
 # 2026-10-18 — 6.0.0: Clear camera recovery only after a decoded frame and publish cooldown state.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
 # 2026-09-05 [6cd3659] v3: add unified Moonraker Monitor model and webcam discovery
-# 2026-10-20 — 6.0.0: Route runout pause and follower selection through explicit workflow owners.
 
 """One Cura Qt model: declarations and composition, not an inheritance stack."""
 from __future__ import annotations

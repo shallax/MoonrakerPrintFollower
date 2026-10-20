@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
-# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
+# 2026-10-20 — 6.0.0: Document internal lifecycle probes with independent QML qualification evidence.
 # 2026-10-18 — 6.0.0: Map discovered-heater cooldown availability to the controls scenario.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
@@ -1477,3 +1477,26 @@ for _name in (
         "date": "2026-10-13",
         "recheck": "a native simulator scenario provides a paused virtual-SD print with a matching downloaded G-code file",
     }
+
+
+# Internal lifecycle identities are test probes, not interactive controls.
+EXCLUSIONS.update({
+    "moonrakerPlateDelivery": {
+        "reason": "nonvisual receipt/file-reference owner; addressed by component and lifetime tests",
+        "evidence": "test_qml_plate_owners delivery/background protocols and test_qml_plate_prefix_ownership asset leases",
+        "date": "2026-10-20",
+        "recheck": "the native harness directly inspects delivery receipts or file references",
+    },
+    "moonrakerPlateViewState": {
+        "reason": "nonvisual camera state owner; input is routed through the existing follower face",
+        "evidence": "test_qml_plate_owners view protocol, test_qml_plate_interaction and test_renderer_parity",
+        "date": "2026-10-20",
+        "recheck": "the native harness directly addresses camera state rather than face input",
+    },
+    "moonrakerPlatePenguin": {
+        "reason": "transient drawing overlay with no controls; activated by a multi-button click sequence",
+        "evidence": "test_qml_plate_owners overlay protocol and test_qml_plate_interaction painted playback/rearm",
+        "date": "2026-10-20",
+        "recheck": "the native harness gains the overlay activation/playback scenario",
+    },
+})

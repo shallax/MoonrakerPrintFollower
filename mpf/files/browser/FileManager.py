@@ -3,11 +3,11 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Delegate streaming upload lifetime to the shared multipart operation.
 # 2026-10-18 — 6.0.0: Fence walk and start callbacks; protect active files and report walk failures.
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-30 [f425547] mpf's subpackages are capitalised
 # 2026-09-11 [1c33814] 3.6.0: file manager, console resize, and e-stop reconnect
-# 2026-10-20 — 6.0.0: Delegate streaming upload lifetime to the shared multipart operation.
 
 """The file-manager service: resident listing, history and view state.
 

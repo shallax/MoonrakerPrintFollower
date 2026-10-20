@@ -3,10 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Share recovery limits and follow choices with strict draft validation.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [d2db7b8] Clarify source macro choices and update prime defaults
 # 2026-09-04 [a99637b] Update to v1.1.0.
-# 2026-10-20 — 6.0.0: Share recovery limits and follow choices with strict draft validation.
 
 from __future__ import annotations
 

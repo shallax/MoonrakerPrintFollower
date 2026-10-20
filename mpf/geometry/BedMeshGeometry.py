@@ -3,10 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Separate host scene drawing from reusable mesh generation.
 # 2026-09-18 [53afbd7] 4.5.0: the reviewer-attribution phrasing goes from the codebase
 # 2026-09-15 [ff4666f] 4.2.0 snapshot rounds: the bed-mesh range filter and the live-verdict fixes
 # 2026-09-06 [2f17f60] Render Klipper bed mesh in Cura Preview
-# 2026-10-20 — 6.0.0: Separate host scene drawing from reusable mesh generation.
 
 """NumPy bed-mesh arrays, sampling and colours without Cura or Qt."""
 from __future__ import annotations

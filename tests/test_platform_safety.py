@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Target the single conservative process-liveness implementation.
 # 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-16 [15ad606] 4.3.0 platform safety: the cross-platform gate — a permanent source sweep pins every

@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Inspect delivery and camera state in raster-coordinate parity checks.
 # 2026-10-01 [4584d5a] Stabilize native plate rendering assertions across hosts
 # 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
@@ -433,7 +434,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         measured = []
         previous = _baseline
         for zoom in (1.0, 1.37, 1.5, 1.79, 2.0):
-            face.setProperty("_interactionActive", False)
+            harness.view_state(face).setProperty("interactionActive", False)
             face.setProperty("viewScale", zoom)
             face.setProperty("displayScale", zoom)
             # The exact scene bakes the zoom into its own raster; the
@@ -444,8 +445,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             self.pump(20)
             exact_image = settle(previous)
             exact = rows(exact_image)
-            face.setProperty("_gestureNavSource", url)
-            face.setProperty("_interactionActive", True)
+            harness.delivery(face).setProperty("gestureSource", url)
+            harness.view_state(face).setProperty("interactionActive", True)
             self.pump(30)
             gesture_image = settle(exact_image)
             gesture = rows(gesture_image)
@@ -725,9 +726,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         mouse(QEvent.Type.MouseMove, cx + 4, cy, Qt.MouseButton.LeftButton)
         deadline = harness.time.monotonic() + 5.0
         while harness.time.monotonic() < deadline \
-                and not face.property("_interactionActive"):
+                and not harness.view_state(face).property("interactionActive"):
             self._pump_ms(20)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(harness.view_state(face).property("interactionActive"),
                         "the panning move never entered the interaction")
         # Back to the camera the fixture was baked at: the carrier is
         # only measurable against the reference at the SAME camera.
@@ -831,7 +832,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
               Qt.MouseButton.NoButton)
         deadline = harness.time.monotonic() + 5.0
         while harness.time.monotonic() < deadline \
-                and face.property("_interactionActive"):
+                and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
 
     def test_the_worker_raster_covers_the_faces_device_rect(self):

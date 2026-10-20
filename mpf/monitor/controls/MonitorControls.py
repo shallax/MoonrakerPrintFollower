@@ -3,11 +3,11 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Use protocol-owned object families and fan writability.
 # 2026-10-18 — 6.0.0: Discover cooldown heaters and preserve newest temperature intent across queues.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
 # 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
-# 2026-10-20 — 6.0.0: Use protocol-owned object families and fan writability.
 
 """Printer-control policy composed with data, command and tuning capabilities."""
 from __future__ import annotations

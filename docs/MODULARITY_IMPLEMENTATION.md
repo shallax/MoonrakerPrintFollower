@@ -31,7 +31,12 @@ Version remains 6.0.0. Merge/tag and a live Cura restart are not authorized here
   field refusals precede publication/persistence. Shared recovery limits and
   follow modes have portable owners; strict drafts retain their own refusal
   policy, independently of tolerant stored-setting migration.
-- [ ] Separate follower gesture, render-delivery and overlay QML ownership.
+- [x] Separate follower gesture, render-delivery and overlay QML ownership.
+  View state owns transforms, input and focal animation; delivery state owns
+  transactions, receipts, standing assets and file references; the overlay owns
+  its activation and playback. Components use explicit ports/methods/signals,
+  with no shared face/root reads. Public view properties remain facade aliases
+  to their owner. Independent component and existing pixel/lifetime tests pass.
 - [x] Separate toolhead import jobs and typed appearance edit transactions.
   `ToolheadImportJobs` owns worker occupancy, cancellation and named results;
   `AppearanceDraft` owns editable values, model reset and identity/mesh-bound
@@ -57,7 +62,7 @@ Version remains 6.0.0. Merge/tag and a live Cura restart are not authorized here
   production JavaScript against shared reference values and Python boundary
   cases. Package-qualified architectural/consumer enforcement accompanies the
   extractions.
-- [ ] Synchronize architecture, README, roadmap, What's New and changed source
+- [x] Synchronize architecture, README, roadmap, What's New and changed source
   headers; retain 6.0.0 throughout.
 - [ ] Full local checks, coverage at least 95%, PR CI and UI sweep on final head.
 
@@ -74,3 +79,11 @@ qualified for bounded replies, reentrant aborts, shutdown and start failures.
 The settings/workflow batch passed full `make all` with 6,300 tests. Coverage
 is 97.72%; every production file clears 95%, and the new validation, workflow,
 residency/tracking and raster-lifetime modules have 100% statement coverage.
+
+Combined local qualification (2026-10-20): full `make all JOBS=8` passed
+6,341 tests in 295 isolated processes, lint, deterministic capture pairs,
+verified plugin/source packages and isolated installed core/raster/Qt consumers.
+`make coverage JOBS=6` passed at 97.7719% (39,668/40,572 statements). Every
+regular production module clears its 95% floor; the existing isolated native
+STEP worker retains its separate mandatory CAD-runtime coverage gate in CI.
+Final-head PR CI and supported-version UI sweep remain pending.

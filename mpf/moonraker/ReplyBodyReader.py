@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-30 [ecf0840] Give the thumbnails and the reply bodies their own owners
 # 2026-10-20 — 6.0.0: Move bounded reply reading to the shared network primitive owner.
+# 2026-09-30 [ecf0840] Give the thumbnails and the reply bodies their own owners
 
 """Bounded reply bodies: the byte cap every hand-read reply shares.
 

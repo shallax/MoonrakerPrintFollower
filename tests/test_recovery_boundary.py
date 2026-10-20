@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Import index boundary services from the application owner.
 # 2026-10-13 [3f9fcb5] Begin v6 recovery with exact follower boundary mapping
 
 """Exact scrub-to-file mapping used by the planned print recovery flow."""

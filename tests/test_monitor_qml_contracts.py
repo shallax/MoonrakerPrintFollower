@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Verify camera handoff order at the view-state owner and preserve face ports.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
@@ -1737,12 +1738,10 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # reads it — while the retarget still reads the OLD display
         # transform; assigning the display scale first would degenerate
         # the anchor to 0.
-        handler = face[face.index("onScaleRequested:"):]
-        handler = handler[:handler.index("\n    }\n")]
-        self.assertLess(handler.index("root._enterInteraction();"),
-                        handler.index("root.viewScale = target;"))
+        self.assertIn("camera.scopeZoom(target)", face)
+        view = (harness.PLUGINS / "PlateViewState.qml").read_text(encoding="utf-8")
+        handler = view[view.index("function scopeZoom("):view.index("function resetTarget(")]
+        self.assertLess(handler.index("enterRequested();"), handler.index("viewScale = target;"))
+        self.assertLess(handler.index("viewScale = target;"), handler.index("barZoomPan(target)"))
         retarget = handler[handler.index("} else {"):]
-        self.assertLess(handler.index("root.viewScale = target;"),
-                        handler.index("root._barZoomPan(target)"))
-        self.assertLess(retarget.index("root._barZoomPan(target)"),
-                        retarget.index("root.displayScale = target;"))
+        self.assertLess(retarget.index("barZoomPan(target)"), retarget.index("displayScale = target;"))

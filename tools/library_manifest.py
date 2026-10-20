@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
-# 2026-10-18 — 6.0.0: Declare the standalone distribution's complete source and asset boundary.
 # 2026-10-20 — 6.0.0: Include portable bed-mesh geometry in the shared source distribution.
+# 2026-10-18 — 6.0.0: Declare the standalone distribution's complete source and asset boundary.
 
 """One explicit inventory shared by wheel construction and external verification."""
 PACKAGE_DIRS = {

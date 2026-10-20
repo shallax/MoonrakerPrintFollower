@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Read retained prefix state from the delivery owner during refresh.
 # 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
 
@@ -293,7 +294,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertGreater(len(samples), 5, "the baseline never drew a grid")
         for split in (0, 1, 3, 0, 5):
             self._printer.setSplit(split)
-            face.setProperty("_deliveredComposition", None)
+            harness.delivery(face).setProperty("delivered", None)
             for _ in range(3):
                 image = window.grabWindow()
                 self.assertTrue(all(image.pixel(x, y) == pixel for x, y, pixel in samples),

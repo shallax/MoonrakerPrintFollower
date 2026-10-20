@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
+# 2026-10-20 — 6.0.0: Qualify installed query/cache, raster-only, retained-renderer and bed-mesh consumers.
 # 2026-10-18 — 6.0.0: Verify isolated consumer imports, selective distribution boundaries and shared-source parity.
-# 2026-10-20 — 6.0.0: Verify installed bed-mesh arrays alongside narrow rendering consumers.
 
 """Install and exercise a built wheel outside the source checkout."""
 import argparse
@@ -48,6 +48,11 @@ boundary = view.recovery_boundary(0, 2)
 assert boundary is not None and all(math.isclose(a, b, abs_tol=1e-6) for a, b in zip(boundary.position, (40, 10, .2)))
 assert split_index(index, 0, boundary.next_motion_offset) == 2
 assert list(motion_edges(index, 0))
+lead_source = b'G90\nM83\n;LAYER:0\nG1 X0 Z0.2 F1800\nG1 X10 E1\nG1 X20 E1\n'
+lead_view = IndexView(('lead.gcode', len(lead_source), 1), build_index_from_bytes(lead_source))
+run = lead_view.extrusion_run_before(0, 2, 5)
+assert run.motions == 1 and run.distance_mm == 10 and run.boundary.completed_motions == 1
+
 prepared = prepare((('current', payload),))
 vertices = pack_shader(prepared)
 assert vertices and any(row[3] for row in vertices)

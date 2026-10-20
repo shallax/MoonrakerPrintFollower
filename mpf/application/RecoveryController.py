@@ -4,11 +4,11 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
+# 2026-10-20 — 6.0.0: Format structured source refusals as operator guidance at the workflow boundary.
 # 2026-10-18 — 6.0.0: Validate independent XYZ telemetry and preserve unloaded preview coordinates.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [368df57] Wait for unloaded recovery test before cleanup on Windows
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
-# 2026-10-20 — 6.0.0: Format structured source refusals as operator guidance at the workflow boundary.
 
 """Qt owner for reviewed recovery plans and a single guarded handover."""
 from __future__ import annotations

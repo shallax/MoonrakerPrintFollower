@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Consume portable follow-mode values from the printing domain.
 # 2026-09-08 [c217114] 3.4.0 feature set: toolhead control, Monitor rework and review fixes
 # 2026-09-04 [a99637b] Update to v1.1.0.
-# 2026-10-20 — 6.0.0: Consume portable follow-mode values from the printing domain.
 
 from __future__ import annotations
 

@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Inspect composed frames at the delivery owner while retaining pixel assertions.
 # 2026-10-06 [a72a380] Match subprocess and delivered-frame test ownership
 # 2026-10-06 [4b3a9d6] Keep zoom in the panned composition test fixture
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
@@ -574,7 +575,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                         image, previous, face, window) == 0:
                     return image
                 previous = image if ready else None
-            state = face.property("_canvasTransaction")
+            state = harness.delivery(face).property("transaction")
             if hasattr(state, "toVariant"):
                 state = state.toVariant()
             self.fail("reverse scrub never delivered a stable prefix/tail composition: %s; transaction=%r" % (

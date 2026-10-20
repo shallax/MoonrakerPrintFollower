@@ -3,11 +3,11 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Use public lexical and extrusion-run queries and return structured source refusals.
 # 2026-10-19 — 6.0.0: Guide unreviewed macro classification through Recovery setup.
 # 2026-10-18 — 6.0.0: Reconstruct feed rate, arc plane and selected object before recovery.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
 # 2026-10-13 [54a31e5] Implement interrupted print recovery handover
-# 2026-10-20 — 6.0.0: Consume public lexical definitions and return structured refusal evidence.
 
 """Read-only recovery planning for a paused virtual-SD print.
 
@@ -134,42 +134,10 @@ def suggest_lead_in(view, suspect, minimum_mm=5.0, minimum_moves=0):
     minimum_mm = _number(minimum_mm, "lead-in distance")
     if type(minimum_moves) is not int or minimum_moves < 0 or minimum_mm <= 0 or suspect is None:
         return None
-    index = view._index
-    layer, split = suspect.selected_layer, suspect.completed_motions
-    if split <= 0:
-        return None
-    with index.cache_lock:
-        if not view._exact_layer(layer) or layer >= len(index.motion_extrusion):
-            return None
-        extrusions = index.motion_extrusion[layer]
-        if len(extrusions) != index.motion_count(layer):
-            return None
-        distance = 0.0
-        count = 0
-        first_boundary = None
-        start = index.layer_start_positions[layer]
-        for motion in range(split - 1, -1, -1):
-            if extrusions[motion] <= 0:
-                break
-            end = (index.motion_x[layer][motion], index.motion_y[layer][motion],
-                   index.motion_z[layer][motion])
-            before = start if motion == 0 else (
-                index.motion_x[layer][motion - 1], index.motion_y[layer][motion - 1],
-                index.motion_z[layer][motion - 1])
-            arc = index.motion_arcs[layer].get(motion) if layer < len(index.motion_arcs) else None
-            length = (ArcGeometry.path_length(arc, before, end, xy=True) if arc
-                      else math.hypot(end[0] - before[0], end[1] - before[1]))
-            if not math.isfinite(length) or length <= 0:
-                break
-            distance += length
-            count += 1
-            first_boundary = view.recovery_boundary(layer, motion)
-            if first_boundary is None:
-                return None
-            if (count >= minimum_moves if minimum_moves else distance >= minimum_mm):
-                return LeadInSuggestion(first_boundary, count, distance)
-        return (LeadInSuggestion(first_boundary, count, distance, True)
-                if first_boundary is not None else None)
+    run = view.extrusion_run_before(suspect.selected_layer, suspect.completed_motions,
+                                    minimum_mm, minimum_moves)
+    return (LeadInSuggestion(run.boundary, run.motions, run.distance_mm, run.limited_by_seam)
+            if run is not None else None)
 
 
 def scan_source(path, boundary, observed_offset=None, *, setup_macros=(), transparent_macros=(),

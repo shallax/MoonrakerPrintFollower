@@ -4,8 +4,8 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Read caller-owned residency demands at hydration completion.
-# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
 # 2026-10-20 — 6.0.0: Consume the public lexical and source-line limit definitions.
+# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
 
 """Hydrate one compact index layer, retaining its opening modal state."""
 from __future__ import annotations

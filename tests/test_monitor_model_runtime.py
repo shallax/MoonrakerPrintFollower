@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Inspect detection owners and preserve fixed-layout gates after QML extraction.
 # 2026-10-18 — 6.0.0: Verify toolhead cooldown arming without a wall-clock race.
 # 2026-10-18 — 6.0.0: Verify stable projections after heater discovery and freshness overlays.
 # 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
@@ -3657,7 +3658,7 @@ Item {
             'visible: gpuFollower.visible && (modelData === "ghost" ? root.showBase : (modelData === "prev" ? root.showPrevious || root._handoffOpacity > 0 : root.showNext))',
             "visible: root.available()",
             # The penguin is a transient drawing inside the fixed face.
-            "visible: root._penguinActive || opacity > 0",
+            "visible: state.active || opacity > 0",
             # The objects list's current-row bar: a highlight behind
             # the text, never a layout shift.
             "visible: modelData.current",
@@ -3843,8 +3844,8 @@ Item {
             'visible: root.gpuRendering ? root.available() && !gpuFollower.ready : root._presentation.kind === "preparing" && !root._presentation.ready',
             "visible: !root.gpuRendering",
             "visible: !root.gpuRendering && root.available() && (root.showRetractions || root.showUnretractions)",
-            "visible: !root.gpuRendering && root._interactionActive",
-            'visible: !root.gpuRendering && root._interactionActive && (root._gestureNavSource !== "" || navigationData() !== "")',
+            "visible: !root.gpuRendering && camera.interactionActive",
+            'visible: !root.gpuRendering && camera.interactionActive && (delivery.gestureSource !== "" || navigationData() !== "")',
             "visible: jumpButton.visible",
             "visible: root.showTravels && _fullRaster() && ExactComposition.travelsOf(root.progress.layers.current)",
             "visible: root.available() && root.showPrevious && _ghost(\"prev\") != null && ExactComposition.rasterOf(_ghost(\"prev\"))",
@@ -3854,7 +3855,7 @@ Item {
             'visible: root._presentation.prefix === "current"',
             'visible: root._presentation.kind === "preparing" && !root._presentation.ready',
             'visible: root._presentation.prefix === "retained"',
-            "visible: root._interactionActive",
+            "visible: camera.interactionActive",
             # The full raster's standing: the full state OR the
             # 100% -> partial entry's transaction — the predicate
             # itself holds the previous composition until the
@@ -3865,7 +3866,7 @@ Item {
             # source latches at entry so a mid-gesture retirement
             # never unloads the scene in hand (an interaction driven
             # without an entry falls back to the live eligible URL).
-            "visible: root._interactionActive && (root._gestureNavSource !== \"\" || navigationData() !== \"\")",
+            "visible: camera.interactionActive && (delivery.gestureSource !== \"\" || navigationData() !== \"\")",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).

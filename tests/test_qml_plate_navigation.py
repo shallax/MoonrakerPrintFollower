@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Read delivered navigation state from its lifecycle owner.
 # 2026-10-07 [96a5e48] Fix follower deadline layout and simulator motion state
 # 2026-10-03 [61c3b8b] Read the anchor ETA to the selected point and group the layer tracks
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
@@ -68,7 +69,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                 self.assertFalse(window.grabWindow().isNull())
             face.setProperty("progress", self.PAYLOAD)
             face.setProperty("_fullRasterSeen", True)
-            face.setProperty("_standingFull", None)
+            harness.delivery(face).setProperty("standingFull", None)
             self._pump_ms(80)
         messages = harness._APPLICATION["messages"][start:]
         self.assertEqual([], [line for line in messages

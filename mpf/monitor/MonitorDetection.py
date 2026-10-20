@@ -3,10 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Delegate attestation and action state to portable effect-driven owners.
 # 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
 # 2026-10-04 [31f1629] Align release introduction with durable pause protection
 # 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-10-20 — 6.0.0: Delegate attestation and action state to portable effect-driven owners.
 
 """Qt bridge for detection observations, tuning, evidence and host effects.
 

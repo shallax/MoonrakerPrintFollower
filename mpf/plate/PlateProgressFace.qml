@@ -3,6 +3,7 @@
 // Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 //
 // Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-20 — 6.0.0: Compose explicit view, delivery and overlay owners over declared handoff ports.
 // 2026-10-13 [d2a7563] Dismiss follower zoom bar after two seconds
 // 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
 // 2026-09-20 [11c27cf] 4.6.0: the follower face — the progress polylines prepared in the coordinator with the
@@ -17,7 +18,6 @@ import Cura 1.1 as Cura
 import "PlateExactComposition.js" as ExactComposition
 import "PlatePainter.js" as Painter
 import "PlateViewPolicy.js" as ViewPolicy
-import "PenguinToolpaths.js" as Penguin
 import "../resources/theme"
 
 // The plate map's progress face (4.6.0): the OctoApp-style
@@ -29,36 +29,6 @@ Item {
     id: root
     objectName: "moonrakerPlateProgressFace"
     clip: true
-
-    property int _penguinClickCount: 0
-    property real _penguinLastClickMs: 0
-    property real _penguinPressMs: 0
-    property bool _penguinActive: false
-    property real _penguinProgress: 0
-
-    function _recordPenguinClick(button) {
-        if (root.compact || root._penguinActive)
-            return;
-        var now = Date.now();
-        if (root._penguinClickCount > 0 && now - root._penguinLastClickMs > 450)
-            root._penguinClickCount = 0;
-        var expected = root._penguinClickCount < 5 ? Qt.LeftButton : root._penguinClickCount < 10 ? Qt.MiddleButton : Qt.RightButton;
-        if (button === expected) {
-            root._penguinClickCount++;
-        } else {
-            root._penguinClickCount = button === Qt.LeftButton ? 1 : 0;
-        }
-        root._penguinLastClickMs = now;
-        if (root._penguinClickCount === 15) {
-            root._penguinClickCount = 0;
-            root._penguinActive = true;
-            penguinCanvas.drawn = 0;
-            root._penguinProgress = 0;
-            penguinCanvas.requestPaint();
-            penguinFadeIn.start();
-            penguinDrawDelay.start();
-        }
-    }
 
     // Deferred work belongs to this Loader instance. Qt.callLater retains
     // method references after the QML context has been destroyed on close.
@@ -251,9 +221,9 @@ Item {
     // canvas items carry the pan as a translation, so a pan costs a
     // transform and never a repaint (the centred-follow ruling: at a
     // pan per poll, a pan-baked raster is a full re-raster per poll).
-    property real viewScale: 1.0
-    property real viewPanX: 0.0
-    property real viewPanY: 0.0
+    property alias viewScale: camera.viewScale
+    property alias viewPanX: camera.viewPanX
+    property alias viewPanY: camera.viewPanY
     // The camera's TWO transforms: viewScale/viewPanX/viewPanY are
     // the TARGET (the exact renderer works toward it, the model's
     // rasters bake it); displayScale/displayPanX/displayPanY are
@@ -261,39 +231,31 @@ Item {
     // moves both directly; a wheel updates the TARGET and the
     // display eases toward it while the bed point under the cursor
     // stays pinned.
-    property real displayScale: 1.0
-    property real displayPanX: 0.0
-    property real displayPanY: 0.0
+    property alias displayScale: camera.displayScale
+    property alias displayPanX: camera.displayPanX
+    property alias displayPanY: camera.displayPanY
     // The zoom animation's focal state: the cursor's position and
     // the bed-fit pixel under it AT THE TARGET — the eased display
     // pan derives from these every tick, so scale and pan converge
     // as one coherent camera transform and the focal point never
     // wanders.
-    property real _zoomAnchorX: 0.0
-    property real _zoomAnchorY: 0.0
-    property real _zoomBedX: 0.0
-    property real _zoomBedY: 0.0
     // The drags applied since the last wheel: the eased pan carries
     // them on top of the focal derivation, so a held drag and a
     // live zoom coexist — the glide pans the scene, the deltas ride
     // along, and the ease lands exactly on the dragged target.
-    property real _panDragDeltaX: 0.0
-    property real _panDragDeltaY: 0.0
     // The toolhead dot's camera: the DISPLAY transform during a
     // gesture (the warm raster's picture — the whole scene rides
     // ONE camera), the target otherwise. The two coincide at every
     // interaction boundary, so the flip never jumps.
-    readonly property real _dotScale: root._interactionActive ? root.displayScale : root.viewScale
-    readonly property real _dotPanX: root._interactionActive || root.keepCentred ? root.displayPanX : root.viewPanX
-    readonly property real _dotPanY: root._interactionActive || root.keepCentred ? root.displayPanY : root.viewPanY
+    readonly property real _dotScale: camera.interactionActive ? root.displayScale : root.viewScale
+    readonly property real _dotPanX: camera.interactionActive || root.keepCentred ? root.displayPanX : root.viewPanX
+    readonly property real _dotPanY: camera.interactionActive || root.keepCentred ? root.displayPanY : root.viewPanY
     // The camera interaction state: while a gesture is live (or the
     // exact scene is still reassembling toward the final target),
     // the warm navigation raster owns the heavy-scene presentation.
-    property bool _interactionActive: false
     // The raster source the CURRENT gesture entered with (the entry
     // latch): set at _enterInteraction, irrelevant once the gesture
     // ends (the idle binding reverts to the live eligible URL).
-    property string _gestureNavSource: ""
     // The retained frame's standing state, written by ITS handler —
     // the live prefix's visible reads this one-way value instead of
     // the retained ITEM's visible, whose mutual read the engine
@@ -304,12 +266,8 @@ Item {
     // item's status lands whenever it lands (the handover's yield
     // fired on some runs and not others). Written by the signal that
     // owns the transition, read like any other property.
-    property var _classTexture: ({
-            source: "",
-            status: Image.Null
-        })
-    readonly property bool _rasterStatusReady: _classTexture.status === Image.Ready && _classTexture.source === progressRasterImage.source.toString()
-    readonly property bool _rasterStatusFailed: _classTexture.status === Image.Error && _classTexture.source === progressRasterImage.source.toString()
+    readonly property bool _rasterStatusReady: delivery.classTexture.status === Image.Ready && delivery.classTexture.source === progressRasterImage.source.toString()
+    readonly property bool _rasterStatusFailed: delivery.classTexture.status === Image.Error && delivery.classTexture.source === progressRasterImage.source.toString()
     // The travels raster's status, mirrored for the SAME beat: the
     // travels are the second half of the full state's picture and
     // their texture decodes on its own clock, so the class raster's
@@ -318,38 +276,22 @@ Item {
     // must not present before the picture's own bake does (its
     // texture can land first, which stood the new travels over the
     // canvas' held picture — the reported shift).
-    property var _travelTexture: ({
-            source: "",
-            status: Image.Null
-        })
-    readonly property bool _travelsStatusReady: _travelTexture.status === Image.Ready && _travelTexture.source === progressTravelImage.source.toString()
-    readonly property bool _travelsStatusFailed: _travelTexture.status === Image.Error && _travelTexture.source === progressTravelImage.source.toString()
+    readonly property bool _travelsStatusReady: delivery.travelTexture.status === Image.Ready && delivery.travelTexture.source === progressTravelImage.source.toString()
+    readonly property bool _travelsStatusFailed: delivery.travelTexture.status === Image.Error && delivery.travelTexture.source === progressTravelImage.source.toString()
     // The prefix Image's Ready status as a one-way mirror: the
     // visible binding reads THIS (written by the image's own status
     // handler), never the status directly — reading the live status
     // there closed a binding cycle through the same image's source
     // and handlers (the engine's recurring live loop warning).
-    property var _retainedTexture: ({
-            source: "",
-            status: Image.Null
-        })
-    property var _prefixTexture: ({
-            source: "",
-            status: Image.Null
-        })
-    readonly property bool _retainedStatusReady: _retainedTexture.status === Image.Ready && _retainedTexture.source === root._retainedPrefixSource
-    readonly property bool _prefixStatusReady: _prefixTexture.status === Image.Ready && _prefixTexture.source === progressPrefixImage.source.toString()
+    readonly property bool _retainedStatusReady: delivery.retainedTexture.status === Image.Ready && delivery.retainedTexture.source === root._retainedPrefixSource
+    readonly property bool _prefixStatusReady: delivery.prefixTexture.status === Image.Ready && delivery.prefixTexture.source === progressPrefixImage.source.toString()
     // ...and its FAILED status, mirrored for the same reason the
     // travels' is: a load that errors will never reach Ready, so a
     // barrier waiting on it could never pass.
-    readonly property bool _prefixStatusFailed: _prefixTexture.status === Image.Error && _prefixTexture.source === progressPrefixImage.source.toString()
+    readonly property bool _prefixStatusFailed: delivery.prefixTexture.status === Image.Error && delivery.prefixTexture.source === progressPrefixImage.source.toString()
     // The zoom the carried tail last painted at: a mid-gesture
     // settle repaints it only on a real scale change.
     property real _carryZoom: 1.0
-    property real _pressX: 0.0
-    property real _pressY: 0.0
-    property real _pressPanX: 0.0
-    property real _pressPanY: 0.0
     // The RETAINED previous prefix (the atomic handover): the last
     // successfully uploaded prefix's source and boundary, frozen at
     // its Ready — shown while the live replacement loads, so the old
@@ -359,42 +301,18 @@ Item {
     // (a print switch moves it), and a seek that lands on the same
     // motions and the same split arithmetic must never re-stand this
     // layer's pixels over that one.
-    property var _standingPrefix: null
-    property var _retiredPrefixView: null
-    property var _retiredFullView: null
-    readonly property string _retainedPrefixSource: _standingPrefix != null ? _standingPrefix.source : ""
-    readonly property int _retainedPrefixSplit: _standingPrefix != null ? _standingPrefix.from : -1
-    readonly property int _retainedPrefixAnchor: _standingPrefix != null ? _standingPrefix.anchor : -2
+    readonly property string _retainedPrefixSource: delivery.standingPrefix != null ? delivery.standingPrefix.source : ""
+    readonly property int _retainedPrefixSplit: delivery.standingPrefix != null ? delivery.standingPrefix.from : -1
+    readonly property int _retainedPrefixAnchor: delivery.standingPrefix != null ? delivery.standingPrefix.anchor : -2
     // A face owns every file it can still load or present, including the
     // retained/held picture while a replacement is prepared behind it.
     // The owner belongs to a model instance, not to a layer or a gesture.
-    property var _assetModel: null
-    property int _assetOwner: 0
-    readonly property var _assetReferences: [navigationImage.source.toString(), prevGhostImage.source.toString(), nextGhostImage.source.toString(), progressRasterImage.source.toString(), progressTravelImage.source.toString(), pendingBaseImage.source.toString(), progressPrefixImage.source.toString(), retainedPrefixImage.source.toString(), root._heldFullSource, root._heldFullTravelSource, root._retainedPrefixSource, root._gestureNavSource, root._paintedPrefixSource, root._deliveredComposition != null ? root._deliveredComposition.prefixSource : ""]
-
-    function _syncAssetReferences() {
-        if (root._assetModel != null && root._assetOwner > 0)
-            root._assetModel.setPlateAssetReferences(root._assetOwner, root._assetReferences);
+    readonly property var _assetReferences: [navigationImage.source.toString(), prevGhostImage.source.toString(), nextGhostImage.source.toString(), progressRasterImage.source.toString(), progressTravelImage.source.toString(), pendingBaseImage.source.toString(), progressPrefixImage.source.toString(), retainedPrefixImage.source.toString(), root._heldFullSource, root._heldFullTravelSource, root._retainedPrefixSource, delivery.gestureSource, root._paintedPrefixSource, delivery.delivered != null ? delivery.delivered.prefixSource : ""]
+    PlateDeliveryState {
+        id: delivery
+        model: root.printerModel
+        references: root._assetReferences
     }
-
-    function _releaseAssetOwner() {
-        if (root._assetModel != null && root._assetOwner > 0)
-            root._assetModel.releasePlateAssetOwner(root._assetOwner);
-        root._assetOwner = 0;
-        root._assetModel = null;
-    }
-
-    function _adoptAssetOwner() {
-        _releaseAssetOwner();
-        if (root.printerModel != null && root.printerModel.acquirePlateAssetOwner !== undefined) {
-            root._assetModel = root.printerModel;
-            root._assetOwner = root._assetModel.acquirePlateAssetOwner();
-            _syncAssetReferences();
-        }
-    }
-
-    on_AssetReferencesChanged: _syncAssetReferences()
-    onPrinterModelChanged: _adoptAssetOwner()
     // The raster paints run on the threaded canvases' worker
     // contexts, which read var properties fresh but can see primitive
     // properties stale; the view/width state rides this var carrier
@@ -423,8 +341,6 @@ Item {
             dpr: root.devicePixelRatio
         };
     }
-    property real _dragX: 0.0
-    property real _dragY: 0.0
     // The scope's dock state: parked out of view until a zoom change
     // docks it, and two idle seconds park it again (the live
     // request — it starts invisible).
@@ -466,14 +382,14 @@ Item {
             // check landing mid-second-press flipped the state under
             // a live drag and froze the camera (the two-quick-pans
             // wedge — the drags went dead).
-            if (root._interactionActive && !viewGesture.pressed && !zoomAnimator.running && _exactReady()) {
+            if (camera.interactionActive && !viewGesture.pressed && !camera.zoomRunning && _exactReady()) {
                 endInteraction();
-            } else if (root._interactionActive && !viewGesture.pressed) {
+            } else if (camera.interactionActive && !viewGesture.pressed) {
                 // The barrier is still pending: keep re-checking it,
                 // and land the repaint the hold deferred — a wheel
                 // never releases, so nothing else can complete it
                 // once the camera has settled.
-                if (!zoomAnimator.running && root._progressDirty) {
+                if (!camera.zoomRunning && root._progressDirty) {
                     _requestProgressPaint();
                 }
                 // The camera has settled, so the hold no longer needs
@@ -486,7 +402,7 @@ Item {
                 // cycle. The handover is unchanged: the exact scene
                 // rebuilds BEHIND the raster and the barrier still
                 // decides when it may show.
-                if (!zoomAnimator.running && !root.settleTimer.running) {
+                if (!camera.zoomRunning && !root.settleTimer.running) {
                     root._resumeWarmBakes();
                 }
                 restart();
@@ -501,36 +417,20 @@ Item {
     // wheel burst glides through its intermediate targets without
     // any velocity discontinuity. The pan derives from the focal
     // bed point each tick — scale and pan are one camera transform.
-    Timer {
-        id: zoomAnimator
-        interval: 16
-        repeat: true
-        onTriggered: {
-            var newScale = ViewPolicy.easeScale(root.displayScale, root.viewScale, 0.30);
-            root.displayScale = newScale;
-            // The derived pan runs EVERY tick — held or not: the
-            // focal glide pans the scene while a drag's accumulated
-            // deltas ride on top, so the cursor's bed point stays
-            // put even with the button down (the live origin-zoom
-            // report — the raster once scaled in place while held).
-            root.displayPanX = ViewPolicy.glidePan(root._zoomAnchorX, root._zoomBedX, root.displayScale, root._panDragDeltaX);
-            root.displayPanY = ViewPolicy.glidePan(root._zoomAnchorY, root._zoomBedY, root.displayScale, root._panDragDeltaY);
-            if (newScale === root.viewScale) {
-                zoomAnimator.stop();
-                if (root._exactReady() && !viewGesture.pressed) {
-                    // The display stands at the target and the
-                    // complete exact scene is presentation-ready:
-                    // the soft-to-sharp swap.
-                    endInteraction();
-                } else if (root._interactionActive && !viewGesture.pressed) {
-                    // The barrier held. The glide is over, so the
-                    // animator is no longer what drives the exit —
-                    // and a wheel never releases, which leaves the
-                    // pan-only re-check as the only thing that can
-                    // hand back.
-                    panExitCheck.restart();
-                }
-            }
+    PlateViewState {
+        id: camera
+        plot: mapping._plot
+        viewportWidth: root.width
+        viewportHeight: root.height
+        keepCentred: root.keepCentred
+        allowDirectPan: navigationData() === ""
+        onEnterRequested: root._enterInteraction()
+        onManuallyPanned: root.manuallyPanned()
+        onZoomSettled: {
+            if (root._exactReady() && !viewGesture.pressed)
+                root.endInteraction();
+            else if (camera.interactionActive && !viewGesture.pressed)
+                panExitCheck.restart();
         }
     }
 
@@ -664,7 +564,7 @@ Item {
         // so the two halves swap in one beat and no frame shows one
         // half of a bake over the other's held picture.
         var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
-        return _fullRaster() && root._rasterStatusReady && root._classTexture.source === layer.rasterData && (!_fullTravelsRequired() || (ExactComposition.travelsOf(layer) && root._travelsStatusReady && root._travelTexture.source === layer.travelData));
+        return _fullRaster() && root._rasterStatusReady && delivery.classTexture.source === layer.rasterData && (!_fullTravelsRequired() || (ExactComposition.travelsOf(layer) && root._travelsStatusReady && delivery.travelTexture.source === layer.travelData));
     }
 
     function _ghost(role) {
@@ -735,14 +635,14 @@ Item {
         // live report's release snap). The exit's re-check drives
         // the barrier until the complete exact scene is
         // presentation-ready.
-        if (root._interactionActive) {
+        if (camera.interactionActive) {
             panExitCheck.restart();
         }
         // The release's catch-up: the freeze deferred the progress
         // repaints through the gesture — paint the accumulated
         // advance NOW so the picture jumps to the current print
         // position the moment the pan ends (the live request).
-        if (root._interactionActive) {
+        if (camera.interactionActive) {
             _requestProgressPaint();
         }
         // The release resumes the model's publications too — the
@@ -753,7 +653,7 @@ Item {
 
     function _enterInteraction() {
         if (root.gpuRendering) {
-            root._interactionActive = true;
+            camera.activate();
             root._holdTicks = 0;
             return;
         }
@@ -769,21 +669,18 @@ Item {
         // gesture is already presenting — the camera transforms
         // ride the QML side, so the latched raster stays coherent
         // for the gesture's whole life.
-        if (!root._interactionActive && navigationData() !== "") {
+        if (!camera.interactionActive && navigationData() !== "") {
             // The IMMEDIATE entry: the pan starts on the first real
             // movement with whatever raster is eligible. The carried
             // tail completes the raster's picture — the lines since
             // its split re-paint at its backing, so the entry drops
             // nothing and no gated wait delays the drag.
-            root._gestureNavSource = navigationData();
+            delivery.holdGesture(navigationData());
             // Tell the model which file this gesture is presenting:
             // a bake committing mid-gesture supersedes the surface's
             // url and unlinks the old one, which is precisely this
             // picture.
-            if (root.printerModel != null) {
-                root.printerModel.setFollowerGestureRaster(root._gestureNavSource);
-            }
-            root._interactionActive = true;
+            camera.activate();
             root._holdTicks = 0;
             // One line per gesture, at the entry: it records the state
             // the hold started from, so a stick needs no separate
@@ -817,7 +714,7 @@ Item {
         var layers = root.progress != null ? root.progress.layers : null;
         var current = layers != null ? layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return "split=" + split + " motions=" + (current != null ? ExactComposition.motionsOf(current) : -1) + " prefixSplit=" + (current != null && current.prefixSplit !== undefined ? current.prefixSplit : -1) + " prefixValid=" + (current != null ? current.prefixValid : "?") + " full=" + _fullRaster() + " modelReady=" + _prefixModelReady() + " prefixReady=" + root._prefixStatusReady + " prefixFailed=" + root._prefixStatusFailed + " partialReady=" + _partialPrefixReady() + " texReady=" + root._textureReady + " shown=" + root._vectorCoversShown + " from=" + root._vectorCoversFrom + " lastSplit=" + root._lastSplit + " wasShown=" + root._prefixWasShown + " shownKey=" + root._prefixShownViewKey + " viewKey=" + _viewKey() + " raster=" + progressRasterImage.status + " travels=" + progressTravelImage.status + " base=" + pendingBaseImage.status + " zoomRun=" + zoomAnimator.running + " settleRun=" + root.settleTimer.running;
+        return "split=" + split + " motions=" + (current != null ? ExactComposition.motionsOf(current) : -1) + " prefixSplit=" + (current != null && current.prefixSplit !== undefined ? current.prefixSplit : -1) + " prefixValid=" + (current != null ? current.prefixValid : "?") + " full=" + _fullRaster() + " modelReady=" + _prefixModelReady() + " prefixReady=" + root._prefixStatusReady + " prefixFailed=" + root._prefixStatusFailed + " partialReady=" + _partialPrefixReady() + " texReady=" + root._textureReady + " shown=" + root._vectorCoversShown + " from=" + root._vectorCoversFrom + " lastSplit=" + root._lastSplit + " wasShown=" + root._prefixWasShown + " shownKey=" + root._prefixShownViewKey + " viewKey=" + _viewKey() + " raster=" + progressRasterImage.status + " travels=" + progressTravelImage.status + " base=" + pendingBaseImage.status + " zoomRun=" + camera.zoomRunning + " settleRun=" + root.settleTimer.running;
     }
 
     // The live stickiness: an interaction held past a beat is wrong,
@@ -828,7 +725,7 @@ Item {
     Timer {
         interval: 500
         repeat: true
-        running: root._interactionActive
+        running: camera.interactionActive
         onTriggered: {
             root._holdTicks += 1;
             if (root._holdTicks >= 3 && root._holdTicks % 2 === 1 && root.printerModel != null) {
@@ -877,13 +774,13 @@ Item {
     }
 
     function _prefixViewValid(source) {
-        return root._retiredPrefixView == null || root._retiredPrefixView.source !== source || root._retiredPrefixView.view === _viewKey();
+        return delivery.prefixValid(source, _viewKey());
     }
 
     function _prefixCandidate() {
         var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
         return {
-            ready: layer != null && layer.prefixValid === true && _prefixViewValid(layer.prefixData) && root._prefixStatusReady && root._prefixTexture.source === layer.prefixData,
+            ready: layer != null && layer.prefixValid === true && _prefixViewValid(layer.prefixData) && root._prefixStatusReady && delivery.prefixTexture.source === layer.prefixData,
             from: layer != null && layer.prefixSplit !== undefined ? layer.prefixSplit : -1,
             source: layer != null && layer.prefixData !== undefined ? layer.prefixData : ""
         };
@@ -891,7 +788,7 @@ Item {
 
     function _retainedCandidate() {
         return {
-            ready: root._standingPrefix != null && root._standingPrefix.world === _worldKeyOf() && root._retainedPrefixSource !== "" && root._retainedStatusReady,
+            ready: delivery.standingPrefix != null && delivery.standingPrefix.world === _worldKeyOf() && root._retainedPrefixSource !== "" && root._retainedStatusReady,
             from: root._retainedPrefixSplit,
             source: root._retainedPrefixSource
         };
@@ -908,48 +805,34 @@ Item {
             attached: root.attached,
             full: _fullDemand(),
             fullReady: _exactFullStanding(),
-            receipt: root._deliveredComposition,
-            epoch: root._progressWorldEpoch,
+            receipt: delivery.delivered,
+            epoch: delivery.epoch,
             world: _worldKeyOf(),
             splitOk: root._splitGate(),
             // The delivered empty bitmap certifies no Canvas ink.
             // Reading recovery geometry here would feed Image status
             // back into that same Image's source binding.
-            inkless: root._deliveredComposition != null && root._deliveredComposition.from === -1,
+            inkless: delivery.delivered != null && delivery.delivered.from === -1,
             split: root.progress != null ? root.progress.split : null,
             showTravels: root.showTravels,
             currentPrefix: _prefixCandidate(),
             retainedPrefix: _retainedCandidate(),
-            heldFull: root._fullRasterSeen && root._standingFull != null && root._standingFull.world === _worldKeyOf() && root.progress != null && root._fullSeenAnchor === root.progress.anchor && root._heldFullSource !== "" && _leavingFull()
+            heldFull: root._fullRasterSeen && delivery.standingFull != null && delivery.standingFull.world === _worldKeyOf() && root.progress != null && root._fullSeenAnchor === root.progress.anchor && root._heldFullSource !== "" && _leavingFull()
         });
     }
     readonly property var _presentation: _presentationDecision()
     on_PresentationChanged: presentationWake.start()
 
     function _capturePresentedAssets() {
-        var decision = _presentationDecision();
-        if (decision.kind === "full" && (root._retiredFullView == null || root._retiredFullView.source !== root.progress.layers.current.rasterData || root._retiredFullView.view === _viewKey()) && (root._standingFull == null || root._standingFull.world !== _worldKeyOf() || root._standingFull.source !== root.progress.layers.current.rasterData || root._standingFull.travels !== (_travelsShown() ? root.progress.layers.current.travelData : ""))) {
-            var layer = root.progress.layers.current;
-            root._standingFull = {
-                source: layer.rasterData,
-                travels: _travelsShown() ? layer.travelData : "",
-                anchor: root.progress.anchor,
-                world: _worldKeyOf(),
-                view: _viewKey()
-            };
-        } else if (decision.kind !== "full" && decision.ready) {
-            root._standingFull = null;
-        }
-        if (decision.prefix === "current" && decision.ready && (root._retiredPrefixView == null || root._retiredPrefixView.source !== _prefixCandidate().source || root._retiredPrefixView.view === _viewKey()) && (root._standingPrefix == null || root._standingPrefix.world !== _worldKeyOf() || root._standingPrefix.source !== _prefixCandidate().source || root._standingPrefix.from !== _prefixCandidate().from)) {
-            var prefix = _prefixCandidate();
-            root._standingPrefix = {
-                source: prefix.source,
-                from: prefix.from,
-                anchor: root.progress.anchor,
-                world: _worldKeyOf(),
-                view: _viewKey()
-            };
-        }
+        var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
+        delivery.capture(_presentationDecision(), {
+            raster: layer != null ? layer.rasterData : "",
+            travels: layer != null && _travelsShown() ? layer.travelData : "",
+            anchor: root.progress != null ? root.progress.anchor : -1,
+            world: _worldKeyOf(),
+            view: _viewKey(),
+            prefix: _prefixCandidate()
+        });
     }
 
     function _retainedPrefixApplies() {
@@ -962,16 +845,11 @@ Item {
         // must still be the served one.
         var progress = root.progress;
         var layer = progress != null && progress.layers != null ? progress.layers.current : null;
-        return progress != null && progress.split != null && progress.split > 0 && layer != null && root._retainedPrefixSplit >= 0 && progress.split >= root._retainedPrefixSplit && progress.split < layer.motions && progress.anchor === root._retainedPrefixAnchor && root._standingPrefix != null && root._standingPrefix.world === _worldKeyOf();
+        return progress != null && progress.split != null && progress.split > 0 && layer != null && root._retainedPrefixSplit >= 0 && progress.split >= root._retainedPrefixSplit && progress.split < layer.motions && progress.anchor === root._retainedPrefixAnchor && delivery.standingPrefix != null && delivery.standingPrefix.world === _worldKeyOf();
     }
 
     function _retireRetained() {
-        // The frozen pixels' identity is gone with the layer they
-        // were frozen for: a payload that names another layer (or no
-        // layer at all), the view transform they baked. Anything that
-        // leaves the record armed lets a later split-only match draw
-        // another layer's history.
-        root._standingPrefix = null;
+        delivery.retirePrefix();
     }
 
     function _leavingFull() {
@@ -984,13 +862,13 @@ Item {
 
     function _splitGate() {
         var split = root.progress != null ? root.progress.split : null;
-        return ExactComposition.splitGate(root._textureReady, root._vectorWorldShown, root._progressWorldEpoch, root._vectorSplitShown, split, root.attached);
+        return ExactComposition.splitGate(root._textureReady, root._vectorWorldShown, delivery.epoch, root._vectorSplitShown, split, root.attached);
     }
 
     function _partialPrefixReady() {
         var layer = root.progress != null && root.progress.layers != null ? root.progress.layers.current : null;
         var split = root.progress != null ? root.progress.split : null;
-        return ExactComposition.prefixReady(_prefixModelReady() ? layer : null, root._prefixStatusReady, root._splitGate(), root._vectorCoversShown, root._vectorSplitShown, split, false, _vectorInkless(), root._vectorCoversFrom, root._deliveredComposition != null ? root._deliveredComposition.prefixSource : "");
+        return ExactComposition.prefixReady(_prefixModelReady() ? layer : null, root._prefixStatusReady, root._splitGate(), root._vectorCoversShown, root._vectorSplitShown, split, false, _vectorInkless(), root._vectorCoversFrom, delivery.delivered != null ? delivery.delivered.prefixSource : "");
     }
 
     function _prefixFrom() {
@@ -1077,7 +955,7 @@ Item {
     }
 
     function _backgroundReady() {
-        return root._backgroundReceipt != null && root._backgroundReceipt.world === _pendingKeyOf();
+        return delivery.backgroundReceipt != null && delivery.backgroundReceipt.world === _pendingKeyOf();
     }
 
     function _ghostReady(role) {
@@ -1091,12 +969,8 @@ Item {
     // Whether the canvas holds — or is owed — a picture. A skip is
     // only safe while nothing stands: a state that stops drawing must
     // still repaint ONCE to clear the pixels the fallback left.
-    property bool _pendingStanding: false
     // The fallback's own arrival word, the pending canvas' `_paints`:
     // written by a paint that ran, never by a skipped request.
-    property int _pendingPaints: 0
-    property var _backgroundTransaction: ExactComposition.empty(0, "")
-    property var _backgroundReceipt: null
     readonly property string _backgroundDemandKey: _pendingKeyOf()
     on_BackgroundDemandKeyChanged: {
         root._pendingKey = root._backgroundDemandKey;
@@ -1106,35 +980,14 @@ Item {
     function _requestPendingPaint() {
         if (root.gpuRendering)
             return;
-        var draws = _pendingDraws();
-        if (draws || root._pendingStanding) {
-            var key = _pendingKeyOf();
-            root._backgroundTransaction = ExactComposition.enqueue(ExactComposition.newWorld(root._backgroundTransaction, root._progressWorldEpoch, key));
+        if (delivery.requestBackground(_pendingDraws(), _pendingKeyOf(), root._pendingKey))
             backgroundWake.start();
-            return;
-        }
-        // Nothing to draw and nothing standing: the picture-word is
-        // recorded without painting. The canvas holds no pixels, so its
-        // picture IS this key's — and the arrival word the composition
-        // gates on (_lastPendingKey) stays honest for a canvas that was
-        // never painted at all.
-        root._lastPendingKey = root._pendingKey;
-        root._backgroundReceipt = {
-            world: _pendingKeyOf(),
-            valid: true,
-            ink: false
-        };
     }
 
     function _wakeBackgroundPaint() {
         if (root.gpuRendering)
             return;
-        root._backgroundTransaction = ExactComposition.newWorld(root._backgroundTransaction, root._progressWorldEpoch, _pendingKeyOf());
-        if (!pendingCanvas.available || !ExactComposition.needsPaint(root._backgroundTransaction))
-            return;
-        var next = ExactComposition.request(root._backgroundTransaction);
-        root._backgroundTransaction = next.state;
-        if (next.start)
+        if (delivery.requestBackgroundPaint(_pendingKeyOf(), pendingCanvas.available))
             pendingCanvas.requestPaint();
     }
 
@@ -1190,52 +1043,13 @@ Item {
     // The zoom/pan soft clamp's margin: at least this many pixels of
     // the bed stay visible on every side, however far the camera
     // pans (the live ruling).
-    property real _panSoftMargin: 100.0
 
-    function _softClampPan(x, y) {
-        return ViewPolicy.softClampPan(mapping._plot, root.viewScale, width, height, root._panSoftMargin, x, y);
-    }
-
-    function _panOnToolhead(x, y) {
-        return ViewPolicy.centrePan(mapping._plot, x === undefined ? root.displayDotX : x, y === undefined ? root.displayDotY : y, root.viewScale, width, height);
-    }
-
-    // The one-shot jump (the pop-over's button): the toolhead's bed
-    // position lands at the view's centre, the zoom is the user's own.
-    // False when there is nothing to centre on.
     function centreOnToolhead() {
-        if (!dotAvailable()) {
-            return false;
-        }
-        var pan = _panOnToolhead();
-        if (pan == null) {
-            return false;
-        }
-        // A programmatic camera change: the display lands with the
-        // target (no pan easing for a button press).
-        root.viewPanX = pan.x;
-        root.viewPanY = pan.y;
-        root.displayPanX = pan.x;
-        root.displayPanY = pan.y;
-        root._enterInteraction();
-        return true;
+        return dotAvailable() && camera.centreOnToolhead(root.displayDotX, root.displayDotY);
     }
-
     function _followToolhead() {
-        if (!root.keepCentred || root.viewScale <= 1.0 || !dotAvailable())
-            return;
-        // Publish the target at telemetry cadence; animation ticks move only
-        // the displayed transform, without waking software render demands.
-        var target = _panOnToolhead(root.dot.x, root.dot.y);
-        var display = _panOnToolhead();
-        if (target != null) {
-            root.viewPanX = target.x;
-            root.viewPanY = target.y;
-        }
-        if (display != null) {
-            root.displayPanX = display.x;
-            root.displayPanY = display.y;
-        }
+        if (root.keepCentred && root.viewScale > 1 && dotAvailable())
+            camera.followToolhead(root.dot.x, root.dot.y, root.displayDotX, root.displayDotY);
     }
     onDotChanged: {
         _updateDot(false);
@@ -1260,15 +1074,6 @@ Item {
 
     function travelWidthPx() {
         return ViewPolicy.travelWidth(root.toolpathWidthPx(), root.travelVisualRatio, root.trueThickness);
-    }
-
-    function _barZoomPan(target) {
-        // The zoom bar's anchor (the live ruling): the scene point
-        // under the viewport CENTRE stays put through the scale
-        // change — the bar must never zoom around the bed origin.
-        // The retarget reads the CURRENT display transform, exactly
-        // like the wheel's cursor anchor.
-        return root._softClampPan(ViewPolicy.focalPan(root.width / 2, root.displayPanX, root.displayScale, target), ViewPolicy.focalPan(root.height / 2, root.displayPanY, root.displayScale, target));
     }
 
     // The raster stack's painted state: the split the progress canvas
@@ -1308,37 +1113,29 @@ Item {
     // A threaded upload never mutates the committed texture. The staging
     // item remains renderable outside the clip until the current demand
     // admits its receipt, then texture and prefix ownership change together.
-    property int _frontBuffer: 0
-    property int _paintBuffer: -1
     function _stageCanvas() {
-        return root._frontBuffer === 0 ? progressBackLoader.item : progressFrontLoader.item;
+        return delivery.frontBuffer === 0 ? progressBackLoader.item : progressFrontLoader.item;
     }
-    property var _deliveredComposition: null
-    readonly property int _vectorCoversShown: _deliveredComposition != null ? _deliveredComposition.from : -2
+    readonly property int _vectorCoversShown: delivery.delivered != null ? delivery.delivered.from : -2
     readonly property bool _prefixHold: root._presentation.prefix === "retained"
     readonly property bool _prefixWasShown: root._presentation.kind === "prefix"
-    readonly property string _prefixShownViewKey: _standingPrefix != null ? _standingPrefix.view : ""
-    property var _standingFull: null
-    readonly property bool _fullRasterSeen: _standingFull != null
-    readonly property int _fullSeenAnchor: _standingFull != null ? _standingFull.anchor : -2
-    readonly property string _heldFullSource: _standingFull != null ? _standingFull.source : ""
-    readonly property string _heldFullTravelSource: _standingFull != null ? _standingFull.travels : ""
+    readonly property string _prefixShownViewKey: delivery.standingPrefix != null ? delivery.standingPrefix.view : ""
+    readonly property bool _fullRasterSeen: delivery.standingFull != null
+    readonly property int _fullSeenAnchor: delivery.standingFull != null ? delivery.standingFull.anchor : -2
+    readonly property string _heldFullSource: delivery.standingFull != null ? delivery.standingFull.source : ""
+    readonly property string _heldFullTravelSource: delivery.standingFull != null ? delivery.standingFull.travels : ""
     // The threaded canvas's scene texture trails its paint by one
     // frame: a paint's coverage record alone must never admit the
     // prefix — the painted delivery confirms the bitmap the scene
     // is about to show.
-    readonly property bool _textureReady: _deliveredComposition != null
+    readonly property bool _textureReady: delivery.delivered != null
     // Only one exact Canvas paint is in flight. Later progress polls
     // coalesce into a single latest demand, and delivery is accepted
     // only for the current static scene incarnation.
     // Authoritative state for the whole threaded Canvas delivery.
     // No separate mutable paint queue, counter or coverage receipt.
-    property var _canvasTransaction: ExactComposition.empty(0, "")
-    property string _progressWorldKey: ""
-    property string _progressLayerKey: ""
-    property int _progressWorldEpoch: 0
-    readonly property int _vectorSplitShown: _deliveredComposition != null ? _deliveredComposition.split : -1
-    readonly property int _vectorWorldShown: _deliveredComposition != null ? _deliveredComposition.epoch : -1
+    readonly property int _vectorSplitShown: delivery.delivered != null ? delivery.delivered.split : -1
+    readonly property int _vectorWorldShown: delivery.delivered != null ? delivery.delivered.epoch : -1
     // The scrub vector's SOURCE identity: a same-anchor payload swap
     // (an empty fixture replaced by the real layer) must reset the
     // accumulated bitmap — the delta path assumes ink it never drew.
@@ -1368,7 +1165,6 @@ Item {
     // the key already reads the new one. The base's own state rides that
     // key, and a frame that still holds the old base is a picture of the
     // previous state — which a diff census then counts.
-    property string _lastPendingKey: ""
     property string _progressKey: ""
 
     function _viewKey() {
@@ -1398,21 +1194,9 @@ Item {
         var p = root.progress;
         var layer = p != null && p.layers != null ? p.layers.current : null;
         var layerKey = [p != null && p.sceneEpoch !== undefined ? p.sceneEpoch : "", p != null ? p.anchor : -1, layer != null && layer.sceneIdentity !== undefined ? layer.sceneIdentity : ""].join("|");
-        var key = _worldKeyOf();
-        if (key === root._progressWorldKey) {
+        if (!delivery.adoptWorld(_worldKeyOf(), layerKey))
             return false;
-        }
-        var layerChanged = layerKey !== root._progressLayerKey;
-        root._progressLayerKey = layerKey;
-        root._progressWorldKey = key;
-        root._progressWorldEpoch += 1;
-        root._canvasTransaction = ExactComposition.newWorld(root._canvasTransaction, root._progressWorldEpoch, key);
-        root._deliveredComposition = null;
         root._progressDirty = true;
-        if (layerChanged) {
-            _retireRetained();
-            root._standingFull = null;
-        }
         return true;
     }
 
@@ -1421,26 +1205,18 @@ Item {
             return;
         if (_progressPaintSatisfied())
             return;
-        root._canvasTransaction = ExactComposition.enqueue(root._canvasTransaction);
+        delivery.enqueue();
         _flushProgressPaint();
     }
 
     function _progressPaintSatisfied() {
-        // A standing receipt cannot satisfy a demand while another bitmap
-        // is being uploaded. Reversing back to that receipt must queue a
-        // replacement for the intervening paint.
-        if (root._canvasTransaction.count > 0)
-            return false;
-        var receipt = root._deliveredComposition;
         var split = root.progress != null ? root.progress.split : null;
-        if (receipt == null || receipt.epoch !== root._progressWorldEpoch || receipt.world !== _worldKeyOf() || receipt.split !== split || receipt.paintKey !== _progressKeyOf())
+        if (!delivery.receiptMatches(_worldKeyOf(), split, _progressKeyOf()))
             return false;
         var from = _prefixFrom();
-        if (from > 0) {
-            var chosen = ExactComposition.choosePrefix(_prefixCandidate(), _retainedCandidate(), split);
-            return receipt.from === from && receipt.prefixSource === chosen.source;
-        }
-        return receipt.from === 0 || (_vectorInkless() && receipt.from === -1);
+        if (from > 0)
+            return delivery.coverageMatches(from, split, _prefixCandidate(), _retainedCandidate(), false);
+        return delivery.coverageMatches(from, split, null, null, delivery.delivered.from !== 0 && _vectorInkless());
     }
 
     function _deliverProgressPaint() {
@@ -1448,41 +1224,11 @@ Item {
     }
 
     function _deliverStagedPaint(bufferIndex) {
-        // Qt can notify delivery again without a new onPaint. That
-        // notification cannot revoke the receipt for the standing
-        // bitmap. Retrying an unfulfilled request still coalesces
-        // through the transaction's pending bit.
-        var hadPaint = root._canvasTransaction.count > 0;
-        var result = ExactComposition.delivered(root._canvasTransaction, root._progressWorldEpoch, _worldKeyOf());
-        // onPainted certifies an upload, not a displayed frame. A newer
-        // demand must discard the staging pixels before they can surface.
-        if (result.accepted && bufferIndex !== undefined && result.receipt.paintKey !== _progressKeyOf()) {
-            result.accepted = false;
-            result.state.pending = true;
-        }
-        root._canvasTransaction = result.state;
-        if (hadPaint && result.accepted) {
-            root._deliveredComposition = result.receipt;
-            if (bufferIndex !== undefined)
-                root._frontBuffer = bufferIndex;
-        }
-        root._paintBuffer = -1;
-        if (hadPaint && !result.accepted)
+        var result = delivery.deliver(_worldKeyOf(), _progressKeyOf(), root.progress != null ? root.progress.anchor : -1, _viewKey(), bufferIndex);
+        if (result.hadPaint && !result.accepted)
             root._progressDirty = true;
-        if (result.accepted && _prefixViewValid(result.receipt.prefixSource) && result.receipt.from > 0 && typeof result.receipt.prefixSource === "string" && result.receipt.prefixSource !== "") {
-            // Capture the delivered asset before the next model publish
-            // can replace its URL. A deferred binding evaluation is too
-            // late to acquire the standing picture's file and pixels.
-            root._standingPrefix = {
-                source: result.receipt.prefixSource,
-                from: result.receipt.from,
-                anchor: root.progress.anchor,
-                world: result.receipt.world,
-                view: _viewKey()
-            };
-        }
-        if (hadPaint && !_progressPaintSatisfied())
-            root._canvasTransaction = ExactComposition.enqueue(root._canvasTransaction);
+        if (result.hadPaint && !_progressPaintSatisfied())
+            delivery.enqueue();
         return result.accepted;
     }
 
@@ -1491,30 +1237,21 @@ Item {
             root._progressDirty = false;
             return;
         }
-        if (ExactComposition.needsPaint(root._canvasTransaction))
+        if (ExactComposition.needsPaint(delivery.transaction))
             progressWake.start();
     }
 
     function _wakeProgressPaint() {
-        if (root.gpuRendering)
-            return;
-        // Keep the standing frame while a worker/decode can supply the
-        // prefix; a full-history QML fallback here would stall the drag.
-        if (_prefixPreparationPending())
+        if (root.gpuRendering || _prefixPreparationPending())
             return;
         var staged = _stageCanvas();
-        if (!ExactComposition.needsPaint(root._canvasTransaction) || staged == null || !staged.available)
+        if (!ExactComposition.needsPaint(delivery.transaction) || staged == null || !staged.available)
             return;
         if (_progressPaintSatisfied()) {
-            root._canvasTransaction = ExactComposition.unchanged(root._canvasTransaction);
+            delivery.unchanged();
             return;
         }
-        var next = ExactComposition.request(root._canvasTransaction);
-        root._canvasTransaction = next.state;
-        if (next.start) {
-            root._paintBuffer = root._frontBuffer === 0 ? 1 : 0;
-            // The other buffer holds an earlier composition. Rebuild its
-            // bounded prefix tail rather than appending to unrelated pixels.
+        if (delivery.request()) {
             root._progressDirty = true;
             staged.requestPaint();
         }
@@ -1558,7 +1295,7 @@ Item {
         // A mid-gesture ZOOM re-bakes the carried tail at the new
         // scale (the pan never repaints — the translation carries
         // it); idle settles leave the hidden canvas alone.
-        if (root._interactionActive && root.viewScale !== root._carryZoom) {
+        if (camera.interactionActive && root.viewScale !== root._carryZoom) {
             root._carryZoom = root.viewScale;
             carryCanvas.requestPaint();
         }
@@ -1638,9 +1375,9 @@ Item {
         // runs through every gesture (each view change restarts it),
         // so the swap happens once, after the last camera input and
         // the mouse-up.
-        if (root._interactionActive && !zoomAnimator.running && !root.settleTimer.running && _exactReady() && !viewGesture.pressed) {
+        if (camera.interactionActive && !camera.zoomRunning && !root.settleTimer.running && _exactReady() && !viewGesture.pressed) {
             endInteraction();
-        } else if (root._interactionActive && !zoomAnimator.running && !root.settleTimer.running && !viewGesture.pressed && root._progressDirty) {
+        } else if (camera.interactionActive && !camera.zoomRunning && !root.settleTimer.running && !viewGesture.pressed && root._progressDirty) {
             // The wheel's own catch-up: a demand that lands mid-hold
             // has its repaint deferred, and a wheel never releases —
             // without this paint the barrier could never pass and the
@@ -1746,10 +1483,9 @@ Item {
         }
         _publishView();
         _adoptProgressWorld();
-        if (root._assetOwner === 0)
-            _adoptAssetOwner();
+        if (delivery.assetOwner === 0)
+            delivery.adopt();
     }
-    Component.onDestruction: _releaseAssetOwner()
 
     // The mapping replots on ITS resize; every raster holds the old
     // transform's coordinates and repaints from scratch (the live
@@ -1788,7 +1524,7 @@ Item {
         // composite, never two independently-moving layers; the
         // live report: a separately-painted grid panned at its own
         // pace).
-        opacity: root.available() && !root._interactionActive ? 1.0 : 0.0
+        opacity: root.available() && !camera.interactionActive ? 1.0 : 0.0
         enabled: false // The face's gesture surface owns pointer input.
         printerModel: root.printerModel
         plate: null
@@ -1975,7 +1711,7 @@ Item {
             renderStrategy: Canvas.Threaded
             onPaint: {
                 var key = _pendingKeyOf();
-                var epoch = root._progressWorldEpoch;
+                var epoch = delivery.epoch;
                 var ink = _pendingDraws();
                 var ctx = getContext("2d");
                 ctx.reset();
@@ -1985,9 +1721,7 @@ Item {
                 // frame composites belongs to the key read here, cleared
                 // base included. The count is the arrival's own word —
                 // a request that skipped the paint never reaches here.
-                root._pendingPaints += 1;
-                root._lastPendingKey = root._pendingKey;
-                root._backgroundTransaction = ExactComposition.painted(root._backgroundTransaction, {
+                delivery.paintBackground({
                     epoch: epoch,
                     world: key,
                     valid: _pendingKeyOf() === key,
@@ -1995,15 +1729,10 @@ Item {
                     split: null,
                     prefixSource: "",
                     ink: ink
-                });
+                }, root._pendingKey);
             }
             onPainted: {
-                var result = ExactComposition.delivered(root._backgroundTransaction, root._progressWorldEpoch, _pendingKeyOf());
-                root._backgroundTransaction = result.state;
-                root._backgroundReceipt = result.accepted ? result.receipt : null;
-                if (result.accepted)
-                    root._pendingStanding = result.receipt.ink;
-                if (ExactComposition.needsPaint(root._backgroundTransaction))
+                if (delivery.deliverBackground(_pendingKeyOf()))
                     backgroundWake.start();
             }
         }
@@ -2032,17 +1761,11 @@ Item {
             // (its yield reads the mirror) and what ends the two
             // holds' ink.
             onSourceChanged: {
-                root._classTexture = {
-                    source: source.toString(),
-                    status: status
-                };
+                delivery.imageStatus("class", source.toString(), status);
                 _requestProgressPaint();
             }
             onStatusChanged: {
-                root._classTexture = {
-                    source: source.toString(),
-                    status: status
-                };
+                delivery.imageStatus("class", source.toString(), status);
                 presentationWake.start();
                 _requestProgressPaint();
             }
@@ -2064,17 +1787,11 @@ Item {
             visible: _travelsShown() || (_presentationDecision().kind === "heldFull" && root._heldFullTravelSource !== "")
             source: _travelsShown() ? root.progress.layers.current.travelData : root._heldFullTravelSource
             onSourceChanged: {
-                root._travelTexture = {
-                    source: source.toString(),
-                    status: status
-                };
+                delivery.imageStatus("travel", source.toString(), status);
                 _requestProgressPaint();
             }
             onStatusChanged: {
-                root._travelTexture = {
-                    source: source.toString(),
-                    status: status
-                };
+                delivery.imageStatus("travel", source.toString(), status);
                 presentationWake.start();
                 _requestProgressPaint();
             }
@@ -2131,17 +1848,11 @@ Item {
             visible: root._presentation.prefix === "current"
             source: root.available() && root.progress.layers.current != null && root.progress.layers.current.prefixValid === true ? root.progress.layers.current.prefixData : ""
             onSourceChanged: {
-                root._prefixTexture = {
-                    source: source.toString(),
-                    status: status
-                };
+                delivery.imageStatus("prefix", source.toString(), status);
                 _requestProgressPaint();
             }
             onStatusChanged: {
-                root._prefixTexture = {
-                    source: source.toString(),
-                    status: status
-                };
+                delivery.imageStatus("prefix", source.toString(), status);
                 presentationWake.start();
                 _requestProgressPaint();
             }
@@ -2165,17 +1876,11 @@ Item {
             visible: root._presentation.prefix === "retained"
             source: root._retainedPrefixSource
             onSourceChanged: {
-                root._retainedTexture = {
-                    source: source.toString(),
-                    status: status
-                };
+                delivery.imageStatus("retained", source.toString(), status);
                 _requestProgressPaint();
             }
             onStatusChanged: {
-                root._retainedTexture = {
-                    source: source.toString(),
-                    status: status
-                };
+                delivery.imageStatus("retained", source.toString(), status);
                 _requestProgressPaint();
             }
             smooth: false
@@ -2190,7 +1895,7 @@ Item {
                 onAvailableChanged: root._flushProgressPaint()
                 width: exactScene.width
                 height: exactScene.height
-                x: bufferIndex === root._frontBuffer ? 0 : width * 2
+                x: bufferIndex === delivery.frontBuffer ? 0 : width * 2
                 renderTarget: Canvas.Image
                 renderStrategy: Canvas.Threaded
                 // The full state's handover in ONE beat: the standing
@@ -2214,7 +1919,7 @@ Item {
                 // still refuses obsolete coverage at delivery.
                 opacity: _exactFullStanding() ? 0 : 1
                 onPainted: {
-                    if (bufferIndex !== root._paintBuffer)
+                    if (bufferIndex !== delivery.paintBuffer)
                         return;
                     // A delivered texture is authoritative ONLY when one
                     // paint from this world can be unambiguously identified.
@@ -2225,26 +1930,26 @@ Item {
                     root._flushProgressPaint();
                 }
                 onPaint: {
-                    if (bufferIndex !== root._paintBuffer)
+                    if (bufferIndex !== delivery.paintBuffer)
                         return;
                     // Implicit Qt paints must not mutate a bitmap whose upload
                     // still owns the delivery slot. Coalesce into the next paint.
-                    if (root._canvasTransaction.count > 0) {
-                        root._canvasTransaction = ExactComposition.enqueue(root._canvasTransaction);
+                    if (delivery.transaction.count > 0) {
+                        delivery.enqueue();
                         return;
                     }
                     if (_prefixPreparationPending()) {
-                        root._canvasTransaction = ExactComposition.enqueue(ExactComposition.unchanged(root._canvasTransaction));
+                        delivery.enqueue(true);
                         return;
                     }
                     // An unchanged bitmap may produce no painted() signal.
                     // Its standing receipt is already proof; do not strand a
                     // queue slot waiting for a texture upload Qt can omit.
                     if (root._progressPaintSatisfied()) {
-                        root._canvasTransaction = ExactComposition.unchanged(root._canvasTransaction);
+                        delivery.unchanged();
                         return;
                     }
-                    var paintEpoch = root._progressWorldEpoch;
+                    var paintEpoch = delivery.epoch;
                     var paintWorld = _worldKeyOf();
                     var paintKey = _progressKeyOf();
                     var bitmapChanged = false;
@@ -2438,7 +2143,7 @@ Item {
                             paintKey: paintKey,
                             prefixSource: root._vectorCoversFrom > 0 ? root._paintedPrefixSource : ""
                         };
-                        root._canvasTransaction = bitmapChanged ? ExactComposition.painted(root._canvasTransaction, nextReceipt) : ExactComposition.unchanged(root._canvasTransaction);
+                        delivery.painted(nextReceipt, bitmapChanged);
                     }
                 }
             }
@@ -2482,7 +2187,7 @@ Item {
     Item {
         id: warmScene
         anchors.fill: parent
-        visible: !root.gpuRendering && root._interactionActive
+        visible: !root.gpuRendering && camera.interactionActive
         Rectangle {
             anchors.fill: parent
             color: UM.Theme.getColor("main_background")
@@ -2518,8 +2223,8 @@ Item {
             // interaction activated without an entry (the presentation
             // fixtures drive the flag directly) falls back to the live
             // eligible URL.
-            visible: !root.gpuRendering && root._interactionActive && (root._gestureNavSource !== "" || navigationData() !== "")
-            source: root._interactionActive ? (root._gestureNavSource !== "" ? root._gestureNavSource : navigationData()) : navigationData()
+            visible: !root.gpuRendering && camera.interactionActive && (delivery.gestureSource !== "" || navigationData() !== "")
+            source: camera.interactionActive ? (delivery.gestureSource !== "" ? delivery.gestureSource : navigationData()) : navigationData()
             smooth: true
         }
 
@@ -2538,7 +2243,7 @@ Item {
             // the default centre origin swings this item's content by
             // size * (1 - displayScale / backing), further than the face
             // is wide, so a zoomed gesture carried no tail at all.
-            visible: !root.gpuRendering && root._interactionActive
+            visible: !root.gpuRendering && camera.interactionActive
             width: visible ? root.width * root._navBacking() : 0
             height: visible ? root.height * root._navBacking() : 0
             x: visible ? root.displayPanX : 0
@@ -2575,79 +2280,14 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
         cursorShape: root.viewScale > 1.0 ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.ArrowCursor
         onWheel: function (wheel) {
-            if (mapping._plot == null) {
-                return;
-            }
-            var pixels = wheel.pixelDelta.y;
-            var angle = wheel.angleDelta.y;
-            if (pixels === 0 && angle === 0)
-                return;
-            var target = ViewPolicy.wheelScale(pixels, angle, root.viewScale, ViewPolicy.MAX_SCALE);
-            if (target === root.viewScale && root.displayScale === root.viewScale) {
-                return;
-            }
-            root._enterInteraction();
-            // The bed-fit pixel under the cursor AT THE TARGET: the
-            // eased display pan derives from it every tick, so scale
-            // and pan converge as one coherent camera transform and
-            // the focal point never wanders.
-            if (target <= 1.0) {
-                // 100% is the fit: centred, panning off (the live
-                // ruling — no pan at full zoom).
-                root.viewScale = 1.0;
-                root.viewPanX = 0.0;
-                root.viewPanY = 0.0;
-            } else {
-                // The point under the cursor stays put, computed
-                // from the CURRENT DISPLAY transform (the retarget
-                // always starts where the camera actually is). The
-                // pan is only SOFT-clamped: the bed may never leave
-                // the viewport wholly — _panSoftMargin pixels stay
-                // visible on every side (the live ruling). Beyond
-                // that the camera stays exactly where the focal
-                // point puts it; only the 100% fit (above)
-                // recentres.
-                root.viewScale = target;
-                root.viewPanX = ViewPolicy.focalPan(wheel.x, root.displayPanX, root.displayScale, target);
-                root.viewPanY = ViewPolicy.focalPan(wheel.y, root.displayPanY, root.displayScale, target);
-                var clamped = root._softClampPan(root.viewPanX, root.viewPanY);
-                root.viewPanX = clamped.x;
-                root.viewPanY = clamped.y;
-            }
-            root._zoomAnchorX = wheel.x;
-            root._zoomAnchorY = wheel.y;
-            root._zoomBedX = ViewPolicy.focalBed(wheel.x, root.viewPanX, root.viewScale);
-            root._zoomBedY = ViewPolicy.focalBed(wheel.y, root.viewPanY, root.viewScale);
-            // The wheel re-owns the camera promise: the ease runs
-            // from the CURRENT display (held-drag pan included) and
-            // the deltas from here on ride the glide.
-            root._panDragDeltaX = 0.0;
-            root._panDragDeltaY = 0.0;
-            if (viewGesture.pressed) {
-                // The wheel made a new target camera while the drag
-                // still owns the pointer. Its old press pan belongs
-                // to the PRE-zoom camera; using it on the next move
-                // would jump back to that camera until the ease ends.
-                root._pressX = wheel.x;
-                root._pressY = wheel.y;
-                root._pressPanX = root.viewPanX;
-                root._pressPanY = root.viewPanY;
-                root._dragX = wheel.x;
-                root._dragY = wheel.y;
-            }
-            zoomAnimator.restart();
+            camera.wheel(wheel.x, wheel.y, wheel.pixelDelta.y, wheel.angleDelta.y, pressed);
         }
         onPressed: function (mouse) {
-            root._penguinPressMs = Date.now();
+            penguin.press();
             // The press records the grab point only: the warm raster
             // waits for a movement that actually pans (the review's
             // ruling — a click at any zoom never flips the scene).
-            root._dragX = mouse.x;
-            root._dragY = mouse.y;
-            root._pressX = mouse.x;
-            root._pressY = mouse.y;
-            root._pressPanX = root.viewPanX;
-            root._pressPanY = root.viewPanY;
+            camera.press(mouse.x, mouse.y);
             // The one-off drag snapshot: the press asks the model for
             // an immediate warm-raster bake with the current split,
             // so the first movement latches a raster that has caught
@@ -2660,175 +2300,26 @@ Item {
             }
         }
         onPositionChanged: function (mouse) {
-            if (!pressed || root.viewScale <= 1.0 || root.displayScale <= 1.0) {
-                return;
-            }
-            // The pan tracks the pointer directly: the display AND
-            // the target move together (no pan easing — the nav
-            // raster makes the direct pan cheap). The delta also
-            // accumulates into the eased pan, so a drag during a
-            // zoom converges exactly onto the dragged target. The
-            // soft clamp applies the APPLIED delta: once the bed's
-            // margin touches the viewport's edge, the camera stops
-            // there while the pointer keeps moving.
-            var dx = mouse.x - root._dragX;
-            var dy = mouse.y - root._dragY;
-            // The clamp works from the PRESS origin, not the live
-            // view: while the entry gate holds, the view itself stays
-            // frozen (its repaint pipeline is what smeared the lines
-            // — the canvas tail re-baked per tick while the prefix
-            // image content lagged), so the buffered drag must not
-            // accumulate through the frozen target.
-            var clamped = root._softClampPan(root._pressPanX + mouse.x - root._pressX, root._pressPanY + mouse.y - root._pressY);
-            var appliedX = clamped.x - root.viewPanX;
-            var appliedY = clamped.y - root.viewPanY;
-            // The interaction raster flips in only when this
-            // movement pans for real: a click's zero delta and a
-            // boundary-blocked drag never activate it (the review's
-            // ruling — no warm-raster transition on inert gestures).
-            if (appliedX !== 0.0 || appliedY !== 0.0) {
-                if (root.keepCentred)
-                    root.manuallyPanned();
-                root._enterInteraction();
-            }
-            // The whole camera (target, display AND the raster's
-            // presentation) moves only once the interaction has
-            // entered — then in one coherent jump to the clamped
-            // target. During the gate's hold nothing moves: no
-            // smear, no mixed-rate drag. With NO eligible raster at
-            // all the camera still follows the pointer directly —
-            // the degraded exact-scene path must keep working (the
-            // freeze is only the hold, never a dead drag).
-            if (root._interactionActive || navigationData() === "") {
-                root.viewPanX = clamped.x;
-                root.viewPanY = clamped.y;
-                // During a wheel ease the display trails the target.
-                // Translate BOTH cameras by the applied drag instead
-                // of snapping the display straight to that target.
-                root.displayPanX += appliedX;
-                root.displayPanY += appliedY;
-            }
-            root._panDragDeltaX += appliedX;
-            root._panDragDeltaY += appliedY;
-            root._dragX = mouse.x;
-            root._dragY = mouse.y;
+            camera.drag(mouse.x, mouse.y, pressed);
         }
         onReleased: function (mouse) {
             root._finishGesture();
-            if (Date.now() - root._penguinPressMs <= 350 && Math.abs(mouse.x - root._pressX) <= 4 && Math.abs(mouse.y - root._pressY) <= 4)
-                root._recordPenguinClick(mouse.button);
-            else
-                root._penguinClickCount = 0;
+            penguin.release(mouse.button, mouse.x - camera.pressX, mouse.y - camera.pressY);
         }
         onCanceled: {
             root._finishGesture();
-            root._penguinClickCount = 0;
+            penguin.cancelSequence();
         }
         onDoubleClicked: function (mouse) {
-            if (mouse.button !== Qt.LeftButton)
-                return;
-            // At the 100% fit there is nothing to reset (the live
-            // ruling: click/down/drag stay inert at full zoom).
-            if (root.viewScale <= 1.0) {
-                return;
-            }
-            // The reset is a programmatic camera change: the target
-            // and the display land together, and the exact scene
-            // returns only once the barrier passes.
-            root._enterInteraction();
-            root.viewScale = 1.0;
-            root.viewPanX = 0.0;
-            root.viewPanY = 0.0;
-            root.displayScale = 1.0;
-            root.displayPanX = 0.0;
-            root.displayPanY = 0.0;
-            zoomAnimator.stop();
+            if (mouse.button === Qt.LeftButton)
+                camera.fitNow();
         }
     }
 
-    Item {
-        id: penguinOverlay
+    PlatePenguinOverlay {
+        id: penguin
         anchors.fill: parent
-        z: 100
-        opacity: 0
-        visible: root._penguinActive || opacity > 0
-
-        Rectangle {
-            anchors.fill: parent
-            color: MoonrakerTheme.penguinBackdrop
-        }
-        Canvas {
-            id: penguinCanvas
-            anchors.fill: parent
-            property real progress: root._penguinProgress
-            property int drawn: 0
-            onProgressChanged: requestPaint()
-            onWidthChanged: {
-                drawn = 0;
-                requestPaint();
-            }
-            onHeightChanged: {
-                drawn = 0;
-                requestPaint();
-            }
-            onPaint: {
-                var context = getContext("2d");
-                var count = Math.floor(Penguin.strokes.length * progress);
-                if (drawn === 0 || drawn > count)
-                    context.clearRect(0, 0, width, height);
-                var side = Math.min(width, height);
-                var left = (width - side) / 2;
-                var top = (height - side) / 2;
-                context.lineWidth = Math.max(1.2, side / 250 * 0.8);
-                context.lineCap = "round";
-                var colours = [MoonrakerTheme.penguinBlack, MoonrakerTheme.penguinWhite, MoonrakerTheme.penguinYellow];
-                for (var index = drawn; index < count; index++) {
-                    var stroke = Penguin.strokes[index];
-                    context.strokeStyle = colours[stroke[4]];
-                    context.beginPath();
-                    context.moveTo(left + stroke[0] * side / 250, top + (250 - stroke[1]) * side / 250);
-                    context.lineTo(left + stroke[2] * side / 250, top + (250 - stroke[3]) * side / 250);
-                    context.stroke();
-                }
-                drawn = count;
-            }
-        }
-    }
-    NumberAnimation {
-        id: penguinFadeIn
-        target: penguinOverlay
-        property: "opacity"
-        from: 0
-        to: 1
-        duration: 250
-    }
-    Timer {
-        id: penguinDrawDelay
-        interval: 250
-        onTriggered: penguinDraw.start()
-    }
-    NumberAnimation {
-        id: penguinDraw
-        target: root
-        property: "_penguinProgress"
-        from: 0
-        to: 1
-        duration: 1800
-        onFinished: penguinHold.start()
-    }
-    Timer {
-        id: penguinHold
-        interval: 3000
-        onTriggered: penguinFadeOut.start()
-    }
-    NumberAnimation {
-        id: penguinFadeOut
-        target: penguinOverlay
-        property: "opacity"
-        from: 1
-        to: 0
-        duration: 350
-        onFinished: root._penguinActive = false
+        compact: root.compact
     }
 
     PlateZoomScope {
@@ -2845,22 +2336,7 @@ Item {
         // assigning the display scale first would degenerate the anchor
         // to 0.
         onScaleRequested: function (target) {
-            root._enterInteraction();
-            root.viewScale = target;
-            if (target <= 1.0) {
-                root.viewPanX = 0.0;
-                root.viewPanY = 0.0;
-                root.displayPanX = 0.0;
-                root.displayPanY = 0.0;
-                root.displayScale = target;
-            } else {
-                var pan = root._barZoomPan(target);
-                root.viewPanX = pan.x;
-                root.viewPanY = pan.y;
-                root.displayPanX = pan.x;
-                root.displayPanY = pan.y;
-                root.displayScale = target;
-            }
+            camera.scopeZoom(target);
         }
     }
 
@@ -2869,9 +2345,7 @@ Item {
     // the checkbox row outside the canvas, so the plate never
     // reflows when the control appears.
     function resetView() {
-        root.viewScale = 1.0;
-        root.viewPanX = 0.0;
-        root.viewPanY = 0.0;
+        camera.resetTarget();
     }
 
     // The scrub input ends any camera interaction outright: the
@@ -2879,17 +2353,15 @@ Item {
     // standing over the hidden exact scene during scrub repaints is
     // the wrong picture between frames.
     function endInteraction() {
-        zoomAnimator.stop();
-        root._interactionActive = false;
-        root._gestureNavSource = "";
+        camera.stopZoom();
+        camera.end();
+        delivery.clearGesture();
         root._holdTicks = 0;
         // Every exit — the pan release, the zoom snap, the scrub —
         // resumes the model's publications, and releases the file
         // hold so the cache can collect it.
         root._resumeWarmBakes();
-        if (root.printerModel != null) {
-            root.printerModel.setFollowerGestureRaster("");
-        }
+        delivery.releaseGesture();
     }
 
     // The retained handover's frozen pixels bake the view transform
@@ -2900,19 +2372,12 @@ Item {
     function _retireRetainedView() {
         // A queued capture must not re-label these immutable pixels
         // with the new view while their replacement is still pending.
-        if (root._standingPrefix != null)
-            root._retiredPrefixView = root._standingPrefix;
-        if (root._standingFull != null)
-            root._retiredFullView = root._standingFull;
-        if (root._retainedPrefixSource !== "") {
-            _retireRetained();
-        }
-        root._standingFull = null;
+        delivery.retireView();
         // A pending paint must read the new world even when a caller
         // renders before the camera's debounce expires. Coalescing is
         // deferred, but identity invalidation is synchronous.
         _adoptProgressWorld();
-        if (!root._interactionActive)
+        if (!camera.interactionActive)
             _wakeProgressPaint();
     }
 

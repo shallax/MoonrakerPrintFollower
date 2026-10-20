@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Check geometry construction at its portable owner and retain host draw contracts.
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
 # 2026-09-06 [4d1ba2c] Test Klipper bed mesh rendering contracts

@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Inspect named appearance state and job generations during printer-bound imports.
 # 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
 # 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0

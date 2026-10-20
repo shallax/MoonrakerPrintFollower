@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
 # 2026-10-20 — 6.0.0: Expose the bounded source-line limit to independent parser consumers.
+# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
 
 """Resource bounds shared by scanning, hydration and index-cache validation."""
 from __future__ import annotations

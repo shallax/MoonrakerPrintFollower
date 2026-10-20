@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Consume public lexical capabilities and explicit indexing owners in feature tests.
 # 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains

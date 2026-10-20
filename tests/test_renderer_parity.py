@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Inspect camera ownership while preserving physical stroke and focal parity assertions.
 # 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
 # 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
 # 2026-09-22 [773e361] 4.6.0: the burn fix, the parity coverage floor and the webcam FPS control
@@ -179,7 +180,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         # the zoomed stroke stays inside the grab.
         face.setProperty("displayPanX", 300 - (ox + 4.0 * fx))
         face.setProperty("displayPanY", 300 - (oy + 4.0 * fy))
-        face.setProperty("_interactionActive", True)
+        _parent.view_state(face).setProperty("interactionActive", True)
         # Arrival BEFORE agreement. Two grabs of a canvas that has not
         # painted yet agree perfectly, so a settle test on its own
         # accepts the blank frame and the census then reads an empty
@@ -285,7 +286,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         self._hold_navigation_fixture(face)
         face.setProperty("viewScale", 4.0)
         face.setProperty("displayScale", 4.0)
-        face.setProperty("_interactionActive", True)
+        _parent.view_state(face).setProperty("interactionActive", True)
         # Read the theme, not a presumed empty pixel. A panned graduation
         # crosses any fixed canvas sample: macOS's failure image sampled
         # #cccccc as background, so the #999999 grid falsely had no ink.
@@ -379,13 +380,13 @@ class RendererParityTests(_parent.RealEngineTestCase):
 
         pan_a = 300 - (ox + 4.0 * fx)
         first = painted(grab(pan_a), pan_a)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(_parent.view_state(face).property("interactionActive"),
                         "the first census lost the held interaction")
         col_grid_a = grid_col(first, pan_a)
         col_stroke_a = stroke_right(first, pan_a)
         pan_b = pan_a - 40.0
         second = painted(grab(pan_b), pan_b, previous=first)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(_parent.view_state(face).property("interactionActive"),
                         "the second census lost the held interaction")
         col_grid_b = grid_col(second, pan_b)
         col_stroke_b = stroke_right(second, pan_b)
@@ -578,9 +579,9 @@ class RendererParityTests(_parent.RealEngineTestCase):
                                    "anchor (col %s)" % col)
         for _ in range(60):
             self._pump_ms(30)
-            if not face.property("_interactionActive"):
+            if not _parent.view_state(face).property("interactionActive"):
                 break
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(_parent.view_state(face).property("interactionActive"),
                          "the bar drag never settled")
 
     def test_nearby_strokes_stay_separate_through_the_raster(self):

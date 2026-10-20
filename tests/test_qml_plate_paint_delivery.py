@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Qualify stale receipts and deferred cleanup at the delivery owner.
 # 2026-10-08 [0c51c11] Fix deferred plate teardown and qualify capture determinism
 # 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
 # 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
@@ -25,7 +26,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             self._pump_ms(40)
         failures = [message for message in harness._APPLICATION["messages"][message_start:]
                     if "invalid context" in message.lower()
-                    or ("PlateProgressFace.qml" in message and "TypeError" in message)]
+                    or (any(name in message for name in ("PlateProgressFace.qml", "PlateDeliveryState.qml", "PlateViewState.qml", "PlatePenguinOverlay.qml")) and "TypeError" in message)]
         self.assertEqual(failures, [], "a retired face ran deferred presentation work")
         # A newly opened face must still deliver its complete picture.
         monitor.setProperty("openPopOver", "plateprogress")
@@ -292,7 +293,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                            progress_now.get("split") if progress_now else "?"))
                     details.append("owners=%s receipt=%s" % (
                         face.property("_presentation").toVariant(),
-                        face.property("_deliveredComposition").toVariant()))
+                        harness.delivery(face).property("delivered").toVariant()))
                     full_image = self._image_with_source(face, layer.rasterData)
                     details.append("held=%r fullImage=%s" % (
                         face.property("_heldFullSource"),
@@ -334,7 +335,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                 self._pump_ms(20)
                 image = window.grabWindow()
                 shown = classify(image, allowed)
-                receipt = face.property("_deliveredComposition").toVariant()
+                receipt = harness.delivery(face).property("delivered").toVariant()
                 receipt_split = receipt.get("split") if isinstance(receipt, dict) else None
                 rapid_trace.append((split, beat, shown, receipt_split))
                 if shown is None:
@@ -431,9 +432,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # record would leave the delivered record claiming a canvas
         # state the test does not mean.
         face.setProperty("_vectorCoversFrom", 0)
-        receipt = {"epoch": face.property("_progressWorldEpoch"),
+        receipt = {"epoch": harness.delivery(face).property("epoch"),
                    "from": 0, "split": 5, "prefixSource": ""}
-        face.setProperty("_deliveredComposition", receipt)
+        harness.delivery(face).setProperty("delivered", receipt)
         face.setProperty("_lastSplit", 5)
         self.assertFalse(predicate(),
                          "an older split's delivered frame readied the prefix")
@@ -443,11 +444,11 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertFalse(predicate(),
                          "the painter's split impersonated delivered pixels")
         receipt["split"] = 18
-        face.setProperty("_deliveredComposition", receipt)
+        harness.delivery(face).setProperty("delivered", receipt)
         self.assertFalse(predicate(), "a full Canvas admitted overlapping prefix ink")
         receipt["from"] = 10
         receipt["prefixSource"] = layer.prefixData
-        face.setProperty("_deliveredComposition", receipt)
+        harness.delivery(face).setProperty("delivered", receipt)
         self.assertTrue(predicate(), "the matching tail delivery never readied the prefix")
 
     def test_a_stale_scene_or_ambiguous_canvas_delivery_cannot_admit_a_prefix(self):
@@ -476,15 +477,15 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             self._pump_ms(10)
         self.assertTrue(face.property("_prefixWasShown"),
                         "the baseline prefix was never presented")
-        epoch = face.property("_progressWorldEpoch")
-        world = face.property("_progressWorldKey")
+        epoch = harness.delivery(face).property("epoch")
+        world = harness.delivery(face).property("worldKey")
         self.assertGreater(epoch, 0)
         self.assertTrue(world)
 
         def deliver(receipt, paints=1):
-            face.setProperty("_canvasTransaction", {
-                "epoch": face.property("_progressWorldEpoch"),
-                "world": face.property("_progressWorldKey"),
+            harness.delivery(face).setProperty("transaction", {
+                "epoch": harness.delivery(face).property("epoch"),
+                "world": harness.delivery(face).property("worldKey"),
                 "inFlight": True, "pending": False, "count": paints,
                 "first": receipt, "last": receipt, "consensus": paints == 1})
             result = QMetaObject.invokeMethod(
@@ -494,7 +495,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
 
         correct = {"epoch": epoch, "world": world, "valid": True,
                    "from": 10, "split": 18}
-        face.setProperty("_deliveredComposition", None)
+        harness.delivery(face).setProperty("delivered", None)
         self.assertFalse(deliver({**correct, "epoch": epoch - 1}),
                          "an earlier layer's callback certified this one")
         self.assertNotEqual(face.property("_vectorCoversShown"), 10)
@@ -511,8 +512,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # Advancing the print or layer incarnation invalidates the
         # previously delivered bitmap without changing its motion
         # count or accidentally reusing a previous anchor's bytes.
-        face.setProperty("_progressWorldEpoch", epoch + 1)
-        face.setProperty("_deliveredComposition", None)
+        harness.delivery(face).setProperty("epoch", epoch + 1)
+        harness.delivery(face).setProperty("delivered", None)
         self.assertFalse(deliver(correct),
                          "the new generation accepted stale Canvas pixels")
         self.assertEqual(face.property("_vectorCoversShown"), -2)
@@ -521,13 +522,13 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
         monitor, window, face, baseline = self._mount_empty()
         self.pump(10)
-        epoch = face.property("_progressWorldEpoch")
-        world = face.property("_progressWorldKey")
+        epoch = harness.delivery(face).property("epoch")
+        world = harness.delivery(face).property("worldKey")
         old = {"epoch": epoch, "world": world, "valid": True,
                "from": 0, "split": 18}
-        face.setProperty("_deliveredComposition", old)
+        harness.delivery(face).setProperty("delivered", old)
         intervening = dict(old, split=8)
-        face.setProperty("_canvasTransaction", {
+        harness.delivery(face).setProperty("transaction", {
             "epoch": epoch, "world": world, "inFlight": True,
             "pending": False, "count": 1, "first": intervening,
             "last": intervening, "consensus": True})
@@ -535,7 +536,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             face, "_progressPaintSatisfied", Q_RETURN_ARG(QVariant)))
         self.assertTrue(QMetaObject.invokeMethod(
             face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant)))
-        self.assertTrue(face.property("_canvasTransaction").toVariant()["pending"])
+        self.assertTrue(harness.delivery(face).property("transaction").toVariant()["pending"])
 
     def test_equivalent_extra_canvas_paints_share_one_valid_delivery(self):
         # Qt can coalesce multiple identical onPaint events into one
@@ -544,11 +545,11 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
         monitor, window, face, baseline = self._mount_empty()
         self.pump(10)
-        epoch = face.property("_progressWorldEpoch")
-        world = face.property("_progressWorldKey")
+        epoch = harness.delivery(face).property("epoch")
+        world = harness.delivery(face).property("worldKey")
         receipt = {"epoch": epoch, "world": world, "valid": True,
                    "from": 0, "split": 8}
-        face.setProperty("_canvasTransaction", {
+        harness.delivery(face).setProperty("transaction", {
             "epoch": epoch, "world": world, "inFlight": True,
             "pending": False, "count": 2, "first": receipt,
             "last": dict(receipt), "consensus": True})
@@ -561,18 +562,18 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
         monitor, window, face, baseline = self._mount_empty()
         self.pump(10)
-        epoch = face.property("_progressWorldEpoch")
-        world = face.property("_progressWorldKey")
+        epoch = harness.delivery(face).property("epoch")
+        world = harness.delivery(face).property("worldKey")
         old = {"epoch": epoch, "world": world, "valid": True,
                "from": 0, "split": 8}
         current = dict(old, **{"from": 5, "split": 10})
-        face.setProperty("_canvasTransaction", {
+        harness.delivery(face).setProperty("transaction", {
             "epoch": epoch, "world": world, "inFlight": True,
             "pending": False, "count": 2, "first": old,
             "last": current, "consensus": False})
         self.assertFalse(QMetaObject.invokeMethod(
             face, "_deliverProgressPaint", Q_RETURN_ARG(QVariant)))
-        state = face.property("_canvasTransaction")
+        state = harness.delivery(face).property("transaction")
         if hasattr(state, "toVariant"):
             state = state.toVariant()
         self.assertTrue(state["pending"])
@@ -580,15 +581,15 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
     def test_exact_canvas_coalesces_progress_while_one_paint_is_in_flight(self):
         from PyQt6.QtCore import QMetaObject
         monitor, window, face, baseline = self._mount_empty()
-        face.setProperty("_deliveredComposition", None)
-        face.setProperty("_canvasTransaction", {
-            "epoch": face.property("_progressWorldEpoch"),
-            "world": face.property("_progressWorldKey"),
+        harness.delivery(face).setProperty("delivered", None)
+        harness.delivery(face).setProperty("transaction", {
+            "epoch": harness.delivery(face).property("epoch"),
+            "world": harness.delivery(face).property("worldKey"),
             "inFlight": True, "pending": False, "count": 0,
             "first": None, "last": None, "consensus": False})
         QMetaObject.invokeMethod(face, "_requestProgressPaint")
         QMetaObject.invokeMethod(face, "_requestProgressPaint")
-        state = face.property("_canvasTransaction")
+        state = harness.delivery(face).property("transaction")
         if hasattr(state, "toVariant"):
             state = state.toVariant()
         self.assertTrue(state["pending"], "rapid live polls did not coalesce")
@@ -601,13 +602,13 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # and starve the GUI/camera under repeated invalidation.
         from PyQt6.QtCore import QMetaObject
         monitor, window, face, baseline = self._mount_empty()
-        face.setProperty("_canvasTransaction", {
-            "epoch": face.property("_progressWorldEpoch"),
-            "world": face.property("_progressWorldKey"),
+        harness.delivery(face).setProperty("transaction", {
+            "epoch": harness.delivery(face).property("epoch"),
+            "world": harness.delivery(face).property("worldKey"),
             "inFlight": False, "pending": True, "count": 0,
             "first": None, "last": None, "consensus": False})
         QMetaObject.invokeMethod(face, "_flushProgressPaint")
-        state = face.property("_canvasTransaction")
+        state = harness.delivery(face).property("transaction")
         if hasattr(state, "toVariant"):
             state = state.toVariant()
         self.assertFalse(state["inFlight"],
@@ -619,32 +620,32 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, Q_ARG, QVariant
         monitor, window, face, baseline = self._mount_empty()
         self._pump_ms(100)
-        epoch, world = face.property("_progressWorldEpoch"), face.property("_progressWorldKey")
-        front = face.property("_frontBuffer")
+        epoch, world = harness.delivery(face).property("epoch"), harness.delivery(face).property("worldKey")
+        front = harness.delivery(face).property("frontBuffer")
         stage = 1 - front
         standing = {"epoch": epoch, "world": world, "valid": True,
                     "from": 0, "split": 6, "paintKey": "standing"}
-        face.setProperty("_deliveredComposition", standing)
+        harness.delivery(face).setProperty("delivered", standing)
 
         def deliver(receipt):
-            face.setProperty("_canvasTransaction", {
+            harness.delivery(face).setProperty("transaction", {
                 "epoch": epoch, "world": world, "inFlight": True,
                 "pending": False, "count": 1, "first": receipt,
                 "last": receipt, "consensus": True})
-            face.setProperty("_paintBuffer", stage)
+            harness.delivery(face).setProperty("paintBuffer", stage)
             return QMetaObject.invokeMethod(face, "_deliverStagedPaint",
                 Q_RETURN_ARG(QVariant), Q_ARG(QVariant, stage))
 
         obsolete = dict(standing, split=16, paintKey="superseded-demand")
         self.assertFalse(deliver(obsolete))
-        self.assertEqual(face.property("_frontBuffer"), front,
+        self.assertEqual(harness.delivery(face).property("frontBuffer"), front,
                          "the superseded upload exposed intermediate pixels")
-        receipt = face.property("_deliveredComposition")
+        receipt = harness.delivery(face).property("delivered")
         self.assertEqual(receipt.toVariant() if hasattr(receipt, "toVariant") else receipt, standing)
-        self.assertTrue(face.property("_canvasTransaction").toVariant()["pending"])
+        self.assertTrue(harness.delivery(face).property("transaction").toVariant()["pending"])
         key = QMetaObject.invokeMethod(face, "_progressKeyOf", Q_RETURN_ARG(QVariant))
         current = dict(standing, split=10, paintKey=key)
         self.assertTrue(deliver(current))
-        self.assertEqual(face.property("_frontBuffer"), stage)
-        receipt = face.property("_deliveredComposition")
+        self.assertEqual(harness.delivery(face).property("frontBuffer"), stage)
+        receipt = harness.delivery(face).property("delivered")
         self.assertEqual(receipt.toVariant() if hasattr(receipt, "toVariant") else receipt, current)

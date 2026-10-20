@@ -3,6 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Release history:
+# 2026-10-20 — 6.0.0: Exercise narrow raster and scene-graph APIs through real pixels and retained geometry.
 # 2026-10-18 — 6.0.0: Prove immutable Qt snapshot parity with headless setup for isolated CI reports.
 
 """A consumer can render directly through public entry points without Cura."""
