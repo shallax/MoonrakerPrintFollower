@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [aeb1e5c] Restore faster centre and move-to toolhead travel
+# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable toolhead coverage contracts."""
 from tests import control_owner_support as harness
 
@@ -255,7 +264,7 @@ class ToolheadCoverageTests(harness.ToolheadCoverageTests):
         controller.z_to_zero()
         commands.complete()
         scripts = self._scripts(commands)
-        self.assertEqual(scripts, ["G28", "G28 Y", "M18", 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 X100 Y50 Z50 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0',
+        self.assertEqual(scripts, ["G28", "G28 Y", "M18", 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 X100 Y50 Z50 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0',
                                    'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 Z0 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
 
     def test_centre_is_refused_without_usable_axis_limits(self):

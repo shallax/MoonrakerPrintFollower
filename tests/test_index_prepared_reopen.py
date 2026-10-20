@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Verify deferred array ownership during lease-less prepared-cache reopen.
+# 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
+# 2026-10-02 [5253a2f] Make prepared batch yield assertion scheduling independent
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable index prepared reopen contracts."""
 from tests import index_plate_support as harness
 
@@ -24,7 +34,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         captured = self._capture_submit()
         self.qt.load("GCodeIndexService")
         self.service._foreground_pending.set()  # A prior foreground demand settled.
-        def hydrate(target, path, layer, should_stop):
+        def hydrate(target, path, layer, should_stop, *, retention=None):
             self.assertIs(target, index)
             self.assertEqual(layer, 5)
             self.assertFalse(should_stop(), "the array worker cancelled on an old demand")
@@ -61,8 +71,8 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
 
     def test_gpu_prefetch_only_uses_nearby_existing_sources_once(self):
         index = self._view(20)
-        index.manual_anchor = 10
-        index.followed_layer = 3
+        self.service._residency.set_window("manual", 10)
+        self.service._residency.set_window("live", 3)
         self.assertIsNone(self.service._gpu_prefetch_layer(index))
         with harness.patch.object(self.service, "_advance"):
             self.service.set_gpu_rendering("popover", True)
@@ -80,8 +90,8 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
     def test_gpu_speculation_decodes_without_file_or_motion_arrays_and_yields_to_seek(self):
         index = self._view(8)
         index.compact = True
-        index.manual_anchor = 3
-        index.followed_layer = 3
+        self.service._residency.set_window("manual", 3)
+        self.service._residency.set_window("live", 3)
         self.service._full_cache.set(5, self._payload(5), 100)
         with harness.patch.object(self.service, "_advance"):
             self.service.set_gpu_rendering("popover", True)
@@ -387,8 +397,8 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # hydrated immediately, while the decoded presentation cache is
         # initially empty. CURRENT must still be prepared, and it must
         # land before either ghost without reacquiring the G-code.
-        index = self._view(5)
-        index.followed_layer = 2
+        self._view(5)
+        self.service._residency.set_window("live", 2)
         self.service._last_save_at = harness.time.monotonic()  # keep index-save out of this ordering test
         self.service._prepared.open(self.files.identity)
         requests = []
@@ -472,9 +482,14 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.assertTrue(self.service._prepared.complete,
                         "the complete store never took the fast path")
         submitted = []
+        lease_less_array_requests = []
         original_submit = self.service._submit
-        self.service._submit = lambda kind, work, lease=None: (
-            submitted.append((kind, lease)) or original_submit(kind, work, lease))
+        def submit(kind, work, lease=None):
+            submitted.append((kind, lease))
+            if kind == "hydrate" and lease is None:
+                lease_less_array_requests.append(work.__self__.arrays_owed)
+            return original_submit(kind, work, lease)
+        self.service._submit = submit
 
         # Phase one: no raw file at all. The prepared payload must reach
         # the hot cache anyway — the arrays are the file's business.
@@ -495,6 +510,11 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         self.assertTrue(all(lease is None for kind, lease in submitted if kind == "hydrate"),
                         "the presentation pass waited on a lease it does not need")
         self.assertNotIn(1, index.hydrated_layers, "an absent file hydrated arrays")
+        self.assertIn(1, self.service._hydrate_arrays,
+                      "the service lost the deferred physical-array demand")
+        self.assertTrue(lease_less_array_requests)
+        self.assertTrue(all(not owed for owed in lease_less_array_requests),
+                        "a cached-geometry worker received array work without its source lease")
 
         # Phase two: the raw file arrives. The arrays hydrate off the
         # recorded demand alone — the layer is already decoded, so
@@ -644,7 +664,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # The worker-visible callback must interrupt that same layer and
         # let CURRENT commit before background work resumes.
         index = harness.make_index(layers=40, motions=20000)
-        index.followed_layer = 0
+        self.service._residency.set_window("live", 0)
         self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
         self.service._prepared.open(self.files.identity)
@@ -1442,7 +1462,7 @@ class PreparedReopenPolicyTests(harness.PreparedReopenPolicyTests):
         # and the slider stayed disabled).
         index = self.qt.load("GCodeIndex").build_index_from_bytes(
             b"".join(b";LAYER:%d\nG1 X0 Y0 E0.1\n" % layer for layer in range(5)))
-        index.followed_layer = 3
+        self.service._residency.set_window("live", 3)
 
         class Cache:
             def load(self, identity):

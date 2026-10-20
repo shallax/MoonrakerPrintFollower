@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [aeb1e5c] Restore faster centre and move-to toolhead travel
+# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable qt toolhead integration contracts."""
 from tests import qt_integration_support as harness
 
@@ -166,7 +175,7 @@ class ToolheadControllerTests(harness.ToolheadControllerTests):
     def test_center_and_z0_moves(self):
         self.data.set_state("paused")
         self.controller.center_toolhead()
-        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 X100 Y100 Z50 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
+        self.assertEqual(self.scripts(), ['SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 X100 Y100 Z50 F3000\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0'])
         self.commands.complete()
         self.controller.z_to_zero()
         self.assertEqual(self.scripts()[-1], 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG90\nG1 Z0 F600\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0')

@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Enforce explicit application-indexing, protocol-upload and portable settings boundaries.
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+# 2026-09-29 [90e8a59] Organise source by feature ownership and enforce domain boundaries
+
 """Qualified package boundaries and feature ownership, not basename lookup.
 
 The existing architecture contract checks individual collaborators. This gate
@@ -51,14 +61,14 @@ def underneath(module, package):
 # Moonraker package here would let a core service acquire a screen/transport.
 RULES = {
     "mpf.geometry": (("mpf.geometry",), ()),
-    "mpf.printing": (("mpf.printing",), ()),
-    "mpf.gcode": (("mpf.gcode", "mpf.geometry", "mpf.printing"),
-                  ("mpf.moonraker.MoonrakerProtocol",)),
-    "mpf.settings": (("mpf.settings",), ("mpf.geometry.DetectionRegions", "mpf.geometry.ToolheadLighting", "mpf.geometry.ToolheadMaterials", "mpf.geometry.ToolheadOpacity", "mpf.geometry.ToolheadRotors")),
+    "mpf.storage": (("mpf.storage",), ()),
+    "mpf.printing": (("mpf.printing", "mpf.geometry"), ()),
+    "mpf.gcode": (("mpf.gcode", "mpf.geometry", "mpf.storage"), ()),
+    "mpf.settings": (("mpf.settings",), ("mpf.printing.FollowMode", "mpf.geometry.DetectionRegions", "mpf.geometry.ToolheadLighting", "mpf.geometry.ToolheadMaterials", "mpf.geometry.ToolheadOpacity", "mpf.geometry.ToolheadRotors")),
     "mpf.moonraker": (("mpf.moonraker",), ("mpf.diagnostics.CameraTiming",)),
-    "mpf.files.browser": (("mpf.files.browser",), ("mpf.moonraker.MoonrakerProtocol",)),
+    "mpf.files.browser": (("mpf.files.browser",), ("mpf.moonraker.MoonrakerProtocol", "mpf.moonraker.MultipartUpload", "mpf.moonraker.ReplyBodyReader")),
     "mpf.files.transfers": (("mpf.files.transfers", "mpf.moonraker"),
-                           ("mpf.settings.PrinterConfig",)),
+                           ("mpf.settings.PrinterConfig", "mpf.storage.ProcessOwner")),
 }
 
 
@@ -113,7 +123,9 @@ class DomainLayoutTests(unittest.TestCase):
             "printing": ("PrintState.py", "RemoteJobService.py", "PauseScheduleService.py"),
             "settings": ("PrinterConfig.py", "PluginPersistence.py", "MoonrakerFollowerConfiguration.qml"),
             "bedmesh": ("BedMeshPresenter.py", "BedMeshSceneNode.py", "BedMeshMap.qml", "BedMeshRangeSlider.qml"),
-            "gcode": ("GCodeIndex.py", "GCodeIndexService.py", "ArcGeometry.py", "TravelStates.py", "PlateProgress.py", "MotionRanges.py"),
+            "application/indexing": ("GCodeIndexService.py", "IndexTasks.py", "PreparedSession.py", "CacheNamespaces.py"),
+            "storage": ("ProcessOwner.py",),
+            "gcode": ("GCodeIndex.py", "ArcGeometry.py", "TravelStates.py", "PlateProgress.py", "MotionRanges.py"),
         }
         for owner, names in features.items():
             for name in names:

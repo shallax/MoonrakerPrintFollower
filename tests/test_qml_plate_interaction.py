@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Inspect camera gestures and overlay playback through their actual owners.
+# 2026-10-13 [52df354] Verify recovery safety paths and release gates
+# 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable qml plate interaction contracts."""
 from tests import qml_engine_support as harness
 
@@ -10,10 +20,10 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         point = QPoint(int(centre.x()), int(centre.y()))
         QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
         QTest.mouseDClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
-        self.assertEqual(face.property("_penguinClickCount"), 3)
+        self.assertEqual(harness.penguin(face).property("clickCount"), 3)
         QTest.mouseClick(window, Qt.MouseButton.MiddleButton, Qt.KeyboardModifier.NoModifier, point)
-        self.assertEqual(face.property("_penguinClickCount"), 0)
-        self.assertFalse(face.property("_penguinActive"))
+        self.assertEqual(harness.penguin(face).property("clickCount"), 0)
+        self.assertFalse(harness.penguin(face).property("active"))
 
     def test_penguin_click_sequence_draws_colours_and_restores_live_face(self):
         from PyQt6.QtCore import QPoint, QPointF, Qt
@@ -26,12 +36,12 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         for button in (Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
             for _ in range(5):
                 QTest.mouseClick(window, button, Qt.KeyboardModifier.NoModifier, point)
-        self.assertTrue(face.property("_penguinActive"))
-        self.assertEqual(face.property("_penguinClickCount"), 0)
+        self.assertTrue(harness.penguin(face).property("active"))
+        self.assertEqual(harness.penguin(face).property("clickCount"), 0)
         deadline = harness.time.monotonic() + 4.0
-        while face.property("_penguinProgress") < 1.0 and harness.time.monotonic() < deadline:
+        while harness.penguin(face).property("progress") < 1.0 and harness.time.monotonic() < deadline:
             self._pump_ms(30)
-        self.assertEqual(face.property("_penguinProgress"), 1.0)
+        self.assertEqual(harness.penguin(face).property("progress"), 1.0)
         image = window.grabWindow()
         origin = face.mapToItem(window.contentItem(), QPointF(0, 0))
         colours = {"#20252b": 0, "#f4f4f4": 0, "#e9ad20": 0}
@@ -42,15 +52,15 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                     colours[colour] += 1
         self.assertTrue(all(count > 10 for count in colours.values()), colours)
         deadline = harness.time.monotonic() + 4.0
-        while face.property("_penguinActive") and harness.time.monotonic() < deadline:
+        while harness.penguin(face).property("active") and harness.time.monotonic() < deadline:
             self._pump_ms(30)
-        self.assertFalse(face.property("_penguinActive"))
+        self.assertFalse(harness.penguin(face).property("active"))
         for button in (Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
             for _ in range(5):
                 QTest.mouseClick(window, button, Qt.KeyboardModifier.NoModifier, point)
-        self.assertTrue(face.property("_penguinActive"), "the completed penguin did not rearm")
-        self.assertEqual(face.property("_penguinClickCount"), 0)
-        self.assertEqual(face.property("_penguinProgress"), 0.0)
+        self.assertTrue(harness.penguin(face).property("active"), "the completed penguin did not rearm")
+        self.assertEqual(harness.penguin(face).property("clickCount"), 0)
+        self.assertEqual(harness.penguin(face).property("progress"), 0.0)
 
     def test_middle_and_right_drag_pan_the_print_follower(self):
         from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
@@ -162,8 +172,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                 "scale": 1.0, "lineScale": 8.0, "compact": False,
                 "panX": 0.0, "panY": 0.0, "backing": 4.0,
                 "bedWidth": 250.0, "bedDepth": 250.0}
-        from mpf.plate.PlateQt import (png_file, render_layer_prefix,
-                                     render_navigation_layer)
+        from mpf.plate.RasterFiles import png_file
+        from mpf.plate.PlateRaster import render_layer_prefix, render_navigation_layer
         nav = render_navigation_layer(
             {"prev": None, "next": None, "current": payload}, plot, view,
             split=18)
@@ -203,15 +213,15 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
 
         wheel(int(face.width() / 2), int(face.height() / 2), 120)
         self._pump_ms(30)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(harness.view_state(face).property("interactionActive"),
                         "the wheel never entered the interaction")
         # No release is ever sent and the prefix never loads: whatever
         # the barrier's verdict, the hold has to release by itself.
         deadline = harness.time.monotonic() + 15.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
         self.assertFalse(
-            face.property("_interactionActive"),
+            harness.view_state(face).property("interactionActive"),
             "a prefix that can never load held the warm raster for good")
         self.assertIn(
             ("interacting", False), self._printer.calls,
@@ -250,13 +260,13 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
 
         wheel(int(face.width() / 2), int(face.height() / 2), 120)
         self._pump_ms(30)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(harness.view_state(face).property("interactionActive"),
                         "the wheel never entered the interaction")
         # The advance lands while the gesture still owns the picture.
         self._printer.setSplit(20)
         self._pump_ms(30)
         self.assertTrue(
-            face.property("_interactionActive"),
+            harness.view_state(face).property("interactionActive"),
             "the advance outlived the gesture — nothing was deferred")
         painted = False
         deadline = harness.time.monotonic() + 10.0
@@ -326,7 +336,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             mouse(QEvent.Type.MouseMove, cx + step * 4, cy + step * 3,
                   harness.Qt.MouseButton.LeftButton)
             self._pump_ms(20)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(harness.view_state(face).property("interactionActive"),
                         "the drag never entered the interaction")
         self.assertEqual(grid.property("opacity"), 0.0,
                          "the mapping stayed on screen mid-gesture")
@@ -335,9 +345,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         mouse(QEvent.Type.MouseButtonRelease, cx + 24, cy + 18,
               harness.Qt.MouseButton.NoButton)
         deadline = harness.time.monotonic() + 5.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the pan gesture never settled back to the exact scene")
         self.assertEqual(grid.property("opacity"), 1.0,
                          "the restored mapping is not on screen")
@@ -376,16 +386,16 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertFalse(QMetaObject.invokeMethod(
             face, "_pendingDraws", Q_RETURN_ARG(QVariant)),
             "the fixture's fallback has pixels to draw")
-        painted = face.property("_pendingPaints")
+        painted = harness.delivery(face).property("pendingPaints")
         # The split advance is the per-poll key change that used to buy a
         # cleared canvas: the request skips the paint and records the key.
         self._printer.setSplit(19)
         self.pump(30)
-        self.assertEqual(face.property("_pendingPaints"), painted,
+        self.assertEqual(harness.delivery(face).property("pendingPaints"), painted,
                          "the empty fallback repainted on a split advance")
         asked = QMetaObject.invokeMethod(face, "_pendingKeyOf",
                                         Q_RETURN_ARG(QVariant))
-        self.assertEqual(face.property("_lastPendingKey"), asked,
+        self.assertEqual(harness.delivery(face).property("lastBackgroundKey"), asked,
                          "the skipped paint never recorded its key — the "
                          "exact scene's barrier would wait forever")
         # The converse, so the skip cannot pass vacuously: a layer with no
@@ -399,9 +409,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self._printer.setLayers({"prev": None, "current": empty, "next": None})
         deadline = harness.time.monotonic() + 5.0
         while harness.time.monotonic() < deadline \
-                and face.property("_pendingPaints") == painted:
+                and harness.delivery(face).property("pendingPaints") == painted:
             self.pump(10)
-        self.assertGreater(face.property("_pendingPaints"), painted,
+        self.assertGreater(harness.delivery(face).property("pendingPaints"), painted,
                            "the vector base fallback never painted")
 
     def test_the_interaction_raster_owns_the_camera_and_swaps_atomically(self):
@@ -424,7 +434,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         layer = self._native_layer(payload, face, prefix_split=10)
         # The warm interaction raster: a real flattened composite at
         # 4x, its URL on the double (the model's role).
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateRaster import render_navigation_layer
+        from mpf.plate.RasterFiles import png_file
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
             plot_value = plot_value.toVariant()
@@ -489,7 +500,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # immediately and the display eases toward the 125% target.
         wheel(cx, cy, 120)
         self._pump_ms(30)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(harness.view_state(face).property("interactionActive"),
                         "the camera gesture never entered the interaction")
         first = self._wait_display_scale(face, 1.0)
         self.assertGreater(first, 1.0, "the first frame never moved")
@@ -498,7 +509,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         # point pinned, and the exact scene hidden throughout.
         last = first
         before_swap = window.grabWindow()
-        while face.property("_interactionActive"):
+        while harness.view_state(face).property("interactionActive"):
             self._pump_ms(20)
             now = face.property("displayScale")
             self.assertGreaterEqual(now, last - 1e-6,
@@ -564,7 +575,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self._pump_ms(30)
         self.assertAlmostEqual(face.property("displayPanX"), pan_before + 40.0,
                                delta=1.5, msg="the drag pan lagged the pointer")
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(harness.view_state(face).property("interactionActive"),
                         "the pan never entered the interaction")
         # The retarget from the CURRENT display: the next wheel keeps
         # the eased motion continuous (no restart jump backwards).
@@ -575,9 +586,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertLess(retargeted, 1.5625 + 1e-6,
                         "the retarget overshot its new target")
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the retargeted zoom never swapped back")
         # A drag DURING the eased zoom: the grab pans directly while
         # the zoom keeps easing, and the eased pan carries the drag's
@@ -603,9 +614,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertGreater(self._wait_display_scale(face, released), released,
                            "the zoom stopped gliding after the release")
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the drag-interrupted zoom never swapped back")
         self.assertEqual(face.property("viewScale"), 1.953125,
                          "the zoom never reached its wheel target")
@@ -623,9 +634,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertAlmostEqual(face.property("viewPanX"), pan_before + 25.0,
                                delta=1.5, msg="the pan-only drag lost its delta")
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the pan-only gesture never settled back to the "
                          "exact scene")
         # A wheel DURING a held drag zooms properly: the target
@@ -661,9 +672,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         mouse(QEvent.Type.MouseButtonRelease, held_cx + 25, held_cy + 10,
               Qt.MouseButton.NoButton)
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the held-wheel gesture never settled back")
         self.assertAlmostEqual(face.property("displayPanX"),
                                face.property("viewPanX"), delta=1.0,
@@ -690,9 +701,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                 face.property("displayPanX"), face.property("viewPanX"),
                 delta=1.0, msg="the drag's release snapped the camera")
             deadline = harness.time.monotonic() + 3.0
-            while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+            while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
                 self._pump_ms(30)
-            self.assertFalse(face.property("_interactionActive"),
+            self.assertFalse(harness.view_state(face).property("interactionActive"),
                              "a repeated drag never settled back")
             self.assertAlmostEqual(
                 face.property("displayPanX"), face.property("viewPanX"),
@@ -703,14 +714,14 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         layer.set_expected_key("invalidated")
         wheel(cx, cy, 120)
         self._pump_ms(120)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(harness.view_state(face).property("interactionActive"),
                         "the incomplete exact scene revealed itself")
         layer.set_expected_key("fixture-key")
         self._printer.setLayers({"prev": None, "current": layer, "next": None})
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the completed exact scene never swapped back")
         # A corner-panned camera must NOT snap on the next wheel: the
         # pan follows the focal computation exactly — the bed's edge
@@ -726,24 +737,30 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             mouse(QEvent.Type.MouseButtonRelease, cx + 200, cy,
                   Qt.MouseButton.NoButton)
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the corner pan never settled")
         self.assertGreater(face.property("viewPanX"), 0.0,
                            "the corner pan never left the clamp range")
         pan_before = face.property("viewPanX")
         scale_before = face.property("viewScale")
-        wheel(cx, cy, 120)
-        expected_pan = (cx - (cx - pan_before) / scale_before
+        # The recovery controls leave a shorter plate, which centres
+        # the square bed farther from its left edge. Use a focal point
+        # that stays within the soft margin so this checks focal math.
+        corner_wheel_x = cx + 40
+        wheel(corner_wheel_x, cy, 120)
+        expected_pan = (corner_wheel_x - (corner_wheel_x - pan_before) / scale_before
                         * face.property("viewScale"))
+        self.assertLess(expected_pan, face.width() - 100.0
+                        - float(plot_bed["offsetX"]) * face.property("viewScale"))
         self.assertAlmostEqual(face.property("viewPanX"), expected_pan,
                                delta=1e-3,
                                msg="the wheel clamped the corner-panned camera")
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the corner zoom never settled")
         # The soft clamp: once the bed would leave the viewport
         # wholly, the pan stops with 100 px of it visible on every
@@ -762,9 +779,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
                                face.property("viewPanX"), delta=1.0,
                                msg="the clamp broke the drag's lockstep")
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the clamped drag never settled")
         # The wheel's side: a programmatic far camera (the harness
         # cannot drag the pointer that far), then a wheel — the
@@ -785,9 +802,9 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         self.assertAlmostEqual(face.property("viewPanY"), hard_y2, delta=1e-3,
                                msg="the wheel broke the soft clamp")
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "the clamped wheel never settled")
         # A release OUTSIDE the face (the pointer left the area
         # mid-drag) cancels the grab: the exit drive must fire all
@@ -798,16 +815,16 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         mouse(QEvent.Type.MouseButtonRelease, cx + 400, cy,
               Qt.MouseButton.NoButton)
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "an outside-face release never left the warm raster")
         # Zooming back out to 100% is the ONE snap the camera
         # allows: the fit fills the viewport, centred.
         for _down in range(8):
             wheel(cx, cy, -120)
         deadline = harness.time.monotonic() + 3.0
-        while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+        while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
             self._pump_ms(30)
         self.assertEqual(face.property("viewScale"), 1.0,
                          "the zoom-out never landed on the fit")
@@ -837,7 +854,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             "motions": 21,
         }
         layer = self._native_layer(payload, face, prefix_split=10)
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateRaster import render_navigation_layer
+        from mpf.plate.RasterFiles import png_file
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
             plot_value = plot_value.toVariant()
@@ -878,30 +896,30 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
 
         def settle():
             deadline = harness.time.monotonic() + 3.0
-            while harness.time.monotonic() < deadline and face.property("_interactionActive"):
+            while harness.time.monotonic() < deadline and harness.view_state(face).property("interactionActive"):
                 self._pump_ms(30)
-            self.assertFalse(face.property("_interactionActive"),
+            self.assertFalse(harness.view_state(face).property("interactionActive"),
                              "the gesture never settled")
 
         wheel(120)
         self._pump_ms(30)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(harness.view_state(face).property("interactionActive"),
                         "the ready raster never entered the interaction")
-        self.assertEqual(face.property("_gestureNavSource"), nav_url,
+        self.assertEqual(harness.delivery(face).property("gestureSource"), nav_url,
                          "the entry never latched its source")
         # The model retires the URL mid-gesture (a demand change):
         self._printer.setNavigation("")
         self._pump_ms(30)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(harness.view_state(face).property("interactionActive"),
                         "the mid-gesture retirement ended the interaction")
-        self.assertEqual(face.property("_gestureNavSource"), nav_url,
+        self.assertEqual(harness.delivery(face).property("gestureSource"), nav_url,
                          "the mid-gesture retirement unlatched the scene")
         settle()
         # The idle binding now reads the retired URL: the next
         # gesture must NOT enter the warm raster.
         wheel(120)
         self._pump_ms(30)
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(harness.view_state(face).property("interactionActive"),
                          "a retired URL admitted the stale warm raster")
 
 

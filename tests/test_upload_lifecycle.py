@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Drive shared upload-operation terminal results and cancellation ownership.
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
+# 2026-09-07 [1e49099] Harden upload lifecycle and restore Monitor semantics
+
 from __future__ import annotations
 
 from http.server import ThreadingHTTPServer
@@ -314,7 +324,7 @@ class UploadLifecycleTests(unittest.TestCase):
             double.finished.emit()
             self.assertEqual(verdicts, [(ok, "f04-upload.gcode" if ok else "No space left on device")])
             self.assertEqual(double._deleted, 1)
-            self.assertFalse(fm._upload_replies)
+            self.assertFalse(fm._uploads)
             verdicts.clear()
 
     def test_file_manager_abort_uploads_clears_ownership_before_abort(self):
@@ -329,7 +339,7 @@ class UploadLifecycleTests(unittest.TestCase):
         self.assertTrue(fm.upload_file(source))
         fm.bind()  # bumps the generation, then aborts: the synchronous finished re-enters the handler
         self.assertEqual(verdicts, [(False, "The printer changed during the upload.")])
-        self.assertFalse(fm._upload_replies)
+        self.assertFalse(fm._uploads)
 
     def test_file_manager_refuses_a_second_same_name_upload(self):
         client = self.client_module.MoonrakerClient(transport=ScriptedTransport())
@@ -345,7 +355,7 @@ class UploadLifecycleTests(unittest.TestCase):
         self.assertEqual(len(verdicts), 1)
         self.assertFalse(verdicts[0][0])
         self.assertIn("already running", verdicts[0][1])
-        self.assertEqual(len(fm._upload_replies), 1)  # the first upload still owns its op
+        self.assertEqual(len(fm._uploads), 1)  # the first upload still owns its op
 
     def test_upload_refusal_words_win_over_qt_error_text(self):
         client = self.client_module.MoonrakerClient(transport=ScriptedTransport())
@@ -355,10 +365,16 @@ class UploadLifecycleTests(unittest.TestCase):
         results = []
         controller.finished.connect(lambda ok, detail: results.append((ok, detail)))
         double = self._upload_reply(error=True, body={"message": "Move out of range"})
-        controller._reply = double
+        from mpf.moonraker.MultipartUpload import MultipartUpload
+        operation = MultipartUpload(client.transport, controller)
+        controller._upload_operation = operation
         controller._active = True
         controller._current = lambda generation=None: True
-        controller._uploaded(double, controller._generation)
+        _manager, source = self._file_manager(client)
+        client.transport.network = SimpleNamespace(post=lambda request, multipart: double)
+        operation.finished.connect(lambda result: controller._uploaded(operation, controller._generation, result))
+        operation.start(source, "f04-upload.gcode", {"root": "gcodes"})
+        double.finished.emit()
         self.qt.events(10)
         self.assertEqual(results, [(False, "Move out of range")])
         self.assertEqual(double._deleted, 1)

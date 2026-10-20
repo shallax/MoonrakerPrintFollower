@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Compose the recovery-source workflow with index and download services.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """Cross-domain orchestration with explicit dependencies; not a shared state bag."""
 from __future__ import annotations
 
@@ -25,6 +35,9 @@ from ..preview.PreviewFormatting import (
 from ..printing.PrintIdentity import index_view_for_print
 from ..printing.PrintState import LayerResolver, PrintSnapshot
 from ..printing.RemoteJobService import RemoteJobService
+from .RecoveryController import RecoveryContext, RecoveryController
+from .RecoveryPlanning import suggest_lead_in
+from .RecoverySources import RecoverySources
 
 
 def _merge_object_tag_definitions(definitions, metrics):
@@ -164,12 +177,13 @@ class PrintCoordinator(QObject):
     MR_META_CHECK_LIMIT = 3
 
     def __init__(self, *, client, binding, files, index, cura, preview, pauses,
-                 presentation, bed_mesh, parent=None):
+                 presentation, bed_mesh, parent=None, persistence=None):
         super().__init__(parent)
         self._client, self._binding = client, binding
         self._files, self._index, self._cura = files, index, cura
         self._preview, self._pauses = preview, pauses
         self._presentation, self._bed_mesh = presentation, bed_mesh
+        self._persistence = persistence
         self._jobs = RemoteJobService({"printing", "paused"})
         self._layers = LayerResolver()
         # The two extracted owners: the load request's lifecycle (its
@@ -206,6 +220,7 @@ class PrintCoordinator(QObject):
         # layer height and slicer estimate for prints the user never
         # loaded. Fetched once per job, retried every 30 s until success.
         self._mr_meta = {}
+        self._mr_meta_verified = False
         self._mr_meta_key = ("", "")
         self._mr_meta_asked = ("", "")
         self._mr_meta_at = 0.0
@@ -235,6 +250,12 @@ class PrintCoordinator(QObject):
         # frozen ±1 presentation window is never served per poll —
         # nothing shows it (the reviewer's C).
         self._popover_open = False
+        self._recovery_suggestion = {}
+        self.recovery = RecoveryController(client, self._recovery_context, self,
+                                           record=self._record_recovery_phase)
+        self._recovery_sources = RecoverySources(
+            send=client.transport.send_json, max_bytes=lambda: self._files.MAX_DOWNLOAD_BYTES,
+            changed=self.recovery.changed.emit)
         self._publish_at = 0.0
         self._processing = self._closed = False
         self._had_toolpath = False
@@ -302,13 +323,17 @@ class PrintCoordinator(QObject):
             stats, sd = stats if isinstance(stats, Mapping) else {}, sd if isinstance(sd, Mapping) else {}
             transition = self._jobs.observe(stats, sd)
             active = self._jobs.printer_state in {"printing", "paused"}
-            job = transition.key if active else None
+            self._recovery_sources.observe_active(active)
+            job = transition.key if active else self._recovery_sources.job
             if transition.new_job or not active:
+                if transition.new_job:
+                    self.recovery.job_changed(stats, sd)
+                    self._recovery_suggestion = {}
                 self._preview.reset_print()
                 self._layers.reset()
             self._index.bind(job)
             self._files.bind(job)
-            self._pauses.bind(job)
+            self._pauses.bind(transition.key if active else None)
             if job != self._mr_meta_key[1]:
                 # A job change invalidates the in-flight metadata fetch
                 # (the file service's generation guard drops its reply)
@@ -416,7 +441,9 @@ class PrintCoordinator(QObject):
         each other). Compare against the print's own filename.
         """
         stats = status.get("print_stats") or {}
-        filename = str(stats.get("filename") or "")
+        filename = (self._recovery_sources.job[0] if self._recovery_sources.job is not None
+                    and stats.get("state") not in {"printing", "paused"}
+                    else str(stats.get("filename") or ""))
         job = self._files.job_key
         view = index_view_for_print(self._index.view, filename)
         plate_view = self._plate_source_view(view, status)
@@ -643,7 +670,9 @@ class PrintCoordinator(QObject):
             plate_layer_count=plate.layer_count,
             plate_pass_fraction=self._index.plate_pass_fraction()
             if face.plate_view is not None else None,
-            plate_visited=plate.visited)
+            plate_visited=plate.visited,
+            history_job_id=(str(self._mr_metadata_for(face.filename, face.job).get("job_id") or "")
+                            if self._mr_meta_verified else ""))
 
     def _trace_layer(self, status, config, face, motion) -> None:
         """The opt-in resolution trace: which upstream telemetry produced
@@ -791,6 +820,7 @@ class PrintCoordinator(QObject):
             # the field only when a print ran): accept without the
             # history cross-check.
             self._mr_meta = value
+            self._mr_meta_verified = False
             self._mr_meta_key = asked
             self.refresh()
             return
@@ -810,6 +840,7 @@ class PrintCoordinator(QObject):
         verdict = self._jobs.current_job_matches(payload, job_id)
         if verdict:
             self._mr_meta = value
+            self._mr_meta_verified = True
             self._mr_meta_key = asked
             self._mr_meta_checks = 0
         elif error or verdict is None:
@@ -825,6 +856,7 @@ class PrintCoordinator(QObject):
             cause = "the history request failed" if error else "the history reply was unattestable"
             if self._mr_meta_checks >= self.MR_META_CHECK_LIMIT:
                 self._mr_meta = value
+                self._mr_meta_verified = False
                 self._mr_meta_key = asked
                 self._mr_meta_checks = 0
                 Logger.log("w", "Moonraker metadata latched after %d failed cross-checks (%s) — the ETA and filament anchors run on an unattested header", self.MR_META_CHECK_LIMIT, cause)
@@ -853,6 +885,7 @@ class PrintCoordinator(QObject):
             self._object_tag_metrics = {}
             self._loads.reset()
             self._mr_meta = {}
+            self._mr_meta_verified = False
             self._mr_meta_key = ("", "")
             self._mr_meta_asked = ("", "")
             self._mr_meta_at = 0.0
@@ -863,6 +896,7 @@ class PrintCoordinator(QObject):
             self._status = {}
             self._frame = {}
             self._preview_block = None
+            self._recovery_sources.reset()
             self._jobs.reset()
             self._layers.reset()
             self._snapshot = PrintSnapshot()
@@ -931,7 +965,9 @@ class PrintCoordinator(QObject):
         index_view = self._index.view
         if index_view is None: return None
         if not index_view.job_key: return index_view
-        filename = str((status.get("print_stats") or {}).get("filename") or "")
+        filename = (self._recovery_sources.job[0] if self._recovery_sources.job is not None
+                    and (status.get("print_stats") or {}).get("state") not in {"printing", "paused"}
+                    else str((status.get("print_stats") or {}).get("filename") or ""))
         return index_view if index_view.job_key[0] == filename else None
 
     def _index_changed(self):
@@ -1106,6 +1142,146 @@ class PrintCoordinator(QObject):
             and motions >= -1 else None
         self._index.set_manual_split(self._plate_split)
         self.refresh()
+
+    @property
+    def recovery_files_state(self):
+        return self._recovery_sources.state(active=self._snapshot.active)
+
+    def refresh_recovery_files(self):
+        return self._recovery_sources.refresh(
+            active=self._snapshot.active, configured=self._binding.configured)
+
+    def select_recovery_file(self, filename):
+        job = self._recovery_sources.select(
+            filename, active=self._snapshot.active, recovering=self.recovery.state["active"])
+        if job is None:
+            return False
+        self._recovery_suggestion = {}
+        self.recovery.invalidate()
+        self._index.bind(job)
+        self._files.bind(job)
+        self._index.request()
+        self._plate_anchor = 0
+        self._plate_split = -1
+        self._index.set_manual_anchor(0)
+        self._index.set_manual_split(-1)
+        self.refresh()
+        self.recovery.changed.emit()
+        return True
+
+    def selected_recovery_boundary(self):
+        """Inspect the manual selection or attached follower's live boundary.
+
+        This is an exact file-location query, not permission to seek or resume.
+        The downloaded source, current job and index must still agree; the
+        eventual recovery preflight will have additional printer-state gates.
+        """
+        snapshot = self._snapshot
+        view = self._index.view
+        path = self._files.path
+        offline_job = self._recovery_sources.job
+        offline = offline_job is not None and not snapshot.active
+        anchor, split = self._plate_anchor, self._plate_split
+        if anchor is None and snapshot.motion_progress is not None:
+            anchor, split = snapshot.motion_progress.layer, snapshot.motion_progress.split
+        if ((not snapshot.active and not offline) or view is None
+                or anchor is None or split is None
+                or snapshot.job_key is None or view.job_key != snapshot.job_key
+                or self._files.job_key != snapshot.job_key):
+            return None
+        if path is None:
+            # A restored display index does not restore the source file.
+            # Recovery must demand it before exact byte mapping can proceed.
+            self._files.request_file()
+            return None
+        try:
+            actual_size = os.path.getsize(path)
+        except OSError:
+            return None
+        expected_size = (offline_job[1] if offline else
+                         snapshot.observation.file_size if snapshot.observation is not None else 0)
+        identity = self._files.identity
+        if (expected_size <= 0 or actual_size != expected_size
+                or identity is None or not identity.matches_job(snapshot.job_key[0], expected_size)
+                or (identity.size > 0 and identity.size != actual_size)):
+            return None
+        boundary = view.recovery_boundary(anchor, split)
+        if boundary is None:
+            self._index.request_hydration(anchor, exact=True)
+        return boundary
+
+    def _recovery_context(self):
+        boundary = self.selected_recovery_boundary()
+        snapshot = self._snapshot
+        identity = self._files.identity
+        offline = self._recovery_sources.job is not None and not snapshot.active
+        if (boundary is None or identity is None
+                or (not offline and (snapshot.observation is None or not snapshot.active))):
+            return None
+        config = self._binding.config
+        machine_id = self._binding.identity[0]
+        return RecoveryContext(snapshot.job_key, snapshot.job_key[0], self._files.path,
+            identity, boundary, (boundary.position[2] if offline else snapshot.layer.height or 0.0), config.recovery_saved_state,
+            config.recovery_prepare_macro, config.recovery_clearance_mm,
+            config.recovery_xy_speed_mm_s, config.recovery_z_speed_mm_s,
+            config.recovery_command_timeout_s, (boundary.next_motion_offset if offline
+                                                  else snapshot.observation.file_position),
+            tuple(config.recovery_setup_macros), tuple(config.recovery_transparent_macros),
+            machine_id, "" if offline else snapshot.history_job_id, config.recovery_status_timeout_s,
+            config.recovery_prime_enabled,
+            (config.recovery_prime_x, config.recovery_prime_y, config.recovery_prime_z),
+            config.recovery_prime_amount_mm, config.recovery_prime_speed_mm_s,
+            config.recovery_nozzle_parameter, config.recovery_bed_parameter, offline,
+            config.recovery_heating_timeout_s,
+            self._index.view.printed_top_z if offline else 0.0,
+            prime_dwell_s=config.recovery_prime_dwell_s)
+
+    def _record_recovery_phase(self, context, phase, detail):
+        Logger.log("w" if phase in {"refused", "uncertain"} else "i",
+                   "Recovery %s: %s (file=%s, byte=%s)", phase, detail,
+                   context.filename, context.boundary.next_motion_offset)
+        if (self._persistence is None or not context.history_job_id
+                or not context.machine_id or context.machine_id == "unknown"):
+            return
+        record = {"jobId": context.history_job_id, "filename": context.filename,
+                  "size": context.job[1], "offset": context.boundary.next_motion_offset,
+                  "phase": phase, "detail": str(detail)[:500], "at": time.time()}
+        self._persistence.set_machine_state(context.machine_id,
+                                            {"recoveryAttempt": record})
+
+    def suggest_recovery_lead_in(self):
+        suspect = self.selected_recovery_boundary()
+        view = self._index.view
+        if suspect is None or view is None:
+            self._recovery_suggestion = {"detail": "Select an exact indexed point first."}
+            self.recovery.changed.emit()
+            return
+        config = self._binding.config
+        suggestion = suggest_lead_in(view, suspect, config.recovery_lead_in_mm,
+            config.recovery_lead_in_moves if config.recovery_lead_in_mode == "moves" else 0)
+        if suggestion is None:
+            self._recovery_suggestion = {"detail": "No safe lead-in exists before this point; adjust the selection."}
+            self.recovery.changed.emit()
+            return
+        boundary = suggestion.boundary
+        self._recovery_suggestion = {
+            "detail": (f"Rewind {suggestion.replayed_motions} extrusion moves "
+                       f"({suggestion.extrusion_path_mm:.1f} mm)"
+                       + ("; stopped at the prior seam." if suggestion.limited_by_seam else ".")),
+            "suspectLayer": suspect.selected_layer + 1,
+            "suspectSplit": suspect.completed_motions,
+            "startLayer": boundary.selected_layer + 1,
+            "startSplit": boundary.completed_motions,
+            "replayedMotions": suggestion.replayed_motions,
+            "replayMm": suggestion.extrusion_path_mm,
+            "limitedBySeam": suggestion.limited_by_seam}
+        self.set_plate_anchor(boundary.selected_layer)
+        self.set_plate_split(boundary.completed_motions)
+        self.recovery.changed.emit()
+
+    @property
+    def recovery_state(self):
+        return dict(self.recovery.state, suggestion=self._recovery_suggestion)
 
     def toggle_attachment(self):
         # A manual toggle is a deliberate choice: it cancels any pending
@@ -1344,6 +1520,8 @@ class PrintCoordinator(QObject):
         })
 
     def close(self):
+        self._recovery_sources.close()
+        self.recovery.close()
         self._closed = True
         self._object_tag_metric_key = self._object_tag_metric_owner = None
         self._object_tag_metrics = {}

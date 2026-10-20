@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Drive attestation and action owners through the Qt detection bridge.
+# 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
+# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+
 """Executable detection owner contracts for run identity, actions and exact observations."""
 from copy import deepcopy
 from types import SimpleNamespace
@@ -127,7 +136,7 @@ class MonitorDetectionTests(unittest.TestCase):
         self.commands.send.side_effect = sent
         context = self.owner._detection_context()
         self.owner._handle_detection_action(context, "failure", time.time())
-        attempt = self.owner._detection_pause_attempt
+        attempt = self.owner._actions.state.pause_attempt
         self.owner._on_detection_pause_command(dict(name="Pause", commandId=attempt,
             terminal=True, outcome="failed", detail="outcome unknown: connection lost"))
         self.assertTrue(self.store.records["printer-one"]["detectionActions"]["pauseUncertain"])
@@ -146,7 +155,7 @@ class MonitorDetectionTests(unittest.TestCase):
         self.commands.send.assert_not_called()
         self.store.fail = False
         self.owner._handle_detection_action(self.owner._detection_context(), "failure", time.time()+100)
-        self.owner._on_detection_pause_command(dict(name="Pause", commandId=self.owner._detection_pause_attempt,
+        self.owner._on_detection_pause_command(dict(name="Pause", commandId=self.owner._actions.state.pause_attempt,
             terminal=True, outcome="confirmed"))
         epoch = self.owner._detection_epoch
         self.store.fail = True
@@ -166,8 +175,8 @@ class MonitorDetectionTests(unittest.TestCase):
         self.owner._handle_detection_action(self.owner._detection_context(), "failure", time.time())
         self.owner._on_detection_pause_command(dict(name="Pause", commandId="old-attempt",
             terminal=True, outcome="confirmed"))
-        self.assertFalse(self.owner._detection_paused_for_print)
-        self.assertTrue(self.owner._detection_pause_pending)
+        self.assertFalse(self.owner._actions.state.paused)
+        self.assertTrue(self.owner._actions.state.pause_pending)
 
     def test_stale_out_of_order_and_wrong_source_samples_are_dropped(self):
         self.owner._on_detection_observation(self.observation(captured_at=time.monotonic()-31))
@@ -240,13 +249,13 @@ class MonitorDetectionTests(unittest.TestCase):
         old = self.requests[-1]
         self.job.job_key = ("next.gcode", 200, 2)
         self.attest(callback=old)
-        self.assertIsNone(self.owner._detection_run_identity)
+        self.assertIsNone(self.owner._run.identity)
 
     def test_periodic_history_reattests_same_local_job_and_retires_previous_print(self):
         self.attest()
         self.owner.setDetectionMuted(True)
         old = self.observation(4)
-        self.owner._detection_history_next_at = 0
+        self.owner._run.next_at = 0
         self.owner._detection_values()
         self.assertEqual(len(self.requests), 2)
         self.attest("server-run-two")
@@ -257,7 +266,7 @@ class MonitorDetectionTests(unittest.TestCase):
 
     def test_new_pause_requires_fresh_history_even_while_local_identity_is_unchanged(self):
         self.attest()
-        self.owner._detection_attested_at -= 3
+        self.owner._run.attested_at -= 3
         self.owner._handle_detection_action(self.owner._detection_context(), "failure", time.time())
         self.commands.send.assert_not_called()
         self.assertEqual(len(self.requests), 2)
@@ -482,7 +491,7 @@ class MonitorDetectionTests(unittest.TestCase):
         self.store.fail = False
         message = Mock()
         self.owner._detection_message = message
-        self.owner._detection_message_token = self.owner._detection_action_context
+        self.owner._detection_message_token = self.owner._actions.state.context
         self.data.active = False
         self.owner._invalidate_detection()
         self.owner._on_detection_alert_action(message, "detectionAcknowledge")
@@ -500,11 +509,11 @@ class MonitorDetectionTests(unittest.TestCase):
     def test_negative_and_failed_latest_attestation_revoke_pause_freshness_immediately(self):
         self.attest()
         old = self.observation(4)
-        self.owner._ensure_detection_run(force=True)
-        self.assertFalse(self.owner._attestation_fresh(2))
+        self.owner._run.ensure(force=True)
+        self.assertFalse(self.owner._run.fresh(2))
         self.requests[-1]({"result": {"jobs": [dict(job_id="server-run-one", start_time=1000.,
             filename="part.gcode", status="completed", end_time=2000.)]}}, "")
-        self.assertIsNone(self.owner._detection_run_identity)
+        self.assertIsNone(self.owner._run.identity)
         self.owner._on_detection_observation(old)
         self.owner._handle_detection_action(self.owner._detection_context(), "failure", time.time())
         self.commands.send.assert_not_called()
@@ -621,12 +630,12 @@ class MonitorDetectionTests(unittest.TestCase):
     def test_delayed_history_response_cannot_become_a_fresh_pause_authorisation(self):
         from unittest.mock import patch
         with patch("mpf.monitor.MonitorDetection.time.monotonic", return_value=100):
-            self.owner._detection_history_pending = False
-            self.owner._detection_history_next_at = self.owner._detection_history_retry_at = 0
-            self.owner._ensure_detection_run(force=True)
+            self.owner._run.pending = False
+            self.owner._run.next_at = self.owner._run.retry_at = 0
+            self.owner._run.ensure(force=True)
         with patch("mpf.monitor.MonitorDetection.time.monotonic", return_value=110):
             self.attest()
-            self.assertFalse(self.owner._attestation_fresh(2))
+            self.assertFalse(self.owner._run.fresh(2))
             self.owner._handle_detection_action(self.owner._detection_context(), "failure", time.time())
             self.commands.send.assert_not_called()
 

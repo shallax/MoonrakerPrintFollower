@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Allow explicit macOS native crash backtraces on diagnostic legs.
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-09-27 [869ece5] Keep follower colour legends stable and allow explicit macOS presentation diagnosis
+# 2026-09-24 [be15099] One leg on demand, running the gate's own steps
+
 # One gate leg, on demand.
 #
 # The release matrix runs 51 legs and takes about forty-five minutes, so
@@ -32,7 +42,7 @@ on:
         description: "the Cura version to install and run"
         type: string
         required: true
-        default: "5.13.0"
+        default: "5.14.0-beta.1"
       mode:
         description: "the runner mode: suite, firstinstall, migration..."
         type: string
@@ -49,6 +59,10 @@ on:
         description: "Compare macOS internal frames and desktop capture instead of a gate leg"
         type: boolean
         default: false
+      native_backtrace:
+        description: "Launch macOS Cura under LLDB to retain native crash frames"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -61,6 +75,7 @@ jobs:
     with:
       os: ${{ inputs.os }}
       unit: ${{ inputs.unit }}
+      native_backtrace: ${{ inputs.native_backtrace }}
       # A one-unit declaration in the gate's own shape, so the reusable
       # workflow reads it exactly as it reads the release matrix's.
       UNITS: >-

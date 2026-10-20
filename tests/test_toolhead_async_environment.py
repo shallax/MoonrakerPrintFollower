@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-12 [0701dcb] Improve reflection continuity and reduce rendering overhead
+# 2026-10-10 [41c12c8] Reduce CPU overhead in toolhead rendering
+# 2026-10-08 [f386c3d] Capture reflections asynchronously with fenced resource ownership
+
 """Main-context ownership, cancellation and recovery without printer access."""
 import sys
 import unittest

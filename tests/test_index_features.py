@@ -1,8 +1,36 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Consume public lexical capabilities and explicit indexing owners in feature tests.
+# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable index features contracts."""
+from mpf.gcode.IndexResidency import IndexResidency
 from mpf.gcode import IndexCodec as index_codec, IndexCache as index_cache
 from tests import index_plate_support as harness
 
 class FeatureTypeTests(harness.FeatureTypeTests):
+    def test_printed_height_bound_tracks_accumulated_extrusions_in_compact_cache(self):
+        data = (b"M82\nG92 E0\n;LAYER:0\nG1 X10 Z0.2 E1\n"
+                b"G0 Z12\nG0 X20\n;LAYER:1\nG1 X30 Z8 E1.5\n"
+                b"G92 E0\nG1 X40 Z9 E0.3\nG0 Z30\n")
+        with harness.tempfile.TemporaryDirectory() as directory:
+            path = harness.os.path.join(directory, "height.gcode")
+            with open(path, "wb") as handle:
+                handle.write(data)
+            full = harness.build_index_from_file(path, compact=False)
+            compact = harness.build_index_from_file(path, compact=True)
+            self.assertEqual(full.printed_top_z, 12)
+            self.assertEqual(compact.printed_top_z, 12)
+            identity = harness.RemoteFileIdentity("height.gcode", len(data), 1, "height")
+            store = harness.PersistentIndexCache(directory)
+            store.save(identity, compact)
+            self.assertEqual(store.load(identity).printed_top_z, 12)
+
     def test_bead_width_profile_is_per_motion_and_survives_compact_cache_and_preparation(self):
         from math import pi
         from mpf.gcode.PlateProgress import prepare_layer, encode_layer, decode_layer
@@ -181,11 +209,11 @@ class MotionLineFastPathTests(harness.MotionLineFastPathTests):
             fast = harness.gcode_index._fast_motion_line(code)
             if fast is None:
                 continue  # the fallback is always legal
-            match = harness.gcode_index._COMMAND.search(code)
+            match = harness.gcode_index.COMMAND_PATTERN.search(code)
             command = match.group(1).upper() if match else b""
-            axes = harness.gcode_index._parse_axes(code)
+            axes = harness.gcode_index.parse_axes(code)
             self.assertEqual(fast, (command, axes), "%r" % line)
-            self.assertIsNotNone(harness.gcode_index._MOTION.search(line),
+            self.assertIsNotNone(harness.gcode_index.MOTION_PATTERN.search(line),
                                  "%r claimed a motion the motion regex refuses" % line)
 
     def test_a_hydrated_layer_matches_the_full_scan_through_the_fast_path(self):
@@ -499,6 +527,7 @@ class FeatureRetentionTests(harness.FeatureRetentionTests):
         self.assertEqual(index.travel_starts[2], [1])
 
     def test_the_frozen_layer_holds_its_own_window_beside_the_live_print(self):
+        residency = IndexResidency()
         data = b"M82\n" + b"".join(b";LAYER:%d\nG1 X%d E1.0\n" % (n, n + 1) for n in range(6))
         path = harness._write_gcode(data)
         self.addCleanup(harness.os.remove, path)
@@ -507,9 +536,9 @@ class FeatureRetentionTests(harness.FeatureRetentionTests):
         # (the pop-over's detach). Every hydration here evicts against
         # the live window alone — the frozen layer and its own
         # neighbours survive on the second anchor.
-        index.manual_anchor = 5
+        residency.set_window("manual", 5)
         for layer in (5, 4, 3, 2):
-            self.assertTrue(harness.hydrate_layer_from_file(index, path, layer, keep_anchor=0))
+            self.assertTrue(harness.hydrate_layer_from_file(index, path, layer, keep_anchor=0, retention=residency.layers))
         # The frozen layer and the neighbour below it hold, and each
         # freshly hydrated layer keeps its own ±1 window until the
         # NEXT hydrate evicts it (the background pass's guarantee:

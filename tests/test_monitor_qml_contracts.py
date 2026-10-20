@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Verify camera handoff order at the view-state owner and preserve face ports.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable monitor qml contracts contracts."""
 from tests import monitor_test_support as harness
 
@@ -415,6 +425,19 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
             self.assertEqual(len(harness.re.findall(cadence, qml)), 2,
                              "the hourglass must flip, rest, flip and rest")
         follower = (harness.PLUGINS / "PrintFollowerPopover.qml").read_text(encoding="utf-8")
+        recovery = (harness.PLUGINS / "RecoveryControls.qml").read_text(encoding="utf-8")
+        self.assertIn('objectName: "moonrakerFollowerOpenRecovery"', follower)
+        self.assertIn('text: "Recover interrupted print from selected point…"', follower)
+        self.assertIn('root.printerModel.plateLayerCount > 0 && root.printerModel.monitorState !== "Printing"', follower)
+        slider = follower.split('objectName: "moonrakerFollowerLayerSlider"', 1)[1].split("onValueTuning:", 1)[0]
+        self.assertNotIn("monitorState", slider)
+        self.assertNotIn('text: "Recovery"', follower)
+        self.assertIn('"Review restart…"', recovery)
+        self.assertIn('"Restart print from point"', recovery)
+        self.assertIn('"Load and restart from point"', recovery)
+        self.assertIn('root.temperaturesReady && root.zReferenceReady && root.selection.offset === root.plan.offset', recovery)
+        self.assertIn('"zReference": root.plan.unloaded ? Number(zReferenceField.text) : 0', recovery)
+        self.assertNotIn('printedTopField', recovery)
         for surface in (follower, harness.JOB_SECTION_QML):
             self.assertIn("LoadProgressIndicator {", surface)
             self.assertIn("root.printerModel.plateSourceStatus", surface)
@@ -1583,7 +1606,7 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # Preview selection: the model wires the committed anchor in,
         # and the projection reads it live, falling back to the plate's
         # own anchor only for a popover that has never been slid.
-        self.assertIn("anchor=lambda: self._follower_layer_anchor", harness.MONITOR_MODEL)
+        self.assertIn("anchor=lambda: self._selection.anchor", harness.MONITOR_MODEL)
         self.assertIn("index = self._anchor()", harness.PAUSE_PRESENTATION)
         self.assertIn("index = anchor", harness.PAUSE_PRESENTATION)
         for token in (
@@ -1715,12 +1738,10 @@ class MonitorModelContractTests(harness.MonitorModelContractTests):
         # reads it — while the retarget still reads the OLD display
         # transform; assigning the display scale first would degenerate
         # the anchor to 0.
-        handler = face[face.index("onScaleRequested:"):]
-        handler = handler[:handler.index("\n    }\n")]
-        self.assertLess(handler.index("root._enterInteraction();"),
-                        handler.index("root.viewScale = target;"))
+        self.assertIn("camera.scopeZoom(target)", face)
+        view = (harness.PLUGINS / "PlateViewState.qml").read_text(encoding="utf-8")
+        handler = view[view.index("function scopeZoom("):view.index("function resetTarget(")]
+        self.assertLess(handler.index("enterRequested();"), handler.index("viewScale = target;"))
+        self.assertLess(handler.index("viewScale = target;"), handler.index("barZoomPan(target)"))
         retarget = handler[handler.index("} else {"):]
-        self.assertLess(handler.index("root.viewScale = target;"),
-                        handler.index("root._barZoomPan(target)"))
-        self.assertLess(retarget.index("root._barZoomPan(target)"),
-                        retarget.index("root.displayScale = target;"))
+        self.assertLess(retarget.index("barZoomPan(target)"), retarget.index("displayScale = target;"))

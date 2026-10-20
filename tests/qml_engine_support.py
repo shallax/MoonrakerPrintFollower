@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Probe actual lifecycle owners and enforce QML error boundaries across specialised fixtures.
+# 2026-10-18 — 6.0.0: Exercise decoded camera freshness, recovery state and URL handling.
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Contracts measured on the REAL engine, offscreen: geometry the text
 linters cannot see and delegate rendering that only exists once the
 documents are mounted.
@@ -68,7 +79,8 @@ if QT_AVAILABLE:
 
     from mpf.gcode.GCodeIndex import build_index_from_bytes
     from mpf.geometry.Polygons import point_in_polygon, polygon_bounds
-    from mpf.plate.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO, qml_geometry
+    from mpf.plate.PlateRaster import _PLATE_TRAVEL_VISUAL_RATIO
+    from mpf.plate.PlateQt import qml_geometry
     from mpf.gcode.PlateProgress import layer_polylines
 
     class CuraApplicationDouble(QObject):
@@ -104,6 +116,8 @@ if QT_AVAILABLE:
             self._camera_fps = float(fps)
             self._camera_fps_maximum = float(maximum)
             self._stream_enabled = True
+            self._camera_recovering = False
+            self.camera_stalls = 0
             self._snapshot_available = False
             self._detection_state = "idle"
             self._detection_score = -1
@@ -216,7 +230,7 @@ if QT_AVAILABLE:
 
         @pyqtProperty(bool, notify=cameraRecoveringChanged)
         def cameraRecovering(self):
-            return False
+            return self._camera_recovering
 
         @pyqtProperty(int, notify=cameraRotationChanged)
         def cameraRotation(self):
@@ -248,11 +262,14 @@ if QT_AVAILABLE:
 
         @pyqtSlot()
         def cameraFirstFrameRendered(self):
-            pass
+            self._camera_recovering = False
+            self.cameraRecoveringChanged.emit()
 
         @pyqtSlot()
         def cameraRenderStalled(self):
-            pass
+            self.camera_stalls += 1
+            self._camera_recovering = True
+            self.cameraRecoveringChanged.emit()
 
         @pyqtSlot()
         def refreshWebcams(self):
@@ -489,6 +506,10 @@ class RealEngineTestCase(unittest.TestCase):
         self._message_start = len(_APPLICATION["messages"])
 
     def tearDown(self):
+        owner_errors = [message for message in _APPLICATION["messages"][self._message_start:]
+                        if any(name in message for name in ("PlateDeliveryState.qml", "PlateViewState.qml", "PlatePenguinOverlay.qml"))
+                        and any(word in message for word in ("ReferenceError", "TypeError", "Binding loop", "Cannot assign"))]
+        self.assertEqual(owner_errors, [], "Follower lifecycle owners reported QML errors")
         result = getattr(self, "_result_for_shots", None)
         if result is not None and len(result.failures) + len(result.errors) > self._shot_failure_count:
             self._capture_failure_shots()
@@ -639,6 +660,8 @@ class RealEngineTestCase(unittest.TestCase):
         local runs write nothing."""
         if result is None:
             result = self.defaultTestResult()
+        # Subclasses with specialised setUp still receive an error boundary.
+        self._message_start = len(_APPLICATION["messages"])
         before = len(result.failures) + len(result.errors)
         self._result_for_shots = result
         self._shot_failure_count = before
@@ -1900,7 +1923,9 @@ class PlateFaceRenderTests(RealEngineTestCase):
         scrub vector's fallback cannot rescue a missing blit.
         `grey=False` leaves the base sibling unset — the pre-arrival
         wrapper the fallback exists for."""
-        from mpf.plate.PlateQt import PlateLayer, png_file, render_layer_prefix, render_layer_raster
+        from mpf.plate.PlateQt import PlateLayer
+        from mpf.plate.RasterFiles import png_file
+        from mpf.plate.PlateRaster import render_layer_prefix, render_layer_raster
         raster_dir = "/tmp/mpf/raster-probe"
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
@@ -2513,7 +2538,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "sx": float(plot_value["sx"]), "sy": float(plot_value["sy"]),
                 "bedXMin": float(plot_value["bed"]["bedXMin"]),
                 "bedYMax": float(plot_value["bed"]["bedYMax"])}
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateRaster import render_navigation_layer
+        from mpf.plate.RasterFiles import png_file
         nav = render_navigation_layer(
             {"prev": None, "next": None, "current": payload}, plot,
             {"width": int(face.width()), "height": int(face.height()),
@@ -2549,7 +2575,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
                 "bedYMax": float(plot_value["bed"]["bedYMax"])}
 
     def _prefix_for(self, payload, face, split, stem):
-        from mpf.plate.PlateQt import render_layer_prefix, png_file
+        from mpf.plate.PlateRaster import render_layer_prefix
+        from mpf.plate.RasterFiles import png_file
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": 1.0, "lineScale": 8.0, "compact": False,
                 "panX": 0.0, "panY": 0.0, "dpr": 1.0}
@@ -2561,7 +2588,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
         """The 4x interaction raster at the size the model publishes
         it — the transport whose decode is 66 ms at the face's own
         geometry."""
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateRaster import render_navigation_layer
+        from mpf.plate.RasterFiles import png_file
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": 1.0, "lineScale": 8.0, "compact": False,
                 "panX": 0.0, "panY": 0.0, "backing": 4.0,
@@ -2856,14 +2884,14 @@ class PlateFaceRenderTests(RealEngineTestCase):
         while time.monotonic() < deadline:
             asked = QMetaObject.invokeMethod(face, "_pendingKeyOf", Q_RETURN_ARG(QVariant))
             if grid.property("_paints") != painted \
-                    and face.property("_lastPendingKey") == asked:
+                    and delivery(face).property("lastBackgroundKey") == asked:
                 return
             self.app.processEvents()
             time.sleep(0.05)
         self.fail("the face never painted the view under test: the grid is at "
                   "%r paints (was %r), the base at %r against %r asked"
                   % (grid.property("_paints"), painted,
-                     face.property("_lastPendingKey"), asked))
+                     delivery(face).property("lastBackgroundKey"), asked))
 
     def _settled(self, window, rounds=10):
         """The window's image once two grabs agree: the canvases raster
@@ -3607,7 +3635,7 @@ class SettingsPageCase(RealEngineTestCase):
     """The settings pane mounted offscreen against the real machine
     action, in a real window (a windowless mount never lays out twice)."""
 
-    DIAGNOSTICS_TAB = 4
+    DIAGNOSTICS_TAB = 5
 
     def setUp(self):
         super().setUp()
@@ -4017,3 +4045,21 @@ QtObject {
 # Explicit exports retain dependencies used by extracted cases. Importing this
 # module creates no Qt application; setUpClass owns application startup.
 __all__ = ['CameraFpsControlTests', 'CameraModelDouble', 'CameraOwnershipTests', 'CameraTitleRowTests', 'ChartColourPickerTests', 'ChartSurfaceTests', 'CollapseOnShrinkTests', 'ConsoleInputRowTests', 'CuraApplicationDouble', 'EscapeLadderTests', 'FollowerViewDprTests', 'IntervalSliderGrabTests', 'LateBedDouble', 'Mock', 'OutputDeviceDouble', 'PaneGutterTests', 'PauseRowRoleTests', 'PlateCanvasHitTests', 'PlateDownloadActionTests', 'PlateDownloadPrinterDouble', 'PlateFaceRenderTests', 'PlateJobBoundaryTests', 'PlatePrinterDouble', 'PlateProjectionMemo', 'PrinterModelDouble', 'QColor', 'QCoreApplication', 'QEvent', 'QGuiApplication', 'QKeyEvent', 'QMetaObject', 'QMouseEvent', 'QObject', 'QPoint', 'QPointF', 'QQmlComponent', 'QQmlEngine', 'QQuickItem', 'QQuickWindow', 'QRectF', 'QT_AVAILABLE', 'QUrl', 'Qt', 'ROOT', 'ReExpansionGuardTests', 'RealEngineTestCase', 'SectionOrderArrivalTests', 'SettingsCacheClearTests', 'SettingsCacheSizeTests', 'SettingsPageCase', 'SettingsSeekTraceTests', 'SimpleNamespace', 'StatusColumnGeometryTests', 'StripVerdictRefreshTests', 'TuningResetConvergenceTests', 'TuningResetTests', '_APPLICATION', '_ActionDialogDouble', '_Application', '_CatalogDouble', '_DefinitionContainer', '_DprMesh', '_ENV_REPORTED', '_Follower', '_LIVE_CONTEXT_OBJECTS', '_MachineActionBase', '_PLATE_TRAVEL_VISUAL_RATIO', '_Registry', 'point_in_polygon', '_report_environment', '_start_application', 'annotations', 'build_index_from_bytes', 'contextlib', 'layer_polylines', 'os', 'patch', 'pathlib', 'polygon_bounds', 'pyqtProperty', 'pyqtSignal', 'pyqtSlot', 'qInstallMessageHandler', 'qml_error_report', 'qml_geometry', 'runtime', 'sys', 'tempfile', 'time', 'unittest']
+
+
+def penguin(face):
+    owner = face.findChild(QQuickItem, "moonrakerPlatePenguin")
+    assert owner is not None, "Follower penguin overlay owner is missing"
+    return owner
+
+
+def view_state(face):
+    owner = face.findChild(QQuickItem, "moonrakerPlateViewState")
+    assert owner is not None, "Follower view state owner is missing"
+    return owner
+
+
+def delivery(face):
+    owner = face.findChild(QObject, "moonrakerPlateDelivery")
+    assert owner is not None, "Follower delivery state owner is missing"
+    return owner

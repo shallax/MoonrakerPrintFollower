@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Publish the CAD test worker readiness marker atomically.
+# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+# 2026-10-06 [a72a380] Match subprocess and delivered-frame test ownership
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+
 """Bounded STL parsing and real disposable-child STEP failure handling."""
 
 import os
@@ -39,7 +49,8 @@ import sys
 import time
 snapshot, runtime, output = sys.argv[1:]
 mode = Path(snapshot).read_text().splitlines()[1]
-Path(runtime, "started").write_text(str(os.getpid()))
+Path(runtime, "started.tmp").write_text(str(os.getpid()))
+Path(runtime, "started.tmp").replace(Path(runtime, "started"))
 if mode == "progress":
     Path(output + ".progress").write_text("Building CAD geometry…", encoding="utf-8")
     deadline = time.monotonic() + 5

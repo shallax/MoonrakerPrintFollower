@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-03 [8b8ac48] Give the pixel settle and the exclusion schema one owner each
+
 """The shared pixel settle, tested without a Qt install.
 
 The settle runs inside the capture legs (the dev container), but its
@@ -8,6 +16,7 @@ veto, and the refusal when the scene never goes quiet.
 """
 from __future__ import annotations
 
+import itertools
 import pathlib
 import sys
 import unittest
@@ -42,9 +51,11 @@ class FakeScene:
 class CaptureSettleTests(unittest.TestCase):
     def test_a_moving_scene_never_settles_and_says_so(self):
         app = FakeApp()
-        scene = FakeScene(["a", "b", "c"])
+        # The fixture must actually move forever; repeating the third frame
+        # sometimes satisfied the settle span on a fast host.
+        frames = itertools.count()
         with self.assertRaisesRegex(RuntimeError, "never settled"):
-            capture_settle.settle(app, scene.grab, label="moving",
+            capture_settle.settle(app, lambda: next(frames), label="moving",
                                   span_seconds=0.05, timeout_ms=120)
 
     def test_the_first_frame_that_proves_the_run_is_returned(self):

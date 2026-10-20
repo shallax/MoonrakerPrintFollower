@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-12 [0701dcb] Improve reflection continuity and reduce rendering overhead
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+
 """Opt-in public simulation-pass adapter with immutable path buffer storage.
 
 Native current/fractional shaders and lower/current/fractional draw order remain
@@ -24,6 +33,14 @@ from ..toolhead.ToolheadInstancedShadow import ToolheadInstancedShadow
 
 _UPLOAD_DIGEST = '0aa0d36964cf4b7d1dde434cc8f62ed517eea5cbbb769ab6a8b9d31012e09a9e'
 _RENDER_DIGEST = 'b0bfdf9021823d0eb220dbc641e087347dfb6742218ebb97d618b2b999acf0a0'
+# Preserve the original audited host pair. Official 5.13 and 5.14 beta 1
+# share the same contiguous attribute uploader; 5.14 changes layer-range
+# iteration in render, without changing the uploaded vertex-buffer layout.
+_NATIVE_WRITER_DIGESTS = frozenset({
+    (_UPLOAD_DIGEST, _RENDER_DIGEST),
+    (_UPLOAD_DIGEST,
+     'c035e8f23f0007be5876b9d81479cf3edbd03d9a98330b5a53ef8607d34bc3fc'),
+})
 
 
 def _canonical_ast(value):
@@ -43,7 +60,7 @@ def _writer_digest(function):
 @lru_cache(maxsize=8)
 def _known_native_writer(upload, render):
     try:
-        return _writer_digest(upload)==_UPLOAD_DIGEST and _writer_digest(render)==_RENDER_DIGEST
+        return (_writer_digest(upload), _writer_digest(render)) in _NATIVE_WRITER_DIGESTS
     except (OSError,TypeError,SyntaxError):return False
 
 

@@ -1,3 +1,18 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-19 — 6.0.0: Give stopped playback an unambiguous completion witness.
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
+# 2026-09-18 [39b9a74] 4.4.0: the verification round — the panel-fix batch (the download guard and its pins, the
+#   load supersede, the pause-items stash keyed on the states, the strip's own fill address with x10's collapse
+#   pin, the card's independent height gate, the dashboard's visible-window fit bound, the popover's overlay
+#   host, the slider's colour type, the theme-covered lint globs, the hourglass tooltip, the settled docs), the
+#   p6/p7 determinism pins, the timestamped evidence dirs, and the ratchet re-census; every gate green on the
+#   fixed tree
+
 """The harness's deterministic generated gcode (pure — no tornado),
 shared by the simulator and the unit tests.
 """
@@ -18,7 +33,15 @@ def penguin_playback():
     except ModuleNotFoundError:
         from capture_penguin import make_gcode as penguin
     # The native seeds and offscreen capture printer share a 250 mm bed.
-    data = penguin().encode("ascii")
+    # The illustration ends on a point also crossed by an earlier travel.
+    # Once stopped, XYZ cannot distinguish those visits if a late poll was
+    # missed. A separate final stroke in the empty top-left corner makes
+    # this test's completion observable without relaxing tracker policy.
+    drawing = penguin()
+    terminal = (";Harness completion witness\n"
+                "G0 X77.500 Y190.000 F6000\nG92 E0\n"
+                "G1 X78.500 Y190.000 E0.05000 F1800\n")
+    data = drawing.replace(";TIME_ELAPSED:900", terminal + ";TIME_ELAPSED:900").encode("ascii")
     rows = []
     position = [0.0, 0.0, 0.0, 0.0]
     layer, tool, offset, clock, feed = -1, 0, 0, 0.0, 6000.0

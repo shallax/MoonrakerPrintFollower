@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Consume the public lexical and source-line limit definitions.
+# 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
+# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
+# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
+# 2026-09-03 [0ff5092] Update to v1.0.3.
+
 """Build a layer/motion index from a G-code source file in one bounded scan."""
 from __future__ import annotations
 
@@ -16,8 +27,8 @@ from typing import BinaryIO, Dict, List, Optional
 from . import ArcGeometry
 
 from .FeatureTracker import _FeatureTracker, _TYPE_OTHER
-from .GCodeParser import _ARC_CLOCKWISE, _ARC_COUNTER, _COMMAND, _ELAPSED, _FAST_MOTIONS, _MOTION, _PAUSE_COMMAND, _STATS_MARKER, _TYPE_COMMENT, _TYPE_PREFIX, _fast_motion_line, _parse_arc_words, _parse_axes
-from .IndexLimits import _LARGE_FILE_COMPACT_THRESHOLD, _MAX_LAYER_BLOCKS, _MAX_LINE_BYTES, _MAX_MOTIONS_PER_LAYER, _MAX_TYPE_NAMES, _MAX_TYPE_NAME_BYTES
+from .GCodeParser import _ARC_CLOCKWISE, _ARC_COUNTER, COMMAND_PATTERN, _ELAPSED, _FAST_MOTIONS, MOTION_PATTERN, _PAUSE_COMMAND, _STATS_MARKER, _TYPE_COMMENT, _TYPE_PREFIX, _fast_motion_line, parse_arc_words, parse_axes
+from .IndexLimits import _LARGE_FILE_COMPACT_THRESHOLD, _MAX_LAYER_BLOCKS, MAX_LINE_BYTES, _MAX_MOTIONS_PER_LAYER, _MAX_TYPE_NAMES, _MAX_TYPE_NAME_BYTES
 from .IndexWork import _BUILD_PROGRESS_MASK, _YIELD_CHECK_MASK, passive_yield
 from .MotionIndex import LayerMotionIndex
 from .ObjectWork import ObjectWorkTracker
@@ -32,7 +43,8 @@ def _emit_progress(handle: BinaryIO, progress) -> None:
         pass
 
 
-def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] = None, progress=None, stage=None) -> LayerMotionIndex:
+def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] = None, progress=None, stage=None, *, cooperative: bool = True) -> LayerMotionIndex:
+    """Scan once; isolated processes may disable host-thread cooperative sleeps."""
     # ONE pass (the ruling): a single read collects the
     # layer ranges, the marker values, the block stats, the motions
     # AND the pause offsets. The old four-pass build re-read the
@@ -49,16 +61,16 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         except OSError:
             compact = False
 
-    winner, captures, filament_diameter, filament_diameters = read_header(path)
+    winner, _captures, filament_diameter, filament_diameters = read_header(path)
 
     blocks: List[dict] = []
     current: Optional[dict] = None
     stats_values: List[int] = []
-    marker_values: List[int] = []
     pause_offsets: List[int] = []
     absolute_xyz = True
     units_scale = 1.0
     x = y = z = 0.0
+    printed_top_z = 0.0
     line_number = 0
     collect_motions = not compact
     # The feature walk runs for every build, compact included: the scan
@@ -75,7 +87,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         while True:
             if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
                 return LayerMotionIndex()
-            if (line_number & _YIELD_CHECK_MASK) == 0 and line_number:
+            if cooperative and (line_number & _YIELD_CHECK_MASK) == 0 and line_number:
                 # Release the GIL on the workers' own wall-clock gate:
                 # the parse is a tight Python loop, and what starves the
                 # UI thread is the TIME between hand-backs, not the line
@@ -88,10 +100,10 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 if progress is not None:
                     _emit_progress(handle, progress)
             offset = handle.tell()
-            line = handle.readline(_MAX_LINE_BYTES + 1)
+            line = handle.readline(MAX_LINE_BYTES + 1)
             if not line:
                 break
-            if len(line) > _MAX_LINE_BYTES:
+            if len(line) > MAX_LINE_BYTES:
                 # A hostile/corrupt file with no newlines would load
                 # a giant "line" into RAM and regex-scan it;
                 # truncated garbage chunks simply match nothing and
@@ -131,10 +143,8 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
             # still takes over retroactively (its pass would have
             # found this line before any later marker's pass ran).
             boundary = False
-            matched = None
             if fast is None and winner is not None and winner.search(stripped) is not None:
                 boundary = True
-                matched = captures[winner]
             if boundary:
                 if current is not None and current["end"] is None:
                     current["end"] = offset
@@ -199,13 +209,6 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                         "start_speed": features.start_speed, "start_tool": features.start_tool,
                     }
                     blocks.append(current)
-                if matched is not None:
-                    capture_match = matched.search(stripped)
-                    if capture_match is not None:
-                        try:
-                            marker_values.append(int(capture_match.group(1)))
-                        except (TypeError, ValueError):
-                            pass
             elif current is not None and current["end"] is None:
                 elapsed_match = None if fast is not None else _ELAPSED.search(stripped)
                 if elapsed_match is not None:
@@ -256,9 +259,9 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
             if fast is not None:
                 command, axes = fast
             else:
-                command_match = _COMMAND.search(code)
+                command_match = COMMAND_PATTERN.search(code)
                 command = command_match.group(1).upper() if command_match else b""
-                axes = _parse_axes(code)
+                axes = parse_axes(code)
             if units_scale != 1.0 and axes:
                 axes = {axis: value * units_scale for axis, value in axes.items()}
             if command == b"G20":
@@ -299,7 +302,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 # a retraction.
                 if "E" in axes:
                     features.e = axes["E"]
-            elif command in _FAST_MOTIONS or _MOTION.search(stripped):
+            elif command in _FAST_MOTIONS or MOTION_PATTERN.search(stripped):
                 # A G2/G3 is ONE motion like any other: it takes the next
                 # index, its E decides extrusion, its ;TYPE: names its
                 # feature. What its line adds is where the head actually
@@ -318,7 +321,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                     nz = axes["Z"] if absolute_xyz else z + axes["Z"]
                 arc = None
                 if command in _ARC_CLOCKWISE or command in _ARC_COUNTER:
-                    arc_words = _parse_arc_words(code)
+                    arc_words = parse_arc_words(code)
                     if units_scale != 1.0 and arc_words:
                         arc_words = {word: value * units_scale for word, value in arc_words.items()}
                     arc = ArcGeometry.descriptor(
@@ -336,6 +339,8 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 previous_e = features.e
                 length = ArcGeometry.path_length(arc, motion_start, (x, y, z), xy=True) if arc else math.hypot(x - motion_start[0], y - motion_start[1])
                 features.add(axes, collect_here, length)
+                if moved_xy and features.e > previous_e:
+                    printed_top_z = max(printed_top_z, motion_start[2], z)
                 if (current is not None and current["end"] is None
                         and moved_xy and features.e > previous_e):
                     object_work.add(offset, x, y, z, features.e - previous_e)
@@ -367,8 +372,8 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
             current["motion_total"] = features.count
 
     return assemble_index(
-        blocks, file_end, stats_values, marker_values, pause_offsets, type_names, filament_diameter, filament_diameters, compact, cancel_event,
-        object_work.finish(),
+        blocks, file_end, stats_values, pause_offsets, type_names, filament_diameter, filament_diameters, compact, cancel_event,
+        object_work.finish(), printed_top_z,
     )
 
 

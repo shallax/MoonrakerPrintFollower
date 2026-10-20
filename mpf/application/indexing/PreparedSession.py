@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Place prepared-store host lifecycle in application indexing with explicit core imports.
+# 2026-09-30 [f80f51e] Give the prepared store's session its own owner
+
 """The prepared store's session: its table, its writer and its coverage.
 
 The file-backed prepared cache outlives a service instance, and one
@@ -27,7 +35,7 @@ from __future__ import annotations
 from UM.Logger import Logger
 
 from .IndexTasks import PreparedLayerReader
-from .PreparedStore import STATE_CACHED, STATE_EMPTY, STATE_UNCACHEABLE
+from ...gcode.PreparedStore import STATE_CACHED, STATE_EMPTY, STATE_UNCACHEABLE
 
 
 class PreparedSession:

@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Qualify metadata retry before slow writer completion without requiring a transient phase.
+# 2026-10-01 [0a51955] Keep metadata retries independent of download failures
+# 2026-10-01 [4be23c8] Fix slow-link source recovery and stream wakeups
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable qt remotefileservicedownloadtests contracts."""
 from tests import qt_integration_support as harness
 
@@ -120,7 +130,12 @@ class RemoteFileServiceDownloadTests(harness.RemoteFileServiceDownloadTests):
         requests[-1].callback(None, "metadata timeout")
         replies[0].readyRead.emit()
         replies[0].finished.emit()
-        self.assertTrue(self._wait(lambda: self.files.phase == "ready"))
+        # On a slow writer, the metadata retry can already be pending when
+        # completion arrives: phase is then "resolving", with a usable file.
+        # Observe the download's durable outcome rather than a transient phase.
+        self.assertTrue(self._wait(lambda: self.files.path is not None))
+        with open(self.files.path, "rb") as source:
+            self.assertEqual(source.read(), payload)
         self.assertFalse(harness.os.path.isfile(cache._path(self._identity("part.gcode", len(payload)))))
 
         self.assertTrue(self._wait(lambda: len([r for r in self.transport.requests
@@ -135,6 +150,40 @@ class RemoteFileServiceDownloadTests(harness.RemoteFileServiceDownloadTests):
         self.files.request_file()
         self.assertEqual(len([r for r in self.transport.requests
                               if r.channel == "metadata"]), 2)
+
+    def test_metadata_retry_can_precede_writer_completion_without_losing_the_download(self):
+        gate = harness.threading.Event()
+        self.addCleanup(gate.set)
+        self.files._target_factory = self._gated_target(gate).open
+        self.files.METADATA_RETRY_DELAYS_MS = (1,)
+        payload = b"G1 X10\n"
+        self.files.bind(("slow.gcode", len(payload), 1))
+        replies = [self._reply_double(payload=payload, size=len(payload)) for _ in range(2)]
+        gets = []
+        self.transport.network = harness.SimpleNamespace(
+            get=lambda request: (gets.append(request), replies[len(gets) - 1])[1])
+        self.files.request_file()
+        requests = lambda: [r for r in self.transport.requests if r.channel == "metadata"]
+        requests()[0].callback(None, "metadata timeout")
+        replies[0].readyRead.emit()
+        replies[0].finished.emit()
+        self.assertTrue(self._wait(lambda: len(requests()) == 2))
+        self.assertIsNone(self.files.path)
+        self.assertEqual(self.files.phase, "downloading")
+        gate.set()
+        self.assertTrue(self._wait(lambda: self.files.path is not None))
+        self.assertEqual(self.files.phase, "resolving")
+        lease = self.files.lease()
+        self.addCleanup(lease.close)
+        with open(lease.path, "rb") as source:
+            self.assertEqual(source.read(), payload)
+        requests()[1].callback({"result": {"size": len(payload), "modified": 1}}, None)
+        self.assertEqual(len(gets), 2)
+        replies[1].readyRead.emit()
+        replies[1].finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "ready"))
+        with open(lease.path, "rb") as source:
+            self.assertEqual(source.read(), payload, "retry retired a still-leased source")
 
     def test_cross_volume_publication_survives_service_close_without_blocking_ui(self):
         import errno

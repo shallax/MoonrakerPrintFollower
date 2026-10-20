@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-30 [14500a2] Extract file-browser presentation from the Monitor facade
+
 """Pure file-table units and local-time labels; callers supply the clock."""
 from datetime import datetime
 import math

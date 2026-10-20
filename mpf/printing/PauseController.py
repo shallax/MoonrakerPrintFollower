@@ -1,3 +1,16 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-16 [84d9672] 4.3.0 snapshot round: the baked-pause list, the M117 fragment merge, and the card's
+#   pause-list rework
+# 2026-09-15 [ca7fd38] 4.2.0 dispatch: the queued lane revalidates every one-shot against its permission rule at
+#   dispatch (denials drop with the policy's reason, clearing the receipt), print-start gates at dispatch not
+#   dialog-open, the autonomous pause re-checks an observed print, and the pause-first jog keeps its shipped
+#   dispatch path
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """Print-local PAUSE scheduling and command lifecycle, independent of Preview UI."""
 from __future__ import annotations
 

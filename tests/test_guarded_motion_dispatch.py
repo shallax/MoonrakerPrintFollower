@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [aeb1e5c] Restore faster centre and move-to toolhead travel
+# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+
 """Fresh query/command-lane tests with real owners and no network transport."""
 from copy import deepcopy
 from types import SimpleNamespace
@@ -201,7 +210,7 @@ class GuardedDispatchTests(unittest.TestCase):
         for task in list(self.data.delayed): task()
         self.assertEqual(self.data.requests[-1].path, 'printer/objects/query')
         self.query()
-        self.assertIn('G1 X150 F600', self.scripts()[-1])
+        self.assertIn('G1 X150 F3000', self.scripts()[-1])
 
     def test_bad_input_lock_disconnect_and_unknown_state_still_refuse_offsets(self):
         for amount in (float('nan'), float('inf'), True, 0, 6):

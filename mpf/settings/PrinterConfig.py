@@ -1,9 +1,22 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Share recovery limits and follow choices with strict draft validation.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [d2db7b8] Clarify source macro choices and update prime defaults
+# 2026-09-04 [a99637b] Update to v1.1.0.
+
 from __future__ import annotations
 
 from collections.abc import Mapping
+from .ConfigConstraints import RECOVERY_NUMBER_LIMITS
+from ..printing.FollowMode import FollowMode
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 import json
+import re
 from math import isfinite
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
@@ -211,6 +224,35 @@ class PrinterConfig:
     detection_safe_seconds: int = 300
     detection_notify_enabled: bool = False
     detection_pause_enabled: bool = False
+    # Recovery is opt-in per sensor. An empty selection records no sensor
+    # transitions; manual estimates remain available.
+    recovery_sensor_names: List[str] = field(default_factory=list)
+    recovery_auto_pause: bool = True
+    # Optional macro that restores the saved pause parser state without
+    # moving the nozzle. Blank uses stock RESTORE_GCODE_STATE PAUSE_STATE.
+    recovery_prepare_macro: str = ""
+    recovery_saved_state: str = "PAUSE_STATE"
+    # Explicit per-printer contracts for opaque source-file macros.
+    recovery_setup_macros: List[str] = field(default_factory=list)
+    recovery_transparent_macros: List[str] = field(default_factory=list)
+    recovery_nozzle_parameter: str = "EXTRUDER"
+    recovery_bed_parameter: str = "BED"
+    recovery_lead_in_mm: float = 5.0
+    recovery_lead_in_mode: str = "mm"
+    recovery_lead_in_moves: int = 3
+    recovery_clearance_mm: float = 5.0
+    recovery_xy_speed_mm_s: float = 50.0
+    recovery_z_speed_mm_s: float = 5.0
+    recovery_prime_enabled: bool = False
+    recovery_prime_x: float = 0.0
+    recovery_prime_y: float = 250.0
+    recovery_prime_z: float = 100.0
+    recovery_prime_amount_mm: float = 50.0
+    recovery_prime_speed_mm_s: float = 5.0
+    recovery_prime_dwell_s: float = 5.0
+    recovery_command_timeout_s: int = 120
+    recovery_heating_timeout_s: int = 1800
+    recovery_status_timeout_s: int = 10
     # The webcam's decode rate (FPS): the user's own throttle for the
     # monitor page's idle load, persisted per machine like the other
     # camera settings.
@@ -303,6 +345,58 @@ class PrinterConfig:
 
         from ..geometry.DetectionRegions import persisted_regions
         data["detection_regions"] = persisted_regions(data["detection_regions"])
+        sensors = data.get("recovery_sensor_names")
+        data["recovery_sensor_names"] = (list(dict.fromkeys(
+            name for name in sensors if isinstance(name, str)
+            and name.startswith(("filament_switch_sensor ", "filament_motion_sensor "))
+            and len(name) <= 128))[:32] if isinstance(sensors, list) else [])
+        macro = data.get("recovery_prepare_macro")
+        macro = str(macro or "").strip().upper()
+        data["recovery_prepare_macro"] = macro if re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", macro) else ""
+        saved = str(data.get("recovery_saved_state") or "").strip().upper()
+        data["recovery_saved_state"] = saved if re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", saved) else "PAUSE_STATE"
+        for key in ("recovery_setup_macros", "recovery_transparent_macros"):
+            names = data.get(key)
+            data[key] = (list(dict.fromkeys(name.strip().upper() for name in names
+                if isinstance(name, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", name.strip().upper())))[:32]
+                if isinstance(names, list) else [])
+        data["recovery_transparent_macros"] = [name for name in data["recovery_transparent_macros"]
+            if name not in data["recovery_setup_macros"]]
+        for key in ("recovery_nozzle_parameter", "recovery_bed_parameter"):
+            name = str(data.get(key) or "").strip().upper()
+            data[key] = name if re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", name) else getattr(defaults, key)
+        if type(data.get("recovery_auto_pause")) is not bool:
+            data["recovery_auto_pause"] = True
+        if type(data.get("recovery_prime_enabled")) is not bool:
+            data["recovery_prime_enabled"] = False
+        for key, lo, hi in RECOVERY_NUMBER_LIMITS:
+            try:
+                number = float(data[key])
+                data[key] = number if isfinite(number) and lo <= number <= hi else getattr(defaults, key)
+            except (TypeError, ValueError, OverflowError):
+                data[key] = getattr(defaults, key)
+        data["recovery_lead_in_mode"] = (data["recovery_lead_in_mode"]
+            if data["recovery_lead_in_mode"] in {"mm", "moves"} else "mm")
+        try:
+            moves = int(data["recovery_lead_in_moves"])
+            data["recovery_lead_in_moves"] = moves if 1 <= moves <= 100 else 3
+        except (TypeError, ValueError, OverflowError):
+            data["recovery_lead_in_moves"] = 3
+        try:
+            timeout = int(data["recovery_command_timeout_s"])
+            data["recovery_command_timeout_s"] = timeout if 10 <= timeout <= 600 else 120
+        except (TypeError, ValueError, OverflowError):
+            data["recovery_command_timeout_s"] = 120
+        try:
+            timeout = int(data["recovery_heating_timeout_s"])
+            data["recovery_heating_timeout_s"] = timeout if 60 <= timeout <= 3600 else 1800
+        except (TypeError, ValueError, OverflowError):
+            data["recovery_heating_timeout_s"] = 1800
+        try:
+            timeout = int(data["recovery_status_timeout_s"])
+            data["recovery_status_timeout_s"] = timeout if 3 <= timeout <= 60 else 10
+        except (TypeError, ValueError, OverflowError):
+            data["recovery_status_timeout_s"] = 10
         sensitivity = data["detection_sensitivity"]
         if type(sensitivity) not in (int, float) or not .8 <= sensitivity <= 1.2 or not isfinite(sensitivity):
             data["detection_sensitivity"] = 1.0
@@ -417,8 +511,8 @@ class PrinterConfig:
             if not isinstance(item, bool):
                 data[key] = str(item).strip().lower() in ("1", "true", "yes", "on")
 
-        if data["follow_mode"] not in {"exact", "completed", "lookahead", "window"}:
-            data["follow_mode"] = "exact"
+        if data["follow_mode"] not in {mode.value for mode in FollowMode}:
+            data["follow_mode"] = FollowMode.EXACT.value
         if data["output_format"].lower() not in {"gcode", "ufp"}:
             data["output_format"] = "gcode"
         else:

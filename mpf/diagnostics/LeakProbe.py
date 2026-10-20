@@ -1,3 +1,15 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-16 [932f58d] 4.3.0 leak hunt: the temporary overnight instrumentation and its census scenarios —
+#   LeakProbe ticks RSS, tracemalloc growth, per-class QML counts and runtime collection sizes into
+#   ~/moonraker_leak.log every minute (armed at the first tick, never during plugin load), the z96 entry-cycle
+#   and z98 printing censuses feed the harness repro; all of it stripped before release
+
 """The overnight-leak instrument, gated OFF by default.
 
 The settings' diagnostics toggle ("Log memory diagnostics") arms a

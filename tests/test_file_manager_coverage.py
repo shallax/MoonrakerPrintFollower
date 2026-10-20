@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Exercise shared upload operations, bounded replies and cancellation lifetime.
+# 2026-10-18 — 6.0.0: Cover file-manager ordering, invalidation and active-file protection.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+
 """Coverage for the file-manager service and its pure view policy.
 
 Two jobs in one file. The policy half pins the projection rules as
@@ -27,7 +38,7 @@ import shutil
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from qt_runtime_support import QT_AVAILABLE, ScriptedTransport
 
@@ -549,10 +560,9 @@ class WalkFailureTests(ServiceCase):
             self.directory("path=gcodes&", [], dirs=("a", "b", "c"))
             self.assertEqual(len(self.all_walk_requests()), 2)
             self.directory("path=gcodes/a", [("a.gcode", {})])
-            self.assertEqual(self.service.resident_directories(), {"a", "b", "c"})
-            # Only the walked child contributed rows.
-            self.assertEqual(self.service.rows_resident, 1)
-            self.assertIsNotNone(self.service.row_for("a/a.gcode"))
+            self.assertIn("2-folder limit", self.service.walk_error)
+            self.assertEqual(self.service.rows_resident, 0)
+            self.assertIsNotNone(self.service.refreshed_at)
 
 
 class LifecycleTests(ServiceCase):
@@ -1179,9 +1189,9 @@ class ThumbnailTests(ServiceCase):
         self.assertEqual(self.service._thumbnails._active, 0)
 
     def test_abort_uploads_survives_replies_that_refuse_to_abort(self):
-        self.service._upload_replies["upload-1"] = (ThumbReply(disposal_raises=True), "a.gcode")
+        self.service._uploads["upload-1"] = (SimpleNamespace(cancel=Mock(side_effect=OSError("busy")), deleteLater=Mock()), "a.gcode")
         self.service._abort_uploads()
-        self.assertEqual(self.service._upload_replies, {})
+        self.assertEqual(self.service._uploads, {})
 
     def test_clear_thumbnails_survives_a_tree_removal_failure(self):
         self.service._thumbnails._entries["a.gcode"] = {"state": "ready", "url": "file:///x.png"}
@@ -1227,14 +1237,14 @@ class UploadTests(ServiceCase):
         self.service.uploadProgress.connect(progress.append)
         self.service.uploadFinished.connect(lambda ok, detail: verdicts.append((ok, detail)))
         self.assertTrue(self.service.upload_file(self.upload_source()))
-        self.assertEqual(len(self.service._upload_replies), 1)
+        self.assertEqual(len(self.service._uploads), 1)
         reply.uploadProgress.emit(1, 2)
         self.assertEqual(progress, [50])
         reply.finished.emit()
         self.assertEqual(verdicts, [(True, "bench.gcode")])
         self.assertEqual([note for note in self.notes if note.startswith("Uploaded")],
                          ["Uploaded bench.gcode."])
-        self.assertFalse(self.service._upload_replies)
+        self.assertFalse(self.service._uploads)
 
     def test_upload_failure_surfaces_the_hosts_words_or_the_transport_text(self):
         self.open_listing()
@@ -1269,7 +1279,7 @@ class UploadTests(ServiceCase):
         self.assertEqual(verdicts[-1], (False, "A file named bench.gcode already exists."))
         self.reply_for(ScriptedReply())
         self.assertTrue(self.service.upload_file(self.upload_source(), overwrite=True))
-        self.assertEqual([relpath for _reply, relpath in self.service._upload_replies.values()],
+        self.assertEqual([relpath for _reply, relpath in self.service._uploads.values()],
                          ["prints/bench.gcode"])
 
     def test_an_upload_that_outlives_its_printer_resolves_with_a_verdict(self):

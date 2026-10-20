@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Use public source-line limits in indexed-file boundary tests.
+# 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
+# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
+# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
+# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+
 """Integration coverage for the gcode index and the Cura lifecycle adapter.
 
 Two surfaces share this file because they are the pair that answers "what
@@ -17,7 +28,7 @@ returned method name ("motion index" / "byte position" / "held ..." /
 Leftover lines, and why no test reaches them:
 
 GCodeIndex.py
-- 227-228 (_parse_axes): the guard covers a non-numeric axis value, but the
+- 227-228 (parse_axes): the guard covers a non-numeric axis value, but the
   scan regex only matches digits and signs, so float() cannot fail.
 - 349-350, 395-396, 403-404 (stats / marker / elapsed coercions): the same
   shape — each value has already matched a numeric regex, so int()/float()
@@ -35,6 +46,7 @@ CuraIntegration.py
   makes that disconnect raise.
 """
 from __future__ import annotations
+from mpf.gcode.IndexResidency import IndexResidency
 
 import mpf.gcode.GCodeIndex as gcode_index
 
@@ -368,9 +380,9 @@ G1 X3
             b";LAYER_CHANGE\nSET_PRINT_STATS_INFO CURRENT_LAYER=4\nG1 X2\n"
             b";LAYER_CHANGE\nSET_PRINT_STATS_INFO CURRENT_LAYER=3\nG1 X3\n")
         self.assertEqual(repeated.current_layer_map, {})
-        # Cura/Orca numeric markers supply the map when no stats exist.
+        # Numeric comments delimit layers but cannot declare firmware numbering.
         markers = build_index_from_bytes(b";LAYER:1\nG1 X1\n;LAYER:2\nG1 X2\n")
-        self.assertEqual(markers.current_layer_map, {1: 0, 2: 1})
+        self.assertEqual(markers.current_layer_map, {})
         # Repeated markers are as unusable as repeated stats values: the
         # numbering restarted, so no layer can be trusted to a marker.
         restarted = build_index_from_bytes(b";LAYER:1\nG1 X1\n;LAYER:1\nG1 X2\n")
@@ -510,21 +522,22 @@ class HydrationTests(unittest.TestCase):
         self.assertEqual(index.motion_count(1), 0)
 
     def test_the_retention_window_follows_the_anchor(self):
+        residency = IndexResidency()
         index, path = self._compact(6)
         for layer in (0, 1, 2):
-            hydrate_layer_from_file(index, path, layer)
+            hydrate_layer_from_file(index, path, layer, retention=residency.layers)
         # The newest hydration sets the anchor, so the window keeps [1, 3]
         # and drops layer 0 rather than growing without bound.
         self.assertEqual(index.hydrated_layers, {1, 2})
-        index.followed_layer = 4
-        hydrate_layer_from_file(index, path, 3)
+        residency.set_window("live", 4)
+        hydrate_layer_from_file(index, path, 3, retention=residency.layers)
         # The live print's layer wins over the worker's pick: the window
         # is [3, 5] around layer 4, not around the hydrated layer 3.
         # The freshly hydrated layer keeps its own ±1 window too (the
         # background pass's prepare window), so the walk's survivor 2
         # stays until the next hydrate evicts it.
         self.assertEqual(index.hydrated_layers, {2, 3})
-        hydrate_layer_from_file(index, path, 5)
+        hydrate_layer_from_file(index, path, 5, retention=residency.layers)
         self.assertEqual(index.hydrated_layers, {3, 5})
         hydrate_layer_from_file(index, path, 0, keep_anchor=0)
         self.assertEqual(index.hydrated_layers, {0})
@@ -583,6 +596,7 @@ class CacheTests(unittest.TestCase):
             "compact": False,
             "hydrated": [0],
             "counts": [1],
+            "printed_top_z": 0.2,
         }
         header.update(overrides)
         return header
@@ -626,6 +640,8 @@ class CacheTests(unittest.TestCase):
         identity = self._identity()
         cache = PersistentIndexCache(self.directory)
         self._write_raw(identity, b"", magic=b"NOTMAGIC")
+        self.assertIsNone(cache.load(identity))
+        self._write_raw(identity, self._body(), header=self._header(identity, version=16))
         self.assertIsNone(cache.load(identity))
         self._write_raw(identity, self._body(), header=self._header(identity, version=_CACHE_VERSION + 1))
         self.assertIsNone(cache.load(identity))

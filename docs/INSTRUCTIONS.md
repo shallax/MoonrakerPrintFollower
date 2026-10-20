@@ -115,7 +115,7 @@ are visible; a Python 3.14 patch release difference is acceptable.
   (the full suite on the selected backend),
   `make test_files FILES="tests.test_a tests.test_b"` (a CHOSEN list of
   test files, one process per file, run in PARALLEL — see below),
-  `make generate_screenshots`, `make package`, `make format`
+  `make generate_screenshots`, `make package`, `make library`, `make format`
   (qmlformat on the selected backend), `make coverage` (mpf/ report,
   the coverage gate), `make snapshot_package` (build + verify + copy to
   `mpf.curapackage` in the host's temporary directory), `make snapshot_quick`
@@ -125,7 +125,7 @@ are visible; a Python 3.14 patch release difference is acceptable.
   driver or the Linux scripts according to the selected backend.
 - For local full validation, `make all` runs shader compilation, lint, the
   full suite, fresh captures, capture determinism, package verification and
-  the local package snapshot in that order. GitHub CI enforces the full suite
+  the local package snapshot and installed-library verification in that order. GitHub CI enforces the full suite
   on pushes and pull requests; the pre-commit hook runs fast checks only.
 - **To run a subset of the tests, use `make test_files`, never one
   `unittest` invocation naming several files.** A single
@@ -452,7 +452,8 @@ When bumping the version (for example 3.1.0 → 3.2.0), every one of these must
 change together:
 
 1. `package.json` — `package_version`
-2. `mpf/plugin.json` — `version`
+2. `mpf/plugin.json` — `version`, and `pyproject.toml` — `project.version`
+   (the Cura plugin and reusable library ship the same release)
 3. `CHANGELOG.md` — a new section at the top, following the existing format
 4. `README.md` — the release header (`**Release:**`) and the "What changed"
    section
@@ -464,12 +465,19 @@ change together:
    keep older release plans as history
 7. `docs/TESTING.md` — keep the current-release testing commands and evidence
    at the top; label older harness audits as historical
-8. At release time, Git tag — `v<version>`; the release workflow validates the
+8. Source headers — complete the end-of-cycle history review below, including
+   fixes made after the first release candidate, before building final archives.
+9. At release time, Git tag — `v<version>`; the release workflow validates the
    tag against both version fields and fails on mismatch
 
 The version test asserts `package_version` and `plugin` `version` stay in
-sync; the release workflow asserts both equal the git tag, so no test edit is
-needed per release.
+sync; `make library` also checks the wheel version against both manifests. The
+release workflow asserts the plugin manifests equal the git tag, so no test edit
+is needed per release. Public library changes must update `docs/LIBRARY.md` and
+the isolated consumer proof in the same change; keep core imports free of Qt/Cura.
+Maintain the explicit module/resource boundary in `tools/library_manifest.py`;
+reuse the production source files rather than copying implementations, and keep
+application services out of the standalone distribution.
 
 `sdk_version` in `package.json` is a compatibility floor, not a release number:
 change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.py`).
@@ -910,6 +918,37 @@ reproducible with only PyQt6.
 
 ## Comment discipline
 
+Project-owned source, test and build files carry the copyright notice
+`Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>` and
+an SPDX licence identifier. The project licence is GNU GPLv3, version 3 only
+(`GPL-3.0-only`); the full text is in `LICENSE`. Preserve upstream attribution
+and licence terms in derived camera modules and vendored fixtures.
+
+The initial 6.0.0 source headers record the earliest commit and two latest content
+changes, following renames, in newest-first order. Those snapshot entries use Git
+author dates, abbreviated hashes and commit subjects; subjects can describe a
+larger change than that file alone.
+
+At the end of **every release cycle**, review every project-owned source header
+against the Git history since the preceding release tag (or the recorded cycle
+base when no tag exists). **Update each changed file's header with its pertinent
+changes before building the final release archives and tagging.** This also
+applies when finalizing another candidate without changing the version number.
+
+Use brief, file-specific summaries of meaningful behaviour changes, fixes or
+structural changes, with `YYYY-MM-DD` dates from the relevant Git commits and the
+release version. Include commit references where available and follow renames
+when finding earlier history. Add new entries newest first, retain the original
+provenance, and keep only a short selection of recent pertinent entries: Git is
+the complete history. Do not manufacture entries for unchanged files, pure
+renames or edits confined to notices. Recheck late release fixes so their entries
+are included in the final packaged sources.
+
+Shebangs, encoding declarations and
+format directives retain their required positions before the header. Do not add
+comments to JSON, binary/generated assets or byte-sensitive G-code fixtures.
+Vendored Cura/Uranium files retain their original notices without project headers.
+
 Comments state WHY, briefly:
 
 - One or two lines for the ordinary case; a documented trap may earn
@@ -988,8 +1027,8 @@ transcription drift):
   pop-over path the capture harness does not exercise).
 - Escape-dismiss hand-test on the pop-overs.
 - Multi-hour Canvas/CPU sanity while printing.
-- One old + one current Cura (the README claims Cura 5.7-5.13 /
-  SDK 8.7-8.12).
+- One old + one current Cura (the README claims Cura 5.7-5.14 beta 1 /
+  SDK 8.7-8.13).
 Once the workflow's tag-built artifacts exist, unpack the curapackage and
 grep the shipped QML/Python for the verification markers — no `BISECT`,
 no `visible: false` console gate, `GET` (not POST) on the endstop query,
@@ -1031,7 +1070,7 @@ it links the Qt graphics runtime even for offline shader compilation. CI
 installs the capture runtime before this build step for that reason.
 `tools/build_shaders.py` requests shader-bundle format 64 and embeds GLSL,
 HLSL and Metal translations. Format 64 is readable by Qt 6.4 and later;
-Cura 5.7 already pins Qt 6.6, so the format covers Cura 5.7 through 5.13.
+Cura 5.7 already pins Qt 6.6, so the format covers the supported Cura 5.7 through 5.14 beta 1 range.
 The bundles have been exercised on Cura 5.13's Qt 6.6 OpenGL backend;
 this is not a claim that every Cura/platform combination was tested locally.
 The graphics driver compiles the packaged target shader when first used;

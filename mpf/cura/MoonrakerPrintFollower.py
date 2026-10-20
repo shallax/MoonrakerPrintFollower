@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+# 2026-09-01 [1294efa] Initial release
+
 """Stable Cura extension facade; domain behaviour is composed, not inherited."""
 from PyQt6.QtCore import QObject, pyqtSlot
 from UM.Extension import Extension
@@ -57,6 +67,18 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     def setPlateAnchor(self, anchor): self._runtime.coordinator.set_plate_anchor(anchor)
     def setPlateSplit(self, motions): self._runtime.coordinator.set_plate_split(motions)
+    def recoverySelection(self): return self._runtime.coordinator.selected_recovery_boundary()
+    def recoveryState(self): return self._runtime.coordinator.recovery_state
+    def recoveryPlan(self): return self._runtime.coordinator.recovery.plan()
+    def recoveryReview(self, parameters): return self._runtime.coordinator.recovery.review(parameters)
+    def recoveryStart(self, temperatures=None): return self._runtime.coordinator.recovery.start(temperatures)
+    def recoveryCancel(self): return self._runtime.coordinator.recovery.cancel()
+    def recoverySuggest(self): return self._runtime.coordinator.suggest_recovery_lead_in()
+    def recoveryFiles(self): return self._runtime.coordinator.recovery_files_state
+    def recoveryListFiles(self): return self._runtime.coordinator.refresh_recovery_files()
+    def recoverySelectFile(self, filename): return self._runtime.coordinator.select_recovery_file(filename)
+    @property
+    def recoveryChanged(self): return self._runtime.coordinator.recovery.changed
     def setFollowerPopoverOpen(self, popover_open): self._runtime.coordinator.set_popover_open(popover_open)
     # The popover's pause block: the one the Preview card just received.
     def pauseAtLayerBlock(self): return self._runtime.coordinator.pause_block

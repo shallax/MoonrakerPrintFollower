@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-14 [1a70728] 4.0.2 F05: print metadata identity — completed-fetch latches keyed by job, history
+#   cross-check, (size, modified) content identity, honest fakes
+# 2026-09-11 [c3f76be] 3.6.0 release: version bump, release notes, and roadmap
+# 2026-09-07 [547223f] Establish shared Moonraker session and service runtime
+
 from __future__ import annotations
 
 from collections import deque

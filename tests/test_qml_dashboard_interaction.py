@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-30 [bce3ddd] The information and status panes become their own components
+# 2026-09-30 [6c7527a] Match the console double's slot to the model's signature
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable qml dashboard interaction contracts."""
 from tests import qml_engine_support as harness
 

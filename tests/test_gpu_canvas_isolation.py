@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-10-01 [5ad04c7] Observe live handoff from its property signal
+# 2026-09-27 [d903c14] Keep hidden software geometry inactive during GPU navigation
+
 """The real QML GPU face must never activate its hidden software producers."""
 from tests import qml_engine_support as harness
 

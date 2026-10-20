@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Compose host indexing and cache namespaces from the application package.
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+# 2026-09-01 [1294efa] Initial release
+
 """Composition root. This module constructs dependencies; it implements no domain policy.
 
 4.5.0: the persistence facade is constructed HERE — one instance per
@@ -11,14 +21,15 @@ destructive half of the boot runs from Cura's initializationFinished
 from __future__ import annotations
 
 import os
+import sys
 
 from UM.Logger import Logger
 from UM.Resources import Resources
 
 from .bedmesh.BedMeshPresenter import BedMeshPresenter
-from .gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+from .application.indexing.CacheNamespaces import CACHE_DIRECTORY_NAME
 from .cura.CuraIntegration import CuraIntegration
-from .gcode.GCodeIndexService import GCodeIndexService
+from .application.indexing.GCodeIndexService import GCodeIndexService
 from .settings.MigrationNotice import MigrationNotice
 from .whatsnew.WhatsNewOverlay import WhatsNewOverlay
 from .moonraker.MoonrakerClient import MoonrakerClient
@@ -171,8 +182,10 @@ class FollowerRuntime:
         # changed signal (fired after every identity re-apply, the
         # machine switch included) rebinds them, and a worker from
         # the old machine never commits into the new one's cache.
-        from .gcode.CacheNamespaces import CacheNamespaces
-        self.index = GCodeIndexService(self.files, None, parent, None)
+        from .application.indexing.CacheNamespaces import CacheNamespaces
+        from .application.indexing.IndexProcess import IndexProcessBuilder
+        index_builder = IndexProcessBuilder(persistence_root) if sys.platform == "win32" else None
+        self.index = GCodeIndexService(self.files, None, parent, None, index_builder=index_builder)
         self.cache_namespaces = CacheNamespaces(
             self._cache_root,
             lambda: self.binding.identity[0] if self.binding.identity else "",
@@ -213,7 +226,8 @@ class FollowerRuntime:
                                          persistence=self.persistence)
         self.coordinator = PrintCoordinator(client=self.client, binding=self.binding,
             files=self.files, index=self.index, cura=self.cura, preview=self.preview,
-            pauses=self.pauses, presentation=self.presentation, bed_mesh=self.bed_mesh, parent=parent)
+            pauses=self.pauses, presentation=self.presentation, bed_mesh=self.bed_mesh,
+            parent=parent, persistence=self.persistence)
         self.presentation.reportedPositionRequested.connect(lambda _reported: self.motion.reset())
         self.presentation.reportedPositionRequested.connect(lambda _reported: self.coordinator.refresh())
         self._closed = False

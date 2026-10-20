@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
+# 2026-09-24 [77c477c] harness: the native legs boot twice, and their setup reports its own failures
+
 """Seeded config variants the harness boots from, as a transform over
 an already-seeded config directory.
 

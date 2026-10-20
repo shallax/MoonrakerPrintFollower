@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-12 [0701dcb] Improve reflection continuity and reduce rendering overhead
+# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+
 """Visual fan phase, telemetry precedence, bad inputs and analytic axes."""
 import math
 import unittest

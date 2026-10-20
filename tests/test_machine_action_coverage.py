@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
+# 2026-09-19 [0f5d266] 4.5.0: the camera stream, the narrow-window contract and the release hardening
+
 """Unit coverage for the settings machine action: the validation verbs,
 the save path's refusals, the connection probe's status machine, the
 cache-clear slot and the migration mirror.
@@ -219,6 +228,49 @@ class MachineActionCase(unittest.TestCase):
     def _follower(self, config=None, **kwargs):
         return _Follower(config if config is not None else self.printer_config.PrinterConfig(),
                          **kwargs)
+
+    def test_recovery_configuration_discovery_bounds_sensor_and_macro_choices(self):
+        transport = _ProbeTransport()
+        follower = self._follower()
+        follower.transport = transport
+        action = self._action(follower, transport=transport)
+        action.refreshRecoveryConfiguration()
+        request = transport.requests[-1]
+        self.assertEqual(request.path, "printer/objects/query")
+        self.assertEqual(request.options["body"], {"objects": {"configfile": ["config"]}})
+        request.callback({"result": {"status": {"configfile": {"config": {
+            "filament_switch_sensor upper": {"pause_on_runout": "false"},
+            "filament_motion_sensor lower": {"pause_on_runout": "true"},
+            "gcode_macro PAUSE": {"gcode": "SAVE_GCODE_STATE NAME=PAUSE\nBASE_PAUSE"},
+            "gcode_macro MPF_PREPARE": {"gcode": "RESTORE_GCODE_STATE NAME=PAUSE MOVE=0"},
+            "gcode_macro PRINT_START": {"gcode": "G90"},
+            "gcode_macro TIMELAPSE_TAKE_FRAME": {"gcode": "M400"},
+        }}}}}, None)
+        self.assertEqual({row["name"] for row in action.recoveryAvailableSensors},
+                         {"filament_switch_sensor upper", "filament_motion_sensor lower"})
+        self.assertEqual({row["pauseOwner"] for row in action.recoveryAvailableSensors},
+                         {"follower", "klipper"})
+        self.assertIn("PAUSE", action.recoverySavedStates)
+        self.assertIn("MPF_PREPARE", action.recoveryPrepareMacros)
+        self.assertTrue(action.saveConfig(self._params(
+            recovery_setup_macros=["PRINT_START"],
+            recovery_transparent_macros=["TIMELAPSE_TAKE_FRAME"])))
+        self.assertEqual(follower.applied[-1].recovery_setup_macros, ["PRINT_START"])
+        self.assertEqual(follower.applied[-1].recovery_transparent_macros,
+                         ["TIMELAPSE_TAKE_FRAME"])
+        self.assertFalse(action.saveConfig(self._params(
+            recovery_setup_macros=["NOT_DISCOVERED"])))
+        self.assertTrue(action.saveConfig(self._params(
+            recovery_prime_enabled=True, recovery_prime_x=12,
+            recovery_prime_y=210, recovery_prime_z=5,
+            recovery_prime_amount_mm=30, recovery_prime_speed_mm_s=2.5,
+            recovery_heating_timeout_s=2400,
+            recovery_nozzle_parameter="TOOL", recovery_bed_parameter="PLATE")))
+        self.assertTrue(follower.applied[-1].recovery_prime_enabled)
+        self.assertEqual(follower.applied[-1].recovery_prime_amount_mm, 30)
+        self.assertEqual(follower.applied[-1].recovery_prime_speed_mm_s, 2.5)
+        self.assertEqual(follower.applied[-1].recovery_nozzle_parameter, "TOOL")
+        self.assertFalse(action.saveConfig(self._params(recovery_prime_speed_mm_s=100)))
 
     def _container(self, container_id="machine-1", container_type="machine"):
         definition_container = self.module.DefinitionContainer

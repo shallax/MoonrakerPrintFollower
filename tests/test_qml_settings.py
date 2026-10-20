@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Load cache namespace capabilities from the application package.
+# 2026-10-19 — 6.0.0: Verify setup title weight and recovery section hierarchy on Qt.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable qml settings contracts."""
 from unittest.mock import patch
 
@@ -126,7 +137,7 @@ class SettingsSeekTraceTests(harness.SettingsSeekTraceTests):
 
 class SettingsCacheClearTests(harness.SettingsCacheClearTests):
     def test_the_clear_button_wipes_the_cache_root_and_reports_it(self):
-        from mpf.gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+        from mpf.application.indexing.CacheNamespaces import CACHE_DIRECTORY_NAME
         document, window = self.open_settings(tab=self.DIAGNOSTICS_TAB)
         resources = harness.sys.modules["UM.Resources"].Resources
         cache_root = harness.os.path.join(resources.getCacheStoragePath(), CACHE_DIRECTORY_NAME)
@@ -211,6 +222,28 @@ class IntervalSliderGrabTests(harness.IntervalSliderGrabTests):
 class SettingsTabCompositionTests(harness.SettingsPageCase):
     """Each persistent tab owns a disjoint part of the saved configuration."""
 
+    def test_setup_pages_have_bold_titles_and_recovery_has_ordered_section_headings(self):
+        document, _window = self.open_settings()
+        pages = self.pages(document)
+        titles = {"Detection": "Failure detection", "Recovery": "Interrupted print recovery"}
+        for name in ("Connection", "Following", "Upload", "Detection", "Recovery", "Diagnostics"):
+            with self.subTest(page=name):
+                title = next((item for item in pages[name + "Settings"].findChildren(harness.QQuickItem)
+                              if item.property("text") == titles.get(name, name)), None)
+                self.assertIsNotNone(title)
+                self.assertTrue(title.property("font").bold())
+        self.show_tab(document, 4)
+        recovery = pages["RecoverySettings"]
+        labels = {item.property("text"): item for item in recovery.findChildren(harness.QQuickItem)
+                  if isinstance(item.property("text"), str)}
+        headings = [labels.get(name) for name in ("Filament sensors", "G-code macros", "Pause-state recovery",
+                    "Suggested rewind", "Return travel", "Nozzle priming before return", "Timeouts")]
+        for heading in headings:
+            self.assertIsNotNone(heading)
+            self.assertTrue(heading.property("font").bold())
+            self.assertGreater(heading.height(), 0)
+        self.assertEqual([heading.y() for heading in headings], sorted(heading.y() for heading in headings))
+
     def test_diagnostics_is_the_last_tab(self):
         document, _window = self.open_settings()
         tabs = [item for item in document.findChildren(harness.QQuickItem)
@@ -226,7 +259,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         document, window = self.open_settings(height=240)
         pages = self.pages(document)
         for index, name in enumerate(("ConnectionSettings", "FollowingSettings",
-                                      "UploadSettings", "DetectionSettings", "DiagnosticsSettings")):
+                                      "UploadSettings", "DetectionSettings", "RecoverySettings", "DiagnosticsSettings")):
             with self.subTest(tab=name):
                 self.show_tab(document, index)
                 scrollbar = pages[name].findChild(harness.QQuickItem, "settingsScrollbar")
@@ -237,7 +270,7 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
                 self.assertTrue(scrollbar.property("visible"))
 
     def pages(self, document):
-        types = ("ConnectionSettings", "FollowingSettings", "UploadSettings", "DiagnosticsSettings", "DetectionSettings")
+        types = ("ConnectionSettings", "FollowingSettings", "UploadSettings", "DiagnosticsSettings", "DetectionSettings", "RecoverySettings")
         result = {}
         for item in document.findChildren(harness.QQuickItem):
             name = item.metaObject().className()
@@ -248,6 +281,27 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
         self.assertEqual(set(result), set(types))
         return result
 
+    def test_recovery_clearance_and_dwell_edit_validate_and_publish(self):
+        document, _ = self.open_settings()
+        self.show_tab(document, 5)
+        page = self.pages(document)["RecoverySettings"]
+        values = page.property("values").toVariant()
+        self.assertEqual(values["recovery_clearance_mm"], 5)
+        self.assertEqual(values["recovery_prime_dwell_s"], 5)
+        self.find(document, "recoveryPrimeEnabled").setProperty("checked", True)
+        dwell = self.find(document, "recoveryPrimeDwell")
+        clearance = self.find(document, "recoveryTravelClearance")
+        for value, valid in (("0", True), ("12.5", True), ("300", True), ("301", False), ("-1", False), ("oops", False)):
+            dwell.setProperty("text", value)
+            self.pump(5)
+            self.assertEqual(page.property("valid"), valid, value)
+            if valid:
+                self.assertEqual(page.property("values").toVariant()["recovery_prime_dwell_s"], float(value))
+        dwell.setProperty("text", "5")
+        clearance.setProperty("text", "12")
+        self.pump(5)
+        self.assertEqual(page.property("values").toVariant()["recovery_clearance_mm"], 12)
+
     def test_tabs_publish_disjoint_complete_configuration_blocks(self):
         document, _ = self.open_settings()
         pages = self.pages(document)
@@ -257,6 +311,15 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
             "UploadSettings": {"frontend_url", "output_format", "upload_dialog", "upload_path", "upload_start_print", "upload_remember_state", "upload_autohide_message", "power_devices", "ready_retry_interval_s", "filename_translate_input", "filename_translate_output", "filename_translate_remove"},
             "DiagnosticsSettings": {"cache_max_mb", "trace_layer", "trace_http", "seek_trace", "memory_diagnostics_log", "memory_diagnostics_trace", "camera_disabled", "software_follower_renderer"},
             "DetectionSettings": set(),
+            "RecoverySettings": {"recovery_sensor_names", "recovery_auto_pause", "recovery_saved_state",
+                                 "recovery_prepare_macro", "recovery_setup_macros", "recovery_transparent_macros",
+                                 "recovery_nozzle_parameter", "recovery_bed_parameter", "recovery_lead_in_mm",
+                                 "recovery_lead_in_mode", "recovery_lead_in_moves", "recovery_clearance_mm",
+                                 "recovery_xy_speed_mm_s", "recovery_z_speed_mm_s", "recovery_prime_enabled",
+                                 "recovery_prime_x", "recovery_prime_y", "recovery_prime_z",
+                                 "recovery_prime_amount_mm", "recovery_prime_speed_mm_s", "recovery_prime_dwell_s",
+                                 "recovery_command_timeout_s", "recovery_heating_timeout_s",
+                                 "recovery_status_timeout_s"},
         }
         seen = set()
         for name, page in pages.items():
@@ -264,8 +327,8 @@ class SettingsTabCompositionTests(harness.SettingsPageCase):
             self.assertEqual(set(values), expected[name])
             self.assertFalse(seen.intersection(values), "two tabs own the same setting")
             seen.update(values)
-        self.assertEqual(len(seen), 35)
-        for index in (4, 3, 1, 2, 0):
+        self.assertEqual(len(seen), 59)
+        for index in (5, 4, 3, 1, 2, 0):
             self.show_tab(document, index)
             self.assertEqual(self.pages(document), pages, "a tab switch recreated a draft owner")
 

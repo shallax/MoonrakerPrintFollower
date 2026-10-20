@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Compose scene-bound reads with plain-value object-tag presentation.
+# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
+# 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """Cura/QML presentation adapter. Inputs are values; outputs are user intents."""
 from __future__ import annotations
 
@@ -12,17 +22,8 @@ from ..resources.PluginPaths import plugin_path
 from .ObjectNameProjection import footprint_hits, place_banners
 from .CameraProjection import CameraProjection
 from .ViewportHover import ViewportHover
-
-
-def _definition_center(row):
-    center = row.get("center")
-    if center is not None:
-        return center[:2]
-    polygon = row.get("polygon") or ()
-    if not polygon:
-        return None
-    return ((min(point[0] for point in polygon) + max(point[0] for point in polygon)) / 2.0,
-            (min(point[1] for point in polygon) + max(point[1] for point in polygon)) / 2.0)
+from .ObjectTagScene import read_scene_objects
+from ..printing.ObjectTagPresentation import object_tag_rows
 
 
 class PreviewPresentation(QObject):
@@ -329,78 +330,18 @@ class PreviewPresentation(QObject):
     def _build_scene_objects(self):
         from UM.Math.Vector import Vector
         scene = self._cura.controller.getScene()
-        root = scene.getRoot()
-        definitions = self._values.get("objectTagDefinitions") or []
-        centers = [(row, center) for row in definitions if (center := _definition_center(row)) is not None]
-        metrics = self._values.get("objectTagMetrics") or {}
         stack = self._application.getGlobalContainerStack()
         width = float(stack.getProperty("machine_width", "value"))
         depth = float(stack.getProperty("machine_depth", "value"))
         centred = bool(stack.getProperty("machine_center_is_zero", "value"))
-        rows = []
-        for node in root.getAllChildren():
-            try:
-                if not node.isSelectable() or node.getMeshData() is None or not node.isVisible():
-                    continue
-                box = node.getBoundingBox()
-                if box is None or not box.isValid():
-                    continue
-                center = box.center
-                px = center.x if centred else center.x + width / 2.0
-                py = -center.z if centred else depth / 2.0 - center.z
-                nearest = min(centers,
-                              key=lambda pair: math.hypot(px - pair[1][0], py - pair[1][1]),
-                              default=None)
-                matched = nearest is not None and math.hypot(px - nearest[1][0], py - nearest[1][1]) < 12.0
-                if matched:
-                    name = nearest[0]["name"]
-                    status_name = nearest[0].get("statusName", name)
-                else:
-                    name = str(node.getName() or "")
-                    status_name = name
-                if not name:
-                    continue
-                metric = metrics.get(name) or {}
-                current_height = self._values.get("objectTagHeight")
-                progress = metric.get("progress")
-                if (progress is None and current_height is not None and box.top > box.bottom
-                        and status_name == self._values.get("objectTagCurrentObject")):
-                    progress = min(1.0, max(0.0, (float(current_height) - box.bottom) / box.height))
-                if matched and nearest[0].get("excluded"):
-                    progress = None
-                rows.append({"name": name, "nodeId": id(node), "position": Vector(center.x, box.top, center.z),
-                             "progress": progress, "deadline": metric.get("deadline") if progress is not None else None})
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                continue
-        if rows:
-            return rows, True
-        current_height = self._values.get("objectTagHeight")
-        selected = self._cura.selected_layer
-        heights = self._cura.heights
-        if selected is not None and selected < len(heights) and math.isfinite(heights[selected]):
-            current_height = heights[selected]
-        z = max(0.0, float(current_height or 0.0))
-        for row, center in centers:
-            x, y = center[:2]
-            scene_x = x if centred else x - width / 2.0
-            scene_z = -y if centred else depth / 2.0 - y
-            metric = metrics.get(row["name"]) or {}
-            progress = None if row.get("excluded") else metric.get("progress")
-            top = metric.get("top")
-            anchor_z = min(z, float(top)) if top is not None else z
-            polygon = row.get("polygon") or ()
-            bounds = row.get("bounds")
-            if len(polygon) < 3 and bounds is not None:
-                xmin, ymin, xmax, ymax = bounds
-                polygon = ((xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax))
-            footprint = [(px if centred else px - width / 2.0,
-                          -py if centred else depth / 2.0 - py)
-                         for px, py in polygon]
-            rows.append({"name": row["name"], "nodeId": 0,
-                         "position": Vector(scene_x, anchor_z, scene_z), "progress": progress,
-                         "deadline": metric.get("deadline") if progress is not None else None,
-                         "footprint": footprint, "footprintHeight": anchor_z})
-        return rows, False
+        selected, heights = getattr(self._cura, "selected_layer", None), getattr(self._cura, "heights", ())
+        selected_height = heights[selected] if selected is not None and selected < len(heights) else None
+        rows, pickable = object_tag_rows(
+            read_scene_objects(scene.getRoot()), self._values.get("objectTagDefinitions") or [],
+            self._values.get("objectTagMetrics") or {}, width=width, depth=depth, centred=centred,
+            current_height=self._values.get("objectTagHeight"),
+            current_object=self._values.get("objectTagCurrentObject"), selected_height=selected_height)
+        return [dict(row, position=Vector(*row["position"])) for row in rows], pickable
 
     def _pick_hover(self, window, scene):
         if self._hover_point is None or not self._pick_available:

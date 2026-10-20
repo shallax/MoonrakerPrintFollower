@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-19 — 6.0.0: Select modern OpenGL for beta CI without patching Cura classes.
+# 2026-10-18 — 6.0.0: Support opt-in LLDB launch for native crash diagnosis.
+# 2026-10-18 - 6.0.0: Repair root-only QtTest permissions before launching Cura.
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-09-24 [bf703bf] gate: every unit runs on every platform - 17 units x 3 OS
+
 # The macOS half of the UI harness host: install Cura, seed its config,
 # move the display, stage the plugin and the driver, start the simulator
 # the plugin talks to, launch Cura and leave both running so
@@ -7,7 +19,7 @@
 # Usage:
 #   tools/native_harness.sh macos <cura-version> <scenario> [options]
 #
-#   <cura-version>   5.7.0 and up (the asset names hold across 5.7-5.13)
+#   <cura-version>   5.7.0 and up (the asset names hold across 5.7-5.14)
 #   <scenario>       what the runner runs once this returns: a runner mode
 #                    (scenario | scenario1..11 | suite | firstinstall |
 #                    migration | discover) or a suite group name, which is
@@ -89,13 +101,13 @@ case "$ARCH_REQUEST" in
     auto|arm64|x64) ;;
     *) die "--arch must be auto, arm64 or x64 (got '$ARCH_REQUEST')" ;;
 esac
-printf '%s' "$CURA_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' ||
-    die "'$CURA_VERSION' is not a version like 5.13.0"
+printf '%s' "$CURA_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$' ||
+    die "'$CURA_VERSION' is not a version like 5.13.0 or 5.14.0-beta.1"
 REQ_MM="$(printf '%s' "$CURA_VERSION" | cut -d. -f1,2)"
 REQ_MAJOR="${REQ_MM%%.*}"
 REQ_MINOR="${REQ_MM##*.}"
-if [ "$REQ_MAJOR" -ne 5 ] || [ "$REQ_MINOR" -lt 7 ] || [ "$REQ_MINOR" -gt 13 ]; then
-    die "Cura $CURA_VERSION is outside the range this harness ranges over (5.7.0 to 5.13.0)"
+if [ "$REQ_MAJOR" -ne 5 ] || [ "$REQ_MINOR" -lt 7 ] || [ "$REQ_MINOR" -gt 14 ]; then
+    die "Cura $CURA_VERSION is outside the range this harness ranges over (5.7.0 to 5.14.0-beta.1)"
 fi
 if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${HARNESS_DISPOSABLE_HOST:-}" != "1" ]; then
     die "this harness replaces Cura and deletes/reseeds its user profile; use a disposable test host with HARNESS_DISPOSABLE_HOST=1"
@@ -596,7 +608,7 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # Cura cannot resolve makes ContainerStack.deserialize raise and
     # then there is no machine at all. Every file-format version is read
     # out of the installed build - the one thing that moves across
-    # 5.7-5.13 - and nothing is written when one cannot be read, since a
+    # 5.7-5.14 - and nothing is written when one cannot be read, since a
     # container file with the wrong version is rejected outright.
     # general/last_run_version is deliberately NOT written: empty means
     # "this version" to QtApplication, so What's New stays off.
@@ -703,7 +715,7 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # the running build's (CuraContainerRegistry.addContainer), and the
     # fixture is written for the 5.13 it lives under. Nothing is trusted
     # as shipped - stacks and instances carry different versions (6 and 4
-    # across 5.7-5.13), so each file gets the one its own type uses.
+    # across 5.7-5.14), so each file gets the one its own type uses.
     SEED_FILES=0
     for seed_path in "$CONFIG_DIR"/machine_instances/*.cfg "$CONFIG_DIR"/extruders/*.cfg \
                      "$CONFIG_DIR"/definition_changes/*.cfg "$CONFIG_DIR"/user/*.cfg; do
@@ -722,9 +734,14 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # rewritten and the plugin state and section set the Linux gate seeds
     # stand. disabled_plugins is dropped wherever it is and re-emitted
     # under [general], which is where Uranium reads it.
-    awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" '
+    # This beta has two upstream legacy mesh/colour errors. Use Cura's
+    # supported modern-context preference on this disposable macOS host;
+    # 5.13 keeps the default legacy renderer coverage. No host code is patched.
+    awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" -v modern="$( [ "$CURA_VERSION" = 5.14.0-beta.1 ] && echo 1 || echo 0 )" '
         BEGIN { sec = "" }
-        /^\[/ { sec = $0; print; if (sec == "[general]") print "disabled_plugins = " ids; next }
+        /^\[/ { sec = $0; print; if (sec == "[general]") print "disabled_plugins = " ids;
+            if (sec == "[view]" && modern == 1) print "opengl_version_detect = force_modern"; next }
+        sec == "[view]" && modern == 1 && /^opengl_version_detect[[:space:]]*=/ { next }
         sec == "[general]" && /^disabled_plugins = / { next }
         sec == "[general]" && /^version = / { print "version = " ver; next }
         sec == "[cura]" && /^active_machine = / { print "active_machine = " am; next }
@@ -854,6 +871,11 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
             rm -f "$QT_WHEEL"
         fi
     fi
+    if [ -f "$QT_TEST" ]; then
+        sudo sh "$ROOT/tools/qtest_binding_permissions.sh" "$QT_TEST" ||
+            die "could not make the QtTest binding readable by Cura"
+        [ -r "$QT_TEST" ] || die "the runner still cannot read $QT_TEST"
+    fi
     if [ -e "$QT_LIB/QtTest.framework/Versions/A/QtTest" ]; then
         echo "framework   : $QT_LIB/QtTest.framework (the binding's own rpath target)"
     else
@@ -961,9 +983,37 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # The launch env the harness needs. HARNESS_RPC_DIR is where the
     # driver writes its port and token; the runner reads the same files.
     export HARNESS_GEOMETRY HARNESS_WINDOW
-    ( cd "$APP/Contents/MacOS" && nohup "$BIN" ) >"$WORK_DIR/cura_run.log" 2>&1 &
+    LAUNCH_LOG="$WORK_DIR/cura_run.log"
+    if [ "${HARNESS_NATIVE_BACKTRACE:-0}" = 1 ]; then
+        [ "${GITHUB_ACTIONS:-}" = true ] || die "native backtrace is restricted to a disposable GitHub runner"
+        DEBUG_ENTITLEMENTS="$WORK_DIR/native-debug-entitlements.plist"
+        DEBUG_SETUP_LOG="$WORK_DIR/native-debug-setup.log"
+        /usr/sbin/DevToolsSecurity -status >"$DEBUG_SETUP_LOG" 2>&1
+        codesign -dv "$APP" >>"$DEBUG_SETUP_LOG" 2>&1
+        codesign -d --entitlements :- "$APP" >"$DEBUG_ENTITLEMENTS" 2>>"$DEBUG_SETUP_LOG"
+        "$PYTHON" - "$DEBUG_ENTITLEMENTS" <<'PY'
+import pathlib
+import plistlib
+import sys
+path = pathlib.Path(sys.argv[1])
+entitlements = plistlib.loads(path.read_bytes())
+entitlements["com.apple.security.get-task-allow"] = True
+path.write_bytes(plistlib.dumps(entitlements))
+PY
+        # Preserve the host's existing permissions and only make this
+        # disposable diagnostic installation available to the debugger.
+        sudo codesign --force --deep --sign - --entitlements "$DEBUG_ENTITLEMENTS" "$APP" \
+            2>&1 | tee -a "$DEBUG_SETUP_LOG"
+        LAUNCH_LOG="$WORK_DIR/native-backtrace.log"
+        note "diagnostic launch under LLDB; ordinary gate launch is unchanged"
+        ( cd "$APP/Contents/MacOS" && nohup xcrun lldb --batch --no-lldbinit \
+            -o run -k 'thread backtrace all' -k 'image list' -k 'register read' -- "$BIN" ) \
+            >"$LAUNCH_LOG" 2>&1 &
+    else
+        ( cd "$APP/Contents/MacOS" && nohup "$BIN" ) >"$LAUNCH_LOG" 2>&1 &
+    fi
     CURA_PID=$!
-    echo "launched $BIN (pid $CURA_PID), output in $WORK_DIR/cura_run.log"
+    echo "launched $BIN (pid $CURA_PID), output in $LAUNCH_LOG"
 
     # The driver's port file is the ready marker: it appears once Cura
     # has loaded the staged plugin, so it is the one signal that says the
@@ -973,6 +1023,10 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         local tick start
         start=$(date +%s)
         for tick in $(seq 1 300); do
+            if [ "${HARNESS_NATIVE_BACKTRACE:-0}" = 1 ] && ! kill -0 "$CURA_PID" 2>/dev/null; then
+                warn "native debugger exited before the driver became ready"
+                return 1
+            fi
             if [ -s "$HARNESS_RPC_DIR/harness_port.txt" ]; then
                 RPC_FILE="$HARNESS_RPC_DIR/harness_port.txt"
                 return 0
@@ -995,14 +1049,14 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
         else
             warn "cura is not running - the boot crashed or exited"
         fi
-        warn "--- $WORK_DIR/cura_run.log (tail) ---"
-        tail -40 "$WORK_DIR/cura_run.log" 2>/dev/null || true
+        warn "--- $LAUNCH_LOG (tail) ---"
+        tail -40 "$LAUNCH_LOG" 2>/dev/null || true
         exit 1
     fi
     note "driver up: $RPC_FILE"
 
     # --- 8b. the renderer the boot actually got ---------------------------
-    # Recorded, never fatal. Cura's own probe (UM/View/GL/OpenGLContext.py,
+    # Record and qualify the selected context. Cura's own probe (UM/View/GL/OpenGLContext.py,
     # CURA-6092) declines a software-backed 4.1 core context ON macOS ONLY
     # - the check is gated on Platform.isOSX() rather than on the premise -
     # and this runner's GL is Apple's software renderer, so the boot lands
@@ -1011,10 +1065,17 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # oversized windows remained stale either way, and the forced path is the
     # one Cura calls "much slower", which measured 3.5x on the layer-view
     # unit (group-printing, 2.8 -> 9.7 min) against a 15-minute budget.
-    # The available-desktop bound keeps native presentation live. This
-    # line records the renderer; native capture judges its actual pixels.
+    # Beta 5.14 explicitly uses modern GL to avoid its broken legacy mesh
+    # path; 5.13 retains the default. The available-desktop bound keeps
+    # native presentation live; native capture judges the actual pixels.
     GL_LINE="$(grep -h 'Detected most suitable OpenGL context version:' \
         "$CONFIG_DIR/cura.log" 2>/dev/null | tail -1 || true)"
+    if [ "$CURA_VERSION" = 5.14.0-beta.1 ]; then
+        case "$GL_LINE" in
+            *"4.1 Core profile"*) ;;
+            *) die "Cura beta did not select the requested modern OpenGL context: $GL_LINE" ;;
+        esac
+    fi
     case "$GL_LINE" in
         *"4.1 Core profile"*)
             note "renderer: ${GL_LINE##*: }" ;;

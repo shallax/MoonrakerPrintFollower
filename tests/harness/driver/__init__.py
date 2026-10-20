@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Wait for the seeded machine instead of creating one during startup.
+# 2026-09-30 [1f78aec] The driver's probe and interaction families get owners
+# 2026-09-27 [4e7fdc5] Use a consistent 1840x900 UI baseline and document macOS presentation findings
+# 2026-09-12 [1fcf985] harness: Phase-A skeleton — driver, runner, wrapper, first live run
+
 """Test-only observation driver for the real-Cura UI harness.
 
 A loopback TCP listener served on Cura's GUI thread. Verbs are generic
@@ -27,6 +37,7 @@ from .frames import HEARTBEAT_DEADLINE_MS, _FRAMES, _heartbeat
 from .interaction import (_aim_in_view, _aim_point, _click_windows,
                           _deliver_press, _nearest_control,
                           _sample_button_state, _viewport_blocker)
+from .machine import activate_seed
 from .qt_test import _import_qtest, qtest_error
 from .scene import (_WALK_STATS, _apply_window_target, _begin_walk,
                     _effectively_visible, _enum_name, _geometry_of,
@@ -1672,26 +1683,10 @@ Row {
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "seed_machine":
-            # Ensure an ACTIVE machine: prefer activating the seeded
-            # machine (the same call startup makes), and add one only
-            # when no machine exists — an added machine gets a new
-            # name and orphans the plugin's per-machine record.
             try:
                 from cura.Settings.CuraContainerRegistry import CuraContainerRegistry
-                manager = Application.getInstance().getMachineManager()
-                if manager.activeMachine is not None:
-                    return {"id": request_id, "ok": True,
-                            "active": manager.activeMachine.getName(), "created": False}
-                stacks = [s for s in CuraContainerRegistry.getInstance().findContainerStacks()
-                          if s.getMetaDataEntry("type") == "machine"]
-                if stacks:
-                    manager.setActiveMachine(stacks[0].getId())
-                    active = manager.activeMachine.getName() if manager.activeMachine else None
-                    return {"id": request_id, "ok": True, "active": active,
-                            "created": False, "activated": bool(active)}
-                ok = bool(manager.addMachine(str(request.get("definition", "fdmprinter"))))
-                active = manager.activeMachine.getName() if manager.activeMachine else None
-                return {"id": request_id, "ok": ok, "active": active, "created": True}
+                return {"id": request_id, **activate_seed(
+                    Application.getInstance(), CuraContainerRegistry.getInstance())}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "switch_machine":

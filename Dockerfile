@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-12 [732955e] Match capture X11 development pin to Ubuntu security runtime
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-09-08 [7341f82] Development tooling: pinned container, quality gates and the Makefile
+
 # Reproducible development/test environment for MoonrakerPrintFollower.
 #
 # The image carries the toolchain only; the repository is mounted at

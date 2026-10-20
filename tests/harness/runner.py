@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Give the first handshake the bounded window-startup budget.
+# 2026-10-18 — 6.0.0: Report invalid probe JSON instead of hiding the failed reply.
+# 2026-10-18 — 6.0.0: Bound RPC transactions and stop suites when the driver is lost.
+# 2026-10-18 — 6.0.0: Require the restored seed and preserve evidence on failed boot gates.
+# 2026-10-18 — 6.0.0: Fail boot evidence when real QtTest input is unavailable.
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-10-03 [950d97a] Keep the alert's frame and timeline, and carry it to the desktop
+# 2026-09-12 [1fcf985] harness: Phase-A skeleton — driver, runner, wrapper, first live run
+
 """Phase-A runner: real Cura under Xvfb, real clicks, real captures.
 
 Runs INSIDE the harness container (it must reach the driver's loopback
@@ -184,45 +198,70 @@ def harvest_cura_log(dest_dir, suffix=""):
     return kept
 
 
+class DriverRPCError(RuntimeError):
+    """The driver is unavailable or a command's reply can no longer be trusted."""
+
+
 def rpc(request, timeout=20.0):
+    deadline = time.monotonic() + timeout
     last_error = None
-    for _ in range(60):
+    sock = None
+    while time.monotonic() < deadline:
         try:
-            port = int(open(PORT_FILE, encoding="utf-8").read().strip())
+            with open(PORT_FILE, encoding="utf-8") as handle:
+                port = int(handle.read().strip())
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            sock = socket.create_connection((DRIVER_HOST, port), timeout=remaining)
+            break
         except (OSError, ValueError) as exc:
             last_error = exc
-            time.sleep(1)
-            continue
-        try:
-            # Present the per-run token on every request: the driver
-            # refuses anything else (the security panel's H1 — an
-            # unauthenticated exec channel in Cura's process).
+            if not cura_process_alive():
+                raise DriverRPCError(f"driver RPC failed: Cura process exited ({exc})") from exc
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+    if sock is None:
+        raise DriverRPCError(f"driver RPC failed within {timeout}s: {last_error}")
+    # Retry only before connecting. sendall may send a partial command before
+    # raising; replaying it can duplicate a click, e-stop or other mutation.
+    try:
+        with sock:
             token = ""
             try:
                 with open(TOKEN_FILE, encoding="utf-8") as handle:
                     token = handle.read().strip()
             except OSError:
                 pass
-            request = dict(request)
-            request["token"] = token
-            with socket.create_connection((DRIVER_HOST, port), timeout=timeout) as sock:
-                sock.sendall(json.dumps(request).encode("utf-8") + b"\n")
-                sock.settimeout(timeout)
-                line = b""
-                while b"\n" not in line:
-                    chunk = sock.recv(4096)
-                    if not chunk:
-                        break
-                    line += chunk
-                # A reply can arrive coalesced with another write from
-                # the driver; take the first object and discard the
-                # tail (json.loads would raise "Extra data").
-                line = line.split(b"\n", 1)[0]
-                return json.loads(line.decode("utf-8"))
-        except (OSError, ValueError) as exc:
-            last_error = exc
-            time.sleep(1)
-    raise RuntimeError(f"driver RPC failed: {last_error}")
+            payload = dict(request, token=token)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("deadline reached before send")
+            sock.settimeout(remaining)
+            sock.sendall(json.dumps(payload).encode("utf-8") + b"\n")
+            line = b""
+            while b"\n" not in line:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("reply deadline reached")
+                sock.settimeout(remaining)
+                chunk = sock.recv(4096)
+                if not chunk:
+                    raise ConnectionError("driver closed before replying")
+                line += chunk
+            return json.loads(line.split(b"\n", 1)[0].decode("utf-8"))
+    except (OSError, ValueError) as exc:
+        raise DriverRPCError(f"driver RPC failed after connecting; command not replayed: {exc}") from exc
+
+
+# The TCP listener is published before Cura finishes its synchronous QML boot.
+# On a cold Windows runner the GUI thread can be occupied beyond the ordinary
+# action deadline. This first read-only handshake uses the same startup budget
+# as wait_window; later commands retain their shorter deadlines and never replay.
+STARTUP_DEADLINE_S = 90.0
+
+
+def startup_hello():
+    return rpc({"id": 1, "cmd": "hello"}, timeout=STARTUP_DEADLINE_S)
 
 
 def _png_size(path):
@@ -322,18 +361,20 @@ def wait_stage(wanted, timeout_ms=20000):
 def ensure_ready(require_aux=True):
     """The boot gate: on a fresh seeded profile Cura's one-shot
     welcome check can run before the saved machine is restored, and
-    the dialog's grey-out then eats every click. Seed the machine
-    (the Add-printer wizard's own code path) and hide the welcome
+    the dialog's grey-out then eats every click. Wait for the exact
+    saved machine to finish restoring and hide the welcome
     overlay until the gate is clear. Orchestration only — no
     plugin-surface claims. The first-install leg passes
     require_aux=False: a clean install has no printer to connect to,
     so the discovery chain cannot come alive — that absence is the
     state under test, not a bad boot."""
-    for _ in range(10):
+    seed_ready = False
+    for _ in range(30):
+        seed = rpc({"id": 1, "cmd": "seed_machine"})
         reply = rpc({"id": 1, "cmd": "welcome"})
-        if reply.get("ok") and not reply.get("up"):
+        if seed.get("ok") is True and reply.get("ok") and not reply.get("up"):
+            seed_ready = True
             break
-        rpc({"id": 1, "cmd": "seed_machine"})
         rpc({"id": 1, "cmd": "hide_welcome"})
         # The g-code-suitability message: dismissed conditionally at
         # boot, never waited for — a flow that loads no gcode never
@@ -343,6 +384,9 @@ def ensure_ready(require_aux=True):
         # over the console's buttons): same conditional dismissal.
         rpc({"id": 1, "cmd": "hide_update_toast"})
         time.sleep(2)
+    if not seed_ready:
+        progress(f"boot machine was not ready: {seed}")
+        return False
     # Cura's first-boot window size is nondeterministic, and a narrow
     # window collapses the header's stage buttons into the overflow
     # menu — the stage clicks then fail ("stage button not found")
@@ -361,6 +405,8 @@ def ensure_ready(require_aux=True):
                        and list(_pin.get("screen") or ()) == _screen)
         progress(f"boot geometry: requested {_want}, actual {_pin.get('size')}, "
             f"available {_pin.get('available')}, frame {_pin.get('frame')}, verified={_pin_ok}")
+    except DriverRPCError:
+        raise
     except Exception:
         _pin_ok = False
     # The model gate: the plugin's per-machine model appears when the
@@ -391,7 +437,7 @@ def ensure_ready(require_aux=True):
     return False
 
 
-def wait_window(timeout_s=90.0):
+def wait_window(timeout_s=STARTUP_DEADLINE_S):
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         reply = rpc({"id": 1, "cmd": "window"})
@@ -404,7 +450,7 @@ def wait_window(timeout_s=90.0):
 def discover():
     """Boot-assisted discovery: dump the window and the stage-menu items."""
     os.makedirs(RUN_DIR, exist_ok=True)
-    reply = rpc({"id": 1, "cmd": "hello"})
+    reply = startup_hello()
     print(json.dumps(reply, indent=2))
     window = wait_window()
     print(json.dumps(window, indent=2))
@@ -423,7 +469,7 @@ def scenario(expect_fail=False):
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -514,7 +560,7 @@ report_only_scenarios = liveness.report_only_scenarios
 
 def frames_probe(phase, scenario_id):
     """One presentation sample, over the runner's own transport."""
-    return liveness.probe(rpc, phase, scenario_id)
+    return liveness.probe(rpc, phase, scenario_id, propagate=(DriverRPCError,))
 
 
 def liveness_outcome(samples):
@@ -582,6 +628,8 @@ def foreground_guard():
         return {"authority": "not-applicable", "capture": "off"}
     try:
         state = rpc({"id": 1, "cmd": "foreground", "raise": True}, timeout=20)
+    except DriverRPCError:
+        raise
     except Exception as exc:
         return {"authority": "unreachable", "foreground": None,
                 "error": repr(exc)[:120]}
@@ -841,8 +889,11 @@ def exec_rpc(code, timeout=60.0, raise_on_error=False):
         return {"_truncated": True}
     try:
         return json.loads(reply.get("result") or "{}")
-    except (TypeError, ValueError):
-        return {}
+    except (TypeError, ValueError) as exc:
+        message = "driver exec returned a non-JSON result"
+        if raise_on_error:
+            raise RuntimeError(message) from exc
+        return {"error": message}
 
 
 # The exec snippets: scenario 1 reads the real model and the real UI.
@@ -1035,7 +1086,8 @@ def boot_step(hello):
             f" · registered={registered}"
             f" · qtest: ok={qtest_state.get('ok')} err={qtest_state.get('error')}"
             f" wheel={qtest_state.get('sys_path_has_wheel')}")
-    return ("00-boot", note, "hello succeeds", registered is True, shot("00-boot"))
+    ready = registered is True and qtest_state.get("ok") is True
+    return ("00-boot", note, "driver registered and QtTest ready", ready, shot("00-boot"))
 
 LOAD_EMIT = """
 window = _main_window()
@@ -1543,7 +1595,7 @@ def scenario9():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1605,7 +1657,7 @@ def scenario8():
     video = start_recorder(video_path, framerate=5)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1682,7 +1734,7 @@ def scenario10():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1746,7 +1798,7 @@ def scenario11():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1813,7 +1865,7 @@ def scenario7():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1874,7 +1926,7 @@ def scenario6():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -1955,7 +2007,7 @@ def scenario5():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -2040,7 +2092,7 @@ def scenario4():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -2114,7 +2166,7 @@ def scenario3():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -2177,7 +2229,7 @@ def scenario2(expect_fail=False):
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -2260,7 +2312,7 @@ def scenario1(expect_fail=False):
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -2480,7 +2532,7 @@ def first_install1():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         # The aux half of the gate is skipped by construction: a clean
         # install has no printer to discover, so the chain it checks
@@ -2603,7 +2655,7 @@ def first_install2():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         # This boot has a printer: the saved record points at the
         # simulator, so the full gate applies.
@@ -2842,7 +2894,7 @@ def migration1():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: the pre-migration machine is restored",
@@ -2936,7 +2988,7 @@ def migration2():
     video = start_recorder(video_path, framerate=15)
     try:
         steps = []
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: the migrated machine is restored",
@@ -3048,13 +3100,16 @@ def suite_run(group_id):
     video_path = os.path.join(RUN_DIR, f"suite-{group_id}.mp4")
     video = start_recorder(video_path, framerate=15)
     steps = []
+    active_spec = {"id": group_id}
     try:
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         _boot = boot_step(hello)
         steps.append(_boot)
         EVIDENCE.append(_evidence_entry({"id": group_id}, -1, {"op": "hello"},
                                         _boot[0], _boot[3], _boot[1], _boot[2],
                                         _boot[4], time.monotonic()))
+        if not _boot[3]:
+            return _verdict(steps)
         gate = ensure_ready()
         _gate_cap = shot("01-gate")
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
@@ -3063,10 +3118,13 @@ def suite_run(group_id):
                                         "01-gate", gate,
                                         "boot gate: active machine present, no welcome overlay",
                                         "welcome absent, window at the pinned geometry", _gate_cap, time.monotonic()))
+        if not gate:
+            return _verdict(steps)
         wait_stage("PrepareStage", timeout_ms=60000)
         progress(f"{group_id}: {len(specs)} scenario(s) in this group")
         done = 0
         for spec in specs:
+            active_spec = spec
             if spec.get("container_skip"):
                 # The engine-divergent scenarios (real Cura
                 # proves them live; the container's engine cannot —
@@ -3117,11 +3175,20 @@ def suite_run(group_id):
                      + f" in {time.monotonic() - started:.0f}s — "
                      + (f"{len(scenario_steps)} steps, failed: {', '.join(failed)}"
                         if failed else f"all {len(scenario_steps)} steps passed"))
+    except DriverRPCError as exc:
+        name = active_spec["id"] + "-driver-lost"
+        detail = str(exc)
+        capture = shot(name)
+        steps.append((name, "Cura driver unavailable", detail, False, capture))
+        EVIDENCE.append(_evidence_entry(active_spec, -6, {"op": "driver_lost"}, name,
+                                        False, "Cura driver unavailable", detail,
+                                        capture, time.monotonic()))
+        progress(f"{active_spec['id']}: FAILED — {detail}")
     finally:
         stop_recorder(video)
-    title = f"Scenario group {group_id}"
-    write_gallery(steps, False, title, video=video_path)
-    print(f"gallery: {RUN_DIR}/index.html")
+        title = f"Scenario group {group_id}"
+        write_gallery(steps, False, title, video=video_path)
+        print(f"gallery: {RUN_DIR}/index.html")
     return _verdict(steps)
 
 
@@ -3151,6 +3218,8 @@ def suite_scenario(spec, step_fn=None):
                 progress(f"geometry {spec['id']}/start: requested {_want}, actual {_got}, "
                     f"available {reply.get('available')}, frame {reply.get('frame')}, "
                     f"watchdog repairs={reply.get('watchdog_repairs', 0)}, verified={_ok}")
+            except DriverRPCError:
+                raise
             except Exception:
                 _ok = False
                 _got = []
@@ -3193,6 +3262,8 @@ def suite_scenario(spec, step_fn=None):
             EVIDENCE.append(_evidence_entry(spec, index, step, name, False,
                                             f"{spec['name']}: {step.get('op')}",
                                             f"step error: {exc!r}", capture, started))
+            if isinstance(exc, DriverRPCError):
+                raise
     end_sample = frames_probe("end", spec["id"])
     # The liveness verdict, folded into the scenario's own steps: a
     # window that answered no forced repaint FAILS the scenario where
@@ -3371,7 +3442,7 @@ def real_run():
     video = start_recorder(video_path, framerate=15)
     steps = []
     try:
-        hello = rpc({"id": 1, "cmd": "hello"})
+        hello = startup_hello()
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, discovery chain live",

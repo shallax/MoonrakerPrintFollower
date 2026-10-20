@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
+# 2026-09-08 [c217114] 3.4.0 feature set: toolhead control, Monitor rework and review fixes
+
 """Monitor toolhead-control owner: the jog queue and pause-first sequencing.
 
 All G-code text, safety classification and queue coalescing rules are pure
@@ -25,7 +34,7 @@ from dataclasses import replace
 import math
 
 from ..MonitorPermissions import R_UNKNOWN, Verdict, can_jog, can_z_offset, can_restart
-from .PhysicalMotion import UnsafeMotion, finite, prepare, target_fields, telemetry_object
+from ...geometry.PhysicalMotion import UnsafeMotion, finite, prepare, target_fields, telemetry_object
 from .ToolheadPolicy import (
     EXTRUDE_DISTANCE_DEFAULT,
     EXTRUDE_SPEED_DEFAULT,

@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Delegate raster publication and asset lifetime; use named job receipts.
+# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
+# 2026-09-30 [1634aac] Cover the controller's seams and drop an accessor nothing called
+# 2026-09-30 [5fb2d5b] Move the renderer's worker and resource lifecycle out of the Monitor
+
 """The follower's native renderer: one owner for the surfaces' worker
 and resource lifecycle.
 
@@ -19,7 +29,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import threading
 import time
 from typing import NamedTuple
@@ -27,15 +36,14 @@ from typing import NamedTuple
 from PyQt6.QtCore import QObject, QThreadPool, QTimer, QUrl, pyqtSlot
 from PyQt6.QtGui import QImage
 
-from .PlateQt import (
-    PlateLayer, RasterBridge, _RasterJob, _CheckpointBudget, _bridge_emit, png_file,
-    qml_geometry, render_layer_prefix, render_layer_raster,
-    render_navigation_layer,
-)
+from .PlateQt import PlateLayer, qml_geometry
+from .RasterJobs import RasterTicket, RasterBridge, _RasterJob, _CheckpointBudget, _bridge_emit
+from .PlateRaster import render_layer_prefix, render_layer_raster, render_navigation_layer
 from .PlateSceneIdentity import (
     NavigationSceneKey, navigation_compatible, navigation_hard_key, navigation_zoom,
 )
 from .RenderSurface import RenderSurface
+from .RasterAssets import RasterAssets
 
 # The warm-raster follow window: while attached, the poll advances
 # the split constantly — the 4x navigation bake runs at most once per
@@ -117,30 +125,10 @@ class PlateRenderController(QObject):
         self._bridge = RasterBridge(self)
         self._bridge.started.connect(self._raster_started)
         self._bridge.done.connect(self._raster_committed)
-        # The raster cache directory (the transport ruling): the QML
-        # Images consume file:// PNGs the workers write here — a data:
-        # URL loads but never renders, and a QImage variant segfaults
-        # the Canvas (both engine-proven). INSTANCE-OWNED: every model
-        # gets its own directory, so two printers can never collide on
-        # filenames or prune each other's assets; the owner's
-        # destruction removes it.
-        self._raster_cache_dir = tempfile.mkdtemp(prefix="mpf-raster-%d-" % os.getpid())
-        # Presentation has its own lifetime: a wrapper can supersede an
-        # asset while a face still loads or retains it. Each face
-        # publishes an atomic set of file references under a unique
-        # owner token.
-        self._asset_owners = {}
-        self._asset_serial = 0
-        # The navigation raster URL an ACTIVE camera gesture has
-        # latched. The face presents that exact file for the gesture's
-        # whole life, so neither a supersede's unlink nor the cache
-        # prune may remove it — both key off the face's CURRENT
-        # references, which a mid-gesture bake moves on, taking the
-        # picture off the screen. Cleared when the gesture ends, so
-        # nothing accumulates.
-        self._gesture_raster = ""
-        # Presentation holds the entry image while a gesture is live;
-        # the bakes resume when it settles.
+        # File publication and retained face/gesture references have their
+        # own lifetime; surfaces own render demand and admission only.
+        self.assets = RasterAssets()
+        # Hold the entry image while a gesture is live; resume bakes on settle.
         self._interacting = False
         # The seek trace: disabled by default; the environment variable
         # (a live debug run) or the config's own flag turns it on.
@@ -281,44 +269,16 @@ class PlateRenderController(QObject):
         self.nav_gesture_bake(self._surfaces.get(name))
 
     def hold_gesture_raster(self, url):
-        """The navigation raster the face's live gesture is holding.
-
-        The gesture latches its entry raster and presents that exact
-        file for the gesture's whole life, so it has to survive a
-        supersede: a bake committing mid-gesture otherwise unlinked the
-        very picture on screen. Empty when no gesture is live.
-        """
-        url = str(url or "")
-        if url == self._gesture_raster:
-            return
-        self._gesture_raster = url
+        self.assets.hold("gesture", str(url or ""))
 
     def acquire_asset_owner(self):
-        self._asset_serial += 1
-        owner = self._asset_serial
-        self._asset_owners[owner] = frozenset()
-        return owner
+        return self.assets.acquire()
 
     def set_asset_references(self, owner, urls):
-        """Replace one face's references without walking the cache or
-        publishing model state in a QML callback. Unknown/released
-        tokens cannot resurrect an owner. Only this run's own assets
-        count."""
-        if owner not in self._asset_owners:
-            return
-        directory = self._raster_file_key(self._raster_cache_dir)
-        files = set()
-        for url in urls:
-            parsed = QUrl(str(url))
-            if not parsed.isLocalFile():
-                continue
-            path = self._raster_file_key(parsed.toLocalFile())
-            if os.path.dirname(path) == directory:
-                files.add(path)
-        self._asset_owners[owner] = frozenset(files)
+        self.assets.replace(owner, urls)
 
     def release_asset_owner(self, owner):
-        self._asset_owners.pop(owner, None)
+        self.assets.release(owner)
 
     def accounting(self):
         """The renderer's share of the memory story: the wrappers'
@@ -334,22 +294,11 @@ class PlateRenderController(QObject):
             wrappers += len(surface.layers)
             for wrapped in surface.layers.values():
                 wrapper_images += wrapped.memory_bytes()
-        dir_files = 0
-        dir_bytes = 0
-        try:
-            for name in os.listdir(self._raster_cache_dir):
-                try:
-                    dir_bytes += os.stat(os.path.join(self._raster_cache_dir, name)).st_size
-                    dir_files += 1
-                except OSError:
-                    pass
-        except OSError:
-            pass
         backing = 1.0
         for surface in self._surfaces.values():
             backing = max(backing, float(surface.view.get("dpr") or 1.0))
         return {"wrapperCount": wrappers, "wrapperImageBytes": wrapper_images,
-                "rasterDirFiles": dir_files, "rasterDirBytes": dir_bytes,
+                **self.assets.accounting(),
                 "backingScale": backing}
 
     def trace_enabled(self):
@@ -608,8 +557,7 @@ class PlateRenderController(QObject):
                            "kind": kind, "split": prefix_split}
             if kind == "prefix":
                 wrapped.set_prefix_pending(True)
-            ticket = (surface.name, layer, token, generation, key, kind,
-                      prefix_split, epoch, serial)
+            ticket = RasterTicket(surface.name, layer, token, generation, key, kind, prefix_split, epoch, serial)
             payload = wrapped._payload
             # The incremental render's base (the forward scrub's
             # refresh cost): the wrapper's committed prefix picture
@@ -637,7 +585,7 @@ class PlateRenderController(QObject):
                       surface=surface, layer=layer, generation=generation,
                       kind=kind, prefix_split=prefix_split, epoch=epoch,
                       serial=serial, cancel=cancel,
-                      directory=self._raster_cache_dir,
+                      asset_store=self.assets,
                       bridge=self._bridge,
                       previous_image=previous_image,
                       previous_file=previous_file,
@@ -669,7 +617,7 @@ class PlateRenderController(QObject):
                         if cancel.is_set():
                             emit(("cancelled",))
                             return
-                        url = png_file(image, directory, stem + "-p%d" % prefix_split)
+                        url = asset_store.publish(image, stem + "-p%d" % prefix_split)
                         emit(("prefix", image, url, prefix_split))
                         return
                     coloured, base, travels = render_layer_raster(
@@ -677,9 +625,9 @@ class PlateRenderController(QObject):
                     if cancel.is_set():
                         emit(("cancelled",))
                         return
-                    emit(("full", coloured, png_file(coloured, directory, stem + "-c"),
-                          base, png_file(base, directory, stem + "-b"),
-                          travels, png_file(travels, directory, stem + "-t")))
+                    emit(("full", coloured, asset_store.publish(coloured, stem + "-c"),
+                          base, asset_store.publish(base, stem + "-b"),
+                          travels, asset_store.publish(travels, stem + "-t")))
                 except Exception as exc:
                     emit(("failed", str(exc)))
             QThreadPool.globalInstance().start(_RasterJob(build))
@@ -696,17 +644,16 @@ class PlateRenderController(QObject):
         if wrapped is None or wrapped.motions < 20 or wrapped._rewind_ticket is not None:
             return
         surface.render_serial += 1
-        ticket = (surface.name, layer, 0, surface.generation, surface.render_key(),
-                  "checkpoints", None, surface.job_epoch, surface.render_serial)
+        ticket = RasterTicket(surface.name, layer, 0, surface.generation, surface.render_key(), "checkpoints", None, surface.job_epoch, surface.render_serial)
         cancel = threading.Event()
         wrapped._rewind_ticket, wrapped._rewind_cancel = ticket, cancel
         payload, plot, view = wrapped._payload, dict(surface.plot), dict(surface.view)
         motions = wrapped.motions
-        directory, bridge = self._raster_cache_dir, self._bridge
+        asset_store, bridge = self.assets, self._bridge
         boundaries = sorted({int(motions * i / 20) for i in range(1, 20)})
         stems = {p: "rewind-%s-e%d-s%d-p%d" % (surface.name, ticket[7], ticket[8], p)
                  for p in boundaries}
-        wrapped._rewind_pending = [QUrl.fromLocalFile(os.path.join(directory, stem + ".png")).toString()
+        wrapped._rewind_pending = [QUrl.fromLocalFile(os.path.join(asset_store.directory, stem + ".png")).toString()
                                   for stem in stems.values()]
 
         def build():
@@ -720,7 +667,7 @@ class PlateRenderController(QObject):
                     image = render_layer_prefix(payload, plot, view, boundary, cancel=budget)
                     if cancel.is_set():
                         break
-                    url = png_file(image, directory, stems[boundary])
+                    url = asset_store.publish(image, stems[boundary])
                     if not url:
                         break
                     assets.append((boundary, url))
@@ -729,11 +676,7 @@ class PlateRenderController(QObject):
                     "rewind checkpoint worker failed: %s", exc)
             finally:
                 if cancel.is_set():
-                    for _boundary, url in assets:
-                        try:
-                            os.unlink(QUrl(url).toLocalFile())
-                        except OSError:
-                            pass
+                    asset_store.discard_unpublished([url for _boundary, url in assets])
                     assets = []
                 _bridge_emit(bridge, "done", ("checkpoints", assets), ticket)
         QTimer.singleShot(150, lambda: None if cancel.is_set() else
@@ -999,13 +942,13 @@ class PlateRenderController(QObject):
             surface.nav["wake_at"] = time.monotonic() + _NAV_FOLLOW_BAKE_S
             surface.nav["wake_settle"] = False
             self._nav_arm_wake(surface)
-        ticket = (surface.name, -1, 0, 0, key, "nav", split, epoch, serial)
+        ticket = RasterTicket(surface.name, -1, 0, 0, key, "nav", split, epoch, serial)
 
         def build(ticket=ticket, window=window, plot=plot, view=view,
                   split=split, cancel=cancel, surface=surface,
                   serial=serial, epoch=epoch, key=key, previous=previous,
                   previous_split=previous_split,
-                  directory=self._raster_cache_dir,
+                  asset_store=self.assets,
                   bridge=self._bridge):
             def emit(payload):
                 _bridge_emit(bridge, "done", payload, ticket)
@@ -1020,8 +963,7 @@ class PlateRenderController(QObject):
                 if cancel.is_set():
                     emit(("cancelled",))
                     return
-                url = png_file(image, directory,
-                               "n-%s-e%d-s%d" % (surface.name, epoch, serial))
+                url = asset_store.publish(image, "n-%s-e%d-s%d" % (surface.name, epoch, serial))
                 if not url:
                     # An unpublished PNG is a FAILED render, never a
                     # successful one: the terminal's failure latch
@@ -1131,113 +1073,27 @@ class PlateRenderController(QObject):
         self._prune_raster_cache()
 
     def _unlink_asset_files(self, images):
-        """A discarded job's files are dead on arrival — remove
-        them now, never wait for the generic pruning."""
-        if not isinstance(images, tuple) or not images:
-            return
-        referenced = self._referenced_raster_files()
-        if images[0] == "checkpoints":
-            for boundary, url in images[1]:
-                self._unlink_asset_files(("prefix", None, url, boundary))
-        elif images[0] == "full":
-            for url in images[2], images[4], images[6]:
-                if not url or not url.startswith("file://"):
-                    continue
-                if self._raster_file_key(QUrl(url).toLocalFile()) in referenced:
-                    continue
-                try:
-                    os.unlink(QUrl(url).toLocalFile())
-                except OSError:
-                    pass
-        elif images[0] == "prefix":
-            url = images[2]
-            if url and url.startswith("file://") and self._raster_file_key(QUrl(url).toLocalFile()) not in referenced:
-                try:
-                    os.unlink(QUrl(url).toLocalFile())
-                except OSError:
-                    pass
-        elif images[0] == "nav":
-            url = images[2]
-            if url and url.startswith("file://") and self._raster_file_key(QUrl(url).toLocalFile()) not in referenced:
-                try:
-                    os.unlink(QUrl(url).toLocalFile())
-                except OSError:
-                    pass
+        self.assets.discard_result(images, self._surface_asset_urls())
 
     def cleanup_raster_cache(self):
-        """The instance's own raster directory goes with the model —
-        never another model's assets."""
-        try:
-            import shutil
-            shutil.rmtree(self._raster_cache_dir, ignore_errors=True)
-        except OSError:
-            pass
+        self.assets.close()
 
-    @staticmethod
-    def _raster_file_key(path):
-        """The raster assets' comparison spelling.
 
-        QUrl spells a local file with '/' on EVERY platform — Windows'
-        toLocalFile() included — while the directory scan builds the
-        native form, so the reference set and the scan only agree once
-        both are keyed this way. Compared raw on Windows, the set
-        matched nothing and the prune unlinked the live wrapper's own
-        picture."""
-        return os.path.normcase(os.path.normpath(path))
+    def _surface_asset_urls(self):
+        urls = []
+        for surface in self._surfaces.values():
+            if surface.nav:
+                urls.append(surface.nav.get("url"))
+            for wrapped in surface.layers.values():
+                urls.extend(wrapped.prefix_references())
+                urls.extend((wrapped.rasterData, wrapped.baseData, wrapped.travelData, wrapped.prefixData))
+        return urls
 
     def _referenced_raster_files(self):
-        """The asset files the live wrappers still display, plus the
-        retained navigation raster: the prune must never unlink a URL
-        a wrapper or the warm-scene face still reads. A retired
-        navigation asset (the url cleared) drops out of the set and
-        the next prune collects it."""
-        referenced = set()
-        for files in self._asset_owners.values():
-            referenced.update(files)
-        # The live gesture's latch, before anything else: it is the
-        # one file whose removal is visible immediately.
-        if self._gesture_raster:
-            referenced.add(self._raster_file_key(
-                QUrl(self._gesture_raster).toLocalFile()))
-        for surface in self._surfaces.values():
-            nav_url = surface.nav.get("url") if surface.nav else None
-            if nav_url:
-                referenced.add(self._raster_file_key(QUrl(nav_url).toLocalFile()))
-            for wrapped in surface.layers.values():
-                for url in wrapped.prefix_references():
-                    if url:
-                        referenced.add(self._raster_file_key(QUrl(url).toLocalFile()))
-                for url in (wrapped.rasterData, wrapped.baseData,
-                            wrapped.travelData, wrapped.prefixData):
-                    if url:
-                        referenced.add(self._raster_file_key(QUrl(url).toLocalFile()))
-        return referenced
+        return self.assets.referenced(self._surface_asset_urls())
 
     def _prune_raster_cache(self, keep=64):
-        """The raster cache's bound (the file-URL transport): the
-        newest `keep` PNGs survive, a file a live wrapper still
-        displays ALWAYS survives (the old newest-N sweep could
-        unlink the picture on screen), and an in-flight publication's
-        temp is never touched. Scoped to THIS model's directory, so
-        another printer's assets are never touched."""
-        try:
-            referenced = self._referenced_raster_files()
-            entries = []
-            for name in os.listdir(self._raster_cache_dir):
-                path = os.path.join(self._raster_cache_dir, name)
-                if self._raster_file_key(path) in referenced or ".tmp-" in name:
-                    continue
-                try:
-                    entries.append((os.stat(path).st_mtime, path))
-                except OSError:
-                    continue
-            for _mtime, path in sorted(entries)[:-keep] if keep else entries:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
-        except OSError:
-            pass
+        self.assets.prune(self._surface_asset_urls(), keep=keep)
 
     @staticmethod
     def _raster_job_matches(job, layer, token, generation, epoch, serial):

@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-03 [b80314a] Show the detached anchor's ETA and keep the Live pill about the stream
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """Qt-independent, immutable physical-print observations shared by all consumers."""
 from __future__ import annotations
 
@@ -113,6 +122,9 @@ class PrintSnapshot:
     # polygon visits, read back from the layer's start (the live
     # ruling: the DEFINE order is not the print order everywhere).
     plate_visited: frozenset = field(default_factory=frozenset)
+    # Moonraker history identity, confirmed against the current newest job.
+    # Kept separate from the session-only RemoteJobService serial.
+    history_job_id: str = ""
 
     @property
     def active(self) -> bool:

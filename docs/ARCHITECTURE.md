@@ -68,12 +68,14 @@ without becoming the owner of that feature's implementation.
 
 | Package | Responsibility |
 | --- | --- |
+| `application/indexing/` | Host indexing jobs, cache binding and prepared-session ownership, separate from reusable parsing and storage. |
+| `storage/` | Read-only process ownership and filesystem primitives shared across domains. |
 | `application/` | Cross-domain print orchestration: coordinator, refresh-side load tracking and next-pause pipeline. These intentionally compose domain and presentation capabilities. |
 | `cura/` | Cura entry points, lifecycle, machine binding, output adapters and host-affine file preparation. |
 | `settings/` | Configuration UI, schema, persistence, migration and shared migration-result presentation. The Machine Action remains a Cura adapter. |
 | `printing/` | Physical print state, run identity, remote job observations, pause scheduling and print-start ownership; independent of the Preview and Monitor screens. |
 | `preview/` | Cura Preview attachment/following, display smoothing, presentation and card hosts. |
-| `gcode/` | Parsing, motion interpretation, indexing, cache lifecycle and immutable prepared geometry. `PlateProgress.py` prepares data; it is not the Qt renderer. |
+| `gcode/` | Parsing, motion interpretation, index/cache formats and immutable prepared geometry. `PlateProgress.py` prepares data; it is not the Qt renderer. |
 | `geometry/` | Pure geometry shared by data processing and presentation. No screen or host dependencies. |
 | `plate/` | Plate/follower rendering, GPU materials, colour projections and interaction. Consumes prepared G-code geometry, never owns parsing primitives. |
 | `bedmesh/` | Mesh presentation and reusable views shared by Preview and Monitor. Screen-specific wrappers remain with the screen. |
@@ -118,6 +120,9 @@ correct package ownership.
 | `PluginPaths.py` | Installed-plugin-root-relative filenames for explicit QML and shader resources | Application state or resource-loading lifecycle |
 | `RuntimeMirror.py` | Direct optional-download URLs tied to the packaged plugin version and GitHub release tag | Network transfers, payload pins or cache identity |
 | `PrinterBinding.py` | Per-printer configuration, migration triggers, active-machine transitions | Preview, files, uploads |
+| `ConfigValidation.py` | Strict, composed connection/recovery/detection draft validation with field-specific refusals | Qt, persistence or asset publication |
+| `ConfigConstraints.py` | Numeric limits shared by strict drafts and tolerant persisted loading | Refusal or migration policy |
+| `FollowMode.py` | Persisted print-follow mode values shared by settings and Preview | Host or UI state |
 | `PrinterConfig.py` | Per-machine settings schema and coercion (the records, the bounds, the normalisers) | Networking, Qt or the settings file (the persistence facade owns the files) |
 | `PluginPersistence.py` | The two plugin-owned stores: the settings document and the per-machine state shards, the typed key-scoped operations and the in-memory document — one instance per file per process, constructed at the composition root and handed down | Schema, coercion or networking |
 | `PersistenceMigration.py` | The one-shot migration's control flow: the strict source read, the backup gate, the verify-by-re-read interlock and the clean-as-commit-point | Qt, Resources or the stores |
@@ -131,11 +136,20 @@ correct package ownership.
 | `SocketFraming.py` | Pure RFC 6455 framing: handshake build/verify, frame codec, extended lengths, size caps, close codes | Qt, sockets, policy |
 | `RemoteJobService.py` | Print observation and same-filename run identity | Preview selection |
 | `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer`/`MotionProgress` and the single `LayerResolver` | QML/Cura writes |
+| `RecoveryPlanning.py` | Read-only scrub lead-in and exact source-modal reconstruction for a supported recovery point | Printer commands or inferred macro state |
+| `RecoveryActions.py` | Immutable recovery route actions shared by command serialization and diagrams | Qt and transport |
+| `RecoveryReview.py` | Confirmation projection of canonical recovery actions | Printer commands or QML ownership |
+| `RecoveryHandover.py` | Pure paused-print, temperature and travel preflight plus staged return script rendering | Network transport, printer mutation or unverified clearance |
+
+| `RecoveryExecution.py` | Sequential one-attempt recovery handover over injected fresh-query and script-send capabilities, with ambiguous results terminal | Blind retries or direct transport ownership |
+| `RecoveryController.py` | Qt owner for asynchronous plan and file validation, live metadata check, and one transport-backed recovery attempt | G-code parsing policy or Cura view state |
+| `RunoutEvents.py` | Print-bound selected-sensor transitions and manual stop estimates with explicit observation precision | Printer commands or inferring an exact extrusion-stop location |
 | `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` — the identity-neutral `request_metadata_only` (4.2.0) included | Index algorithms or Cura loading |
 | `DownloadStream.py` | Bounded streaming G-code downloads to disk and the `DownloadOperation` lifecycle | Networking policy or Cura |
 | `GCodeIndexService.py` | Index lifecycle, bounded worker execution, `IndexView`, and the shared live-motion observation service | Networking or UI |
 | `PlateSplitTracker.py` | Pure shared live-motion boundary policy: accepted floor, below-floor evidence, layer/print reset and adaptive compact search window | Qt, geometry matching, rendering |
 | `LoadStateTracker.py` | The refresh-side load state: the pending flags and their age-out windows, the busy term, the monitor request's terminal conditions and the lease handoff | Snapshot semantics or Cura loading |
+| `GCodeDocument.py` | Standalone in-memory document; immutable layer metadata, geometry snapshots and exact boundaries | Printer jobs, source reopening, Qt, network and application state |
 | `GCodeIndex.py` | One bounded G-code scan, delegating header parsing and completed-record assembly | Cache files, hydration or application orchestration |
 | `FollowController.py` | Follow-mode decisions and state precedence | Preview writes or networking |
 | `CuraIntegration.py` | Scene/view/file lifecycle, guarded callbacks and Preview API access | Printer protocol |
@@ -150,6 +164,8 @@ correct package ownership.
 | `PreviewToolheadPresentation.py` | Preview Toolhead host, readouts, local chrome and epoch-fenced selected-machine intents | G-code, polling or physical-motion policy |
 | `ToolheadReadout.py` | Pure physical-position, Z offset and firmware-capability readouts | Qt, transport or movement permission |
 | `PhysicalMotion.py` | Pure physical path/travel guard, G92/base-coordinate conversion, inclusive G-code zero bounds and validated manual-move scripts | Qt, telemetry acquisition or command transport |
+| `ObjectTagScene.py` | Scene-node admission and read-only bounds snapshots | Print progress or name matching |
+| `ObjectTagPresentation.py` | Plain-value tag matching, progress fallback, anchors and footprints | Qt vectors, scene traversal or UI lifecycle |
 | `PreviewPresentation.py` | Preview QML objects, displayed values and user-intent signals | Following or scheduling policy |
 | `GraphicsCensus.py` | Opt-in unique graphics-owner metadata and format estimates, with borrowed resources distinguished | GPU residency queries, resource mutation or retained wrappers |
 | `RenderTiming.py` | Opt-in bounded asynchronous GPU queries for plugin draw commands, never system-wide GPU utilisation | Profile settings writes, synchronous GPU waits or native timer ownership |
@@ -172,6 +188,8 @@ correct package ownership.
 | `StepWorker.py` | Stdlib-only isolated native STEP process, flattened millimetre triangles and colours | Cura, Qt, NumPy or parent-process configuration |
 | `CadRuntime.py` | Optional platform-pinned CAD and CPython 3.12 helper downloads, safe extraction and verification of every cached runtime file against retained pinned archives | Printer credentials, model upload or pip |
 | `WindowsRuntimeWithoutRedist.py` | Deterministic removal of bundled Microsoft runtime DLLs from the Windows CAD wheel and Python helper, with CAD import names repaired for the system runtime | Network access, installation or licence decisions |
+| `ToolheadImportJobs.py` | One cancellable model-import worker, progress, named result and owner-thread receipt admission | QObject or saved asset publication |
+| `AppearanceDraft.py` | Named appearance state and identity/mesh-bound edit checkpoints | Qt, imports or asset persistence |
 | `ToolheadModels.py` | One CAD worker and per-active-printer settings draft; retired results never adopt after Cancel or rebind | Live scene rendering |
 | `ToolheadModelPreview.py` | Preview camera, immutable background mesh packing, nearest-surface picking and software-only capture fallback | Printer scene or settings commit |
 | `ToolheadPreviewGL.py` | Qt Quick framebuffer renderer, current-context shader/buffers and depth-tested CAD lighting; camera-only updates reuse uploaded geometry | Cura OpenGL singleton, settings draft writes or imports |
@@ -204,6 +222,10 @@ correct package ownership.
 | `ToolheadEnvironmentScene.py` | Owned shaders reading platform/grid/visible bed-height meshes and the visible public LayerData prefix | Native program mutation or recursive renderer calls |
 | `ToolheadSceneNode.py` | Non-selectable lit triangle node; private head depth above final scene composition, cleared before Qt controls; opaque single pass and completed-image opacity | Telemetry or nozzle suppression |
 | `ToolheadPresenter.py` | Reported-position freshness/homing gate, estimated public LayerData adapter and one native-nozzle suppression owner | Print progress matching or native class patches |
+| `BedMeshGeometry.py` | Host-independent mesh sampling, bed-edge extension, colours and NumPy geometry arrays | Uranium scene nodes or draw calls |
+| `PrinterObjects.py` | Klipper object classification and fan writability shared by discovery and control | Labels or Monitor state |
+| `RecoveryRefusal.py` | Structured source refusal codes and complete ordered command evidence | Settings-pane navigation |
+| `RecoveryMessages.py` | Operator guidance for recovery refusals | Parsing or approval of source commands |
 | `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
 | `MonitorData.py` | Monitor request lifetime, category timers, the frozen `MonitorSnapshot` and the observation record's assembly (the tri-state connection, the two push-ins) | QML declarations |
 | `MoonrakerMonitorModel.py` | The single Qt Monitor model: explicit property declarations, collaborator composition and the one publication transaction | Domain policy or networking |
@@ -234,10 +256,13 @@ correct package ownership.
 | `DetectionObservation.py` | Immutable sampled frame, capture timestamp, result and bounding boxes. |
 | `DetectionDownloadTransport.py` | HTTPS socket abort during headers, chunk framing and body receipt. |
 | `PrintRunIdentity.py` | Attests active Moonraker history identity independently of local follower serials. |
-| `MonitorDetection.py` | Owns detection tuning, per-run mute and pause guard, history resolution and bounded evidence submission. |
+| `DetectionActions.py` | Per-run alert/pause/acknowledgement state and explicit persistence, command and notification effects | Qt, Uranium messages or inference |
+| `DetectionRun.py` | History attestation, run identity, freshness, retry cadence and request fences | Camera UI or pause decisions |
+| `MonitorDetection.py` | Detection observation/configuration bridge, bounded evidence submission and host effect adapters | Run attestation or per-run action policy |
 | `DetectionPolicy.py` | Freshness, context reset and sustained evidence transitions | Qt, native inference or printer commands |
 | `LocalDetectionService.py` | Single background setup, benchmark and inference lane; global consent, readiness and persisted enable state. Disabling retires queued/in-flight results while retaining per-printer settings | Camera transport or printer commands |
 | `EvidenceStore.py` | The alert's bounded evidence on disk: the triggering frame and a per-print score timeline, pruned by count | Qt, policy or printer commands |
+| `HeaterTargets.py` | Heater target inventory and validated Klipper temperature limits | Networking or command dispatch |
 | `TemperaturePresentation.py` | Per-printer chart configuration, history ownership and independently cached mini/full/latest/legend projections | Monitor publication, networking or toolhead state |
 | `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
@@ -248,6 +273,7 @@ correct package ownership.
 | `FileFormatting.py` | Pure file-table units and local-time labels | Qt, network or a screen model |
 | `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection and the LOCAL-file upload (its own multipart path) | MoonrakerMonitorModel |
 | `ThumbnailCache.py` | The listing thumbnails' whole lifecycle: the bounded fetch queue, the in-flight reply registry with its identity check, the generation that invalidates both together, the temp tree the bodies land in and the cache the listing rekeys on rename | Rows, the walk or a listing rebuild |
+| `MultipartUpload.py` | Streaming multipart file/reply lifetime, bounded terminal bodies, cancellation and progress | Readiness, power or print-start policy |
 | `ReplyBodyReader.py` | The hard byte cap on the replies the file chrome reads itself: one drain per readyRead, overflow aborts the transfer and drops the bytes, one disposal per reply | Transfer workflows or reply policy beyond the cap |
 | `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
 | `SectionLayoutPolicy.py` | The static pane→section table (Controls 14, Information 4, Status 6), including the Failure Detection controls after Print, and the section-layout normaliser — unknown ids drop, missing ids fill, hidden ids dedupe and sort | Qt, the store, any id vocabulary outside the table |
@@ -264,7 +290,9 @@ correct package ownership.
 | `FilesViewModel.py` | Stable-identity Qt file-list projection | Networking or file operations |
 | `FollowerColourScheme.py` | Guarded Cura colour-mode, material and theme integration | Geometry or tracking |
 | `FollowerRuntime.py` | Dependency construction and signal wiring at the composition root | Domain policy |
-| `GpuFollower.py` | Retained follower geometry, bounded asynchronous preparation and scene-graph presentation | Motion matching or printer commands |
+| `ToolpathGeometry.py` | Qt-free toolpath preparation, CPU strokes, event markers and optional NumPy vertex packing | Qt, Cura or printer commands |
+| `GpuFollower.py` | Bounded asynchronous geometry work and retained Qt scene-graph presentation, using ToolpathGeometry | Motion matching or printer commands |
+| `qt.py` | Explicit optional Qt library exports for GpuFollower and PlateQt rendering | Cura services or duplicate algorithms |
 | `PlateAxisGeometry.py` | Border-aligned open axis-arrow segments for GPU and warm raster rendering | QML and printer commands |
 | `GpuObjectPicker.py` | Retained object outlines using the shared GPU stroke engine | Exclusion commands |
 | `GpuStrokeMaterial.py` | Shader materials, stroke vertex layout and GPU uniform updates | Print state or networking |
@@ -273,10 +301,19 @@ correct package ownership.
 | `MoonrakerPrintFollower.py` | Stable Cura extension facade and runtime ownership | Domain algorithms |
 | `PlateProgress.py` | Prepared layer geometry, motion ranges and display payload construction | Qt scene graph or commands |
 | `PlateRenderController.py` | The native renderer: per-surface render contexts, bounded demand scheduling, raster workers and their tickets, cache assets and decoded pins | Print state, presentation settings or Qt publication |
-| `PlateQt.py` | Qt-facing layer assets and preparation adapters | Printer tracking policy |
+| `PlateQt.py` | Qt-facing layer assets and immutable geometry conversion | Painting, workers and printer tracking policy |
+| `PlateRaster.py` | Image-value toolpath painting | QML objects, worker scheduling or file publication |
+| `RasterAssets.py` | Scoped raster file lifetime, publication and independent consumer references | Surface scheduling or QML state |
+| `RasterFiles.py` | Atomic raster image publication | Painting and scheduling |
+| `RasterJobs.py` | Raster worker execution and guarded owner handoff | Rendering policy |
+| `raster.py` | Standalone raster API | Scene-graph imports |
+| `scenegraph.py` | Standalone retained rendering API | Cura services |
 | `PreparedSession.py` | The prepared store's session for the file being served: the adopted table, the incremental writer and its retirement, the coverage census, the completeness/published latches and the identity strength gate | The store's format, the RAM tiers or worker scheduling |
 | `PreparedStore.py` | Validated random-access prepared-layer files and resumable preparation | Networking or UI |
 | `PreviewColours.py` | Pure print-wide ranges and Cura-compatible gradient projection | Cura API access |
+| `FollowerSelection.py` | Follower attachment, layer selection and within-layer scrub state over explicit demand callbacks | Qt properties or renderer lifetime |
+| `RunoutPause.py` | Fresh sensor/job checks, runout pause dispatch and callback-generation fences | Uranium messages or Monitor publication |
+| `RecoverySources.py` | Recovery source listing, validation, ordering, selection and request lifetime | Index/file adoption or printer start commands |
 | `PrintCoordinator.py` | Cross-domain orchestration over injected services and immutable observations | Protocol or geometry algorithms |
 | `PrintIdentity.py` | Pure current-print identity checks | I/O or mutable lifecycle |
 | `PrintStartOwner.py` | Print-start acknowledgement and operation lifetime | HTTP transport |
@@ -286,11 +323,18 @@ correct package ownership.
 | `FeatureTracker.py` | Slicer feature, extrusion and travel state while scanning a layer | Files, caches or scheduling |
 | `GCodeParser.py` | G-code token/marker parsing and bounded fast-path recognition | Modal state, files or Qt |
 | `IndexAssembly.py` | Projection of completed scan records into a motion index, pause/marker maps and metric ranges | File reads or scheduling |
+| `SourceIdentity.py` | Caller-owned source identity contract and explicit cache keys | Printer protocol or host logging |
+| `ProcessOwner.py` | Conservative read-only process liveness | Printer or UI state |
+| `IndexResidency.py` | Generation-scoped independent consumer windows read by workers at hydration completion | Parsed content and printer selection policy |
+| `IndexMotionTracking.py` | Accepted live motion matching over index and prepared geometry inputs | Build scheduling or cache ownership |
+| `cache.py` | Portable cache and residency consumer API without shadowing implementation modules | Host indexing lifecycle |
 | `IndexCache.py` | Persistent index cache files, atomic writes and eviction | Parsing or Qt |
 | `IndexCodec.py` | Cache format, bounds and validation of event/feature/arc columns | File lifetime or scheduling |
 | `IndexHeader.py` | Slicer marker sniffing and filament metadata | Motion state or the hot scan loop |
 | `IndexHydrator.py` | Hydration of one compact layer from its saved modal seed | Index lifecycle or worker scheduling |
 | `IndexLimits.py` | Input and allocation bounds shared by the scanner and hydrator | Mutable state |
+| `IndexProcess.py` | Disposable Windows scan and preparation batches, verified Python-only helper provisioning, bounded packed handoff and cancellation | Qt publication or persistent print-cache writes |
+| `IndexWorker.py` | Standalone stdlib scan/preparation entry point and temporary index/PPL1 results | Cura imports, networking or printer state |
 | `IndexTasks.py` | Immutable submission records and worker-local hydration/preparation execution | Service lifecycle, signal publication or coordinator references |
 | `IndexView.py` | Read-only query capability over one index and spiral-Z projections | Index lifecycle or workers |
 | `IndexWork.py` | Cooperative cancellation/yield vocabulary and wall-clock gates | Worker pools or Qt |
@@ -475,8 +519,10 @@ parked nozzle cannot reset its progress identity. After RESUME, an off-model
 nozzle still holds that layer until its queued return reaches a resolvable
 printing height. Resetting the resolver clears this print-local hold.
 
-Resolution prefers exact G-code current-layer mapping, then reported layer numbering,
-then indexed file position. Configured Z fallback requires extrusion advancement,
+Resolution prefers exact `SET_PRINT_STATS_INFO CURRENT_LAYER` mapping, then reported
+layer numbering using the configured zero/one-based convention, then indexed file
+position. Slicer comments delimit layer ranges but never declare firmware numbering.
+Cache format 17 rebuilds older indexes that inferred firmware mappings from comments. Configured Z fallback requires extrusion advancement,
 so a temporary Z-hop does not move the physical layer. Available metadata/geometry
 can supply height/count information. A byte-progress percentage is not treated as
 a reliable layer number. Local geometry never clamps the physical observation;
@@ -506,6 +552,18 @@ readings remain em dashes. `MoonrakerOutputDevicePlugin` grants the readout
 route to the selected machine only, revokes it before deactivation, and clears
 readouts, target and distance drafts, motion focus and the open menu at a machine switch. The pane has
 no transport, command owner or extra poller.
+
+`MoonrakerPreviewCardPanelHost.qml` participates in Cura's `saveButton` row.
+When Cura replaces a stage, it reparents this persistent card into the new row.
+The host renews visibility on the next animation tick after the old row's
+teardown; newer Qt releases otherwise retain visible geometry without rendering.
+The host keeps the row's measured strip height, but translates its visual bounds
+upward and top-anchors the card, preserving its bottom-aligned scene position.
+This makes the overflow visible in the row's direct child bounds, avoiding Qt's
+cached descendant-bounds optimization rejecting clicks above a replacement row.
+A real-QML regression checks live input readiness, pixels, unchanged docking and
+single-click delivery through repeated Loader replacements, alongside the
+installed-Cura UI sweep.
 
 `PreviewToolheadHost.qml` anchors at the top left below Cura's actual stage
 menu, reserving the lower-left perspective controls, job summary and object
@@ -730,7 +788,7 @@ Source mesh XYZ is Z-up millimetres; its anchor is subtracted before the single
 Cura rotation (x,z,-y). Automatic alignment centres the XY bounds at minimum Z,
 including an annular nozzle face; manual XYZ or surface picking overrides it.
 
-STEP styles inherit through compound/solid/shell/face topology with instance placement, visibility and sRGB conversion. Four white sources on the top perimeter of the build volume aim 45° inward/down. View Options persists whole-model opacity as a global view preference; an independent scene-lighting uniform fades attached illumination with the same opacity without changing saved light intensities. Per-printer configuration persists up to eight attached emitters with model-local position, outward normal, RGB colour, brightness and range. Picking uses the visible surface normal and offsets the source outside the face; the shader excludes the inward hemisphere. Add/colour/brightness/remove edits share the settings Save/Cancel draft. An owned additive pass lights the native plate geometry and the visible G-code prefix using the installed SimulationView vertex/geometry sources and an owned lighting fragment. A depth prepass prevents bed illumination leaking through rendered paths. Its unchanged lower-layer depth is cached in an owned framebuffer and invalidated by camera, viewport, layer bounds, visibility filters or receiver changes; the current path prefix is drawn separately on every frame. Owned path indices are uploaded once, sharing Cura’s public cached vertex buffer. Conservative block bounds and a geometry-stage sphere check skip distant paths before tubular extrusion, and depth-only fragments skip lighting calculations. Toolhead-only position changes request cached composition without propagating scene-transform changes through Cura’s native G-code rendering. Zero opacity or disabling both receiving surfaces bypasses scene lighting entirely. Native receiver batches are retained across QtRenderer cached redraws, whose getBatches list is empty after endRendering; a full frame replaces them and scene/view/dimension changes invalidate them. Native shaders and classes are not patched. Brightness uses 0–100% UI values mapped to the existing 0–5 intensity; a renderer-only draft signal gives live updates without rebuilding the lights list. The custom head crop is seeded from the owned simulation pass’s complete visible depth, including fractional paths, plus public solid batches. Transparent bed and printer-frame geometry does not write that occlusion depth. Transparent model surfaces participate alongside the bed and frame; the head depth and coverage mask preserve opaque printed paths and prevent double blending outside the head. Geometry is not excluded merely because it belongs to a sliceable model. Its native shaders blend only foreground surfaces into a separate cropped image; a premultiplied resolve preserves the head’s coverage and opacity without double-drawing those surfaces outside it. Unchanged compositions reuse the result. Matching camera, viewport, source, path and depth-format checks prevent stale occluders; cache identity includes that depth revision. Warm/native fallback frames retain the previous overlay behaviour until compatible owned depth is available. Destination depth is cleared after composition so Qt controls stay above the head; line overlays do not occlude it. The transparency helper reuses native vertex buffers and never rerenders G-code. Native True-position nozzles still use the simpler native-mesh overlay without this custom-head depth seed.
+STEP styles inherit through compound/solid/shell/face topology with instance placement, visibility and sRGB conversion. Four white sources on the top perimeter of the build volume aim 45° inward/down. View Options persists whole-model opacity as a global view preference; an independent scene-lighting uniform fades attached illumination with the same opacity without changing saved light intensities. Per-printer configuration persists up to eight attached emitters with model-local position, outward normal, RGB colour, brightness and range. Picking uses the visible surface normal and offsets the source outside the face; the shader excludes the inward hemisphere. Add/colour/brightness/remove edits share the settings Save/Cancel draft. An owned additive pass lights the native plate geometry and the visible G-code prefix using the installed SimulationView vertex/geometry sources and an owned lighting fragment. A depth prepass prevents bed illumination leaking through rendered paths. Its unchanged lower-layer depth is cached in an owned framebuffer and invalidated by camera, viewport, layer bounds, visibility filters or receiver changes; the current path prefix is drawn separately on every frame. Owned path indices are uploaded once, sharing Cura’s public cached vertex buffer. Conservative block bounds and a geometry-stage sphere check skip distant paths before tubular extrusion, and depth-only fragments skip lighting calculations. Toolhead-only position changes request cached composition without propagating scene-transform changes through Cura’s native G-code rendering. Zero opacity or disabling both receiving surfaces bypasses scene lighting entirely. Native receiver batches are retained across QtRenderer cached redraws, whose getBatches list is empty after endRendering; a full frame replaces them and scene/view/dimension changes invalidate them. Native shaders are not patched. Native Cura and Uranium classes are not patched. Brightness uses 0–100% UI values mapped to the existing 0–5 intensity; a renderer-only draft signal gives live updates without rebuilding the lights list. The custom head crop is seeded from the owned simulation pass’s complete visible depth, including fractional paths, plus public solid batches. Transparent bed and printer-frame geometry does not write that occlusion depth. Transparent model surfaces participate alongside the bed and frame; the head depth and coverage mask preserve opaque printed paths and prevent double blending outside the head. Geometry is not excluded merely because it belongs to a sliceable model. Its native shaders blend only foreground surfaces into a separate cropped image; a premultiplied resolve preserves the head’s coverage and opacity without double-drawing those surfaces outside it. Unchanged compositions reuse the result. Matching camera, viewport, source, path and depth-format checks prevent stale occluders; cache identity includes that depth revision. Warm/native fallback frames retain the previous overlay behaviour until compatible owned depth is available. Destination depth is cleared after composition so Qt controls stay above the head; line overlays do not occlude it. The transparency helper reuses native vertex buffers and never rerenders G-code. Native True-position nozzles still use the simpler native-mesh overlay without this custom-head depth seed.
 
 Scene-light receivers use the native display material: older shadowed paths use
 Cura’s grey and alpha, while current and unshadowed paths retain line colours.
@@ -904,6 +962,25 @@ desired state rather than an unbounded executor queue. Rebinding cancels the old
 build and waits asynchronously for its completion before scheduling new work.
 Persistent cache restoration, parsing, hydration and cache persistence all run off
 the UI thread. Only generation-valid results are published on the Qt thread.
+
+On Windows, `IndexProcessBuilder` runs the initial scan in a disposable Python
+process so parsing cannot monopolise the interpreter used by the webcam and Qt
+callbacks. The worker uses the same parser and validated index format, disables
+cooperative sleeps only in its own process, and writes solely to a private
+temporary directory. It transfers compact boundaries and modal seeds; existing
+demand hydration supplies visible motions without a full-print decode in Cura.
+The parent polls bounded progress and terminates and joins
+the child on cancellation before releasing the source lease. The existing
+verified runtime installer provisions only the pinned CPython helper, reusing a
+retained CAD-helper archive when available. The full preparation pass uses up to
+eight parallel processes, bounded by the available CPU count (one per four logical
+processors, minimum one). Each child handles at most 32 layers with an 8 MiB
+packed-output target. Foreground demand kills and joins all speculative children;
+only the service-owned session appends
+results to its captured persistent writer. Boundaries and modal seeds cross
+to the child; host motion arrays are never hydrated by background preparation.
+Ordinary library scans and other platforms retain cooperative thread yielding. Runtime installation failure is
+reported; there is no silent return to the CPU-heavy host scan.
 
 `IndexView` exposes immutable ranges/maps/timing and read-only query operations.
 It does not expose mutable motion arrays or worker handles. Compact motion arrays
@@ -1294,7 +1371,9 @@ these light/dark scenes. No production render path is altered.
 Canvas delivery transaction, the attached/detached split acceptance rule, the
 exact-picture readiness policy and the layer payload's own asset validity —
 the raster, base and travel predicates those decisions are taken over. The QML
-face now adapts this policy to actual Canvas/Image objects. Its software progress
+delivery owner (`PlateDeliveryState.qml`) applies this policy to render receipts,
+world admission, standing images and model file references. The face adapts
+actual Canvas/Image events to that owner's methods. Its software progress
 surface has two bounded Canvas textures: a committed front and an offscreen
 staging buffer. A staging upload can replace the front only when its receipt
 matches the current demand; receipt, front texture and prefix ownership switch
@@ -1317,12 +1396,15 @@ walk, the travel families and the retraction glyphs. Each painter takes the
 context, the payload, the boundaries and one explicit style record naming the
 camera the pixels are baked at; `drawLayer` repeats the bed transform inline
 because a call per vertex over hundreds of thousands of points was the
-follower's dominant cost. The face keeps the camera STATE, the gestures that
-write it, the canvases and the decision of which picture to draw.
+follower's dominant cost. `PlateViewState.qml` owns target/display camera state, drag/wheel/scope updates
+and focal animation. Its explicit entry/settle signals negotiate renderer
+handoff with the face, which composes Canvas/Image surfaces and supplies input
+snapshots. The public face view properties are aliases to that single owner.
 The webcam accepts left and middle drag for pan; its right drag still changes
 FPS. The Print Follower accepts left, middle and right drag for the same pan
 path. A rapid five-left, five-middle, five-right click sequence on its full
-face starts a presentation-only penguin overlay. Its strokes are generated
+face starts `PlatePenguinOverlay.qml`, which owns the click sequence and animated
+overlay. Its strokes are generated
 from the capture penguin G-code in extrusion order and painted with fixed
 black, white and yellow tool colours, independent of the current line mode.
 The overlay masks the live face, then fades away without changing its print,
@@ -1355,7 +1437,7 @@ the warm-to-exact barrier while an optional prefix is still decoding.
 
 ### Presentation asset lifetimes
 
-Every `PlateProgressFace` acquires an owner token from its model and replaces
+Each face's `PlateDeliveryState` acquires an owner token from its model and replaces
 its set of asset references atomically as Image sources and retained/held
 sources change. The set includes assets loading behind the visible picture,
 the retained prefix, the held full raster and the gesture's entry image.
@@ -1393,8 +1475,10 @@ execution lock during native decoding. Periodic ticks and worker completions
 share one dispatch deadline, with a single-shot wake for its remaining interval.
 The mailbox still holds only the latest pending frame, the worker still permits
 one in-flight decode, and stopping or replacing a stream cancels the extra wake.
-The camera requests a framebuffer render target: Qt 6.0-6.8 ignores it, while
-Qt 6.9+ can use accelerated OpenGL painting when the host supports it.
+On macOS the camera uses QQuickPaintedItem's raster image target. Its framebuffer
+painter can crash in Apple's legacy OpenGL driver during Qt's target clear,
+before plugin painting begins. Other platforms request a framebuffer target:
+Qt 6.0-6.8 ignores it, while Qt 6.9+ can accelerate OpenGL painting when supported.
 
 Partial-layer scrub geometry has a dedicated notification for each surface.
 Each face retains it in a separate QML binding, so split advances and raster
@@ -1729,6 +1813,19 @@ Native and Linux harnesses use `tests/harness/log_gate.py` to reject plugin
 warnings, errors and QML binding/polish loops. Native first-install and migration
 legs include both boots' logs. Missing evidence fails the gate. Deliberate fault-injection scenarios may declare exact expected log messages; only a fully passing scenario records that allowance, and the shared gate consumes its bounded message count. Repeated authentication-refusal warnings are permitted only inside the successful authentication-fault scenario's recorded time window. Other warnings still fail.
 
+The test-only driver's `machine.py` selects the exact seeded printer after Cura
+reports startup completion. It never manufactures a machine while the registry
+is loading. The runner refuses dependent scenarios after a failed startup gate
+and writes the recorded failure gallery. Native unit-test processes run through
+`tools/native/test_worker.py`, with periodic thread-stack evidence and a hard
+parent-process deadline; this also covers native Qt calls that block event-loop
+deadline checks.
+Harness RPC retries stop once a connection succeeds: a partially sent command
+or lost reply must never replay a mutation. Connection and response reads share
+one monotonic deadline. Terminal transport failures abort the scenario group
+while its recording/gallery cleanup runs. A separate always-run CI collector
+preserves native logs and macOS crash reports independently of runner cleanup.
+
 ### Object-outline retention
 
 The Exclude Object Picker retains the grid and each object's native outline
@@ -1768,9 +1865,12 @@ retires outstanding results and owned alerts, and requires fresh analysis on
 return. Advanced and region editing are explicit user modes; neither changes
 the shared collapse/lock contracts.
 
-`MonitorDetection.py` owns policy, immutable observations, run attestation,
-camera-local settings, alerts, evidence and automatic-pause guards. The Qt
-Monitor facade forwards explicit properties/intents and composes that owner.
+`DetectionRun` owns history attestation and freshness over immutable printer/job
+inputs. `DetectionActions` owns alert repetition, acknowledgements, mute and
+pause latches; it emits explicit persistence, command, status, evidence and
+notification effects. `MonitorDetection.py` applies those effects and adapts
+observations, camera-local settings and evidence to host UI. The Qt Monitor
+facade forwards explicit properties/intents and composes that bridge.
 The 0.00–1.00 signal maps adaptive boundaries to the chosen Advanced bounds;
 it is not a calibrated probability. Sensitivity scales the adaptive gap, with
 1.00 preserving the original defaults. The long baseline belongs to the printer,
@@ -2333,3 +2433,233 @@ fallback; a null retained rectangle means no retained surface region is present.
 Do not add attachment texture rows to their parent framebuffer's byte estimate,
 or count borrowed buffers as additional plugin allocations. Stale worker receipts
 are historical observations, not simultaneous live-allocation totals.
+
+## Recovery confirmation preview
+
+Recovery checks file seek, modal restoration and pause cleanup at the selected
+XY above the print. A single final script lowers Z and starts the SD worker,
+without a dwell or network round trip at the print surface. The confirmation
+preview uses bounded deposition segments from the read-only source scan; its
+angled 3D and XY/XZ/YZ projections show the recorded prefix, not measured material.
+The bed outline uses reported XY travel bounds in the same coordinate frame and scale. Each
+step shares its position and text with the ordered confirmation.
+
+`RecoveryActions` defines immutable movement, extrusion and dwell actions;
+`RecoveryHandover` serializes their commands and `RecoveryReview` projects their
+positions and durations into confirmation text. QML does not recalculate travel.
+The confirmation carries a review token tied to the source/context and parameters.
+Freshly prepared travel is compared with the reviewed actions before movement;
+a changed starting point, route or descent refuses handover for a fresh review.
+
+
+Recovery selection defaults to the accepted `PrintSnapshot.motion_progress`
+layer/split while the follower remains attached. A manual anchor takes precedence;
+no parser byte estimate substitutes for a missing exact motion boundary. Index
+hydration and source/job identity checks still gate publication. Planning preserves
+the selected point and validates the source and printer again before execution.
+
+`RecoveryController` publishes preview segments as nested QVariant-compatible
+lists, plus bed bounds translated from fresh firmware axis limits and coordinate
+bases. `RecoveryStepPreview.qml` projects them onto an angled front-right view and
+XY/XZ/YZ views; all use the same world units within each projection. RGB axis arrows
+start at G-code zero. The bed is the reported XY travel rectangle, not inferred CAD
+geometry. Unloaded Z reference is reflected in the bed placement. The preview is
+bounded/simplified and distinguishes recorded progress from actual deposited material.
+
+Priming chooses the configured Z only when above the restart layer, otherwise
+restart Z + 5 mm, capped at the transformed Z limit. Travel to prime uses the higher
+of current and effective prime Z without an additional lift. Return travel is the
+selected Z plus configured clearance, also capped. A nozzle already above that
+plane keeps its height during the XY return, then lowers over the restart point.
+A nozzle below the plane lifts before XY travel. The prime-only dwell defaults
+to 5 seconds and participates in the command timeout. Final descent/modal restoration,
+pause release and SD start share one script without G4, M400 or a network round trip
+at the restart surface. Fresh staging-position checks precede that final script.
+
+Recovery dialogs reset their scroll offsets and preview selector when opened.
+After submission, Dismiss closes both dialogs without calling cancellation. User
+stop bookmarks can be removed independently of the selected restart boundary.
+
+`HeaterTargets` owns discovery and target bounds for extruders, beds and generic
+heaters. Monitor publishes bounded targets; the Temperatures UI offers sliders,
+Off and selectable 1/5/10/25 degree bumps. Dispatch revalidates against current
+configuration, while temperature profiles remain available during printing.
+
+`tools/capture_recovery.py` renders selection, a complete preview panel and the
+scrolled confirmation in light/dark real themes using synthetic source geometry.
+It has no network transport or command slots. It participates in native/container
+capture generation, text contrast auditing and deterministic capture comparison.
+
+
+## Reusable library and whole-product lifecycle contracts
+
+The standalone distribution is `moonraker-toolpath`, imported as
+`moonraker_toolpath`. Its `GCodeDocument` owns an in-memory index and returns
+frozen layer metadata, immutable geometry snapshots and exact inspection
+boundaries. It refuses incomplete geometry when scanner retention limits are
+reached. The mutable compact index API is explicitly advanced: callers own
+source identity and hydration lifetime.
+
+`tools/library_manifest.py` declares the complete dependency closure and stroke
+shader resources. The build maps selected `mpf/gcode`, `mpf/plate`, `mpf/geometry`
+and `mpf/resources` sources into the standalone namespace with identical bytes.
+A separate small root exports the document API without Cura registration. There
+are no copied algorithms or compatibility aliases. Plugin services, QML screens,
+network clients, cameras and runtime installers are excluded. `ToolpathGeometry`
+remains Qt-free; `.plate.qt` opts into the existing Qt renderers.
+
+AST boundary tests include imports nested inside functions. `make library`
+installs outside the checkout, checks the exact source/resource inventory and
+version synchronisation, then exercises stdlib-only documents/indexing/vertices
+and optional Qt raster pixels/retained nodes. [LIBRARY.md](LIBRARY.md) defines
+consumer contracts and the advanced API's responsibilities.
+
+Recovery source checks report every unclassified command in the reconstruction
+range together, deduplicated in source order. After the first unknown command,
+the read-only review scan collects further names up to the observed offset;
+it never approves a command or publishes a partial recovery plan. Commands after
+that range still run normally from the resumed file. The refusal names the
+Configure Moonraker > Recovery > G-code macros controls and explains Add, Save
+and rechecking. Existing setup/transparent contracts and modal checks remain
+mandatory. Settings pages use bold page titles and named recovery subsections;
+real-Qt tests verify font weight and their settled vertical order.
+
+Recovery source scanning records the effective feed rate, independent raw E mode,
+arc plane and active EXCLUDE_OBJECT name. Setup macros invalidate feed rate as
+well as coordinates until the file establishes them again. Handover restores
+configured arc/object state and refuses active exclusions whose private offsets
+cannot be reconstructed. It explicitly sends a zero bed target without a cooling
+wait. Both physical and G-code XYZ arrays must be finite before a review is ready;
+unloaded previews retain file X/Y and use physical Z for the new reference.
+After the final restart script is submitted, cancellation cannot withdraw it;
+the controller completes the read-only success/uncertainty check.
+
+`HeaterTargets` discovers writable heater names independently of configured
+presets. `MonitorControls` uses that inventory for cooldown; profile and cooldown
+intents discard pending `MonitorTuning` heater keys so older debounced values cannot
+win later. A control-owned intent revision also invalidates queued group scripts
+after any newer valid temperature choice; the whole group is cancelled because
+it may contain opaque macro G-code. Connection, lock and current-limit checks
+still govern dispatch. Already submitted scripts cannot be withdrawn.
+
+`FileManager` assigns a revision to each resident walk. Failed/incomplete walks
+retain the previous complete listing and finish with an error; superseded callbacks
+cannot publish. Text sorting reverses known values with stable filename ties and
+keeps unknown values last. Start acknowledgements belong to one immutable attempt
+and cannot resurrect an expired or invalidated attempt. Session invalidation clears
+file-browser confirmation drafts, and upload/rename/delete recheck the active file
+and destination immediately before dispatch, including containing directories.
+
+`CameraViewport` compares decoded `framesDisplayed` every eight seconds while
+visible and streaming. A retained image alone does not imply a live camera.
+No progress invokes the existing recovery/retry policy and removes the Live badge;
+only another decoded frame clears recovery, not headers or incoming bytes.
+Bridge origins are constructed with QUrl host/port fields, preserving IPv6 literals.
+
+### Cura 5.14 beta 1 renderer qualification
+
+The plugin does not replace Cura or Uranium class methods. Cura 5.14 beta 1
+has two upstream legacy renderer defects: `LayerPolygon.mapLineTypeToColor`
+indexes a Python list with a NumPy array, and `MeshData.getColors` evaluates
+an array as a boolean instead of returning the colour array. The former
+workaround was removed because it could not repair the whole rendering path.
+
+On disposable macOS CI hosts, the harness seeds Cura's supported
+`view/opengl_version_detect = force_modern` preference for that exact beta
+and requires the resulting 4.1 core context. Software OpenGL supports this
+context, although Cura normally selects legacy mode for performance. Cura
+5.13 retains default context selection and legacy mesh coverage. Native
+Preview probes require nonempty mesh geometry when using legacy mode.
+Users of this beta's legacy renderer may encounter blank Preview geometry;
+this plugin does not repair that upstream defect or change users' graphics
+preferences.
+
+The application indexing adapters (`GCodeIndexService`, `IndexTasks`, `PreparedSession` and `CacheNamespaces`) live in `mpf/application/indexing`. The parser/library package does not own host scheduling or printer cache binding.
+
+Cache primitives depend on the `SourceIdentity` protocol, not Moonraker's identity
+implementation. `CacheIdentity` lets an outside consumer supply its own stable
+key and metadata. Prepared-cache diagnostics are an injected callback; the
+application cache namespace supplies Uranium logging. `storage.ProcessOwner`
+provides the single conservative liveness probe used by cache and transfer cleanup.
+
+`IndexResidency` holds independent consumer windows outside parsed motion content.
+The application supplies its live/manual windows; workers capture the generation's
+`layers` capability and read it under the index commit lock at hydration completion.
+Hydrated-layer windows remain protected through preparation. `IndexMotionTracking`
+owns accepted physical progress and continuity; the indexing service supplies a
+read-only index view and the prepared payload rather than owning that tracker.
+
+`RasterAssets` owns one render instance's directory and presentation reference
+sets. Surface scheduling supplies URL snapshots rather than sharing its mutable
+records with that owner. Workers publish through the captured asset owner, which
+rejects writes after closure and removes a directory recreated by an in-flight
+publication. Reference/hold changes and pruning run on the renderer owner thread;
+workers can discard only their own unpublished outputs. `RasterTicket` names the
+existing nine queued-signal identity fields without changing their wire values.
+
+`FollowerSelection` owns attachment and manual selection state. The Monitor supplies
+live/displayed layer values and routes demand callbacks; renderer print epochs
+remain with the render controller. `RunoutPause` owns its generation and pending
+command state; connection and print changes invalidate callbacks before they can
+dispatch PAUSE. Recovery marker storage and its history keys remain a separate
+persistence concern. `RecoverySources` owns file-list requests and the selected
+unloaded source; the coordinator binds that source to index/download services.
+
+Recovery lexical recognition uses public patterns and parsing functions from
+`GCodeParser`; strict recovery refusals remain separate from tolerant geometry
+scanning. `RecoveryPlanError` carries a code and ordered command names. The
+source scanner reports all unclassified commands in the reconstruction range;
+`RecoveryMessages` adds setup-pane guidance only at the presentation boundary.
+
+The Python and JavaScript Preview gradients retain native execution in their
+respective renderers. `tests/fixtures/preview-colours.json` specifies reference
+colours. Real-QML tests run the production JavaScript against those values and
+the Python implementation across clamp, constant-range and piecewise boundaries.
+
+`ToolheadImportJobs` occupies one worker slot until its owner-thread receipt,
+including cancelled work. Results are named values; active-printer identity and
+asset publication remain the presenter's adoption checks. `AppearanceDraft`
+contains the editable appearance families, lights, rotors and tip values.
+Checkpoints clone those values and restore only for the same printer identity
+and mesh object. Replacing a model resets local appearance while retaining the
+existing global material/detail preferences.
+
+`MultipartUpload` owns one file device, multipart body and reply. Progress is
+clamped once; `UploadResult` carries immutable bounded response bytes, transport
+error and cancellation/overflow flags. Each payload read returns a fresh parsed
+mapping. Cancellation invalidates the operation before abort, so synchronous
+`finished` cannot publish a second result. Both upload workflows use this owner;
+the file manager retains name/directory policy, and the Cura upload workflow
+retains power/readiness and print-start outcome decisions. `ReplyBodyReader`
+lives in the Moonraker network package and also serves thumbnail responses.
+
+`ObjectTagScene.read_scene_objects` reads admitted node bounds into immutable
+`SceneTagObject` values. `ObjectTagPresentation.object_tag_rows` matches those
+values to printer definitions, applies metric/height progress and exclusion,
+and builds G-code-only fallback anchors/footprints. `PreviewPresentation`
+retains scene invalidation, caching, vector adaptation, panel lifecycle and hover
+routing. The projection algorithms need neither Cura nodes nor Qt vectors.
+
+Detection actions require a successful durable-record effect before a pause
+request. The run owner preserves request-time attestation age, retry cadence and
+printer/session/job fences; late or delayed history replies cannot authorize a
+fresh pause. Action refresh rechecks the pause latch after synchronous effects,
+preventing a reentrant history completion from requesting the same pause twice.
+Qt message creation remains in the Monitor bridge. Runout and scheduled-pause
+workflows retain their distinct evidence and acknowledgement rules.
+
+The delivery owner receives explicit world/view keys and paint receipts; it does
+not read the face's shared context. Painters submit receipts through `painted`
+and `paintBackground`; matching texture events enter through `deliver` and
+`deliverBackground`. Only the owner changes transaction/front/standing state.
+Image status and asset-reference snapshots are explicit input events/ports.
+Independent component tests qualify these protocols without a follower face;
+real-engine frame, gesture, pixel parity and retained-file tests keep their
+original behavioural assertions and inspect the actual owners. QML errors from
+any lifecycle owner fail those real-engine tests.
+
+`IndexView.extrusion_run_before` provides lock-protected, bounded extrusion-run
+evidence as `ExtrusionRun`. Recovery lead-in policy validates user limits and
+maps that query result to its suggestion; it no longer reaches into private
+index arrays or exact-layer helpers. The installed standard-library consumer
+qualifies this query alongside parsing, hydration, cache and geometry APIs.

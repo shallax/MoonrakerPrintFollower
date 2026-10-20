@@ -1,16 +1,64 @@
 # Moonraker Print Follower roadmap
 
-This is the direction of travel, not an implementation contract. `ARCHITECTURE.md`
-stays the binding description of how the code is organised today; this file says
-what the releases ahead aim to deliver and why they are ordered the way they are.
-Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
-are proposals — each becomes binding only when its release branch exists.
+6.0.0 adds recovery, heater controls and reliability improvements. Its merge and tag require passing PR
+CI and the full supported-version UI sweep on the final commit, as described in
+TESTING.md alongside the limits of automated validation. Further maintenance focuses
+on correctness, compatibility, documentation and reusable component boundaries.
+`ARCHITECTURE.md` describes the implemented product; version fields and the release
+checklist live in `INSTRUCTIONS.md`. Older plans below are historical proposals,
+not commitments to additional feature releases.
 
 Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
-## Current release and next plans — update (12 October 2026)
+## Current release — 6.0.0 (18 October 2026)
+
+The `release/v6.0.0` branch includes interrupted-print recovery with exact
+indexed boundaries, live selection without detachment, manual and sensor stop
+bookmarks, earlier/future point selection, and unloaded-file recovery. The UI
+requires printing to be paused before starting recovery. Read-only planning,
+source identity checks, temperature waits, optional priming and guarded seek/modal
+restoration precede a final descent and immediate SD restart.
+
+Implemented review controls show layer and move, explicit ordered actions,
+estimated movement times and four coordinate views: angled front-right, XY, XZ
+and YZ. Recorded deposition and reported bed/travel bounds share the same scale.
+Return clearance and priming dwell are configurable; effective prime heights and
+travel respect the printer's Z ceiling. Dismiss leaves an active handover running,
+and reopening resets scrolling and preview steps.
+
+This release also adds bounded per-heater temperature sliders and selectable
+1/5/10/25 degree bumps, profiles during printing, and Cura 5.14 beta 1 compatibility.
+Package metadata, release notes and What's New stay at 6.0.0 until publication.
+The whole-product audit also corrects file-manager races and sorting, decoded
+camera freshness, heater command ordering and recovery modal-state restoration.
+G-code indexing and CPU geometry now have supported library entry points without
+Cura or Qt, with optional Qt renderers and an independently installed wheel proof.
+The `moonraker_toolpath` distribution contains only the shared dependency closure
+and renderer shaders, with an immutable document API and explicit advanced compact
+indexing. The library and Cura plugin share source implementations and version.
+
+Raster painting now has an independent import, separate from QML assets and
+worker publication. Recovery commands and confirmation diagrams consume a shared
+action plan. The broader modularity work is tracked in
+[MODULARITY_IMPLEMENTATION.md](MODULARITY_IMPLEMENTATION.md), based on the
+[repository audit](MODULARITY_AUDIT.md). The listed boundaries now have explicit
+owners: index residency/tracking, settings validation, recovery/source selection,
+view/delivery QML state, toolhead drafts/import jobs, detection actions/attestation,
+shared uploads/protocol knowledge and Preview/bed-mesh projections. Independent
+consumer, effect, lifecycle and cross-language conformance tests accompany those
+extractions. The implementation record tracks the final qualification results.
+
+Ongoing qualification includes paused/unloaded recovery on real printers,
+sustained performance measurements and supported Cura versions. Runout markers,
+parser position and recorded toolpaths cannot prove
+where extrusion physically stopped after a jam. Reliable missing-material detection
+or an automatically chosen restart layer remains unscheduled research. Preview diagrams
+are not collision simulation. The older 5.x and initial 6.0 design notes below are
+historical; the implementation contract is in ARCHITECTURE.md.
+
+## Historical release plans — update (12 October 2026)
 
 The `release/v5.4.0` branch starts from the merged 5.3.0 release at
 `77c815fd790d0051abe1bb640846ca7dbfab71eb`. Its scope is to mirror every
@@ -231,15 +279,16 @@ the FPS face retains room for its longer readout.
 
 ### Optional runtime hosting
 
-The optional detection and STEP installers now resolve their 27 selectable
-assets from the matching plugin GitHub Release and preserve verified installed
-cache identities. The release workflow stages exact pinned bytes, uploads to a
-draft and verifies GitHub's asset digests. Public release still requires the
-redistribution companion and direct-download verification described in
-[RUNTIME_MIRROR.md](RUNTIME_MIRROR.md).
-Publish unchanged bytes with corresponding source and notices on the current
-plugin release, then download-verify every public asset before shipping. No
-binary payloads enter Git history.
+The optional detection and STEP installers resolve their 27 selectable assets
+from the matching plugin GitHub Release and preserve verified installed cache
+identities. Hosting was implemented and the public `v5.4.0` release was published
+on 12 October 2026 with all 27 assets, their manifest and the source/notices
+companion. It is not outstanding feature work.
+
+Each subsequent release must attach those pinned payloads and its companion to
+its own version tag, then verify the release downloads. This is a release
+procedure for 6.0.0; see [RUNTIME_MIRROR.md](RUNTIME_MIRROR.md). No binary payloads
+enter Git history.
 
 ### Remaining 5.x work — shared tracking already implemented
 
@@ -260,7 +309,7 @@ paused macro execution, planned filament-change waypoints, a Preview webcam
 thumbnail, accessibility marker styles and translations remain unassigned.
 Historical proposals below are not a commitment to add another 5.x release.
 
-### 6.0.0 — Resume printing from a scrubbed G-code position
+### Historical 6.0.0 design — Resume printing from a scrubbed G-code position
 
 The intended workflow is deliberate recovery from a user-selected point in the
 Print Follower pane, including an earlier point than the printer's pause:
@@ -284,6 +333,17 @@ boundaries. Scrubbing remains inspection until the user deliberately starts
 recovery. Ordinary Resume continues to mean returning from the existing pause;
 resuming from an earlier selection is a separate operation. The existing
 physical tracker is the foundation, not a second tracking implementation.
+
+The first implementation step is a read-only boundary query for the expanded
+follower's detached layer and motion split. It maps the number of completed
+motions to the next original motion command's byte offset and the selected
+endpoint. A full-layer selection may cross empty layers. Compact or evicted
+motion arrays, a fractional selection, a missing next move, and mismatched
+print/download identities return no exact boundary. The coordinator also
+requires a downloaded source whose size matches the active print. This result
+is evidence for a recovery plan, not an executable seek: commands between
+motions, printer state, file integrity at handover and physical move completion
+still need separate checks. No recovery command is issued by this step.
 
 Questions to resolve during 6.0.0 design and feasibility work:
 

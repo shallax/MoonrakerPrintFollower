@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-09-18 [53afbd7] 4.5.0: the reviewer-attribution phrasing goes from the codebase
+# 2026-09-08 [c217114] 3.4.0 feature set: toolhead control, Monitor rework and review fixes
+
 """Pure policy for manual toolhead control: scripts, gates and the jog queue.
 
 The Monitor's toolhead controls move the physical printer. Every G-code

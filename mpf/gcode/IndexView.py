@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Expose bounded extrusion-run evidence through the read-only query interface.
+# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
+# 2026-10-13 [3f9fcb5] Begin v6 recovery with exact follower boundary mapping
+# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+
 """Read-only index queries, including continuous-Z layer evidence."""
 from __future__ import annotations
 
@@ -11,6 +21,31 @@ from types import MappingProxyType
 
 
 from .MotionIndex import LayerMotionIndex
+from . import ArcGeometry
+
+
+@dataclass(frozen=True)
+class RecoveryBoundary:
+    """A scrubbed motion boundary, for inspection only.
+
+    ``next_motion_offset`` names the original command that follows the
+    selected completed-motion count. It is not an executable resume offset:
+    intervening modal commands and printer state still need reconstruction.
+    """
+    selected_layer: int
+    completed_motions: int
+    next_layer: int
+    next_motion: int
+    next_motion_offset: int
+    position: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class ExtrusionRun:
+    boundary: RecoveryBoundary
+    motions: int
+    distance_mm: float
+    limited_by_seam: bool = False
 
 
 @dataclass(frozen=True)
@@ -29,7 +64,115 @@ class IndexView:
     @property
     def compact(self): return self._index.compact
     @property
+    def printed_top_z(self): return self._index.printed_top_z
+    @property
     def pause_layers(self): return tuple(self._index.pauses)
+
+    def extrusion_run_before(self, layer, split, minimum_mm=5.0, minimum_moves=0):
+        """Inspect a same-layer positive-extrusion run, with no mutable-array access.
+
+        The result stops at non-extrusion, an unusable motion, or the requested
+        distance/count. None means an exact retained run cannot be inspected.
+        This is geometry evidence, not permission to execute a recovery.
+        """
+        try:
+            minimum_mm = float(minimum_mm)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(minimum_mm) or minimum_mm <= 0 or type(minimum_moves) is not int or minimum_moves < 0:
+            return None
+        index = self._index
+        if type(layer) is not int or not 0 <= layer < len(index.ranges):
+            return None
+        if type(split) is not int or not 0 < split <= index.motion_count(layer):
+            return None
+        with index.cache_lock:
+            if not self._exact_layer(layer) or layer >= len(index.motion_extrusion):
+                return None
+            extrusions = index.motion_extrusion[layer]
+            if len(extrusions) != index.motion_count(layer):
+                return None
+            distance = 0.0
+            count = 0
+            first_boundary = None
+            start = index.layer_start_positions[layer]
+            for motion in range(split - 1, -1, -1):
+                if extrusions[motion] <= 0:
+                    break
+                end = (index.motion_x[layer][motion], index.motion_y[layer][motion],
+                       index.motion_z[layer][motion])
+                before = start if motion == 0 else (
+                    index.motion_x[layer][motion - 1], index.motion_y[layer][motion - 1],
+                    index.motion_z[layer][motion - 1])
+                arc = index.motion_arcs[layer].get(motion) if layer < len(index.motion_arcs) else None
+                length = (ArcGeometry.path_length(arc, before, end, xy=True) if arc
+                          else math.hypot(end[0] - before[0], end[1] - before[1]))
+                if not math.isfinite(length) or length <= 0:
+                    break
+                distance += length
+                count += 1
+                first_boundary = self.recovery_boundary(layer, motion)
+                if first_boundary is None:
+                    return None
+                if (count >= minimum_moves if minimum_moves else distance >= minimum_mm):
+                    return ExtrusionRun(first_boundary, count, distance)
+            return (ExtrusionRun(first_boundary, count, distance, True)
+                    if first_boundary is not None else None)
+
+    def recovery_boundary(self, layer, completed_motions):
+        """Map an integer scrub split to the next original motion.
+
+        A compact or evicted layer has a motion count but no exact offsets;
+        returning a byte-range estimate here would be unsafe. A selection at
+        the end of a layer advances to the first motion of the next indexed
+        layer, skipping empty layers. None means the exact mapping is not
+        currently available or no motion follows the selection.
+        """
+        index = self._index
+        if isinstance(layer, bool) or not isinstance(layer, int) or not 0 <= layer < len(index.ranges):
+            return None
+        total = index.motion_count(layer)
+        if completed_motions == -1 and not isinstance(completed_motions, bool):
+            completed_motions = total  # the follower's full-layer sentinel
+        if isinstance(completed_motions, bool) or not isinstance(completed_motions, int) \
+                or not 0 <= completed_motions <= total:
+            return None
+        with index.cache_lock:
+            # The start position of a selected boundary needs the complete
+            # preceding motion array, even if the next command is in a
+            # different layer. A retained count alone cannot supply it.
+            if not self._exact_layer(layer):
+                return None
+            position = (index.layer_start_positions[layer] if completed_motions == 0 else
+                        (index.motion_x[layer][completed_motions - 1],
+                         index.motion_y[layer][completed_motions - 1],
+                         index.motion_z[layer][completed_motions - 1]))
+            for next_layer in range(layer, len(index.ranges)):
+                next_motion = completed_motions if next_layer == layer else 0
+                if not self._exact_layer(next_layer):
+                    return None
+                offsets = index.motion_offsets[next_layer]
+                if next_motion < len(offsets):
+                    offset = int(offsets[next_motion])
+                    start, end = index.ranges[next_layer]
+                    if start <= offset < end:
+                        return RecoveryBoundary(layer, completed_motions, next_layer,
+                                                next_motion, offset, tuple(position))
+                    return None
+            return None
+
+    def _exact_layer(self, layer):
+        index = self._index
+        return (layer < len(index.motion_offsets)
+                and layer < len(index.layer_start_positions)
+                and layer < len(index.motion_x)
+                and layer < len(index.motion_y)
+                and layer < len(index.motion_z)
+                and len(index.motion_offsets[layer]) == index.motion_count(layer)
+                and len(index.motion_x[layer]) == index.motion_count(layer)
+                and len(index.motion_y[layer]) == index.motion_count(layer)
+                and len(index.motion_z[layer]) == index.motion_count(layer)
+                and (not index.compact or layer in index.hydrated_layers))
 
     def physical_file_offset(self, progress):
         """Map the accepted nozzle motion boundary to an indexed file offset."""

@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Inspect camera ownership while preserving physical stroke and focal parity assertions.
+# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-22 [773e361] 4.6.0: the burn fix, the parity coverage floor and the webcam FPS control
+
 """The renderer-parity contract (4.6.0): the native rasterised
 toolpath presents the SAME PHYSICAL stroke width the QML vector
 sections paint — never a fixed-width floor.
@@ -42,7 +52,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
     _native_layer = _parent.PlateFaceRenderTests._native_layer
 
     def test_warm_raster_bakes_border_arrows_without_text_overlay(self):
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.plate.PlateRaster import render_navigation_layer
         from PyQt6.QtGui import QColor
         view = {"width": 563, "height": 563, "scale": 1.0,
                 "lineScale": 0.7, "backing": 4.0,
@@ -53,7 +63,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         without = render_navigation_layer(
             {"prev": None, "current": PAYLOAD, "next": None},
             PROBE_PLOT, dict(view, showAxisArrows=False))
-        from mpf.plate.PlateQt import scene_context
+        from mpf.plate.PlateRaster import scene_context
         self.assertNotEqual(scene_context(PROBE_PLOT, view),
                             scene_context(PROBE_PLOT, dict(view, showAxisArrows=False)))
         edge = 250 * PROBE_PLOT["sx"] * view["backing"]
@@ -99,7 +109,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         2 x backing rows (8 at 4x) and read 4x-wide live. The pin
         holds the footprint to the physical stroke plus the
         engine's own AA spread, on any engine."""
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.plate.PlateRaster import render_navigation_layer
         nav_view = {"width": 563, "height": 563, "scale": 1.0,
                     "lineScale": 0.7, "backing": 4.0}
         raster = render_navigation_layer(
@@ -126,7 +136,8 @@ class RendererParityTests(_parent.RealEngineTestCase):
         independent raster presented at 400% must show the physical
         stroke scaled by the zoom (~1.3 logical rows), never the old
         floor's fixed footprint magnified to 8 presented rows."""
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateRaster import render_navigation_layer
+        from mpf.plate.RasterFiles import png_file
         from PyQt6.QtCore import QPointF
         monitor, window, face = self._follower_popover()
         face.setProperty("lineScale", 0.7)
@@ -169,7 +180,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         # the zoomed stroke stays inside the grab.
         face.setProperty("displayPanX", 300 - (ox + 4.0 * fx))
         face.setProperty("displayPanY", 300 - (oy + 4.0 * fy))
-        face.setProperty("_interactionActive", True)
+        _parent.view_state(face).setProperty("interactionActive", True)
         # Arrival BEFORE agreement. Two grabs of a canvas that has not
         # painted yet agree perfectly, so a settle test on its own
         # accepts the blank frame and the census then reads an empty
@@ -210,7 +221,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         a separately-painted grid layer (a second layer pans at its
         own pace). The 10 mm graduation's ink must sit in the
         raster itself."""
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.plate.PlateRaster import render_navigation_layer
         nav_view = {"width": 563, "height": 563, "scale": 1.0,
                     "lineScale": 0.7, "backing": 4.0,
                     "bedWidth": 250.0, "bedDepth": 250.0}
@@ -233,7 +244,8 @@ class RendererParityTests(_parent.RealEngineTestCase):
         the grid and the toolpaths shift by EXACTLY the same pixels
         through a pan. Two layers (a canvas grid over the raster)
         lag and shift differently."""
-        from mpf.plate.PlateQt import render_navigation_layer, png_file
+        from mpf.plate.PlateRaster import render_navigation_layer
+        from mpf.plate.RasterFiles import png_file
         from PyQt6.QtCore import QPointF
         monitor, window, face = self._follower_popover()
         face.setProperty("lineScale", 0.7)
@@ -274,7 +286,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         self._hold_navigation_fixture(face)
         face.setProperty("viewScale", 4.0)
         face.setProperty("displayScale", 4.0)
-        face.setProperty("_interactionActive", True)
+        _parent.view_state(face).setProperty("interactionActive", True)
         # Read the theme, not a presumed empty pixel. A panned graduation
         # crosses any fixed canvas sample: macOS's failure image sampled
         # #cccccc as background, so the #999999 grid falsely had no ink.
@@ -368,13 +380,13 @@ class RendererParityTests(_parent.RealEngineTestCase):
 
         pan_a = 300 - (ox + 4.0 * fx)
         first = painted(grab(pan_a), pan_a)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(_parent.view_state(face).property("interactionActive"),
                         "the first census lost the held interaction")
         col_grid_a = grid_col(first, pan_a)
         col_stroke_a = stroke_right(first, pan_a)
         pan_b = pan_a - 40.0
         second = painted(grab(pan_b), pan_b, previous=first)
-        self.assertTrue(face.property("_interactionActive"),
+        self.assertTrue(_parent.view_state(face).property("interactionActive"),
                         "the second census lost the held interaction")
         col_grid_b = grid_col(second, pan_b)
         col_stroke_b = stroke_right(second, pan_b)
@@ -394,7 +406,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         show NO printed geometry (only the grey base when enabled);
         the full and intermediate states keep their pictures, and a
         complete split draws the full layer."""
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.plate.PlateRaster import render_navigation_layer
         # A 21-motion stroke: a mid split paints a real prefix.
         stroke = [[20.0 + motion * 6.5, 125.0, float(motion)]
                   for motion in range(21)]
@@ -460,7 +472,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         a zoom-4 raster's 10 mm graduation paints ~1-2 columns,
         never the fixed 4 the old baked grid left at 400% (the live
         report's thick-grid complaint)."""
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.plate.PlateRaster import render_navigation_layer
         nav_view = {"width": 563, "height": 563, "scale": 1.0,
                     "lineScale": 0.7, "backing": 4.0, "zoom": 4.0,
                     "bedWidth": 250.0, "bedDepth": 250.0}
@@ -567,9 +579,9 @@ class RendererParityTests(_parent.RealEngineTestCase):
                                    "anchor (col %s)" % col)
         for _ in range(60):
             self._pump_ms(30)
-            if not face.property("_interactionActive"):
+            if not _parent.view_state(face).property("interactionActive"):
                 break
-        self.assertFalse(face.property("_interactionActive"),
+        self.assertFalse(_parent.view_state(face).property("interactionActive"),
                          "the bar drag never settled")
 
     def test_nearby_strokes_stay_separate_through_the_raster(self):
@@ -577,7 +589,7 @@ class RendererParityTests(_parent.RealEngineTestCase):
         separated once the zoom resolves the gap beyond the stroke —
         the rejected floor widened the subpixel line into the
         neighbouring stroke's gap."""
-        from mpf.plate.PlateQt import render_navigation_layer
+        from mpf.plate.PlateRaster import render_navigation_layer
         two = {"classes": {"WALL-OUTER": [
             LINE[0],
             [[20.0, 125.5, 2.0], [150.0, 125.5, 3.0]],

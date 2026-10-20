@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Check geometry construction at its portable owner and retain host draw contracts.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-06 [4d1ba2c] Test Klipper bed mesh rendering contracts
+
 import pathlib
 import types
 import unittest
@@ -11,6 +21,7 @@ TYPED_CONTROLS = (PLUGINS / "MoonrakerMonitorModel.py").read_text(encoding="utf-
 TYPED = "\n".join((PLUGINS / name).read_text(encoding="utf-8") for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))
 PRESENTER = (PLUGINS / "BedMeshPresenter.py").read_text(encoding="utf-8")
 SCENE_NODE = (PLUGINS / "BedMeshSceneNode.py").read_text(encoding="utf-8")
+MESH_GEOMETRY = (PLUGINS / "BedMeshGeometry.py").read_text(encoding="utf-8")
 MONITOR_CONTROLS = (PLUGINS / "MonitorControls.py").read_text(encoding="utf-8")
 DASHBOARD = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text(encoding="utf-8")
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text(encoding="utf-8")
@@ -87,9 +98,9 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn('Resources.getPath(Resources.Shaders, "default.shader")', SCENE_NODE)
         self.assertIn("transparent=True", SCENE_NODE)
         self.assertIn("backface_cull=False", SCENE_NODE)
-        self.assertIn("value * exaggeration", SCENE_NODE)
-        self.assertIn("DEFAULT_EXAGGERATION = 20.0", SCENE_NODE)
-        self.assertIn("machine_depth / 2.0 - printer_y", SCENE_NODE)
+        self.assertIn("value * exaggeration", MESH_GEOMETRY)
+        self.assertIn("DEFAULT_EXAGGERATION = 20.0", MESH_GEOMETRY)
+        self.assertIn("machine_depth / 2.0 - printer_y", MESH_GEOMETRY)
 
     def test_monitor_and_preview_controls_expose_mesh(self):
         self.assertIn("bedMeshAvailable", TYPED_CONTROLS)
@@ -121,10 +132,10 @@ class BedMeshTests(unittest.TestCase):
             "bed_y_min, bed_y_max",
             "extrapolated=extrapolated",
         ):
-            self.assertIn(token, SCENE_NODE)
+            self.assertIn(token, MESH_GEOMETRY)
         self.assertLess(
-            float(SCENE_NODE.split("EXTRAPOLATED_ALPHA =", 1)[1].splitlines()[0].strip()),
-            float(SCENE_NODE.split("SURFACE_ALPHA =", 1)[1].splitlines()[0].strip()),
+            float(MESH_GEOMETRY.split("EXTRAPOLATED_ALPHA =", 1)[1].splitlines()[0].strip()),
+            float(MESH_GEOMETRY.split("SURFACE_ALPHA =", 1)[1].splitlines()[0].strip()),
         )
 
     def test_bed_mesh_draws_an_obvious_probe_bounds_outline(self):
@@ -137,7 +148,7 @@ class BedMeshTests(unittest.TestCase):
             "boundary_vertices",
             "boundary_colours",
         ):
-            self.assertIn(token, SCENE_NODE)
+            self.assertIn(token, MESH_GEOMETRY)
 
     def test_bed_mesh_visibility_forces_scene_redraw_and_rebuilds_after_file_load(self):
         self.assertIn("sceneChanged.emit(self._node)", TYPED)
@@ -192,7 +203,7 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("blendOver", BED_MESH_MAP_QML)
         self.assertIn("measured ? 0.58 : 0.28", BED_MESH_MAP_QML)
         self.assertIn("root.inRange(sample)", BED_MESH_MAP_QML)
-        self.assertIn("OUT_OF_WINDOW_GREY", SCENE_NODE)
+        self.assertIn("OUT_OF_WINDOW_GREY", MESH_GEOMETRY)
         self.assertIn("low=thresholds[0], high=thresholds[1]", PRESENTER)
         self.assertIn("def set_thresholds", PRESENTER)
         self.assertIn("def _clamp_thresholds", PRESENTER)
@@ -205,9 +216,9 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("EXAGGERATION_PREF_KEY", PRESENTER)
         self.assertIn("def set_exaggeration", PRESENTER)
         self.assertIn("self._exaggeration", PRESENTER)
-        self.assertIn("MAX_EXAGGERATION = 1000.0", SCENE_NODE)
+        self.assertIn("MAX_EXAGGERATION = 1000.0", MESH_GEOMETRY)
         self.assertIn("MAX_EXAGGERATION = 1000.0", PRESENTER)
-        self.assertIn('max(0.0, min(self.MAX_EXAGGERATION, float(exaggeration)))', SCENE_NODE)
+        self.assertIn('max(0.0, min(cls.MAX_EXAGGERATION, float(exaggeration)))', MESH_GEOMETRY)
         for token in ("Scale z-max", "bedMeshExaggerationRequested", "bedMeshExaggeration"):
             self.assertIn(token, PREVIEW_SURFACE)
         self.assertIn("to: 1000", PREVIEW_SURFACE)

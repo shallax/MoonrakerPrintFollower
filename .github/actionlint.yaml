@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-20 [37f794c] 4.6.0: the live-test fixes — the follower reads the monitor's own index (no preview
+#   dependency) with its download action, the two controls split into their own sections, the dot and the key
+#   distinguished, the canvas clips, and the runner-label lint config
+
 # The runner label the workflows pin (the Ubuntu-26 migration):
 # actionlint's bundled label set predates it, so it is declared as a
 # self-hosted-style custom label instead of warning on every run.

@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-09-27 [43ab36d] Accelerate follower rendering with retained GPU shader geometry
+# 2026-09-19 [0f5d266] 4.5.0: the camera stream, the narrow-window contract and the release hardening
+
 module MoonrakerPrintFollower
 MoonrakerMJPGImage 1.0 MoonrakerMJPGImage.qml
 MoonrakerMJPGImage 1.1 MoonrakerMJPGImage.qml

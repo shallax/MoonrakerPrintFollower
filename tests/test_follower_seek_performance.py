@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Measure seek behaviour through the application indexing owner.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable follower seek performance contracts."""
 from tests import composed_runtime_support as harness
 
@@ -97,7 +107,8 @@ class RendererOnlySeekBenchmarks(harness.RendererOnlySeekBenchmarks):
         # The complete PNG transport (encode + write + atomic
         # rename) on the seek's three sibling sizes — the worker's
         # cost, measured apart from the geometry walk.
-        from mpf.plate.PlateQt import png_file, render_layer_raster
+        from mpf.plate.RasterFiles import png_file
+        from mpf.plate.PlateRaster import render_layer_raster
         plot = {"offsetX": 10.0, "offsetY": 10.0, "sx": 1.0, "sy": 1.0,
                 "bedXMin": 0.0, "bedYMax": 250.0}
         view = {"width": 563, "height": 492, "scale": 1.0, "lineScale": 0.7,

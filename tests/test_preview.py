@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-07 [a6dd76a] Complete the 3.2.0 architecture cleanup
+
 """Preview domain: follower behaviour, formatting, presentation and QML UX."""
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError

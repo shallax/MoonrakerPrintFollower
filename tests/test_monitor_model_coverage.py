@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
+# 2026-10-18 — 6.0.0: Cover file-manager ordering, invalidation and active-file protection.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+
 """Coverage for MoonrakerMonitorModel's plumbing: the file-manager confirm
 and print payloads with their slots, the publish value builders, the
 hydration edge branches and the action tail.
@@ -192,6 +203,94 @@ class MonitorModelCase(unittest.TestCase):
     @staticmethod
     def thumb(name):
         return [{"relative_path": f".thumbs/{name}-32x32.png", "width": 32, "height": 32}]
+
+
+class RecoveryModelTests(MonitorModelCase):
+    def test_runout_pause_respects_live_klipper_owner(self):
+        name = "filament_switch_sensor upper"
+        snapshot_type = self.qt.load("PrintState")
+        observation_type = self.qt.load("RemoteJobService")
+        self.print_state = snapshot_type.PrintSnapshot(
+            job_key=("part.gcode", 100, 1),
+            observation=observation_type.PrintObservation("printing", "part.gcode", 100, 50, 10))
+        self.model = self.build(config=self.printer_config(recovery_sensor_names=[name]))
+        self.connect()
+        self.model._runout_events.observe(self.print_state.job_key,
+            {name: {"filament_detected": True, "enabled": True}}, at=time.time(), selected=(name,))
+        event = self.model._runout_events.observe(self.print_state.job_key,
+            {name: {"filament_detected": False, "enabled": True}}, at=time.time(), selected=(name,))[0]
+        self.model._runout_pause.request(event, self.print_state)
+        request = self.sent("printer/objects/query")[-1]
+        self.assertEqual(request.options["body"]["objects"][name], ["filament_detected", "enabled"])
+        status = {"print_stats": {"state": "printing", "filename": "part.gcode"},
+                  "virtual_sdcard": {"file_size": 100}, "pause_resume": {"is_paused": False},
+                  name: {"filament_detected": False, "enabled": True},
+                  "configfile": {"config": {name: {"pause_on_runout": "true"}}}}
+        request.callback({"result": {"status": status}}, None)
+        self.assertFalse(self.sent("printer/gcode/script"))
+        status["configfile"]["config"][name]["pause_on_runout"] = "false"
+        self.model._runout_pause.request(event, self.print_state)
+        self.sent("printer/objects/query")[-1].callback({"result": {"status": status}}, None)
+        self.assertEqual(self.sent("printer/gcode/script")[-1].options["body"]["script"], "PAUSE")
+
+    def test_qml_recovery_submission_preserves_reviewed_temperatures_and_z_reference(self):
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtQml import QQmlEngine, QQmlComponent
+        submitted = []
+        reviews = []
+        self.model = self.build(recovery_start=submitted.append,
+            recovery_review=lambda values: reviews.append(values) or {"token": "review-token", "actions": []})
+        engine = QQmlEngine()
+        engine.rootContext().setContextProperty("printer", self.model)
+        component = QQmlComponent(engine)
+        component.setData(b'import QtQml 2.15\nQtObject { property var review: printer.reviewRecovery({hotend: 215, bed: 60, zReference: 12.4}); Component.onCompleted: '
+                          b'printer.startRecovery({hotend: 215, bed: 60, zReference: 12.4}) }', QUrl())
+        item = component.create()
+        self.assertIsNotNone(item, [error.toString() for error in component.errors()])
+        self.assertEqual(reviews, [{"hotend": 215, "bed": 60, "zReference": 12.4}])
+        self.assertEqual(submitted, reviews)
+        item.deleteLater()
+        self.qt.events()
+
+    def test_recovery_slots_forward_only_selected_user_intents(self):
+        calls = []
+        self.model = self.build(
+            recovery_plan=lambda: calls.append("prepare"),
+            recovery_start=lambda: calls.append("start"),
+            recovery_cancel=lambda: calls.append("cancel"),
+            recovery_suggest=lambda: calls.append("lead-in"))
+        self.model.suggestRecoveryLeadIn()
+        self.model.prepareRecovery()
+        self.model.startRecovery()
+        self.model.cancelRecovery()
+        self.assertEqual(calls, ["lead-in", "prepare", "start", "cancel"])
+
+    def test_manual_marker_survives_model_restart_for_confirmed_history_job(self):
+        store = self.persistence()
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(
+            job_key=("part.gcode", 100, 1), history_job_id="job-001")
+        self.model = self.build(persistence=store)
+        self.model._selection.attached = False
+        self.model._selection.anchor = 0
+        self.model._selection.split = 2
+        self.model.markRecoveryStop()
+        rows = store.get_machine_state("A")["recoveryEvents"]["events"]
+        self.assertEqual((rows[0]["kind"], rows[0]["layer"], rows[0]["split"]),
+                         ("manual", 0, 2))
+        store.set_machine_state("A", {"recoveryAttempt": {
+            "jobId": "job-001", "filename": "part.gcode", "size": 100,
+            "offset": 25, "phase": "uncertain", "detail": "Inspect printer"}})
+
+        restored = self.build(persistence=store)
+        restored._sync_recovery_history(self.print_state)
+        self.assertEqual(len(restored._runout_events.events), 1)
+        self.assertEqual(restored._runout_events.events[0].split, 2)
+        self.assertEqual(restored._recovery_previous_attempt["phase"], "uncertain")
+        restored.removeRecoveryStop(restored._runout_events.events[0].document())
+        self.assertEqual(store.get_machine_state("A")["recoveryEvents"]["events"], [])
+        again = self.build(persistence=store)
+        again._sync_recovery_history(self.print_state)
+        self.assertEqual(again._runout_events.events, ())
 
 
 class PublishSentinelTests(MonitorModelCase):
@@ -619,6 +718,32 @@ class PrintConfirmTests(MonitorModelCase):
 
 class FileMutationTests(MonitorModelCase):
     """The delete, rename, upload and view slots over a real listing."""
+
+    def test_upload_confirmation_revalidates_the_active_print(self):
+        self.listing()
+        self.model.fileUpload("/tmp/part.gcode")
+        self.assertTrue(self.value("fileUploadConfirm"))
+        self.printing("part.gcode")
+        with patch.object(self.model._file_manager, "upload_file") as upload:
+            self.model.fileConfirmUpload()
+            upload.assert_not_called()
+        self.assertFalse(self.value("fileUploadConfirm"))
+
+    def test_printer_invalidation_revokes_all_confirmation_drafts(self):
+        self.listing()
+        self.model.fileRequestDeleteDir("old-printer-folder")
+        self.model.fileRequestRename("part.gcode")
+        self.model.fileUpload("/tmp/part.gcode")
+        self.model._file_manager.unbind()
+        self.model._file_manager.bind()
+        before = len(self.channels())
+        self.model.fileConfirmDelete()
+        self.model.fileConfirmRename()
+        self.model.fileConfirmUpload()
+        self.model.fileConfirmPrint()
+        self.assertEqual(len(self.channels()), before)
+        for name in ("fileDeleteConfirm", "fileRenameTarget", "fileUploadConfirm", "filePrintConfirm"):
+            self.assertFalse(self.value(name), name)
 
     def listing(self, files=None, *, dirs=("prints",), history=()):
         self.model_now()
@@ -1326,9 +1451,9 @@ class ModuleCoercionSlotTests(MonitorModelCase):
 
     def test_an_unparseable_anchor_and_scale_fall_back(self):
         module = self.qt.load("MoonrakerMonitorModel")
-        self.assertEqual(module._coerce_anchor(None), -1)
-        self.assertEqual(module._coerce_anchor("junk"), -1)
-        self.assertEqual(module._coerce_anchor("7"), 7, "a stored digit is a layer")
+        self.assertEqual(self.qt.load("FollowerSelection").coerce_anchor(None), -1)
+        self.assertEqual(self.qt.load("FollowerSelection").coerce_anchor("junk"), -1)
+        self.assertEqual(self.qt.load("FollowerSelection").coerce_anchor("7"), 7, "a stored digit is a layer")
         view = module._follower_view_state({"lineScale": "junk", "showNext": "yes"})
         self.assertEqual(view["lineScale"], 1.0, "an unparseable stroke fell through")
         self.assertTrue(view["showNext"], "a non-bool flag must keep its default")
@@ -1483,7 +1608,7 @@ class FollowerViewSlotTests(MonitorModelCase):
     def test_live_exact_publications_continue_while_the_warm_image_is_latched(self):
         self.model = self.build()
         self.model.setFollowerPopoverOpen(True)
-        self.model._follower_attached = True
+        self.model._selection.attached = True
         self.model.setFollowerInteracting(True)
         from dataclasses import replace
         initial = {"layers": {"current": None, "prev": None, "next": None},
@@ -1596,9 +1721,9 @@ class FollowerSeekSlotTests(MonitorModelCase):
         # Detached on a frozen split: the repeat is a republish only. The
         # flag is set directly — the detach's own publish re-attaches
         # against the fresh (job-less) snapshot.
-        model._follower_attached = False
+        model._selection.attached = False
         frozen = min(5, model._values.get("plateLayerMotionCount", 0) or 0)
-        model._follower_layer_split = frozen
+        model._selection.split = frozen
         model.setFollowerLayerProgress(frozen)
         self.assertEqual(self.splits, [], "a repeated scrub re-asked for the same split")
 
@@ -1693,7 +1818,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         surface.desired = {"current": 6, "ghosts": {}, "split": None}
         ticket = ("popover", 6, 0, 0, surface.render_key(), "checkpoints", None, 0, 42)
         layer._rewind_ticket = ticket
-        path = pathlib.Path(self.model.plate_renderer._raster_cache_dir) / "late-checkpoint.png"
+        path = pathlib.Path(self.model.plate_renderer.assets.directory) / "late-checkpoint.png"
         path.write_bytes(b"retired")
         layer.clear_prefix_checkpoints()
         self.model.plate_renderer._raster_committed(("checkpoints", [(5, self.local_url(str(path)))]), ticket)
@@ -1710,7 +1835,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
                    "travels": [], "travelStarts": [], "travelEnds": []}
         layers = {"current": payload, "prev": None, "next": None}
         model.setFollowerPopoverOpen(True)
-        model._follower_attached = True
+        model._selection.attached = True
         self.print_state = replace(self.print_state, job_key=("job-a",),
                                    plate_progress={"layers": layers,
                                                    "anchor": 0, "split": 3,
@@ -1996,7 +2121,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
                               "epoch": 0, "serial": 4, "backing": 4.0}
         # Inside the cache directory, so the prune is a real test of
         # the hold rather than of a directory it never scans.
-        held = os.path.join(self.model.plate_renderer._raster_cache_dir, "held-nav.png")
+        held = os.path.join(self.model.plate_renderer.assets.directory, "held-nav.png")
         pathlib.Path(held).write_bytes(b"held")
         surface.nav["url"] = self.local_url(held)
         self.model.setFollowerGestureRaster(surface.nav["url"])
@@ -2040,7 +2165,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
 
     def test_presentation_references_survive_arbitrary_prefix_supersedes(self):
         self.model = self.build()
-        directory = pathlib.Path(self.model.plate_renderer._raster_cache_dir)
+        directory = pathlib.Path(self.model.plate_renderer.assets.directory)
         held = directory / "standing-prefix.png"
         full = directory / "held-full.png"
         held.write_bytes(b"prefix")
@@ -2065,7 +2190,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
 
     def test_asset_owners_release_independently_and_cannot_be_resurrected(self):
         self.model = self.build()
-        path = pathlib.Path(self.model.plate_renderer._raster_cache_dir) / "shared.png"
+        path = pathlib.Path(self.model.plate_renderer.assets.directory) / "shared.png"
         path.write_bytes(b"shared")
         url = self.local_url(str(path))
         first = self.model.acquirePlateAssetOwner()
@@ -2076,7 +2201,7 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         self.model.setPlateAssetReferences(first, [url])
         self.model.plate_renderer._prune_raster_cache(keep=0)
         self.assertTrue(path.exists())
-        self.assertNotIn(first, self.model.plate_renderer._asset_owners)
+        self.assertNotIn(first, self.model.plate_renderer.assets._owners)
         self.model.releasePlateAssetOwner(second)
         self.model.releasePlateAssetOwner(second)
         self.model.plate_renderer._prune_raster_cache(keep=0)
@@ -2088,11 +2213,11 @@ class SurfaceDemandSlotTests(MonitorModelCase):
         owner = self.model.acquirePlateAssetOwner()
         self.model.setPlateAssetReferences(owner, ["", "data:image/png;base64,AA==",
             "https://example.invalid/prefix.png", self.local_url("/tmp/foreign.png")])
-        self.assertEqual(self.model.plate_renderer._asset_owners[owner], frozenset())
+        self.assertEqual(self.model.plate_renderer.assets._owners[owner], frozenset())
 
     def test_discard_cleanup_respects_presentation_and_collects_vanished_jobs(self):
         self.model = self.build()
-        directory = pathlib.Path(self.model.plate_renderer._raster_cache_dir)
+        directory = pathlib.Path(self.model.plate_renderer.assets.directory)
         held = directory / "held.png"
         abandoned = directory / "abandoned.png"
         held.write_bytes(b"held")
@@ -2194,19 +2319,19 @@ class SurfaceLifecycleTests(MonitorModelCase):
 
     def test_the_instance_sweeps_its_own_raster_directory(self):
         self.model = self.build()
-        directory = self.model.plate_renderer._raster_cache_dir
+        directory = self.model.plate_renderer.assets.directory
         pathlib.Path(directory, "leftover.png").write_bytes(b"leftover")
         self.model.plate_renderer.cleanup_raster_cache()
         self.assertFalse(os.path.exists(directory))
         # An un-removable directory must not raise out of the model's
         # own destruction.
-        with patch.object(self.model.plate_renderer, "_raster_cache_dir", directory):
+        with patch.object(self.model.plate_renderer.assets, "directory", directory):
             with patch("shutil.rmtree", side_effect=OSError("no removal")):
                 self.model.plate_renderer.cleanup_raster_cache()
 
     def test_the_memory_accounting_survives_a_hostile_directory(self):
         self.model = self.build()
-        pathlib.Path(self.model.plate_renderer._raster_cache_dir, "kept.png").write_bytes(b"kept")
+        pathlib.Path(self.model.plate_renderer.assets.directory, "kept.png").write_bytes(b"kept")
         self.assertEqual(self.model.memory_accounting()["rasterDirFiles"], 1)
         # A directory that cannot be listed reads as empty, and a file
         # that cannot be stat'ed is skipped rather than raised.
@@ -2217,7 +2342,7 @@ class SurfaceLifecycleTests(MonitorModelCase):
 
     def test_the_prune_survives_a_hostile_directory(self):
         self.model = self.build()
-        stale = os.path.join(self.model.plate_renderer._raster_cache_dir, "r-stale.png")
+        stale = os.path.join(self.model.plate_renderer.assets.directory, "r-stale.png")
         pathlib.Path(stale).write_bytes(b"stale")
         with patch("os.stat", side_effect=OSError("no stat")):
             self.model.plate_renderer._prune_raster_cache(keep=0)
@@ -2253,3 +2378,17 @@ class SurfaceLifecycleTests(MonitorModelCase):
         self.model._publish()
         self.assertEqual(self.value("plateLayerCount"), 0,
                          "an unparseable layer count reached the slider's range")
+
+class HeaterPublicationTests(MonitorModelCase):
+    def test_heater_rows_publish_and_qt_slot_routes_the_target(self):
+        self.model = self.build()
+        signals = []
+        self.model.typedControlsChanged.connect(lambda: signals.append(True))
+        self.observe(auxiliary={"configfile": {"settings": {
+            "extruder": {"min_temp": 5, "max_temp": 285}}},
+            "extruder": {"target": 215}})
+        self.assertEqual(self.value("heaterControlItems")[0]["maximum"], 285)
+        self.assertTrue(signals)
+        with patch.object(self.model._controls, "set_heater_temperature") as set_target:
+            self.model.setHeaterTemperature("extruder", 220)
+            set_target.assert_called_once_with("extruder", 220)

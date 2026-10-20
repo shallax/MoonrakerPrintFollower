@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Discard superseded heater values without disturbing other pending tuning.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-09-08 [c217114] 3.4.0 feature set: toolhead control, Monitor rework and review fixes
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """Debounced, revision-guarded live tuning independent of QML and printer discovery."""
 from __future__ import annotations
 from dataclasses import dataclass
@@ -11,6 +21,7 @@ class PendingValue:
     script: str = ""
     channel: str = ""
     sent: bool = False
+    guard: object = None
 
 
 class MonitorTuning(QObject):
@@ -53,13 +64,20 @@ class MonitorTuning(QObject):
         self._drop(key)
         self._pending[key] = PendingValue(value, self._revision)
 
-    def queue(self, key, value, channel, script):
+    def discard(self, prefix):
+        """A later group action supersedes pending tuning in that group."""
+        for key in tuple(self._pending):
+            if key.startswith(prefix):
+                self._drop(key)
+        self.changed.emit()
+
+    def queue(self, key, value, channel, script, *, guard=None):
         if not self._data.active: return
         # A release replaces either a preview-only value or the last released
         # value retained while the user re-grabbed the Slider.
         self._drop(key)
         self._revision += 1
-        self._pending[key] = PendingValue(value, self._revision, script=script, channel=channel)
+        self._pending[key] = PendingValue(value, self._revision, script=script, channel=channel, guard=guard)
         timer = self._timer(self._debounce, key, self.DEBOUNCE_MS, self._send)
         timer.start()
         self.changed.emit()
@@ -102,6 +120,9 @@ class MonitorTuning(QObject):
     def _send(self, key):
         pending = self._pending.get(key)
         if pending is None or not pending.script: return
+        if pending.guard is not None and not pending.guard():
+            self._expire(key)
+            return
         pending.sent = True
         revision = pending.revision
         def finished(payload, error):

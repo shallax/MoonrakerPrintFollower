@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Capture generation-scoped residency capabilities for hydration workers.
+# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+
 """Worker-local indexing tasks with submission-time inputs.
 
 The service owns scheduling, generations and completion publication. Tasks
@@ -11,15 +19,12 @@ from typing import Any, Callable
 import time
 
 from UM.Logger import Logger
-from .MotionIndex import LayerMotionIndex
-from .IndexHydrator import hydrate_layer_from_file
-from .IndexWork import HydrationYield, passive_yield
-from .LayerCache import _decoded_charge
-from .PlateProgress import (
-    PreparationYield, decode_layer as _decode_layer,
-    encode_layer as _encode_layer, prepare_layer as _prepare_layer,
-)
-from .PreparedStore import STATE_UNCACHEABLE
+from ...gcode.MotionIndex import LayerMotionIndex
+from ...gcode.IndexHydrator import hydrate_layer_from_file
+from ...gcode.IndexWork import HydrationYield, passive_yield
+from ...gcode.LayerCache import _decoded_charge
+from ...gcode.PlateProgress import PreparationYield, decode_layer as _decode_layer, encode_layer as _encode_layer, prepare_layer as _prepare_layer
+from ...gcode.PreparedStore import STATE_UNCACHEABLE
 
 _FULL_PREP_BATCH_S = 0.12
 
@@ -56,6 +61,7 @@ class LayerHydrationTask:
     writer: Any
     foreground: Any
     read_prepared: Callable[[int], Any]
+    retention: Callable[[], frozenset[int]] | None = None
 
     def run(self):
         failed = []
@@ -100,7 +106,7 @@ class LayerHydrationTask:
                             "layer %d arrays stay unhydrated: "
                             "no gcode lease — the split rides "
                             "the estimate", layer)
-                    elif not hydrate_layer_from_file(self.index, self.lease.path, layer):
+                    elif not hydrate_layer_from_file(self.index, self.lease.path, layer, retention=self.retention):
                         Logger.log(
                             "w",
                             "layer %d arrays failed to hydrate "
@@ -116,7 +122,7 @@ class LayerHydrationTask:
                 if self.lease is None:
                     failed.append(layer)
                     continue
-                result = hydrate_layer_from_file(self.index, self.lease.path, layer)
+                result = hydrate_layer_from_file(self.index, self.lease.path, layer, retention=self.retention)
                 if not result:
                     failed.append(layer)
                     continue
@@ -167,8 +173,12 @@ class LayerPreparationTask:
     writer: Any
     foreground: Any
     failed_layers: frozenset[int]
+    retention: Callable[[], frozenset[int]] | None = None
+    isolated: Callable | None = None
 
     def run(self):
+        if self.isolated is not None:
+            return self.isolated(self)
         encoded = {}
         uncacheable = set()
         frontier = self.start
@@ -244,7 +254,7 @@ class LayerPreparationTask:
                 try:
                     if self.lease is None or not hydrate_layer_from_file(
                             self.index, self.lease.path, layer,
-                            should_stop=self.foreground.is_set):
+                            should_stop=self.foreground.is_set, retention=self.retention):
                         break
                 except HydrationYield:
                     # A demand outranks the pass, and the layer
@@ -284,6 +294,7 @@ class LayerArrayTask:
     layers: tuple[int, ...]
     lease: Any
     foreground: Any
+    retention: Callable[[], frozenset[int]] | None = None
 
     def run(self):
         yield_at = time.monotonic()
@@ -294,7 +305,7 @@ class LayerArrayTask:
             try:
                 if not hydrate_layer_from_file(
                         self.index, self.lease.path, layer,
-                        should_stop=self.foreground.is_set):
+                        should_stop=self.foreground.is_set, retention=self.retention):
                     Logger.log("w", "layer %d arrays failed to hydrate from %s — "
                                "the split rides the estimate", layer, self.lease.path)
             except HydrationYield:

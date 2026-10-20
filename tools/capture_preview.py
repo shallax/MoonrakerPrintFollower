@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-08 [0f363ac] Deterministic captures: vendored Cura assets, capture harness, committed screenshots
+
 """Deterministic Preview-pane captures: render the real
 mpf/preview/MoonrakerPreviewCard.qml in an offscreen engine with the
 real Cura/UM theme components, the real cura-light theme and fake pane

@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Resolve explicit indexing and renderer owners in runtime composition proofs.
+# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
+# 2026-10-01 [561e634] Surface file-manager refusal notes in the popup
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable runtime index composition contracts."""
 from tests import composed_runtime_support as harness
 
@@ -170,9 +180,9 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         service._plate_layers_memos = {("part.gcode", 100, 1): object()}
         service._manual_anchor = 4
         service._manual_split = 12
-        service._split_tracker.begin(("part.gcode", 100, 1), 4)
-        service._split_tracker.floor = 7
-        service._split_tracker.refined = 9
+        service._motion.tracker.begin(("part.gcode", 100, 1), 4)
+        service._motion.tracker.floor = 7
+        service._motion.tracker.refined = 9
         service._objects._visited = {1, 2}
         service._objects._visited_upto = 5
         service._objects._visited_settled = frozenset({1})
@@ -202,9 +212,9 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         self.assertEqual(service._plate_layers_memos, {})
         self.assertIsNone(service._manual_anchor)
         self.assertIsNone(service._manual_split)
-        self.assertIsNone(service._split_tracker.floor)
-        self.assertIsNone(service._split_tracker.refined)
-        self.assertIsNone(service._split_tracker.key)
+        self.assertIsNone(service._motion.tracker.floor)
+        self.assertIsNone(service._motion.tracker.refined)
+        self.assertIsNone(service._motion.tracker.key)
         self.assertEqual(service._objects._visited, set())
         self.assertEqual(service._objects._visited_upto, -1)
         self.assertEqual(service._objects._visited_settled, frozenset())
@@ -279,8 +289,8 @@ class ComposedComponentTests(harness.ComposedComponentTests):
         files._path = target
         files._want_file = True
         # The live print stands on layer 1; the follower is frozen on 9.
-        index.followed_layer = 1
-        index.manual_anchor = 9
+        service._residency.set_window("live", 1)
+        service._residency.set_window("manual", 9)
         service._manual_anchor = 9
         service._advance()  # the poll that starts the pass chain
 

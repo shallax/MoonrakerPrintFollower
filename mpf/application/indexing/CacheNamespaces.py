@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Supply host diagnostics explicitly to the portable prepared cache.
+# 2026-10-01 [1866243] Persist print sources and publish live download progress
+# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+# 2026-09-22 [3b83162] 4.6.0: the persistence lifecycle wave — the machine-following namespace, the
+#   clean-shutdown checkpoint, the interrupted-candidate arbitration and the unified per-print folder
+
 """The per-machine cache namespace owner (the review's machine-
 namespace finding): the runtime constructs ONE owner over ONE index
 service, and the owner follows the binding's changed signal — a
@@ -13,9 +24,9 @@ import os
 
 from UM.Logger import Logger
 
-from .IndexCache import PersistentIndexCache
-from .PreparedStore import PreparedCache
-from .RawSourceCache import RawSourceCache
+from ...gcode.IndexCache import PersistentIndexCache
+from ...gcode.PreparedStore import PreparedCache
+from ...gcode.RawSourceCache import RawSourceCache
 
 # The persistent cache's directory name (the 2026-09-22 ruling): it
 # must NEVER match the plugin's package ID — Uranium's package
@@ -25,6 +36,10 @@ from .RawSourceCache import RawSourceCache
 # out of the purge's path (the pre-4.6.0 name collided and the whole
 # index cache vanished on every package install).
 CACHE_DIRECTORY_NAME = "MoonrakerPrintFollowerPersistentCache"
+
+
+def _cache_log(message, *args):
+    Logger.log("i", message, *args)
 
 
 class CacheNamespaces:
@@ -67,8 +82,8 @@ class CacheNamespaces:
         and a hidden 16-print cap would silently override it."""
         print_root = os.path.join(self._cache_root, "cache-v2", self._machine_hash, "prints")
         cache_bytes = self._cache_bytes
-        prepared = PreparedCache(print_root) if cache_bytes is None \
-            else PreparedCache(print_root, max_bytes=cache_bytes)
+        prepared = PreparedCache(print_root, log=_cache_log) if cache_bytes is None \
+            else PreparedCache(print_root, max_bytes=cache_bytes, log=_cache_log)
         index = PersistentIndexCache(print_root) if cache_bytes is None \
             else PersistentIndexCache(print_root, max_bytes=cache_bytes,
                                       max_entries=None)

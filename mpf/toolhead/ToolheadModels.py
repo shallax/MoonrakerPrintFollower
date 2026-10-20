@@ -1,9 +1,18 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Compose cancellable import jobs and named appearance drafts/checkpoints.
+# 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
+# 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+
 """One optional CAD worker and a transactional settings draft per active printer."""
 from __future__ import annotations
 
 import os
 import shutil
-import threading
 import time
 import numpy as np
 
@@ -15,8 +24,9 @@ from ..geometry.ToolheadMaterials import (material_profile, surface_detail, MATE
 from ..geometry.ToolheadOpacity import opacity_overrides, opacity_colours, selection_mask, MAX_OPACITY_ENTRIES, colour_value, colour_overrides
 from ..geometry.ToolheadRotors import rotors, body_axis, MAX_ROTORS, speed
 from ..geometry.ToolheadLighting import MAX_LIGHTS, validated_lights
-from .CadRuntime import install_runtime, missing_windows_runtime, runtime_assets, runtime_directory
-from .ToolheadImport import read_step, read_stl
+from .CadRuntime import missing_windows_runtime, runtime_assets, runtime_directory
+from .ToolheadImportJobs import ToolheadImportJobs
+from .AppearanceDraft import AppearanceDraft
 
 
 class ToolheadModels(QObject):
@@ -32,10 +42,8 @@ class ToolheadModels(QObject):
         super().__init__(parent)
         self.store, self.runtime_root = store, runtime_root
         self._config, self._identity = config_source, identity_source
-        self._generation = 0
-        self._worker = None
-        self._cancelled = threading.Event()
-        self._closed = False
+        self._imports = ToolheadImportJobs(runtime_root,
+            progress=self.progress.emit, completed=self.completed.emit)
         self._pending = ""
         self._status = ""
         self._started = None
@@ -44,19 +52,10 @@ class ToolheadModels(QObject):
         self._elapsed_timer.timeout.connect(self.elapsedChanged.emit)
         self._key = self._name = ""
         self._mesh = default_mesh()
-        self._manual = False
-        self._imported = False
-        self._texts = ["0", "0", "0"]
-        self._surface_detail = .35
-        self._material_overrides, self._surface_materials = {}, {}
-        self._body_opacity, self._face_opacity = {}, {}
-        self._body_colours, self._face_colours = {}, {}
-        self._body_materials, self._body_finishes, self._face_finishes = {}, {}, {}
+        self._appearance = AppearanceDraft()
         self._opacity_bodies, self._opacity_faces = set(), set()
         self._opacity_kind = "body"
         self._paint_kind = "plastic"
-        self._lights = []
-        self._rotors = []
         self._rotor_candidate = {}
         self._fan_readings = {}
         self._edit_checkpoint = None
@@ -68,25 +67,25 @@ class ToolheadModels(QObject):
     def mesh(self): return self._mesh
 
     @property
-    def tip(self): return valid_tip(self._texts)
+    def tip(self): return valid_tip(self._appearance.texts)
 
     @pyqtProperty("QVariantList", notify=changed)
-    def lights(self): return validated_lights(self._lights)
+    def lights(self): return validated_lights(self._appearance.lights)
 
     @pyqtProperty(float, notify=changed)
-    def surfaceDetail(self): return self._surface_detail
+    def surfaceDetail(self): return self._appearance.surface_detail
 
     @pyqtProperty("QVariantMap", notify=changed)
-    def materialOverrides(self): return material_overrides(self._material_overrides)
+    def materialOverrides(self): return material_overrides(self._appearance.material_overrides)
 
     @pyqtProperty("QVariantMap", notify=changed)
-    def surfaceMaterials(self): return dict(self._surface_materials)
+    def surfaceMaterials(self): return dict(self._appearance.surface_materials)
 
     @pyqtProperty("QVariantMap", notify=changed)
-    def bodyOpacity(self): return dict(self._body_opacity)
+    def bodyOpacity(self): return dict(self._appearance.body_opacity)
 
     @pyqtProperty("QVariantMap", notify=changed)
-    def faceOpacity(self): return dict(self._face_opacity)
+    def faceOpacity(self): return dict(self._appearance.face_opacity)
 
     @pyqtProperty("QVariantList", notify=changed)
     def opacityBodies(self): return sorted(self._opacity_bodies)
@@ -107,10 +106,10 @@ class ToolheadModels(QObject):
     def selectedSources(self): return dict(self._selection_summary()["sources"])
 
     @pyqtProperty("QVariantMap", notify=changed)
-    def bodyColours(self): return dict(self._body_colours)
+    def bodyColours(self): return dict(self._appearance.body_colours)
 
     @pyqtProperty("QVariantMap", notify=changed)
-    def faceColours(self): return dict(self._face_colours)
+    def faceColours(self): return dict(self._appearance.face_colours)
 
     @pyqtProperty(str, notify=changed)
     def selectedColour(self): return self._selection_summary()["colour"]
@@ -119,22 +118,22 @@ class ToolheadModels(QObject):
     def setSelectedColour(self, value):
         colour = colour_value(value)
         if colour is None: return False
-        result = self._change_targets(self._body_colours, self._face_colours, colour)
+        result = self._change_targets(self._appearance.body_colours, self._appearance.face_colours, colour)
         if result is not None:
-            self._body_colours, self._face_colours = result
+            self._appearance.body_colours, self._appearance.face_colours = result
             self.changed.emit()
             return True
         return False
 
     @pyqtSlot(result=bool)
     def resetSelectedColour(self):
-        inherited = tuple(int(key) for key, value in self._body_colours.items()
+        inherited = tuple(int(key) for key, value in self._appearance.body_colours.items()
             if value != "imported" and int(key) not in self._opacity_bodies)
         selected = np.isin(self.mesh.surfaces, tuple(self._opacity_faces))
         required = set(map(int, self.mesh.surfaces[selected & np.isin(self.mesh.body_ids, inherited)]))
-        result = self._change_targets(self._body_colours, self._face_colours, "imported", reset_faces=required)
+        result = self._change_targets(self._appearance.body_colours, self._appearance.face_colours, "imported", reset_faces=required)
         if result is not None:
-            self._body_colours, self._face_colours = result
+            self._appearance.body_colours, self._appearance.face_colours = result
             self.changed.emit()
             return True
         return False
@@ -149,7 +148,7 @@ class ToolheadModels(QObject):
         self.changed.emit()
 
     def _colour_target(self):
-        return (self._draft_identity, id(self.mesh), self._generation,
+        return (self._draft_identity, id(self.mesh), self._imports.generation,
             tuple(sorted(self._opacity_bodies)), tuple(sorted(self._opacity_faces)))
 
     @pyqtSlot(result=bool)
@@ -172,8 +171,8 @@ class ToolheadModels(QObject):
         return False
 
     def _selection_summary(self):
-        key = (id(self.mesh), repr((self._body_materials, self._surface_materials, self._body_finishes,
-            self._face_finishes, self._material_overrides, self._body_opacity, self._face_opacity, self._body_colours, self._face_colours)),
+        key = (id(self.mesh), repr((self._appearance.body_materials, self._appearance.surface_materials, self._appearance.body_finishes,
+            self._appearance.face_finishes, self._appearance.material_overrides, self._appearance.body_opacity, self._appearance.face_opacity, self._appearance.body_colours, self._appearance.face_colours)),
             tuple(sorted(self._opacity_bodies)), tuple(sorted(self._opacity_faces)))
         cached = getattr(self, "_selection_cache", None)
         if cached is not None and cached[0] == key: return cached[1]
@@ -183,10 +182,10 @@ class ToolheadModels(QObject):
             self._selection_cache = key, result
             return result
         mask = selection_mask(self.mesh, self._opacity_bodies, self._opacity_faces)
-        parameters = material_parameters(self.mesh, self._surface_materials, self._body_materials)
-        finishes = resolved_finishes(self.mesh, self._surface_materials, self._body_materials,
-            self._material_overrides, self._body_finishes, self._face_finishes, parameters=parameters)
-        opacity = opacity_colours(self.mesh, self._body_opacity, self._face_opacity, body_colours=self._body_colours, face_colours=self._face_colours)
+        parameters = material_parameters(self.mesh, self._appearance.surface_materials, self._appearance.body_materials)
+        finishes = resolved_finishes(self.mesh, self._appearance.surface_materials, self._appearance.body_materials,
+            self._appearance.material_overrides, self._appearance.body_finishes, self._appearance.face_finishes, parameters=parameters)
+        opacity = opacity_colours(self.mesh, self._appearance.body_opacity, self._appearance.face_opacity, body_colours=self._appearance.body_colours, face_colours=self._appearance.face_colours)
         result = {}
         for name, values in (("material", parameters[:, 3]), ("roughness", finishes[:, 0]),
                              ("reflectivity", finishes[:, 1]), ("opacity", opacity[:, 3])):
@@ -196,11 +195,11 @@ class ToolheadModels(QObject):
         result["colour"] = "#" + "".join(f"{int(round(float(channel)*255)):02x}" for channel in rgb[0]) if len(rgb) == 1 else ""
         result["material"] = MATERIAL_TYPES[int(result["material"])] if result["material"] >= 0 else "mixed"
         sources = {}
-        for name, bodies, faces in (("material", self._body_materials, self._surface_materials),
-                ("roughness", self._body_finishes, self._face_finishes),
-                ("reflectivity", self._body_finishes, self._face_finishes),
-                ("opacity", self._body_opacity, self._face_opacity),
-                ("colour", self._body_colours, self._face_colours)):
+        for name, bodies, faces in (("material", self._appearance.body_materials, self._appearance.surface_materials),
+                ("roughness", self._appearance.body_finishes, self._appearance.face_finishes),
+                ("reflectivity", self._appearance.body_finishes, self._appearance.face_finishes),
+                ("opacity", self._appearance.body_opacity, self._appearance.face_opacity),
+                ("colour", self._appearance.body_colours, self._appearance.face_colours)):
             source = np.zeros(len(self.mesh.triangles), dtype=np.uint8)
             for rank, identities, values in ((1, self.mesh.body_ids, bodies), (2, self.mesh.surfaces, faces)):
                 explicit, automatic = [], []
@@ -241,7 +240,7 @@ class ToolheadModels(QObject):
 
     def _apply_opacity(self, value):
         if self.busy or not self.opacitySelectionCount: return
-        bodies, faces = dict(self._body_opacity), dict(self._face_opacity)
+        bodies, faces = dict(self._appearance.body_opacity), dict(self._appearance.face_opacity)
         descendants = set(map(int, self.mesh.surfaces[np.isin(self.mesh.body_ids, tuple(self._opacity_bodies))]))
         for identity in descendants: faces.pop(str(identity), None)
         for selected, target in ((self._opacity_bodies, bodies), (self._opacity_faces, faces)):
@@ -254,7 +253,7 @@ class ToolheadModels(QObject):
         if max(len(bodies), len(faces)) > MAX_OPACITY_ENTRIES:
             self._status = "This edit exceeds the 2,048 body or face opacity overrides; nothing changed."
             self.changed.emit(); return
-        self._body_opacity, self._face_opacity = bodies, faces
+        self._appearance.body_opacity, self._appearance.face_opacity = bodies, faces
         self._status = "Imported transparency restored." if value is None else "Selected opacity updated."
         self.changed.emit()
 
@@ -267,13 +266,13 @@ class ToolheadModels(QObject):
     def resetSelectedOpacity(self): self._apply_opacity(None)
 
     @pyqtProperty("QVariantMap", notify=changed)
-    def bodyMaterials(self): return dict(self._body_materials)
+    def bodyMaterials(self): return dict(self._appearance.body_materials)
 
     @pyqtProperty("QVariantMap", notify=changed)
-    def bodyFinishes(self): return local_finish_overrides(self._body_finishes, self.mesh, bodies=True)
+    def bodyFinishes(self): return local_finish_overrides(self._appearance.body_finishes, self.mesh, bodies=True)
 
     @pyqtProperty("QVariantMap", notify=changed)
-    def faceFinishes(self): return local_finish_overrides(self._face_finishes, self.mesh)
+    def faceFinishes(self): return local_finish_overrides(self._appearance.face_finishes, self.mesh)
 
     @pyqtProperty(str, notify=changed)
     def selectedMaterial(self): return self._selection_summary()["material"]
@@ -318,61 +317,61 @@ class ToolheadModels(QObject):
     @pyqtSlot(str)
     def setSelectedMaterial(self, kind):
         if kind not in (*MATERIAL_TYPES, "automatic"): return
-        result = self._change_targets(self._body_materials, self._surface_materials, kind)
+        result = self._change_targets(self._appearance.body_materials, self._appearance.surface_materials, kind)
         if result is not None:
-            self._body_materials, self._surface_materials = result
+            self._appearance.body_materials, self._appearance.surface_materials = result
             self.changed.emit()
 
     @pyqtSlot(str, float)
     def setSelectedFinish(self, field, value):
         number = unit_value(value)
         if field not in ("roughness", "reflectivity") or number is None: return
-        result = self._change_targets(self._body_finishes, self._face_finishes, number, field)
+        result = self._change_targets(self._appearance.body_finishes, self._appearance.face_finishes, number, field)
         if result is not None:
-            self._body_finishes, self._face_finishes = result
+            self._appearance.body_finishes, self._appearance.face_finishes = result
             self.changed.emit()
 
     @pyqtSlot(str)
     def resetSelectedFinish(self, field):
         if field not in ("roughness", "reflectivity"): return
-        result = self._change_targets(self._body_finishes, self._face_finishes, "automatic", field)
+        result = self._change_targets(self._appearance.body_finishes, self._appearance.face_finishes, "automatic", field)
         if result is not None:
-            self._body_finishes, self._face_finishes = result
+            self._appearance.body_finishes, self._appearance.face_finishes = result
             self.changed.emit()
 
     @pyqtProperty(str, notify=changed)
     def paintKind(self): return self._paint_kind
 
     @pyqtProperty(int, notify=changed)
-    def paintedFaceCount(self): return len(self._surface_materials)
+    def paintedFaceCount(self): return len(self._appearance.surface_materials)
 
     @pyqtProperty(int, notify=changed)
-    def paintedBodyCount(self): return len(self._body_materials)
+    def paintedBodyCount(self): return len(self._appearance.body_materials)
 
     @pyqtProperty("QVariantList", notify=changed)
     def materialTypes(self):
         return [dict(kind=kind, label=MATERIAL_LABELS[index],
-            roughness=self._material_overrides.get(kind, {}).get("roughness", TYPE_PROFILES[index].roughness),
-            reflectivity=self._material_overrides.get(kind, {}).get("reflectivity", TYPE_PROFILES[index].reflectivity),
-            roughnessAuto="roughness" not in self._material_overrides.get(kind, {}),
-            reflectivityAuto="reflectivity" not in self._material_overrides.get(kind, {}))
+            roughness=self._appearance.material_overrides.get(kind, {}).get("roughness", TYPE_PROFILES[index].roughness),
+            reflectivity=self._appearance.material_overrides.get(kind, {}).get("reflectivity", TYPE_PROFILES[index].reflectivity),
+            roughnessAuto="roughness" not in self._appearance.material_overrides.get(kind, {}),
+            reflectivityAuto="reflectivity" not in self._appearance.material_overrides.get(kind, {}))
             for index, kind in enumerate(MATERIAL_TYPES)]
 
     @pyqtSlot(str, str, float)
     def setMaterialFinish(self, kind, field, value):
         number = unit_value(value)
         if self.busy or kind not in MATERIAL_TYPES or field not in ("roughness", "reflectivity") or number is None: return
-        self._material_overrides = material_overrides(self._material_overrides)
-        self._material_overrides.setdefault(kind, {})[field] = number
+        self._appearance.material_overrides = material_overrides(self._appearance.material_overrides)
+        self._appearance.material_overrides.setdefault(kind, {})[field] = number
         self._status = ""
         self.changed.emit()
 
     @pyqtSlot(str, str)
     def resetMaterialFinish(self, kind, field):
         if self.busy: return
-        row = self._material_overrides.get(kind)
+        row = self._appearance.material_overrides.get(kind)
         if row is not None: row.pop(field, None)
-        self._material_overrides = material_overrides(self._material_overrides)
+        self._appearance.material_overrides = material_overrides(self._appearance.material_overrides)
         self._status = ""
         self.changed.emit()
 
@@ -385,25 +384,25 @@ class ToolheadModels(QObject):
     @pyqtSlot(int)
     def paintSurface(self, surface):
         if surface not in self.mesh.present_surfaces: return
-        result = self._change_targets(self._body_materials, self._surface_materials,
+        result = self._change_targets(self._appearance.body_materials, self._appearance.surface_materials,
             self._paint_kind, selected_bodies=set(), selected_faces={surface})
         if result is not None:
-            self._body_materials, self._surface_materials = result
+            self._appearance.body_materials, self._appearance.surface_materials = result
             self.changed.emit()
 
     @pyqtSlot(int)
     def paintBody(self, body):
         if body not in self.mesh.present_bodies: return
-        result = self._change_targets(self._body_materials, self._surface_materials,
+        result = self._change_targets(self._appearance.body_materials, self._appearance.surface_materials,
             self._paint_kind, selected_bodies={body}, selected_faces=set())
         if result is not None:
-            self._body_materials, self._surface_materials = result
+            self._appearance.body_materials, self._appearance.surface_materials = result
             self.changed.emit()
 
     @pyqtSlot()
     def clearMaterialPaint(self):
         if not self.busy:
-            self._surface_materials, self._body_materials = {}, {}
+            self._appearance.surface_materials, self._appearance.body_materials = {}, {}
             self._status = ""
             self.changed.emit()
 
@@ -413,7 +412,7 @@ class ToolheadModels(QObject):
                      source=material.source) for material in self.mesh.materials]
 
     @pyqtProperty("QVariantList", notify=changed)
-    def rotors(self): return rotors(self._rotors, self.mesh)
+    def rotors(self): return rotors(self._appearance.rotors, self.mesh)
 
     @pyqtProperty("QVariantList", notify=changed)
     def bodies(self): return [dict(label=body.name, body=index) for index, body in enumerate(self.mesh.bodies) if index in self.mesh.present_bodies]
@@ -471,7 +470,7 @@ class ToolheadModels(QObject):
         if not checked:
             self._status = "Enter finite centre/axis values, a nonzero axis and visual RPM between 0 and 30,000."
             self.changed.emit(); return
-        alpha = opacity_colours(self.mesh, self._body_opacity, self._face_opacity)[:,3]
+        alpha = opacity_colours(self.mesh, self._appearance.body_opacity, self._appearance.face_opacity)[:,3]
         if len(np.unique(self.mesh.body_ids[(alpha > 0) & (alpha < .999)])) > 64:
             self._status = "Fan animation supports at most 64 translucent bodies."
             self.changed.emit(); return
@@ -480,7 +479,7 @@ class ToolheadModels(QObject):
         if len(others) >= MAX_ROTORS:
             self._status = "A toolhead supports at most eight animated bodies."
             self.changed.emit(); return
-        self._rotors = others + [row]
+        self._appearance.rotors = others + [row]
         self._rotor_candidate = row
         self.fanReadingsChanged.emit()
         self._status = "Visual rotation configured. Printer fan bindings only read telemetry."
@@ -489,7 +488,7 @@ class ToolheadModels(QObject):
     @pyqtSlot(int)
     def removeRotor(self, body):
         if self.busy: return
-        self._rotors = [row for row in self.rotors if row['body'] != body]
+        self._appearance.rotors = [row for row in self.rotors if row['body'] != body]
         self._rotor_candidate = {}
         self.fanReadingsChanged.emit()
         self.changed.emit()
@@ -497,45 +496,45 @@ class ToolheadModels(QObject):
     @pyqtSlot(float)
     def previewSurfaceDetail(self, value):
         if not self.busy:
-            self._surface_detail = surface_detail(value)
+            self._appearance.surface_detail = surface_detail(value)
             self.lightingPreviewChanged.emit()
 
     @pyqtSlot(float)
     def setSurfaceDetail(self, value):
         if not self.busy:
-            self._surface_detail = surface_detail(value)
+            self._appearance.surface_detail = surface_detail(value)
             self.changed.emit()
 
     def pickedLight(self, position, direction, surface=0):
-        if self.busy or len(self._lights) >= MAX_LIGHTS: return
-        self._lights = validated_lights(self._lights + [dict(position=position, direction=direction, surface=surface)])
+        if self.busy or len(self._appearance.lights) >= MAX_LIGHTS: return
+        self._appearance.lights = validated_lights(self._appearance.lights + [dict(position=position, direction=direction, surface=surface)])
         self.changed.emit()
 
     @pyqtSlot(int, bool)
     def setLightPaint(self, index, paint):
-        if self.busy or not 0 <= index < len(self._lights): return
-        self._lights[index]['paint'] = bool(paint)
+        if self.busy or not 0 <= index < len(self._appearance.lights): return
+        self._appearance.lights[index]['paint'] = bool(paint)
         self.changed.emit()
 
     @pyqtSlot(int)
     def removeLight(self, index):
-        if not self.busy and 0 <= index < len(self._lights):
-            del self._lights[index]
+        if not self.busy and 0 <= index < len(self._appearance.lights):
+            del self._appearance.lights[index]
             self.changed.emit()
 
     @pyqtSlot(int, str)
     def setLightColour(self, index, colour):
-        if self.busy or not 0 <= index < len(self._lights): return
-        updated = validated_lights([dict(self._lights[index], colour=colour)])
+        if self.busy or not 0 <= index < len(self._appearance.lights): return
+        updated = validated_lights([dict(self._appearance.lights[index], colour=colour)])
         if updated:
-            self._lights[index] = updated[0]
+            self._appearance.lights[index] = updated[0]
             self.changed.emit()
 
     def _brightness(self, index, brightness):
-        if self.busy or not 0 <= index < len(self._lights): return False
-        updated = validated_lights([dict(self._lights[index], brightness=brightness)])
+        if self.busy or not 0 <= index < len(self._appearance.lights): return False
+        updated = validated_lights([dict(self._appearance.lights[index], brightness=brightness)])
         if not updated: return False
-        self._lights[index] = updated[0]
+        self._appearance.lights[index] = updated[0]
         return True
 
     @pyqtSlot(int, float)
@@ -553,25 +552,19 @@ class ToolheadModels(QObject):
     def beginEdit(self):
         self.cancelColourChoice()
         if not self.busy:
-            self._edit_checkpoint = (self._draft_identity, self._mesh, list(self._texts),
-                                     self._manual, self.lights, self._surface_detail, self.rotors,
-                                     self.materialOverrides, self.surfaceMaterials, self.bodyOpacity, self.faceOpacity, self.bodyMaterials, self.bodyFinishes, self.faceFinishes, self.bodyColours, self.faceColours)
+            self._edit_checkpoint = self._appearance.checkpoint(self._draft_identity, self._mesh)
 
     @pyqtSlot(bool)
     def endEdit(self, accept):
         self.cancelColourChoice()
         checkpoint, self._edit_checkpoint = self._edit_checkpoint, None
-        if checkpoint is None or accept or self.busy: return
-        identity, mesh, texts, manual, lights, detail, saved_rotors, finishes, painted, bodies, faces, body_materials, body_finishes, face_finishes, body_colours, face_colours = checkpoint
-        if identity != self._identity() or mesh is not self._mesh: return
-        self._texts, self._manual, self._lights = texts, manual, lights
-        self._surface_detail = detail
-        self._material_overrides, self._surface_materials = finishes, painted
-        self._body_opacity, self._face_opacity = bodies, faces
-        self._body_colours, self._face_colours = body_colours, face_colours
-        self._body_materials, self._body_finishes, self._face_finishes = body_materials, body_finishes, face_finishes
+        if checkpoint is None or accept or self.busy:
+            return
+        restored = checkpoint.restore(self._identity(), self._mesh)
+        if restored is None:
+            return
+        self._appearance = restored
         self._opacity_bodies, self._opacity_faces = set(), set()
-        self._rotors = saved_rotors
         self._rotor_candidate = {}
         self.fanReadingsChanged.emit()
         self.changed.emit()
@@ -597,7 +590,7 @@ class ToolheadModels(QObject):
         self.elapsedChanged.emit()
 
     @pyqtProperty(bool, notify=changed)
-    def busy(self): return self._worker is not None
+    def busy(self): return self._imports.busy
 
     def clear_runtime_downloads(self):
         """Remove only the STEP reader/helper cache, never saved model assets."""
@@ -620,27 +613,27 @@ class ToolheadModels(QObject):
     def valid(self): return not self.busy and self.tip is not None and not self._pending
 
     @pyqtProperty(bool, notify=changed)
-    def manual(self): return self._manual
+    def manual(self): return self._appearance.manual
 
     @pyqtProperty(str, notify=changed)
-    def tipX(self): return self._texts[0]
+    def tipX(self): return self._appearance.texts[0]
 
     @pyqtProperty(str, notify=changed)
-    def tipY(self): return self._texts[1]
+    def tipY(self): return self._appearance.texts[1]
 
     @pyqtProperty(str, notify=changed)
-    def tipZ(self): return self._texts[2]
+    def tipZ(self): return self._appearance.texts[2]
 
     def _set_tip(self, point, manual):
-        self._texts = [format(v, ".6g") for v in point]
-        self._manual = manual
+        self._appearance.texts = [format(v, ".6g") for v in point]
+        self._appearance.manual = manual
         self.changed.emit()
 
     @pyqtSlot(int, str)
     def setTip(self, axis, text):
         if axis not in (0, 1, 2) or self.busy: return
-        self._texts[axis] = text
-        self._manual = True
+        self._appearance.texts[axis] = text
+        self._appearance.manual = True
         self.changed.emit()
 
     def picked(self, point):
@@ -654,16 +647,15 @@ class ToolheadModels(QObject):
         self.cancelColourChoice()
         self._stop_elapsed()
         self._edit_checkpoint = None
-        self._generation += 1
-        self._cancelled.set()
+        self._imports.cancel()
         self._pending = ""
         self._imported = False
         config = self._config()
-        self._lights = validated_lights(getattr(config, "toolhead_lights", []))
-        self._surface_detail = surface_detail(getattr(config, "toolhead_surface_detail", .35))
-        self._material_overrides = material_overrides(getattr(config, "toolhead_material_overrides", {}))
+        self._appearance.lights = validated_lights(getattr(config, "toolhead_lights", []))
+        self._appearance.surface_detail = surface_detail(getattr(config, "toolhead_surface_detail", .35))
+        self._appearance.material_overrides = material_overrides(getattr(config, "toolhead_material_overrides", {}))
         self._rotor_candidate = {}
-        self._rotors = rotors(getattr(config, "toolhead_rotors", []))
+        self._appearance.rotors = rotors(getattr(config, "toolhead_rotors", []))
         self._draft_identity = self._identity()
         self._key = getattr(config, "toolhead_model", "")
         self._name = getattr(config, "toolhead_model_name", "")
@@ -677,15 +669,15 @@ class ToolheadModels(QObject):
                 self._key = self._name = ""
                 missing = True
         tip = valid_tip(getattr(config, "toolhead_tip", [])) if not missing else None
-        if missing: self._rotors, self._lights = [], []
-        self._surface_materials = painted_materials(getattr(config, "toolhead_surface_materials", {}), self.mesh) if not missing else {}
-        self._body_materials = painted_materials(getattr(config, "toolhead_body_materials", {}), self.mesh, bodies=True) if not missing else {}
-        self._body_finishes = local_finish_overrides(getattr(config, "toolhead_body_finishes", {}), self.mesh, bodies=True) if not missing else {}
-        self._face_finishes = local_finish_overrides(getattr(config, "toolhead_face_finishes", {}), self.mesh) if not missing else {}
-        self._body_opacity = opacity_overrides(getattr(config, "toolhead_body_opacity", {}), self.mesh, bodies=True) if not missing else {}
-        self._face_opacity = opacity_overrides(getattr(config, "toolhead_face_opacity", {}), self.mesh) if not missing else {}
-        self._body_colours = colour_overrides(getattr(config, "toolhead_body_colours", {}), self.mesh, bodies=True) if not missing else {}
-        self._face_colours = colour_overrides(getattr(config, "toolhead_face_colours", {}), self.mesh) if not missing else {}
+        if missing: self._appearance.rotors, self._appearance.lights = [], []
+        self._appearance.surface_materials = painted_materials(getattr(config, "toolhead_surface_materials", {}), self.mesh) if not missing else {}
+        self._appearance.body_materials = painted_materials(getattr(config, "toolhead_body_materials", {}), self.mesh, bodies=True) if not missing else {}
+        self._appearance.body_finishes = local_finish_overrides(getattr(config, "toolhead_body_finishes", {}), self.mesh, bodies=True) if not missing else {}
+        self._appearance.face_finishes = local_finish_overrides(getattr(config, "toolhead_face_finishes", {}), self.mesh) if not missing else {}
+        self._appearance.body_opacity = opacity_overrides(getattr(config, "toolhead_body_opacity", {}), self.mesh, bodies=True) if not missing else {}
+        self._appearance.face_opacity = opacity_overrides(getattr(config, "toolhead_face_opacity", {}), self.mesh) if not missing else {}
+        self._appearance.body_colours = colour_overrides(getattr(config, "toolhead_body_colours", {}), self.mesh, bodies=True) if not missing else {}
+        self._appearance.face_colours = colour_overrides(getattr(config, "toolhead_face_colours", {}), self.mesh) if not missing else {}
         self._opacity_bodies, self._opacity_faces = set(), set()
         self._set_tip(tip or self.mesh.automatic_tip, tip is not None)
 
@@ -696,14 +688,10 @@ class ToolheadModels(QObject):
         self._pending = self._key = self._name = self._status = ""
         self._imported = False
         self._mesh = default_mesh()
-        self._surface_materials = {}
-        self._body_opacity, self._face_opacity = {}, {}
-        self._body_colours, self._face_colours = {}, {}
-        self._body_materials, self._body_finishes, self._face_finishes = {}, {}, {}
+        self._appearance.reset_model()
         self._opacity_bodies, self._opacity_faces = set(), set()
-        self._rotors, self._rotor_candidate = [], {}
+        self._rotor_candidate = {}
         self.automatic()
-        self._lights = []
         self.changed.emit()
 
     @pyqtSlot(str)
@@ -755,66 +743,40 @@ class ToolheadModels(QObject):
 
     @pyqtSlot()
     def cancel(self):
-        self._generation += 1
-        self._cancelled.set()
+        self._imports.cancel()
         self._pending = ""
         self._status = "Finishing cancelled import…" if self.busy else ""
         self.changed.emit()
 
     def _start(self, path, step):
-        self._generation += 1
-        generation = self._generation
-        self._cancelled = cancel = threading.Event()
         self._status = "Reading model…"
         self._started = time.monotonic()
         self._elapsed_timer.start()
         self.elapsedChanged.emit()
         self._draft_identity = self._identity()
-
-        def run():
-            mesh, key, error = None, "", ""
-            try:
-                if step:
-                    runtime = install_runtime(self.runtime_root, cancel,
-                        lambda text: self.progress.emit(generation, text))
-                    self.progress.emit(generation, "Converting STEP assembly…")
-                    mesh = read_step(path, runtime, cancel,
-                        progress=lambda text: self.progress.emit(generation, text))
-                else:
-                    mesh = read_stl(path, cancel)
-            except Exception as failure:
-                error = str(failure) or type(failure).__name__
-            try: self.completed.emit(generation, (mesh, key, os.path.basename(path)), error, path)
-            except RuntimeError: pass  # host shutdown retires the QObject
-
-        self._worker = threading.Thread(target=run, name="MPF toolhead import", daemon=True)
-        self._worker.start()
+        self._imports.start(path, step)
         self.changed.emit()
 
     def _progress(self, generation, text):
-        if generation == self._generation and not self._closed:
+        if generation == self._imports.generation and not self._imports.closed:
             self._status = text
             self.changed.emit()
 
     def _complete(self, generation, result, error, _path):
-        self._worker = None
+        current = self._imports.receive(generation)
         self._stop_elapsed()
-        if self._closed: return
-        if generation != self._generation or self._identity() != self._draft_identity:
+        if self._imports.closed: return
+        if not current or self._identity() != self._draft_identity:
             self._status = ""
             self.changed.emit()
             return
         if error:
             self._status = "Import failed: " + error
         else:
-            self._mesh, self._key, self._name = result
-            self._surface_materials = {}
-            self._body_opacity, self._face_opacity = {}, {}
-            self._body_colours, self._face_colours = {}, {}
-            self._body_materials, self._body_finishes, self._face_finishes = {}, {}, {}
+            self._mesh, self._key, self._name = result.mesh, result.key, result.name
+            self._appearance.reset_model()
             self._opacity_bodies, self._opacity_faces = set(), set()
-            self._lights = []
-            self._rotors, self._rotor_candidate = [], {}
+            self._rotor_candidate = {}
             self._imported = True
             self._status = f"Ready · {len(self.mesh.triangles):,} triangles"
             self.automatic()
@@ -829,16 +791,14 @@ class ToolheadModels(QObject):
             self._key = self.store.publish(self.mesh)
             self._imported = False
         return {"toolhead_model": self._key, "toolhead_model_name": self._name,
-                "toolhead_lights": self.lights, "toolhead_surface_detail": self._surface_detail, "toolhead_rotors": self.rotors,
+                "toolhead_lights": self.lights, "toolhead_surface_detail": self._appearance.surface_detail, "toolhead_rotors": self.rotors,
                 "toolhead_material_overrides": self.materialOverrides, "toolhead_surface_materials": self.surfaceMaterials,
                 "toolhead_body_materials": self.bodyMaterials, "toolhead_body_finishes": self.bodyFinishes, "toolhead_face_finishes": self.faceFinishes,
                 "toolhead_body_opacity": self.bodyOpacity, "toolhead_face_opacity": self.faceOpacity,
                 "toolhead_body_colours": self.bodyColours, "toolhead_face_colours": self.faceColours,
-                "toolhead_tip": list(self.tip) if self._manual else []}
+                "toolhead_tip": list(self.tip) if self._appearance.manual else []}
 
     def close(self):
         self.cancelColourChoice()
         self._stop_elapsed()
-        self._closed = True
-        self._generation += 1
-        self._cancelled.set()
+        self._imports.close()

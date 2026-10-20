@@ -1,3 +1,12 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
+// 2026-10-03 [13b277f] Keep a stale signal visible, contain the camera seam, and give alerts reach
+// 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
+
 import QtQuick 2.15
 import UM 1.5 as UM
 

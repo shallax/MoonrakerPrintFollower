@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable preview follower policy contracts."""
 from tests import preview_family_support as harness
 

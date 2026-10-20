@@ -1,4 +1,13 @@
 .pragma library
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-09-30 [903acdb] Asset validity joins the readiness owner
+// 2026-09-27 [43ab36d] Accelerate follower rendering with retained GPU shader geometry
+// 2026-09-26 [23e3c8a] refactor: extract authoritative pure exact-scene compositor policy
+
 // One Qt-free policy for asynchronous paint transactions and scene readiness.
 // All functions are pure: only PlateProgressFace owns Canvas and Image objects.
 function empty(epoch,world) {

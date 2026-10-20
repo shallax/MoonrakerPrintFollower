@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-29 [90e8a59] Organise source by feature ownership and enforce domain boundaries
+# 2026-09-22 [bb87d0b] 4.6.0: the release-candidate remediation pass
+# 2026-09-10 [713f61c] 3.5.0 groundwork: aux-fed temperature history, charts and the shared pop-over shell
+
 """Pure temperature history: one ring buffer per sensor, fed by the
 auxiliary poll.
 

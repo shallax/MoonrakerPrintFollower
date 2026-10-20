@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-05 [b0dbf7f] v3: add integrated Moonraker upload and print output device
+
 """Cura output-device adapter. Upload policy and file preparation are composed."""
 
 from dataclasses import replace

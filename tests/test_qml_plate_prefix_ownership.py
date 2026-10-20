@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Inspect standing prefix and file-reference ownership directly.
+# 2026-10-03 [6c323ef] Read the prefix takeover from the composition, not a fringe count
+# 2026-10-03 [d8fd7da] Name the term that holds the prefix takeover
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable qml plate prefix ownership contracts."""
 from tests import qml_engine_support as harness
 
@@ -134,7 +144,7 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         """
         from PyQt6.QtCore import QMetaObject, Q_RETURN_ARG, QVariant
         terms = QMetaObject.invokeMethod(face, "_holdTerms", Q_RETURN_ARG(QVariant))
-        texture = face.property("_prefixTexture")
+        texture = harness.delivery(face).property("prefixTexture")
         if hasattr(texture, "toVariant"):
             texture = texture.toVariant()
         return "%s | texture=%s | model=%s" % (terms, dict(texture or {}), layer.prefixData)
@@ -155,7 +165,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             "motions": 21,
         }
         prefix_split = 10
-        from mpf.plate.PlateQt import render_layer_prefix, png_file
+        from mpf.plate.PlateRaster import render_layer_prefix
+        from mpf.plate.RasterFiles import png_file
         layer = self._native_layer(payload, face)
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):
@@ -275,26 +286,26 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
         face = component.createWithInitialProperties({"printerModel": first})
         self.assertIsNotNone(face, harness.qml_error_report(component))
         self.pump(10)
-        owner = face.property("_assetOwner")
+        owner = harness.delivery(face).property("assetOwner")
         self.assertIn(owner, first.asset_owners)
         prefix = "file:///tmp/mpf/standing-prefix.png"
         full = "file:///tmp/mpf/held-full.png"
         warm = "file:///tmp/mpf/gesture-entry.png"
-        face.setProperty("_standingPrefix", {"source": prefix, "from": 10,
+        harness.delivery(face).setProperty("standingPrefix", {"source": prefix, "from": 10,
                          "anchor": -1, "world": "lease-test", "view": ""})
-        face.setProperty("_standingFull", {"source": full, "travels": "",
+        harness.delivery(face).setProperty("standingFull", {"source": full, "travels": "",
                          "anchor": -1, "world": "lease-test"})
-        face.setProperty("_gestureNavSource", warm)
+        harness.delivery(face).setProperty("gestureSource", warm)
         self.pump(10)
         self.assertTrue({prefix, full, warm}.issubset(first.asset_owners[owner]))
-        face.setProperty("_standingPrefix", None)
+        harness.delivery(face).setProperty("standingPrefix", None)
         self.pump(5)
         self.assertNotIn(prefix, first.asset_owners[owner])
         face.setProperty("printerModel", second)
         self.pump(10)
         self.assertFalse(first.asset_owners)
         self.assertTrue({full, warm}.issubset(
-            second.asset_owners[face.property("_assetOwner")]))
+            second.asset_owners[harness.delivery(face).property("assetOwner")]))
         face.deleteLater()
         harness.QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         self.pump(10)
@@ -316,7 +327,8 @@ class PlateFaceRenderTests(harness.PlateFaceRenderTests):
             "motions": 21,
         }
         prefix_split = 10
-        from mpf.plate.PlateQt import render_layer_prefix, png_file
+        from mpf.plate.PlateRaster import render_layer_prefix
+        from mpf.plate.RasterFiles import png_file
         layer = self._native_layer(payload, face)
         plot_value = face.property("plot")
         if hasattr(plot_value, "toVariant"):

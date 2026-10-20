@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [3174be6] Keep pre-commit fast and preserve fragmented loopback frames
+# 2026-10-01 [c541945] Preserve websocket close delivery and synchronize handoff test
+# 2026-09-11 [df499ac] 4.0.0: add the websocket connection owner with real-socket loopback tests
+
 """Real-socket tests for MoonrakerSocket against a scripted loopback server."""
 from __future__ import annotations
 

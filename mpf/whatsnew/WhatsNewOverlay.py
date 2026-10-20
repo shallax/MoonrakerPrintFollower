@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-03 [81b4bbe] Report the offer's wire honestly and state the alert path in the README
+# 2026-10-03 [0bb9b65] Pin the evidence drive to its context and cover the store's refusals
+# 2026-09-15 [cf5323d] 4.1.0: the one-time what's-new popup, proven through the harness
+
 """The what's-new overlay's window owner: the once-per-version offer
 and the Popup's creation on Cura's own engine.
 

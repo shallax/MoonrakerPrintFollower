@@ -1,4 +1,13 @@
 #!/bin/sh
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-13 [e9c5c69] CI: run the harness smoke set on every PR
+
 # The branch and PR harness check: the smoke set against the primary pinned
 # Cura, twice in a row — the second unit proves the boot survives the
 # first unit's debris (Cura's owner-only writes broke the next unit's
@@ -9,7 +18,7 @@ cd "$root"
 
 HARNESS_DIR="${HARNESS_DIR:-/tmp/mpf}"
 CONTAINER="${HARNESS_CONTAINER:-mpf-cura-ci}"
-PRIMARY="${CURA_PRIMARY:-5.13.0}"
+PRIMARY="${CURA_PRIMARY:-5.14.0-beta.1}"
 RUN_ROOT="$HARNESS_DIR/ui-artifacts/runs/$(date +%Y-%m-%d-%H%M%S)"
 
 mkdir -p "$HARNESS_DIR" "$RUN_ROOT"

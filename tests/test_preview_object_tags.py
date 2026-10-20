@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
+# 2026-10-08 [ed29287] Wait for visible checkbox theme transitions in tests
+# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
+
 """Object banner placement and real-engine Preview overlay checks."""
 from __future__ import annotations
 

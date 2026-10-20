@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Exercise restrictive wheel permissions and cached binding repair.
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
+# 2026-09-24 [bf703bf] gate: every unit runs on every platform - 17 units x 3 OS
+
 """The platform dispatch's pins, host-safe on any platform.
 
 tests/harness/native_host.py chooses the capture device, the
@@ -13,20 +23,91 @@ Run directly (like the other harness files):
 """
 
 import json
+import os
 import pathlib
+import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import unittest
+import zipfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+if str(HERE.parents[1]) not in sys.path:
+    sys.path.insert(0, str(HERE.parents[1]))
 
 import native_host
 from window_geometry import fit_content_rectangle, verified_geometry
+from tools.stage_qtest_runtime import stage_windows_runtime
 
 
 class AvailableDesktopTests(unittest.TestCase):
+    def test_windows_runtime_repairs_missing_dll_without_replacing_other_libraries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            package = root / "PyQt6"
+            binaries = package / "Qt6/bin"
+            binaries.mkdir(parents=True)
+            core = binaries / "Qt6Core.dll"
+            core.write_bytes(b"Cura QtCore")
+            binding = package / "QtTest.pyd"
+            binding.write_bytes(b"existing binding")
+            wheel = root / "runtime.whl"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr("PyQt6/Qt6/bin/Qt6Test.dll", b"matching QtTest runtime")
+                archive.writestr("PyQt6/Qt6/bin/Qt6Core.dll", b"must not replace Cura")
+                archive.writestr("../unexpected", b"must not extract")
+            for existing_binding in (True, False):
+                with self.subTest(existing_binding=existing_binding):
+                    target = stage_windows_runtime(wheel, package)
+                    self.assertEqual(target, binaries / "Qt6Test.dll")
+                    self.assertEqual(target.read_bytes(), b"matching QtTest runtime")
+                    self.assertEqual(core.read_bytes(), b"Cura QtCore")
+                    self.assertFalse((root / "unexpected").exists())
+                    self.assertEqual(stage_windows_runtime(root / "missing.whl", package), target)
+                    target.unlink()
+                    if binding.exists():
+                        self.assertEqual(binding.read_bytes(), b"existing binding")
+                        binding.unlink()
+            for payload in (None, b""):
+                with zipfile.ZipFile(wheel, "w") as archive:
+                    if payload is not None:
+                        archive.writestr("PyQt6/Qt6/bin/Qt6Test.dll", payload)
+                with self.assertRaises((KeyError, ValueError)):
+                    stage_windows_runtime(wheel, package)
+                self.assertFalse((binaries / "Qt6Test.dll").exists())
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("unzip"), "POSIX wheel permissions")
+    def test_qtest_wheel_binding_is_readable_after_extraction_and_cached_repair(self):
+        script = HERE.parents[1] / "tools/qtest_binding_permissions.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            wheel = root / "pyqt6.whl"
+            member = zipfile.ZipInfo("PyQt6/QtTest.abi3.so")
+            member.create_system = 3
+            member.external_attr = 0o600 << 16
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr(member, b"binding fixture")
+            subprocess.run(["unzip", "-q", "-j", str(wheel), "-d", str(root)], check=True)
+            binding = root / "QtTest.abi3.so"
+            self.assertEqual(stat.S_IMODE(binding.stat().st_mode), 0o600)
+            for mode in (0o600, 0o400):
+                with self.subTest(existing_mode=oct(mode)):
+                    binding.chmod(mode)
+                    subprocess.run(["sh", str(script), str(binding)], check=True)
+                    self.assertEqual(stat.S_IMODE(binding.stat().st_mode), 0o644)
+                    self.assertEqual(binding.read_bytes(), b"binding fixture")
+            for invalid in (root / "missing", root):
+                result = subprocess.run(["sh", str(script), str(invalid)], capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+            link = root / "link"
+            link.symlink_to(binding)
+            self.assertNotEqual(subprocess.run(["sh", str(script), str(link)],
+                                              capture_output=True).returncode, 0)
+
     def test_all_platforms_stage_the_drivers_geometry_import(self):
         tools = HERE.parents[1] / "tools"
         for name in ("ui_test.sh", "native_harness.sh", "native_harness.ps1"):

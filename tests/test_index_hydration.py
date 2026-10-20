@@ -1,7 +1,35 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Supply consumer retention windows through the residency owner.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable index hydration contracts."""
 from tests import index_plate_support as harness
 
 class HydrationWindowTests(harness.HydrationWindowTests):
+    def test_recovery_demands_exact_arrays_even_when_manual_gpu_geometry_is_ready(self):
+        index = self._bind(layers=8)
+        self.service._residency.set_window("live", 0)
+        self.service._residency.set_window("manual", 5)
+        self.service._manual_anchor = 5
+        self.service._gpu_consumers.add("popover")
+        from unittest.mock import patch
+        with patch.object(self.service, "_presentation_source", return_value="decoded"):
+            self.service.request_hydration(5, exact=True)
+            self.assertEqual(self.service._hydrate_arrays, {4, 5, 6})
+            self.assertEqual(self.service._hydrate, set())
+            self.service.request_hydration(5, exact=True)
+            self.assertEqual(self.service._hydrate_arrays, {4, 5, 6})
+            index.hydrated_layers.update((4, 5, 6))
+            self.service._hydrate_arrays.clear()
+            self.service.request_hydration(5, exact=True)
+            self.assertEqual(self.service._hydrate_arrays, set())
+
     def test_a_hydration_request_covers_the_layers_around_the_layer(self):
         self._bind()
         self.service.request_hydration(2)
@@ -94,8 +122,7 @@ class HydrationWindowTests(harness.HydrationWindowTests):
         # idempotency guard swallowed the whole call, so a manual
         # window that lost its demand never came back.
         self._bind(layers=8)
-        index = self.service._view._index
-        index.followed_layer = 1
+        self.service._residency.set_window("live", 1)
         self.service.set_manual_anchor(5)
         self.service._hydrate.clear()
         self.service.set_manual_anchor(5)
@@ -109,39 +136,39 @@ class HydrationWindowTests(harness.HydrationWindowTests):
         self.assertEqual(self.service._hydrate, {4, 6})
 
     def test_a_moved_anchor_retops_the_window(self):
-        index = self._bind(hydrated=(4,))
+        self._bind(hydrated=(4,))
         self.service._hydrate = {0, 1, 2}
         self.service.set_followed_layer(3)
-        self.assertEqual(index.followed_layer, 3)
+        self.assertEqual(self.service._residency.anchor("live"), 3)
         # The anchor is pruned to its own window, then topped back up:
         # the layer the print has just left is exactly the ghost the face
         # wants, and it is not in the request any more.
         self.assertEqual(self.service._hydrate, {2, 3, 4})
 
     def test_a_manual_anchor_demands_its_window_beside_the_live_one(self):
-        index = self._bind(layers=8)
-        index.followed_layer = 1
+        self._bind(layers=8)
+        self.service._residency.set_window("live", 1)
         self.service.set_manual_anchor(5)
         # The frozen layer's window is asked for on its own demand path:
         # re-anchoring the live window would evict the live layer the
         # dot, the split and the printed fill all read.
         self.assertEqual(self.service._hydrate, {4, 5, 6})
-        self.assertEqual(index.manual_anchor, 5)
+        self.assertEqual(self.service._residency.anchor("manual"), 5)
         self.service._hydrate.clear()
         self.service.request_hydration(1)
         self.assertEqual(self.service._hydrate, {0, 1, 2})
         # Rejoining the print drops the frozen demand.
         self.service.set_manual_anchor(None)
-        self.assertIsNone(index.manual_anchor)
+        self.assertIsNone(self.service._residency.anchor("manual"))
         self.assertEqual(self.service._hydrate, {0, 1, 2})
 
     def test_a_manual_anchor_outside_the_index_is_never_asked_for(self):
-        index = self._bind(layers=8)
+        self._bind(layers=8)
         self.service.set_manual_anchor(11)
         # A layer outside the file is no anchor: nothing is demanded and
         # the retention bound keeps the live window alone.
         self.assertEqual(self.service._hydrate, set())
-        self.assertIsNone(index.manual_anchor)
+        self.assertIsNone(self.service._residency.anchor("manual"))
 
     def test_the_frozen_anchor_reaches_an_index_built_after_the_detach(self):
         self._bind(layers=8)
@@ -149,10 +176,10 @@ class HydrationWindowTests(harness.HydrationWindowTests):
         # the anchor yet.
         self.service._view = None
         self.service.set_manual_anchor(6)
-        index = self._bind(layers=8)
+        self._bind(layers=8)
         # The poll's advance hands the held anchor to the new index.
         self.service._apply_manual_anchor()
-        self.assertEqual(index.manual_anchor, 6)
+        self.assertEqual(self.service._residency.anchor("manual"), 6)
 
     def test_the_full_marker_draws_every_motion_of_the_frozen_layer(self):
         # A seek lands the layer at 100% (the live request): the FULL
@@ -246,11 +273,11 @@ class HydrationWindowTests(harness.HydrationWindowTests):
         self.assertIsNotNone(second["current"])
 
     def test_a_request_outside_the_followed_window_is_not_queued(self):
-        index = self._bind()
-        index.followed_layer = 0
+        self._bind()
+        self.service._residency.set_window("live", 0)
         self.service.request_hydration(4)
         self.assertEqual(self.service._hydrate, set())
-        index.followed_layer = None
+        self.service._residency.set_window("live", None)
         self.service.request_hydration(4)
         self.assertEqual(self.service._hydrate, {3, 4})
 

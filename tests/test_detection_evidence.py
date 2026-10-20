@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-10-03 [0bb9b65] Pin the evidence drive to its context and cover the store's refusals
+# 2026-10-03 [950d97a] Keep the alert's frame and timeline, and carry it to the desktop
+
 """The alert evidence store: frames, per-print timelines, and the bounds
 that keep both finite."""
 

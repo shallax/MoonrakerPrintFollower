@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Verify shared geometry and modular component ownership after extraction.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-28 [fb91fc1] Enforce 95 percent coverage for every plugin file
+
 """Rendering contract for the retained GPU stroke material."""
 
 from array import array
@@ -69,7 +79,7 @@ class StrokeMaterialTests(unittest.TestCase):
         self.assertEqual(values[24:28], (1.0, 2.5, 1.0, 1.0))
 
     def test_cancelled_pack_and_stdlib_optional_metrics(self):
-        from mpf.plate.GpuStrokeMaterial import _pack_stdlib, pack_shader
+        from mpf.plate.ToolpathGeometry import _pack_stdlib, pack_shader
 
         cancelled = threading.Event()
         cancelled.set()

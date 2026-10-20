@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Verify shared geometry and modular component ownership after extraction.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-27 [dd99358] Mirror Cura preview colours and travel states and composite ghost opacity on GPU
+
 """Cura travel categories across layers, tools, caches and rendering paths."""
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -75,8 +85,9 @@ class TravelStateTests(unittest.TestCase):
         from PyQt6.QtGui import QGuiApplication
         from PyQt6.QtQuick import QQuickWindow
         from PyQt6 import sip
-        from mpf.plate.GpuFollower import GpuFollower, prepare
-        from mpf.plate.GpuStrokeMaterial import pack_shader
+        from mpf.plate.GpuFollower import GpuFollower
+        from mpf.plate.ToolpathGeometry import prepare
+        from mpf.plate.ToolpathGeometry import pack_shader
         from mpf.plate.PlateQt import qml_geometry
         app = QGuiApplication.instance() or QGuiApplication([])
         groups = {name: [((0, i, i), (10, i, i))] for i,name in enumerate(TRAVEL_NAMES)}

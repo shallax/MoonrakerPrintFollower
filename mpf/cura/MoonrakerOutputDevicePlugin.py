@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+# 2026-09-05 [0b33c68] v3: register integrated Moonraker output device
+
 from __future__ import annotations
 
 
@@ -251,6 +261,17 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 request_monitor_download=self._follower.confirmDownloadForMonitor,
                 request_plate_anchor=self._follower.setPlateAnchor,
                 request_plate_split=self._follower.setPlateSplit,
+                recovery_selection=getattr(self._follower, "recoverySelection", None),
+                recovery_state=getattr(self._follower, "recoveryState", None),
+                recovery_plan=getattr(self._follower, "recoveryPlan", None),
+                recovery_review=getattr(self._follower, "recoveryReview", None),
+                recovery_start=getattr(self._follower, "recoveryStart", None),
+                recovery_cancel=getattr(self._follower, "recoveryCancel", None),
+                recovery_suggest=getattr(self._follower, "recoverySuggest", None),
+                recovery_files=getattr(self._follower, "recoveryFiles", None),
+                recovery_list_files=getattr(self._follower, "recoveryListFiles", None),
+                recovery_select_file=getattr(self._follower, "recoverySelectFile", None),
+                recovery_changed=getattr(self._follower, "recoveryChanged", None),
                 request_follower_popover_open=getattr(self._follower, "setFollowerPopoverOpen", None),
                 # The popover's pause block and its three intents (the
                 # capability-guarded form, like the demand gate above:

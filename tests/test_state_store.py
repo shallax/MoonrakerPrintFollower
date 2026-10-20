@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-15 [fb627c3] 4.2.0 state store: the explicit owner of the Monitor's persisted chrome —
+#   read-modify-write merges that preserve foreign keys (4.3.0's store consumes the same file), the one-time
+#   migration's deliberate replace, and rate-limited failure notes through the console with a per-session latch
+
 """Pure tests for the 4.2.0 StateStore (F11/A6): the file semantics
 the model's persistence now delegates to."""
 import json

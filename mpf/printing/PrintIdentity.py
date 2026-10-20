@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-15 [ad303eb] the hourglass clear: skip only the improve's own publish, settle the clear before the
+#   values build, and end the hourglass outright on a printer switch — the binding-reset and download-failure
+#   semantics preserved with their tests
+
 """Print-identity helpers shared by the state and the coordinator."""
 from __future__ import annotations
 def index_view_for_print(view, filename):

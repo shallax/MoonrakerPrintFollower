@@ -1,4 +1,13 @@
 #!/bin/sh
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
+# 2026-09-10 [2293ce1] Filament readouts, the Last-action row, console feed fixes and the capture gates
+
 # Two full capture runs in the pinned container must be byte-identical.
 # The harness freezes every live input (the wall clock included), so any
 # difference between two runs means a new unpinned source leaked in —

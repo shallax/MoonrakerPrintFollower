@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-20 [ced0e6b] 4.6.0: the motion-edge geometry repair, real G2/G3 arcs and the layer-290 fixture
+
 """The commanded path of one arc motion: the plane it turns in, the
 direction and the length of its sweep, the helix along the third axis,
 and the live position measured against it.

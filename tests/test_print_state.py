@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-07 [2ec6e6e] Harden lifecycle ownership and race guards
+
 """PrintState domain: immutable snapshots and the single LayerResolver."""
 from __future__ import annotations
 
@@ -37,6 +47,26 @@ class PrintStateTests(unittest.TestCase):
         index = SimpleNamespace(ranges=((0, 10), (10, 20)), current_layer_map={5: 1}, layer_at=lambda p: 0)
         self.assertEqual(resolver.resolve({"print_stats": {"info": {"current_layer": 5}}}, PrinterConfig(), index).index, 1)
         self.assertEqual(resolver.resolve({"virtual_sdcard": {"file_position": 5}}, PrinterConfig(), index).index, 0)
+
+    def test_comment_only_layer_numbers_do_not_override_printer_numbering(self):
+        from mpf.gcode.GCodeIndex import build_index_from_bytes
+
+        for marker in (";LAYER:{layer}", "; layer num/total_layer_count: {human}/3"):
+            data = "".join(marker.format(layer=n, human=n + 1) +
+                           f"\nG1 X{n + 1} Z{(n + 1) * .2} E{n + 1}\n"
+                           for n in range(3)).encode()
+            index = build_index_from_bytes(data)
+            for one_based in (True, False):
+                resolver = LayerResolver()
+                config = PrinterConfig(moonraker_layer_is_one_based=one_based)
+                for layer in range(3):
+                    with self.subTest(marker=marker, one_based=one_based, layer=layer):
+                        # No Cura height table or metadata is available to
+                        # conceal an incorrect comment-derived mapping.
+                        result = resolver.resolve({"print_stats": {"info": {
+                            "current_layer": layer + int(one_based)}}}, config, index)
+                        self.assertEqual(result.index, layer)
+                        self.assertEqual(result.source, "Moonraker current_layer")
 
     def test_z_hop_does_not_advance_physical_layer_without_extrusion(self):
         resolver = LayerResolver()

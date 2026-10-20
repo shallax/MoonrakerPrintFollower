@@ -2,6 +2,134 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 6.0.0
+
+- Run Windows scanning and background layer preparation in disposable processes
+  to keep webcam and UI callbacks responsive; preserve progress, foreground
+  priority, cancellation and cache validation. Prepare layers with up to eight
+  parallel workers, size result reads to their actual payloads, and remove
+  per-motion allocation overhead from metric and object summaries.
+
+- Share recovery travel actions between command generation and confirmation;
+  refuse an altered itinerary after review. Separate rendering/file lifetime,
+  indexing residency/tracking, settings validation and application workflows
+  into independently testable owners. View, delivery and overlay QML components
+  own their lifecycle state through explicit ports.
+- Separate toolhead import jobs and named appearance checkpoints, detection
+  attestation/actions and host effects, streaming multipart ownership, printer
+  object classification and structured recovery refusals. Extend the reusable
+  library with narrow raster/scene-graph imports, portable cache/residency,
+  lexical queries and NumPy bed-mesh arrays. Qualify Python/JavaScript preview
+  colours against shared reference cases.
+
+- List all unclassified recovery commands together, with explicit directions to
+  the macro lists, Add, Save and Check G-code. Give setup tabs bold titles and
+  group recovery controls under named headings.
+
+- Test Cura 5.14 beta 1 using its modern renderer on macOS CI, avoiding two
+  upstream legacy Preview defects without patching Cura classes. Retain default
+  rendering coverage on 5.13. Verify native legacy mesh geometry and use an
+  unambiguous stopped endpoint in UI tests.
+
+- Respect configured printer layer numbering when G-code contains only slicer
+  layer comments. Avoid following one layer ahead on older Cura versions;
+  rebuild cached indexes that inferred firmware numbering from comments.
+
+- Use raster camera painting on macOS to avoid a native OpenGL framebuffer
+  crash with newer Qt versions. Preserve native crash evidence and stop UI
+  tests promptly when Cura exits.
+- Keep the Preview follower card rendered and clickable after switching Cura
+  stages. Stage readable QtTest bindings on macOS and the matching test runtime
+  on Windows; require working real input in UI-harness boot evidence.
+- Wait for Cura to restore the seeded test printer before running UI scenarios;
+  preserve failed startup evidence. Bound native test processes and retain their
+  progress, thread stacks and logs when a build stalls or is cancelled.
+- Package reusable G-code indexing and toolpath geometry as a dependency-free
+  Python library, with optional Qt raster/scene-graph rendering, documented public
+  entry points and an installed-wheel example checked in CI. The separate
+  `moonraker_toolpath` package excludes application services and provides immutable
+  document/layer snapshots alongside the advanced compact index API.
+- Ignore malformed optional per-extruder filament diameter comments while indexing.
+  Synchronise the shared layer cache across independent documents, and convert
+  empty immutable geometry safely when publishing it to Qt.
+- Fix descending file-name sorts, incomplete or superseded directory walks,
+  stale print-start acknowledgements and upload confirmations after a printer or
+  directory change. Protect the active print and its containing directories.
+- Detect camera stalls after the first decoded frame, clear recovery only on
+  fresh decoded frames, and preserve IPv6 addresses in bridge URLs.
+- Cool down discovered writable heaters without requiring saved profiles; discard
+  older queued heater adjustments when applying a profile or cooldown.
+- Restore recovery arc plane, feed rate, raw extrusion mode and current object;
+  refuse active object exclusions and incomplete position telemetry. Restore a
+  zero bed target without a cooling wait. After restart submission, finish the
+  read-only outcome check rather than reporting a cancelled paused state.
+
+- After recovery purging, retain the purge height while returning to the selected
+  X/Y, then lower over the restart point. Lift before XY only when below the
+  configured clearance plane; confirmation steps and diagrams show the same order.
+
+- Recovery retains a configured prime Z above the restart point; otherwise it uses restart Z + 5 mm. Prime and travel heights respect the printer’s Z ceiling, including coordinate offsets, and confirmation diagrams show the capped positions.
+
+- Preview each recovery step in angled 3D and XY/XZ/YZ views with the nozzle, restart
+  marker, scaled print bed, visible RGB axes and recorded printed toolpath.
+  Priming travel no longer adds a redundant clearance lift. Keep confirmation actions fixed below
+  the scrollable content. Finish checks above the print, then descend and start
+  printing in one script with no dwell at the restart point.
+
+- Prepopulate recovery from the attached follower, including the editable layer
+  and move fields when the index arrives after the dialog opens. Reset scroll
+  and step selection on opening, and dismiss the complete dialog stack after
+  submitting recovery.
+
+- Expand recovery lifecycle, simulated-printer and real-QML regression coverage.
+  Document the workflow and architecture with reproducible light/dark recovery
+  screenshots.
+
+- Allow recovery checks and confirmed restarts at future indexed points, with
+  an explicit skip-forward notice. Explain stop bookmarks, rename Select to
+  Use point, and allow individual markers to be removed.
+
+- Recovery return travel now uses the selected layer plus the configurable
+  clearance (5 mm by default), with an ordered confirmation of moves, heating,
+  purge and descent. Optional priming has a configurable 0–300 second dwell,
+  defaulting to 5 seconds, after extrusion finishes.
+
+- Rename Temperature profiles to Temperatures and add individual heater sliders,
+  Off buttons and selectable 1/5/10/25 °C bumps. Read each heater's limits from
+  Klipper configuration through Moonraker; individual targets can be adjusted
+  during printing, with limits and connection/lock state checked before dispatch.
+  Saved profiles and cooldown are also available while printing.
+
+- Add Cura 5.14 beta 1 / SDK 8.13 support. Run the primary CI UI gate
+  on 5.14 beta 1, retain 5.13 as secondary, and include the beta in the
+  full supported-version UI sweep. Match harness QtTest wheels to the exact
+  bundled runtime across both older lowercase and newer display-name metadata.
+
+- Dismiss the Print Follower zoom bar after two idle seconds.
+- Clarify what source setup and transparent macro selections allow the recovery
+  planner to read, and set the optional prime defaults to X0 Y250 Z100, 50 mm
+  at 5 mm/s. Priming remains disabled until selected.
+- Recover an interrupted paused virtual-SD print from a selected
+  exact Print Follower motion boundary. Select an unloaded root G-code file
+  for power-loss recovery without running its print-start macro. Review the
+  actual XYZ, G-code byte, E mode and accumulated extrusion before confirmation.
+- Capture selected filament sensor runout transitions and manual stop estimates
+  as follower markers. Leave Klipper in charge when `pause_on_runout` is enabled;
+  optionally request PAUSE for selected sensors where it is disabled.
+- Suggest a configurable extrusion lead-in without crossing a travel or
+  retraction. Reconstruct source modal state, verify source identity and fresh
+  paused printer state, stage a bounded nozzle return, and check each step before
+  resuming. Ambiguous command results stop the handover without automatic retry.
+- Discover selectable sensors, macros and saved pause states from printer config;
+  expose recovery settings per printer. Recovery can be planned with no sensor.
+  Wait for the latest G-code temperature targets, request missing targets, and
+  optionally prime at a configured XYZ with bounded amount and speed before
+  returning to the selected point. Unloaded recovery uses the selected restart
+  height plus configured clearance, capped at the physical Z limit. A manual
+  Z reference in the follower supports homing on the existing object: the
+  adjusted file and physical restart heights are reviewed, and a temporary
+  G-code origin is verified before movement.
+
 ## 5.4.0
 
 - Download optional Obico detection, ONNX Runtime and STEP/CAD assets from

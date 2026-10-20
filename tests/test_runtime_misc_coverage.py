@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Use shared follow-mode values without importing preview policy into settings.
+# 2026-10-01 [4be23c8] Fix slow-link source recovery and stream wakeups
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+
 """Coverage for the runtime's small modules: the Cura view/identity
 adapters, the download stream and the file-manager lane built on it, the
 upload writer's lease, the follow state machine, the lifecycle bridge and
@@ -38,7 +48,8 @@ from mpf.cura.CuraAdapter import (active_machine_identity, apply_preview_decisio
 from mpf.cura.CuraLifecycleBridge import CuraLifecycleBridge
 from mpf.cura.CuraOutputWriter import CuraOutputWriter
 from mpf.files.transfers.DownloadStream import DownloadOperation, DownloadTarget
-from mpf.preview.FollowController import FollowController, FollowMode, FollowState, decide_layers
+from mpf.printing.FollowMode import FollowMode
+from mpf.preview.FollowController import FollowController, FollowState, decide_layers
 from mpf.settings.PrinterConfig import PrinterConfig
 
 if QT_AVAILABLE:
@@ -1618,7 +1629,7 @@ class FollowerRuntimeTests(unittest.TestCase):
         self.assertTrue(runtime_instance._closed)
 
     def test_the_smoothing_trace_lands_under_the_cache_directory_when_opted_in(self):
-        from mpf.gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+        from mpf.application.indexing.CacheNamespaces import CACHE_DIRECTORY_NAME
         with patch.dict(os.environ, {"MOONRAKER_FOLLOWER_SMOOTHING_TRACE": "smoothing.csv"}):
             _, follower = self.build()
         trace_path = follower._runtime.motion._trace_path
@@ -1631,7 +1642,7 @@ class FollowerRuntimeTests(unittest.TestCase):
         # replaced package. The cache directory must never match the
         # package ID, and the purge's own walk must leave it alone
         # (the legacy name dies wholesale — that is exactly the bug).
-        from mpf.gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
+        from mpf.application.indexing.CacheNamespaces import CACHE_DIRECTORY_NAME
         self.assertNotEqual(CACHE_DIRECTORY_NAME, "MoonrakerPrintFollower")
         with tempfile.TemporaryDirectory() as root:
             legacy = os.path.join(root, "MoonrakerPrintFollower")

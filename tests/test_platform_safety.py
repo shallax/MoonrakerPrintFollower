@@ -1,3 +1,15 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Target the single conservative process-liveness implementation.
+# 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-16 [15ad606] 4.3.0 platform safety: the cross-platform gate — a permanent source sweep pins every
+#   POSIX-only token to its guard (the O_NOFOLLOW class of bug cannot come back) and pins the binary-safe open
+#   modes on the download and output paths
+
 """The cross-platform gate (the directive: the plugin MUST
 run on Windows, macOS and Linux). The O_NOFOLLOW lesson — one
 POSIX-only constant silently broke every state write on Windows —
@@ -16,6 +28,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from mpf.storage import ProcessOwner as process_owner
 from pathlib import Path
 from unittest.mock import patch
 from tests.source_root import SourceRoot
@@ -134,7 +147,7 @@ class TempRootSweepTests(unittest.TestCase):
 
         with patch.object(sys, "platform", "win32"), \
                 patch.object(os, "kill", windows_kill), \
-                patch.object(sweep_module, "_windows_liveness",
+                patch.object(process_owner, "windows_process_alive",
                              side_effect=lambda pid: pid == second_pid):
             sweep_module._sweep_stale_roots(self.root, self.current)
 
@@ -204,7 +217,7 @@ class TempRootSweepTests(unittest.TestCase):
 
             with patch.object(ctypes, "WinDLL", return_value=FakeDll(), create=True), \
                     patch.object(ctypes, "get_last_error", return_value=open_error, create=True):
-                return sweep_module._windows_liveness(1234), closed
+                return process_owner.windows_process_alive(1234), closed
 
         self.assertFalse(verdict(0, 87, True, 259)[0], "no-such-process read alive")
         self.assertTrue(verdict(0, 5, True, 259)[0], "access-denied read dead")

@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Exercise travel-pen colour metrics through the extracted raster painter.
+# 2026-10-18 — 6.0.0: Verify shared geometry and modular component ownership after extraction.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-27 [dd99358] Mirror Cura preview colours and travel states and composite ghost opacity on GPU
+
 """Whole-print colour limits, tool identities and retained GPU colour updates."""
 from array import array
 import math
@@ -86,8 +97,9 @@ class ColourMetricsTests(unittest.TestCase):
         from PyQt6.QtGui import QGuiApplication
         from PyQt6.QtQuick import QQuickWindow
         from PyQt6 import sip
-        from mpf.plate.GpuFollower import GpuFollower,prepare
-        from mpf.plate.GpuStrokeMaterial import pack_shader,_pack_stdlib
+        from mpf.plate.GpuFollower import GpuFollower
+        from mpf.plate.ToolpathGeometry import prepare
+        from mpf.plate.ToolpathGeometry import pack_shader,_pack_stdlib
         app=QGuiApplication.instance() or QGuiApplication([])
         payload={"classes":{"SKIN":[[(0,0,0),(10,0,0),(20,0,1)]]},"widths":(.4,.8),"speeds":(10,20),"tools":(0,1)}
         packed=prepare((("current",payload),("prev",payload),("next",payload)))
@@ -207,9 +219,10 @@ class ColourMetricsTests(unittest.TestCase):
         from PyQt6.QtGui import QGuiApplication,QPen
         from PyQt6.QtQuick import QQuickWindow
         from PyQt6 import sip
-        from mpf.plate.GpuFollower import GpuFollower,prepare
-        from mpf.plate.GpuStrokeMaterial import pack_shader
-        from mpf.plate.PlateQt import _travels_pen
+        from mpf.plate.GpuFollower import GpuFollower
+        from mpf.plate.ToolpathGeometry import prepare
+        from mpf.plate.ToolpathGeometry import pack_shader
+        from mpf.plate.PlateRaster import _travels_pen
         app=QGuiApplication.instance() or QGuiApplication([])
         window=QQuickWindow();item=GpuFollower(window.contentItem())
         item._data=pack_shader(prepare((("current",{"travels":[[(0,0,0),(10,0,0)]]}),)))

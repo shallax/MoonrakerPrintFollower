@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Remove the injected host-logger assertion from portable cache validation.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-29 [1db0cab] Test extracted parser, hydration, cache and read-only query boundaries
+
 """A cache hit is accepted only when its metadata describes valid motion columns."""
 import gzip
 import json
@@ -5,7 +15,6 @@ from pathlib import Path
 import struct
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import Mock, patch
 
 from mpf.gcode import IndexCache, IndexCodec
 from mpf.gcode.GCodeIndex import build_index_from_bytes
@@ -64,9 +73,3 @@ class PersistentIndexValidationTests(unittest.TestCase):
                 self.cache.save(self.identity, self.index)
                 self.assertEqual(self.path.read_bytes(), before)
                 setattr(self.index, field, original)
-
-    def test_cache_diagnostics_use_the_injected_host_logger(self):
-        logger = Mock()
-        with patch.object(IndexCache, "_Logger", logger):
-            IndexCache._log("cache %s", "restored")
-        logger.log.assert_called_once_with("i", "cache %s", "restored")

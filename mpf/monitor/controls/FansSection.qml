@@ -1,3 +1,14 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+// 2026-09-30 [f425547] mpf's subpackages are capitalised
+// 2026-09-15 [c4829c1] 4.3.0 extraction: the Fan-speed section — FansSection.qml owns the per-fan sliders; the
+//   slider interaction channel becomes a host sink so the freeze/refocus machinery stays single-owner, and the
+//   tuning section rides the same contract; pins retarget same-pass
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3

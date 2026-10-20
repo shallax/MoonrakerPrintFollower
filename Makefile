@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Add backend-aware library verification to the complete release gate.
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-09-08 [7341f82] Development tooling: pinned container, quality gates and the Makefile
+
 # Unified entry points for the repository's development procedures.
 #
 # The real logic lives in tools/native/*.py or tools/*.sh (see INSTRUCTIONS.md);
@@ -59,6 +69,7 @@ help:
 	@echo "verify_captures        verify light/dark capture determinism"
 	@echo "generate_shaders       compile packaged Qt shaders"
 	@echo "package                build and verify both release artifacts"
+	@echo "library                build and verify the reusable Python wheel"
 	@echo "snapshot_package       copy verified package to the temp directory"
 	@echo "snapshot_quick         lint, tests and verified snapshot"
 	@echo "format                 format plugin QML"
@@ -74,6 +85,15 @@ all:
 	$(MAKE) build
 	$(MAKE) verify_captures
 	$(MAKE) snapshot_package
+	$(MAKE) library
+
+.PHONY: library
+library:
+ifneq ($(LEG),posix)
+	$(DEV) library
+else
+	./tools/docker_dev.sh python3 tools/native/dev.py library
+endif
 
 build:
 	$(MAKE) generate_shaders
@@ -242,7 +262,7 @@ endif
 ifneq ($(LEG),posix)
 # The desktop harness is explicit: neither target is part of make all.
 ui_test: package
-	$(DEV) ui_test --cura-version $(or $(CURA_VERSION),5.13.0) --mode $(or $(MODE),scenario)
+	$(DEV) ui_test --cura-version $(or $(CURA_VERSION),5.14.0-beta.1) --mode $(or $(MODE),scenario)
 
 ui_release_gate: package
 	$(DEV) ui_release_gate

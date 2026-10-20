@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-10-03 [13b277f] Keep a stale signal visible, contain the camera seam, and give alerts reach
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """Real Qt, minimal Cura host doubles, and isolated production-package imports.
 
 No plugin method is copied or mocked by this harness. Qt tests are optional for
@@ -152,7 +161,7 @@ class PipeSafeHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def runtime():
+def runtime(*, isolated_index=False):
     # Native extension modules must load before the sys.modules snapshot
     # used to isolate each fake host; NumPy cannot be reinitialised.
     import numpy  # noqa: F401
@@ -437,8 +446,15 @@ def runtime():
                 app.processEvents()
 
         with patch.dict(sys.modules, modules):
-            yield SimpleNamespace(load=load, app=app, Application=Application,
-                Machine=Machine, events=process_events, QObject=QObject, QTimer=QTimer)
+            # Collaborator tests select the inline parser explicitly. Process
+            # parity/cancellation and the production Windows selection have
+            # their own tests; these fixtures never provision a runtime.
+            index_process = load("IndexProcess")
+            builder = index_process.IndexProcessBuilder
+            factory = (lambda root: builder(root, executable=sys.executable)) if isolated_index else (lambda root: None)
+            with patch.object(index_process, "IndexProcessBuilder", factory):
+                yield SimpleNamespace(load=load, app=app, Application=Application,
+                    Machine=Machine, events=process_events, QObject=QObject, QTimer=QTimer)
     finally:
         # A plugin worker can still be writing into the cache when the
         # context unwinds (a late prepared-store flush): the scratch

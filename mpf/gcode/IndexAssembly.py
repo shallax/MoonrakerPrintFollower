@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
+# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
+# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
+# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+
 """Assemble scanned layer records into the query index.
 
 The scanner owns G-code modal state and the hot input loop. Assembly only
@@ -30,7 +40,7 @@ def _print_colour_ranges(blocks, heights, diameter, diameters):
                 result[name] = (min(lo, previous[0]), max(hi, previous[1]))
     return result
 
-def assemble_index(blocks, file_end, stats_values, marker_values, pause_offsets, type_names, filament_diameter, filament_diameters, compact, cancel_event, object_work=None) -> LayerMotionIndex:
+def assemble_index(blocks, file_end, stats_values, pause_offsets, type_names, filament_diameter, filament_diameters, compact, cancel_event, object_work=None, printed_top_z=0.0) -> LayerMotionIndex:
     ranges: List[Tuple[int, int]] = []
     motions: List[array] = []
     xs: List[array] = []
@@ -162,18 +172,13 @@ def assemble_index(blocks, file_end, stats_values, marker_values, pause_offsets,
                 layer_map = {}
                 break
             layer_map[value] = index
-    elif not layer_map and ranges and len(marker_values) == len(ranges):
-        # Cura and Orca numeric layer markers provide a useful mapping even when
-        # SET_PRINT_STATS_INFO is absent. The exact values are preserved instead
-        # of assuming zero/one-based numbering.
-        for index, value in enumerate(marker_values):
-            if value in layer_map:
-                layer_map = {}
-                break
-            layer_map[value] = index
+    # Slicer comments delimit indexed layers; they do not declare the values
+    # Klipper reports. Without explicit stats, the resolver uses the user's
+    # zero/one-based setting instead of inventing a firmware mapping.
 
     hydrated = set(range(len(ranges))) if not compact else set()
     return LayerMotionIndex(
+        printed_top_z=printed_top_z,
         ranges=ranges,
         motion_offsets=motions,
         motion_x=xs,

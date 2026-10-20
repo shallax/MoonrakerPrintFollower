@@ -1,3 +1,15 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Synchronise shared prepared-cache access across independent indexes.
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
+# 2026-09-20 [11c27cf] 4.6.0: the follower face — the progress polylines prepared in the coordinator with the
+#   motion-index split, the OctoApp-style prev/current/next view with the travel-boundary glyphs, the face
+#   toggle, the right-inset sweep and the plate capture seed
+
 """The plate's progress payload: prepared polylines for the follower
 face, built from the index's motion arrays.
 
@@ -630,29 +642,31 @@ def _build(index: LayerMotionIndex, layer: int,
 # held weakly: a live index keeps its entry valid, a collected one
 # drops it rather than let a recycled id claim another index's layer.
 _prepared_layers: Dict[Tuple[int, int], tuple] = {}
-_prepared_lock = threading.Lock()
+_prepared_lock = threading.RLock()
 
 
 def _prepared_guard(index: LayerMotionIndex):
-    """The index's own lock when it has one (the service holds it while
-    it builds the bundle), so the store shares one lock with the index
-    it is keyed on rather than adding a second one beside it."""
+    """Acquire index state before the global cache lock, consistently.
+
+    Separate indexes have separate locks, so cache mutation also needs the
+    shared lock. Reentrancy supports callers without a per-index lock.
+    """
     return getattr(index, "cache_lock", None) or _prepared_lock
 
 
 def _prepared_get(index: LayerMotionIndex, layer: int) -> Optional[dict]:
-    with _prepared_guard(index):
+    with _prepared_guard(index), _prepared_lock:
         entry = _prepared_layers.get((id(index), layer))
-    if entry is None:
-        return None
-    owner, count, payload = entry
-    if owner() is not index or count != index.motion_count(layer):
-        return None
-    return payload
+        if entry is None:
+            return None
+        owner, count, payload = entry
+        if owner() is not index or count != index.motion_count(layer):
+            return None
+        return payload
 
 
 def _prepared_put(index: LayerMotionIndex, layer: int, payload: dict) -> None:
-    with _prepared_guard(index):
+    with _prepared_guard(index), _prepared_lock:
         _prepared_layers[(id(index), layer)] = (
             weakref.ref(index), index.motion_count(layer), payload)
         while len(_prepared_layers) > _PREPARED_LIMIT:

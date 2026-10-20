@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Use the raster painter owner for seeded monitor capture geometry.
+# 2026-10-18 — 6.0.0: Model decoded frame progress in deterministic healthy-camera captures.
+# 2026-10-04 [95512c0] Polish monitor mini beds and refresh release screenshots
+# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-09-08 [0f363ac] Deterministic captures: vendored Cura assets, capture harness, committed screenshots
+
 """Deterministic Monitor captures: render the real dashboard QML in an
 offscreen engine with stubbed Cura/UM types and fake printer data, and
 write PNGs for release notes and layout regression checks.
@@ -28,7 +39,7 @@ import capture_settle
 
 from unittest.mock import patch
 
-from PyQt6.QtCore import QObject, QPointF, QUrl
+from PyQt6.QtCore import QObject, QPointF, QTimer, QUrl
 from PyQt6.QtGui import QColor, QGuiApplication
 from PyQt6.QtQml import QQmlComponent, QQmlEngine
 
@@ -321,6 +332,18 @@ def main():
                 "the dashboard never rendered inside the capture shell "
                 f"(preloaded component status: {dashboard.status()})")
 
+        # The placeholder represents a healthy feed. Its stable pixels still
+        # need decoded-frame progress; otherwise long captures correctly trip
+        # the real stall watchdog and invalidate their synthetic model state.
+        camera_frames = QTimer(window)
+        camera_frames.setInterval(1000)
+        def next_camera_frame():
+            for camera in item.findChildren(QQuickItem):
+                if camera.objectName() == "cameraImage" and camera.isVisible():
+                    camera.setProperty("framesDisplayed", camera.property("framesDisplayed") + 1)
+        camera_frames.timeout.connect(next_camera_frame)
+        camera_frames.start()
+
         # The e-stop label's contrast gate (the 4.5.0 dark-mode
         # ruling): the idle copy must contrast with the button's
         # ground in BOTH themes — hardcoded black on dark grey is
@@ -596,7 +619,8 @@ def main():
         model.plateProgressChanged.emit()
         # Offscreen Qt has no native GPU surface. Feed the real fallback's
         # prepared raster, painted from exactly the same indexed layer.
-        plate_qt = qt.load("PlateQt")
+        plate_raster = qt.load("PlateRaster")
+        raster_files = qt.load("RasterFiles")
         plot_value = face.property("plot").toVariant()
         bed = plot_value["bed"]
         plot = {"offsetX": bed["offsetX"], "offsetY": bed["offsetY"],
@@ -605,9 +629,9 @@ def main():
         view = {"width": int(face.width()), "height": int(face.height()),
                 "scale": 1.0, "lineWidthPx": 2.0, "lineScale": 2.0,
                 "colourScheme": model.followerColourScheme}
-        coloured, _, _ = plate_qt.render_layer_raster(payload, plot, view)
+        coloured, _, _ = plate_raster.render_layer_raster(payload, plot, view)
         layer.set_expected_key("capture-penguin")
-        layer.set_raster(coloured, "capture-penguin", plate_qt.png_file(
+        layer.set_raster(coloured, "capture-penguin", raster_files.png_file(
             coloured, os.path.join(output_dir, ".layers"), "penguin"))
         # A fixed observation of the indexed layer prevents the synthetic
         # transport's unrelated dashboard job from replacing this illustration.

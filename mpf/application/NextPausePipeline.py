@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-07 [96a5e48] Fix follower deadline layout and simulator motion state
+# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-09-18 [78df407] 4.5.0 debt pack: PrintCoordinator.refresh becomes a composition (TECH_DEBT #3)
+
 """The next-pause pipeline: the bar's anchor, the merged rows, the target."""
 from __future__ import annotations
 

@@ -1,3 +1,16 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-19 [b9bab1b] 4.5.0: the corrupt-source recovery writes its global state through the same live-v2-wins
+#   merge as the records path, and the tri-state probe reads QML enum values through .value
+# 2026-09-19 [83b1de7] 4.5.0 hardening: private migration backups, late-activation readiness parity, WebSocket
+#   teardown on structured refusal, one-shot download bookkeeping, live v2 state wins replayed migrations, and
+#   the deterministic coverage logger patch
+# 2026-09-18 [7fe91f6] 4.5.0: the persistence facade and the one-shot migration's control flow — the strict
+#   read, the backup gate, the verify-by-re-read, the clean-as-commit-point and the pretty key-scoped stores
+
 """The 4.5.0 one-shot migration's explicit owner (the panel's
 B1/C1-C6/E5 rulings): the strict source read that distinguishes an
 absent blob from a corrupt one, the backup-before-clean gate, the

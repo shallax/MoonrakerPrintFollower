@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Use shared upload-operation receipts and faithful bounded reply reads.
+# 2026-10-03 [0bb9b65] Pin the evidence drive to its context and cover the store's refusals
+# 2026-10-01 [1866243] Persist print sources and publish live download progress
+# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+
 """Coverage for the what's-new overlay's window owner, the upload
 controller and the camera bridge.
 
@@ -127,8 +137,12 @@ if QT_AVAILABLE:
         def errorString(self):
             return self._error_string
 
+        def read(self, size):
+            data, self._body = self._body[:size], self._body[size:]
+            return data
+
         def readAll(self):
-            return self._body
+            return self.read(len(self._body))
 
         def isRunning(self):
             return False
@@ -745,12 +759,14 @@ class UploadControllerCoverageTests(unittest.TestCase):
         results = []
         controller.finished.connect(lambda ok, detail: results.append((ok, detail)))
         controller._upload()
-        stranger = FakeReply(body=b'{"error": "not mine"}')
-
-        controller._uploaded(stranger, controller._generation)
-
-        self.assertEqual(stranger.deleted, 1)
+        from mpf.moonraker.MultipartUpload import MultipartUpload, UploadResult
+        stranger = MultipartUpload(client.transport, controller)
+        controller._uploaded(stranger, controller._generation, UploadResult(body=b'{"error":"not mine"}'))
+        self.assertIsNot(controller._upload_operation, stranger)
+        self.assertFalse(stranger._terminal, "a foreign operation retains its own lifetime")
         self.assertEqual(results, [])
+        stranger.cancel(notify=False)
+        stranger.deleteLater()
 
     def test_upload_surfaces_the_servers_words_over_qt_error_text(self):
         # The refusal-words rule: Moonraker's own message beats Qt's

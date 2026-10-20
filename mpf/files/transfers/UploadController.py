@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Retain readiness/print-start policy while delegating file and reply ownership.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """One upload-operation owner: identity, folder discovery, readiness and streaming.
 
 No Cura application or QML references. The adapter supplies a prepared file lease
@@ -8,10 +18,10 @@ from dataclasses import asdict
 import os
 from urllib.parse import urlencode
 
-from PyQt6.QtCore import QByteArray, QFile, QIODevice, QObject, QTimer, QVariant, pyqtSignal
-from PyQt6.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkReply, QNetworkRequest
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from ...moonraker.MoonrakerTransport import _moonraker_error_text
+from ...moonraker.MoonrakerProtocol import moonraker_error_text
+from ...moonraker.MultipartUpload import MultipartUpload
 from ...settings.PrinterConfig import PrinterConfig
 
 
@@ -31,7 +41,7 @@ class UploadController(QObject):
         self._generation = 0
         self._session = None
         self._active = self._terminal_pending = self._choice_pending = False
-        self._reply = self._file = self._source = None
+        self._upload_operation = self._source = None
         self._config = PrinterConfig()
         self._filename, self._path = "", ""
         self._start_print = False
@@ -250,18 +260,9 @@ class UploadController(QObject):
         self._request("GET", "server/info", received)
 
     def _upload(self):
-        if not self._current() or self._reply is not None or self._source is None: return
+        if not self._current() or self._upload_operation is not None or self._source is None: return
         self._print_outcome = ""
         try:
-            file = QFile(self._source.path)
-            if not file.open(QIODevice.OpenModeFlag.ReadOnly): raise OSError(file.errorString())
-            self._file = file
-            multipart = QHttpMultiPart(QHttpMultiPart.ContentType.FormDataType)
-            part = QHttpPart()
-            part.setHeader(QNetworkRequest.KnownHeaders.ContentDispositionHeader, QVariant(f'form-data; name="file"; filename="{self._filename}"'))
-            part.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, QVariant("application/octet-stream"))
-            part.setBodyDevice(file)
-            multipart.append(part)
             fields = {"root": "gcodes"}
             if self._path: fields["path"] = self._path
             self._print_refusal = ""
@@ -274,38 +275,25 @@ class UploadController(QObject):
                     self._print_refusal = verdict.reason or "no longer allowed"
                 else:
                     fields["print"] = "true"
-            for name, value in fields.items():
-                part = QHttpPart()
-                part.setHeader(QNetworkRequest.KnownHeaders.ContentDispositionHeader, QVariant(f'form-data; name="{name}"'))
-                part.setBody(QByteArray(value.encode()))
-                multipart.append(part)
-            request = self._client.transport.request("server/files/upload", timeout_ms=30000)
-            reply = self._client.transport.network.post(request, multipart)
-            multipart.setParent(reply)
-            file.setParent(reply)
-            self._reply = reply
+            operation = self._upload_operation = MultipartUpload(self._client.transport, self)
             generation = self._generation
-            reply.uploadProgress.connect(lambda sent, total:
-                self.progress.emit(max(0, min(100, int(sent * 100 / total)))) if total > 0 and self._current(generation) else None)
-            reply.finished.connect(lambda: self._uploaded(reply, generation))
+            operation.progress.connect(lambda percent:
+                self.progress.emit(percent) if self._current(generation) else None)
+            operation.finished.connect(lambda result: self._uploaded(operation, generation, result))
+            operation.start(self._source.path, self._filename, fields)
             self.status.emit("Uploading " + self._filename)
         except Exception as error:
             self.fail(str(error))
 
-    def _uploaded(self, reply, generation):
-        if reply is not self._reply or not self._current(generation):
-            reply.deleteLater()
+    def _uploaded(self, operation, generation, result):
+        if operation is not self._upload_operation or not self._current(generation):
             return
-        error = reply.errorString() if reply.error() != QNetworkReply.NetworkError.NoError else ""
-        import json
-        payload = {}
-        try:
-            parsed = json.loads(bytes(reply.readAll()).decode())
-            if isinstance(parsed, dict): payload = parsed
-        except (ValueError, UnicodeError): pass  # successful legacy non-JSON response
+        payload = result.payload()
+        error = ("Upload response exceeds the size limit." if result.overflow else
+                 "Upload cancelled" if result.cancelled else result.network_error)
         # The server's words always win over Qt's generic error text
         # (the refusal-words rule shared with the file manager).
-        words = _moonraker_error_text(payload) if payload else ""
+        words = moonraker_error_text(payload) if payload else ""
         if words:
             error = words
         elif not error and payload.get("error"):
@@ -337,13 +325,10 @@ class UploadController(QObject):
         self._generation += 1
         self._active, self._terminal_pending, self._choice_pending = False, True, False
         self._client.transport.cancel_owner(self.owner)
-        reply, self._reply = self._reply, None
-        if reply is not None:
-            if reply.isRunning(): reply.abort()
-            reply.deleteLater()
-        if self._file is not None:
-            self._file.close()
-            self._file = None
+        operation, self._upload_operation = self._upload_operation, None
+        if operation is not None:
+            operation.cancel(notify=False)
+            operation.deleteLater()
         if self._source is not None:
             self._source.close()
             self._source = None

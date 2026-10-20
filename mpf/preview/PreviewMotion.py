@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-12 [0701dcb] Improve reflection continuity and reduce rendering overhead
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-07 [7ce149f] Smooth the Preview path head for 3.3.0
+
 """Qt tick driver for the smoothed Preview path; the policy stays pure.
 
 The physical path fraction (0..1 within the layer) arrives from

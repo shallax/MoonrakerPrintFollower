@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
+# 2026-09-27 [dd99358] Mirror Cura preview colours and travel states and composite ghost opacity on GPU
+# 2026-09-26 [e9a60d8] refactor: give warm raster demands typed immutable scene identities
+
 """Immutable scene identity for the plate's asynchronous navigation assets.
 
 An asset is compatible only when its entire scene matches. During attached

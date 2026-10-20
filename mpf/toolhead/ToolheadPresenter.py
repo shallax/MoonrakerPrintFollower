@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
+# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+
 """Owns toolhead rendering, telemetry availability and native nozzle suppression."""
 from __future__ import annotations
 

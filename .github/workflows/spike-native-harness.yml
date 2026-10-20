@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-23 [716a090] 4.6.0: the native-harness spike, as a disposable CI probe
+
 # Native-harness spike: a DISPOSABLE probe that
 # answers two questions the Linux-only UI harness (tools/ui_test.sh -
 # AppImage + Docker + Xvfb, all by construction) cannot answer on a dev
@@ -89,7 +98,7 @@ on:
       cura_version:
         description: "Cura release tag to install"
         required: false
-        default: "5.13.0"
+        default: "5.14.0-beta.1"
         type: string
       macos_arch:
         description: "macOS dmg arch: auto prefers arm64 when published"
@@ -123,7 +132,7 @@ jobs:
       # version-stamped config directory, so Cura came up on its first-run
       # wizard, which would have stalled the harness's own first gate. The
       # default belongs here, once, where every step sees it.
-      CURA_VERSION: ${{ github.event.inputs.cura_version || '5.13.0' }}
+      CURA_VERSION: ${{ github.event.inputs.cura_version || '5.14.0-beta.1' }}
       CURA_MACOS_ARCH: ${{ github.event.inputs.macos_arch || 'auto' }}
       EVIDENCE: spike-evidence
     steps:
@@ -718,7 +727,7 @@ jobs:
           # xattr is applied, so Gatekeeper is not part of this test.
           set +e
           mkdir -p "$EVIDENCE"
-          VERSION="${CURA_VERSION:-5.13.0}"
+          VERSION="${CURA_VERSION:-5.14.0-beta.1}"
           REQUEST="${CURA_MACOS_ARCH:-auto}"
           LOG="$EVIDENCE/download-macos.txt"
           BASE="https://github.com/Ultimaker/Cura/releases/download/${VERSION}"
@@ -938,7 +947,7 @@ jobs:
           $installerTxt = Join-Path $EVIDENCE 'cura-installer.txt'
           function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
           function V($m) { W $m; Add-Content -Path $verdict -Value $m }
-          $ver = if ($env:CURA_VERSION) { $env:CURA_VERSION } else { '5.13.0' }
+          $ver = if ($env:CURA_VERSION) { $env:CURA_VERSION } else { '5.14.0-beta.1' }
 
           $base = "https://github.com/Ultimaker/Cura/releases/download/$ver"
           $exeName = "UltiMaker-Cura-$ver-win64-X64.exe"
@@ -1022,7 +1031,7 @@ jobs:
         run: |
           set +e
           mkdir -p "$EVIDENCE"
-          VERSION="${CURA_VERSION:-5.13.0}"
+          VERSION="${CURA_VERSION:-5.14.0-beta.1}"
           LOG="$EVIDENCE/install-macos.txt"
           # The arch is the download step's decision (auto or forced, taken
           # from the release's own asset list) - never re-derived here, so
@@ -1441,7 +1450,7 @@ jobs:
           $verdict = Join-Path $EVIDENCE 'verdict.txt'
           function W($m) { Write-Host $m; Add-Content -Path $log -Value $m }
           function V($m) { W $m; Add-Content -Path $verdict -Value $m }
-          $ver = if ($env:CURA_VERSION) { $env:CURA_VERSION } else { '5.13.0' }
+          $ver = if ($env:CURA_VERSION) { $env:CURA_VERSION } else { '5.14.0-beta.1' }
           # Both installers live in the download step's temp dir, never in
           # the evidence directory: ~160 MB each, regenerable from their
           # pinned URLs, so the bytes are not evidence. RUNNER_TEMP is
@@ -1958,10 +1967,10 @@ jobs:
             # moves across 5.7-5.13.
             BUNDLE_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
               "$APP/Contents/Info.plist" 2>/dev/null)"
-            [ -n "$BUNDLE_VER" ] || BUNDLE_VER="${CURA_VERSION:-5.13.0}"
+            [ -n "$BUNDLE_VER" ] || BUNDLE_VER="${CURA_VERSION:-5.14.0-beta.1}"
             MM="$(printf '%s' "$BUNDLE_VER" | awk -F. 'NF >= 2 && $2 != "" { print $1 "." $2; exit }')"
             if [ -z "$MM" ]; then
-              MM="$(printf '%s' "${CURA_VERSION:-5.13.0}" | awk -F. '{ print $1 "." $2 }')"
+              MM="$(printf '%s' "${CURA_VERSION:-5.14.0-beta.1}" | awk -F. '{ print $1 "." $2 }')"
             fi
             echo "bundle version $BUNDLE_VER -> config dir $MM"
             PREF_PY="$(find "$APP/Contents" -path '*/UM/Preferences.py' -print -quit 2>/dev/null)"

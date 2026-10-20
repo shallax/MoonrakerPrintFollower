@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Read printer-object families from their protocol owner.
+# 2026-10-18 — 6.0.0: Exercise decoded camera freshness, recovery state and URL handling.
+# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-10-01 [1866243] Persist print sources and publish live download progress
+# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+
 """Coverage for the settings, formatting and persistence surfaces.
 
 Targets the branches the existing suites leave untouched rather than
@@ -26,7 +37,8 @@ from unittest.mock import patch
 import mpf
 
 from mpf.files.browser.FileFormatting import (file_disk_text, file_duration_short, file_filament, file_row_payload, file_size, file_temperature, file_timestamp)
-from mpf.monitor.MonitorFormatting import (chart_label, chart_temperature_objects, core_values, day_offset_suffix, duration, endstop_values, estimate_remaining, factor_percent, fan_writable, filament_diameter, filament_total_mm_from_file, friendly, layer_readout, height_readout, literal_default, mesh_profiles, number, object_kind, parse_bed_mesh, parse_mcu_stats, peripheral_values, preview_eta_text, print_job_caption, result, wanted_object, format_bytes, normalise_mesh, filament_total_mm_from_gcode, infer_macro_parameters, preview_block, preview_temperature_pair)
+from mpf.monitor.MonitorFormatting import chart_label, chart_temperature_objects, core_values, day_offset_suffix, duration, endstop_values, estimate_remaining, factor_percent, filament_diameter, filament_total_mm_from_file, friendly, layer_readout, height_readout, literal_default, mesh_profiles, number, parse_bed_mesh, parse_mcu_stats, peripheral_values, preview_eta_text, print_job_caption, result, format_bytes, normalise_mesh, filament_total_mm_from_gcode, infer_macro_parameters, preview_block, preview_temperature_pair
+from mpf.moonraker.PrinterObjects import fan_writable, object_kind, wanted_object
 from mpf.monitor.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALREADY_PRINTING,
                                         R_BUSY, R_CLEARED_PAUSE, R_DISCONNECTED, R_ESTOPPED,
                                         R_LOCKED, R_NO_PAUSED_PRINT, R_NOTHING_TO_PAUSE,
@@ -71,7 +83,7 @@ if QT_AVAILABLE:
     _QT = _RUNTIME.__enter__()
 
     from mpf.monitor.camera.CameraBridge import CameraBridge
-    from mpf.gcode.GCodeIndexService import GCodeIndexService
+    from mpf.application.indexing.GCodeIndexService import GCodeIndexService
     from mpf.gcode.IndexView import IndexView
     from mpf.gcode.MotionIndex import LayerMotionIndex
     from mpf.monitor.camera.MonitorCamera import MonitorCamera
@@ -2507,11 +2519,11 @@ if QT_AVAILABLE:
             self.service._view = IndexView(self.job, index)
             self.service._hydrate = {0, 4, 9}
             self.service.set_followed_layer(4)
-            self.assertEqual(index.followed_layer, 4)
+            self.assertEqual(self.service._residency.anchor("live"), 4)
             self.assertEqual(self.service._hydrate, {4})
             # A non-integer anchor and a missing view are no-ops.
             self.service.set_followed_layer("4")
-            self.assertEqual(index.followed_layer, 4)
+            self.assertEqual(self.service._residency.anchor("live"), 4)
             self.service._view = None
             self.service.set_followed_layer(2)
 
@@ -2580,8 +2592,8 @@ if QT_AVAILABLE:
             # included: the pass's own hydration hands the interpreter
             # back on it, and a stub that rejects the keyword fails the
             # whole batch instead of hydrating the layer.
-            with patch("mpf.gcode.IndexTasks.hydrate_layer_from_file",
-                       side_effect=lambda index, path, layer, should_stop=None: (
+            with patch("mpf.application.indexing.IndexTasks.hydrate_layer_from_file",
+                       side_effect=lambda index, path, layer, should_stop=None, *, retention=None: (
                            hydrations.append(layer),
                            index.hydrated_layers.add(layer),
                            True)[2]):
@@ -2619,7 +2631,7 @@ if QT_AVAILABLE:
                 return original(kind, work, lease)
 
             self.service._submit = counted
-            with patch("mpf.gcode.IndexTasks.hydrate_layer_from_file",
+            with patch("mpf.application.indexing.IndexTasks.hydrate_layer_from_file",
                        side_effect=OSError("the file went away")):
                 self.service._advance()
                 self.assertEqual(submitted, ["fullprep"],
@@ -2936,6 +2948,13 @@ if QT_AVAILABLE:
             with patch.object(CameraBridge, "configure", return_value=False):
                 self.assertEqual(self.camera._bridge_url(self.config, "http://printer.local/cam"),
                                  "http://printer.local/cam")
+
+        def test_authenticated_ipv6_camera_preserves_a_valid_origin_and_feed_query(self):
+            self.config = PrinterConfig(url="http://[2001:db8::1]:7125", api_key="SECRET")
+            url = self.camera._bridge_url(self.config, "http://[2001:db8::1]:7125/webcam?action=stream&camera=2")
+            self.assertTrue(url.startswith("http://127.0.0.1:"))
+            self.assertEqual(self.camera._camera_bridge._upstream_base, "http://[2001:db8::1]:7125")
+            self.assertIn("action=stream&camera=2", url)
 
         def test_select_publishes_the_choice_and_ignores_out_of_range(self):
             self._snapshot({"uid": "u1", "name": "Front", "stream_url": "/one"},

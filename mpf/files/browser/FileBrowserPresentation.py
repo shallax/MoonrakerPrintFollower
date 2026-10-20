@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Invalidate stale drafts and recheck active-file upload and directory mutations.
+# 2026-09-30 [14500a2] Extract file-browser presentation from the Monitor facade
+
 """File-browser drafts, actions and cached row projections.
 
 The backend owns remote operations; this object owns the popup's transient
@@ -41,6 +49,16 @@ class FileBrowserPresentation(QObject):
         self._files_model_rev = -1
         manager.uploadProgress.connect(self._on_upload_progress)
         manager.uploadFinished.connect(self._on_upload_finished)
+        manager.invalidated.connect(self.reset)
+
+    def reset(self):
+        """Confirmation drafts belong to one printer session."""
+        self._file_print_confirm = self._file_delete_confirm = None
+        self._file_rename_target = self._file_upload_confirm = None
+        self._file_rename_conflict = False
+        self._file_upload_progress = None
+        self._file_manager_note = ""
+        self.changed.emit()
 
     def set_note(self, text):
         self._file_manager_note = str(text)
@@ -257,7 +275,7 @@ class FileBrowserPresentation(QObject):
         self._file_delete_confirm = None
         if confirm:
             if confirm.get("kind") == "dir":
-                self._file_manager.delete_directory(confirm["path"])
+                self._file_manager.delete_directory(confirm["path"], self._printing_relpath())
             else:
                 self._file_manager.delete_files(confirm["relpaths"], self._printing_relpath())
         self.changed.emit()
@@ -314,7 +332,8 @@ class FileBrowserPresentation(QObject):
         if target:
             if target.get("kind") == "dir":
                 self._file_manager.rename_directory(
-                    target["path"], target["name"], overwrite=bool(self._file_rename_conflict))
+                    target["path"], target["name"], overwrite=bool(self._file_rename_conflict),
+                    printing_relpath=self._printing_relpath())
             else:
                 self._file_manager.rename_file(
                     target["path"], target["name"], self._printing_relpath(),
@@ -361,7 +380,8 @@ class FileBrowserPresentation(QObject):
             self.changed.emit()
             return
         if name_collides(self._file_manager.resident_rows(), target):
-            self._file_upload_confirm = {"path": path, "filename": name}
+            self._file_upload_confirm = {"path": path, "filename": name,
+                                         "directory": list(self._file_manager.directory)}
             self.changed.emit()
             return
         self._start_upload(path, name)
@@ -371,7 +391,10 @@ class FileBrowserPresentation(QObject):
         confirm = self._file_upload_confirm
         self._file_upload_confirm = None
         if confirm:
-            self._start_upload(confirm["path"], confirm["filename"], overwrite=True)
+            if confirm["directory"] != self._file_manager.directory:
+                self._note("Upload cancelled: the destination folder changed. Select the file again.")
+            else:
+                self._start_upload(confirm["path"], confirm["filename"], overwrite=True)
         self.changed.emit()
 
     def fileUploadDismiss(self):
@@ -536,6 +559,10 @@ class FileBrowserPresentation(QObject):
         }
 
     def _start_upload(self, path, name, overwrite=False) -> None:
+        target = upload_relpath("/".join(self._file_manager.directory), name)
+        if target == self._printing_relpath():
+            self._note(f"Upload refused: {name} is currently printing.")
+            return
         # The popup's payload opens on the FIRST publish after this;
         # the service's progress and outcome signals drive it from
         # here on (a live request: a bar while it runs and

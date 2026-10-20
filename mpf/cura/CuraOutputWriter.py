@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-22 [7b897c0] 4.6.0: the live-fix wave — the ghost gate, the temp sweep, the resumed-session counts and
+#   the 0% ghost
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """Cura-affine file preparation. The output is a lease, not an in-memory buffer."""
 from dataclasses import dataclass
 import os

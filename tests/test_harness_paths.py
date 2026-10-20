@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Cover older Cura metadata casing and normalized wheel names.
+# 2026-10-16 [1d52947] Handle multiple compatible PyQt wheels deterministically
+# 2026-10-16 [10580bf] Match harness QtTest wheels to Cura embedded runtime metadata
+# 2026-09-14 [e168ec7] harness: fix the doubled evidence path, with tests
+
 """Regression pins for the run-dir resolution rule.
 
 The doubled-path bug (shipped in 4.0.2): the container side of
@@ -10,11 +20,16 @@ ui_test.sh resolve through it; these tests pin the behaviour and the
 wiring.
 """
 
+import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from tools import fetch_cura
 
 ROOT = Path(__file__).resolve().parent.parent
 HELPER = ROOT / "tools" / "ui_test_paths.sh"
@@ -69,6 +84,156 @@ def _resolve(base, name):
 
 def _container(work_dir, path):
     return _helper("container", work_dir, path).stdout.strip()
+
+
+class CuraProfileVersionTests(unittest.TestCase):
+    def test_qt_wheel_selection_handles_rebuilt_wheels_without_comparing_dicts(self):
+        names = ["pyqt6-6.10.0-cp39-abi3-manylinux_2_34_x86_64.whl",
+                 "pyqt6-6.10.0-1-cp39-abi3-manylinux_2_34_x86_64.whl",
+                 "pyqt6-6.10.0-cp39-abi3-manylinux_2_34_aarch64.whl"]
+        files = [{"filename": name} for name in names]
+        for candidates in (files, list(reversed(files))):
+            self.assertEqual(fetch_cura.pick_wheel(candidates, True)["filename"], names[1])
+
+    def test_stale_cached_wheels_are_replaced_using_separate_binding_and_qt_pins(self):
+        version = "5.14.0-beta.1"
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            prepared = base / version
+            (prepared / "root").mkdir(parents=True)
+            (prepared / "UltiMaker-Cura.AppImage").write_bytes(b"cached-appimage")
+            wheels = prepared / "wheels"
+            wheels.mkdir()
+            (wheels / "stale-file").write_bytes(b"old wheel")
+            (prepared / "manifest.json").write_text(json.dumps({
+                "launch": "loader", "env": "modern", "bundled_python": "3.11",
+                "bundled_pyqt6": "6.6.0"}), encoding="utf-8")
+            def fetch(package, pin, abi3, destination):
+                name = f"{package}-{pin}.whl"
+                (destination / name).write_bytes(b"wheel")
+                return name
+            def unpack(*args, **kwargs):
+                binding = wheels / "PyQt6"
+                binding.mkdir(exist_ok=True)
+                (binding / "QtTest.abi3.so").write_bytes(b"test binding")
+            with patch.object(fetch_cura, "BASE", base), patch("sys.argv", ["fetch_cura.py", version]), \
+                    patch.object(fetch_cura, "discover", return_value=("3.11", "6.10.0", "6.10.1")), \
+                    patch.object(fetch_cura, "fetch_wheel", side_effect=fetch) as downloads, \
+                    patch.object(fetch_cura, "sh", side_effect=unpack):
+                self.assertEqual(fetch_cura.main(), 0)
+            self.assertEqual([(call.args[0], call.args[1]) for call in downloads.call_args_list],
+                             [("PyQt6", "6.10.0"), ("PyQt6-Qt6", "6.10.1")])
+            self.assertFalse((wheels / "stale-file").exists())
+            manifest = json.loads((prepared / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["bundled_pyqt6"], "6.10.0")
+            self.assertEqual(manifest["bundled_qt6"], "6.10.1")
+
+    def test_runtime_pins_come_from_embedded_metadata_in_flat_appimages(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "cura").mkdir()
+            metadata = root / "cura/CuraVersion.py"
+            metadata.write_text("PythonInstalls = {'PyQt6': {'version': '6.10.0'}, "
+                                "'PyQt6-Qt6': {'version': '6.10.1'}}\n"
+                                "ConanInstalls = {'cpython': {'version': '3.11.9'}}\n",
+                                encoding="utf-8")
+            self.assertEqual(fetch_cura.discover(root), ("3.11", "6.10.0", "6.10.1"))
+            metadata.unlink()
+            with self.assertRaisesRegex(RuntimeError, "refusing guessed QtTest"):
+                fetch_cura.discover(root)
+
+    def test_older_cura_lowercase_metadata_keeps_independent_runtime_pins(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "cura").mkdir()
+            metadata = root / "cura/CuraVersion.py"
+            # Cura 5.7's AppImage spells these keys in lowercase.
+            metadata.write_text("PythonInstalls = {'pyqt6': {'version': '6.6.0'}, "
+                                "'pyqt6-qt6': {'version': '6.6.0'}}\n"
+                                "ConanInstalls = {'cpython': {'version': '3.10.4'}}\n",
+                                encoding="utf-8")
+            self.assertEqual(fetch_cura.discover(root), ("3.10", "6.6.0", "6.6.0"))
+            metadata.write_text("PythonInstalls = {'pyqt6': {'version': '6.6.0'}, "
+                                "'pyqt6_qt6': {'version': '6.6.1'}}\n"
+                                "ConanInstalls = {'cpython': {'version': '3.10.4'}}\n",
+                                encoding="utf-8")
+            self.assertEqual(fetch_cura.discover(root), ("3.10", "6.6.0", "6.6.1"))
+            metadata.write_text("PythonInstalls = {'pyqt6': {'version': '6.6.0'}}\n"
+                                "ConanInstalls = {'cpython': {'version': '3.10.4'}}\n",
+                                encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "refusing guessed QtTest"):
+                fetch_cura.discover(root)
+
+    def test_wheel_metadata_names_are_case_and_separator_independent(self):
+        for binding, qt in (("PyQt6", "PyQt6_Qt6"), ("pyqt6", "pyqt6_qt6")):
+            with self.subTest(binding=binding), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                (root / "usr/bin").mkdir(parents=True)
+                (root / "usr/bin/python3.10").touch()
+                (root / f"{binding}-6.6.0.dist-info").mkdir()
+                runtime = root / f"{qt}-6.6.1.dist-info"
+                runtime.mkdir()
+                self.assertEqual(fetch_cura.discover(root), ("3.10", "6.6.0", "6.6.1"))
+                runtime.rmdir()
+                with self.assertRaisesRegex(RuntimeError, "refusing guessed QtTest"):
+                    fetch_cura.discover(root)
+
+    @unittest.skipIf(os.name == "nt", "POSIX access modes")
+    def test_extracted_tools_are_readable_across_uids_without_world_writes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "root"
+            root.mkdir(mode=0o700)
+            nested = root / "lib"
+            nested.mkdir(mode=0o700)
+            data = nested / "library.so"
+            data.write_bytes(b"fixture")
+            data.chmod(0o600)
+            binary = root / "UltiMaker-Cura"
+            binary.write_bytes(b"fixture")
+            binary.chmod(0o700)
+            outside = Path(temp) / "outside"
+            outside.write_bytes(b"untouched")
+            outside.chmod(0o600)
+            (root / "external-link").symlink_to(outside)
+            fetch_cura.make_host_tools_readable(root)
+            self.assertEqual(root.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(nested.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(data.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(binary.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(outside.stat().st_mode & 0o777, 0o600)
+
+    def test_prepared_beta_uses_the_modern_boot_environment(self):
+        version = "5.14.0-beta.1"
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            manifest_path = base / version / "manifest.json"
+            manifest_path.parent.mkdir()
+            root = manifest_path.parent / "root"
+            root.mkdir(mode=0o700)
+            wheels = manifest_path.parent / "wheels"
+            wheels.mkdir(mode=0o700)
+            manifest_path.write_text(json.dumps({"launch": "loader", "env": "legacy",
+                "bundled_python": "3.11", "bundled_pyqt6": "6.10.0", "bundled_qt6": "6.10.0"}),
+                                     encoding="utf-8")
+            with patch.object(fetch_cura, "BASE", base), patch("sys.argv", ["fetch_cura.py", version]), \
+                    patch.object(fetch_cura, "discover", return_value=("3.11", "6.10.0", "6.10.0")):
+                self.assertEqual(fetch_cura.main(), 0)
+            self.assertEqual(json.loads(manifest_path.read_text(encoding="utf-8"))["env"], "modern")
+            if os.name != "nt":
+                self.assertEqual(root.stat().st_mode & 0o555, 0o555)
+                self.assertEqual(wheels.stat().st_mode & 0o555, 0o555)
+
+    @unittest.skipUnless(SHELL, NO_SHELL)
+    def test_beta_and_stable_releases_use_major_minor_profile_directories(self):
+        script = UI_TEST.read_text(encoding="utf-8")
+        assignment = next(line for line in script.splitlines() if line.startswith("SEED_VER="))
+        for version, expected in (("5.13.0", "5.13"), ("5.14.0-beta.1", "5.14")):
+            with self.subTest(version=version):
+                result = subprocess.run(
+                    [SHELL, "-c", assignment + '\nprintf "%s" "$SEED_VER"'],
+                    env={**os.environ, "CURA_VERSION": version},
+                    capture_output=True, text=True, check=True)
+                self.assertEqual(result.stdout, expected)
 
 
 class ContainerPathMappingTests(unittest.TestCase):

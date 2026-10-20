@@ -1,3 +1,13 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected release and Git history (newest first; original provenance retained):
+// 2026-10-18 — 6.0.0: Expose decoded-frame progress for camera freshness tests and captures.
+// 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
+// 2026-09-28 [e1105e4] Poll webcam snapshots at low FPS to save bandwidth
+// 2026-09-08 [0f363ac] Deterministic captures: vendored Cura assets, capture harness, committed screenshots
+
 import QtQuick 2.15
 
 Item {
@@ -24,6 +34,7 @@ Item {
     property bool snapshotMode: false
     property var detectionReceiver: null
     property real recentDisplayedFPS: 0
+    property int framesDisplayed: 0
     // The ownership counters: the camera start/stop lifecycle tests
     // count every call and every source assignment — Cura's real
     // start() is destructive, so the count IS the contract.

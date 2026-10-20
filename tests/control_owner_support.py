@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Coverage suite for the coordinator and the two control owners.
 
 ``test_monitor_qml_contracts.py`` reaches PrintCoordinator through the full follower
@@ -241,7 +250,7 @@ if QT_AVAILABLE:
         def set_followed_layer(self, layer):
             self.followed.append(layer)
 
-        def request_hydration(self, layer):
+        def request_hydration(self, layer, *, exact=False):
             self.hydration.append(layer)
 
         def set_manual_anchor(self, layer):

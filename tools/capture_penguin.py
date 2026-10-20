@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-27 [4c0a3b2] Use the same 250 mm cube in native tests and capture fixtures
+# 2026-09-27 [56cdfe9] Centre the native penguin fixture on its 250 mm test bed
+# 2026-09-27 [f080ac1] Capture follower and object picker cards with indexed penguin toolpaths
+
 """Deterministic three-material penguin toolpaths for the README capture.
 
 This is illustration G-code, not a printer job: no heating, homing or macros.

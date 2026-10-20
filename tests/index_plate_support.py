@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Load application indexing and explicit painter/job owners in indexing fixtures.
+# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
+# 2026-10-01 [7074cff] Make asynchronous release tests tolerate delayed workers
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """The per-motion feature columns, and the demand that fills them.
 
 Two surfaces share this file because they are one feature seen from both
@@ -205,6 +215,7 @@ class FeatureCacheTests(unittest.TestCase):
             "compact": False,
             "hydrated": [0],
             "counts": [1],
+            "printed_top_z": 0.2,
         }
         header.update(overrides)
         return header
@@ -695,7 +706,7 @@ class PreparedReopenPolicyTests(unittest.TestCase):
     def _compact_view(self, layers, hydrated, followed=None):
         index = make_index(layers=layers, motions=20, compact=True)
         index.hydrated_layers = set(hydrated)
-        index.followed_layer = followed
+        self.service._residency.set_window("live", followed)
         self.service._view = self.qt.load("IndexView").IndexView(
             self.files.job_key, index)
         return index

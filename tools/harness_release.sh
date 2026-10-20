@@ -1,4 +1,13 @@
 #!/bin/sh
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-13 [433ee88] harness: Cura version selection, swap proven, release-gate wiring
+
 # The release gate's real-Cura scenario runs: the smoke set on the
 # primary pinned Cura, the full suite groups on the primary, and the
 # smoke set again on the secondary version — the version-swap proof
@@ -39,8 +48,8 @@ HARNESS_DIR="${HARNESS_DIR:-/tmp/mpf}"
 # own name(s) — never the dev harness container, which an ad-hoc run
 # may be using (the gate used to remove it out from under them).
 CONTAINER="${HARNESS_CONTAINER:-mpf-cura-gate}"
-PRIMARY="${CURA_PRIMARY:-5.13.0}"
-SECONDARY="${CURA_SECONDARY:-5.12.0}"
+PRIMARY="${CURA_PRIMARY:-5.14.0-beta.1}"
+SECONDARY="${CURA_SECONDARY:-5.13.0}"
 RUN_ROOT="$HARNESS_DIR/ui-artifacts/runs/$(date +%Y-%m-%d-%H%M%S)"
 
 mkdir -p "$HARNESS_DIR" "$RUN_ROOT"

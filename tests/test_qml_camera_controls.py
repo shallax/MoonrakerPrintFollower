@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Keep decoded frames flowing through long healthy-stream gesture tests.
+# 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable qml camera controls contracts."""
 from tests import qml_engine_support as harness
 
@@ -550,6 +560,14 @@ class CameraFpsControlTests(harness.CameraFpsControlTests):
                          and control.x() + control.width() <= frame.width() + 0.5,
                          timeout=8.0)
         self.assertEqual(self._bar(pane).property("cameraBarMode"), "zoom", "the scale comes back")
+        # This long gesture test models a healthy stream: keep delivering decoded
+        # frames while waiting through the idle timer. Stalls have their own tests.
+        from PyQt6.QtCore import QTimer
+        frames = QTimer(image)
+        frames.setInterval(1000)
+        frames.timeout.connect(lambda: image.setProperty("framesDisplayed", image.property("framesDisplayed") + 1))
+        frames.start()
+        self.addCleanup(frames.stop)
         self.assertTrue(self._bar(pane).property("cameraBarShown"), "and it is on screen")
         self.assertLessEqual(control.x() + control.width(), frame.width() + 0.5,
                              "docked, not parked")

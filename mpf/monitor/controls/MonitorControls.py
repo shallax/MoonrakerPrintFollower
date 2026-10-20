@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Use protocol-owned object families and fan writability.
+# 2026-10-18 — 6.0.0: Discover cooldown heaters and preserve newest temperature intent across queues.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+
 """Printer-control policy composed with data, command and tuning capabilities."""
 from __future__ import annotations
 from collections.abc import Mapping
@@ -6,11 +17,10 @@ import shlex
 import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from ..MonitorFormatting import (
-    FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES,
-    fan_writable, friendly, infer_macro_parameters, number, mesh_profiles,
-)
-from ..MonitorPermissions import R_UNKNOWN, Verdict, can_apply_temperature_preset, can_exclude, can_macro, can_power, can_restart, can_restore, can_z_offset
+from ..MonitorFormatting import friendly, infer_macro_parameters, number, mesh_profiles
+from ...moonraker.PrinterObjects import FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES, fan_writable
+from ..temperature.HeaterTargets import heater_targets, heater_names, target_command, finite
+from ..MonitorPermissions import can_set_temperature, R_UNKNOWN, Verdict, can_apply_temperature_preset, can_exclude, can_macro, can_power, can_restart, can_restore, can_z_offset
 
 # The in-flight latch's hard ceiling: a gesture's pending state expires
 # on its own after a few multiples of the status lag (the review's
@@ -76,6 +86,7 @@ class MonitorControls(QObject):
         self._values = {}
         self._values_copy = None
         self._pending = {}
+        self._heater_intent = 0
         self._macros, self._presets = [], []
         data.changed.connect(self.observe)
         data.invalidated.connect(self.reset)
@@ -95,6 +106,7 @@ class MonitorControls(QObject):
         return self._values_copy
 
     def reset(self):
+        self._heater_intent += 1
         self._remembered_colors.clear()
         self._remembered_gain.clear()
         self._remembered_channels.clear()
@@ -192,15 +204,19 @@ class MonitorControls(QObject):
         setup = self._allowed(can_restart)
         objects = {name.lower() for name in snapshot.objects}
         profiles = mesh_profiles(aux.get("bed_mesh"))
+        heaters = heater_targets(aux)
+        for heater in heaters:
+            heater["target"] = self._display("heater:" + heater["object"], heater["target"])
         new_values = {
+            "heaterControlItems": heaters,
+            "canSetHeaterTemperature": self._allowed(can_set_temperature),
+            "canHeatersOff": self._allowed(can_apply_temperature_preset) and bool(self._cooldown_commands()),
             "macroNames": list(self._macros), "hasQuadGantryLevel": "quad_gantry_level" in objects,
             "hasBedMesh": "bed_mesh" in objects, "canRunSetup": setup,
             "temperaturePresetNames": [item["name"] for item in self._presets],
             "temperaturePresetItems": [{"index": i, "name": item["name"], "active": self.preset_active(item, aux)} for i, item in enumerate(self._presets)],
-            # The presets do NOT ride the setup row: a firmware restart
-            # is unsafe in either print state, a heater target is not,
-            # so this one action takes its own policy row (a pause is
-            # exactly when a temperature change is wanted).
+            # Temperature profiles share live heater permissions, independently
+            # of setup actions such as firmware restart.
             "canApplyTemperaturePreset": self._allowed(can_apply_temperature_preset) and bool(self._presets),
             "speedFactorPercent": self._display("speed-factor", _factor_percent(min(500, max(0.01, number(move.get("speed_factor"), 1))) * 100)),
             "flowFactorPercent": self._display("flow-factor", _factor_percent(min(500, max(0.01, number(move.get("extrude_factor"), 1))) * 100)),
@@ -293,37 +309,63 @@ class MonitorControls(QObject):
         # dispatch sites without one.
         item = self._presets[index]
         preset, commands = item["preset"], []
-        for name, attributes in (preset.get("values") or {}).items():
+        values = preset.get("values") or {}
+        for name, attributes in (values.items() if isinstance(values, Mapping) else ()):
             if not isinstance(attributes, Mapping) or not attributes.get("bool"): continue
-            target = number(attributes.get("value"), None)
-            if target is None: continue
-            parts = name.split(" ", 1)
-            heater = parts[-1]
-            command = f"SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN={heater}" if parts[0] == "temperature_fan" else f"SET_HEATER_TEMPERATURE HEATER={heater}"
+            target = finite(attributes.get("value"))
+            command = target_command(name)
+            if target is None or target < 0 or command is None: continue
             commands.append(command + f" TARGET={target:g}")
         if preset.get("gcode"): commands.append(str(preset["gcode"]))
-        if commands: self._commands.script(item["name"], "\n".join(commands), rule=can_apply_temperature_preset)
+        if commands:
+            self._tuning.discard("heater:")
+            self._commands.script(item["name"], "\n".join(commands), rule=self._heater_group_rule())
+
+    def _heater_group_rule(self):
+        # A queued group may contain opaque macro G-code. Supersede the whole
+        # unsent group after a newer temperature intent, never replay it later.
+        self._heater_intent += 1
+        revision = self._heater_intent
+
+        def allowed(observation):
+            if revision != self._heater_intent:
+                return Verdict("disabled", "superseded by a later temperature change")
+            return can_apply_temperature_preset(observation)
+        return allowed
+
+    def set_heater_temperature(self, name, target):
+        if not self._allowed(can_set_temperature):
+            return
+        item = next((row for row in heater_targets(self._data.snapshot.auxiliary)
+                     if row["object"] == name), None)
+        value = finite(target)
+        if item is None or value is None or (value != 0 and not item["minimum"] <= value <= item["maximum"]):
+            return
+        self._heater_intent += 1
+        key = "heater:" + name
+        self._tuning.queue(key, value, key,
+                          f"SET_HEATER_TEMPERATURE HEATER={name.split()[-1]} TARGET={value:g}",
+                          guard=lambda: self._allowed(can_set_temperature) and any(
+                              row["object"] == name and (value == 0 or row["minimum"] <= value <= row["maximum"])
+                              for row in heater_targets(self._data.snapshot.auxiliary)))
+
+    def _cooldown_commands(self):
+        names = list(heater_names(self._data.snapshot.auxiliary))
+        for item in self._presets:
+            values = item["preset"].get("values") or {}
+            for name, attributes in (values.items() if isinstance(values, Mapping) else ()):
+                if not isinstance(attributes, Mapping) or not attributes.get("bool"): continue
+                names.append(name)
+        return [command + " TARGET=0" for name in dict.fromkeys(names)
+                if (command := target_command(name))]
 
     def heaters_off(self):
-        """Cooldown: set every heater appearing in the profiles to 0 target.
-
-        The union of profile heater entries is the safe heater inventory —
-        auxiliary objects include temperature *sensors*, which take no
-        target and must not receive a heater command.
-        """
+        """Turn off live heaters and profile targets, excluding sensor-only objects."""
         if not self._allowed(can_apply_temperature_preset): return
-        commands, seen = [], set()
-        for item in self._presets:
-            for name, attributes in (item.get("preset") or {}).get("values", {}).items():
-                if not isinstance(attributes, Mapping) or not attributes.get("bool"): continue
-                if name in seen: continue
-                seen.add(name)
-                parts = name.split(" ", 1)
-                heater = parts[-1]
-                command = (f"SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN={heater}"
-                           if parts[0] == "temperature_fan" else f"SET_HEATER_TEMPERATURE HEATER={heater}")
-                commands.append(command + " TARGET=0")
-        if commands: self._commands.script("Cooldown", "\n".join(commands), rule=can_apply_temperature_preset)
+        commands = self._cooldown_commands()
+        if commands:
+            self._tuning.discard("heater:")
+            self._commands.script("Cooldown", "\n".join(commands), rule=self._heater_group_rule())
 
     def factor(self, kind, percent, preview=False):
         percent = _factor_percent(percent)

@@ -1,8 +1,19 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Validate settings before publishing toolhead assets; keep host persistence at the adapter.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-09-04 [2f1de9e] Update to v2.0.0.
+
 """Native Cura Machine Action for unified per-printer Moonraker settings."""
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from dataclasses import asdict, replace
 from typing import Any, Dict, Optional
@@ -19,11 +30,11 @@ from UM.Logger import Logger
 from UM.Resources import Resources
 from UM.Settings.DefinitionContainer import DefinitionContainer
 
-from ..gcode.CacheNamespaces import CACHE_DIRECTORY_NAME
-from ..preview.FollowController import FollowMode
+from ..application.indexing.CacheNamespaces import CACHE_DIRECTORY_NAME
 from ..moonraker.MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
 from ..moonraker.MoonrakerSession import RequestCategory
 from ..moonraker.MoonrakerTransport import MoonrakerHttpTransport
+from ..settings.ConfigValidation import ConfigDiscovery, ConfigValidationError, validate_config
 from ..settings.PrinterConfig import PrinterConfig, normalise_url
 
 from ..settings.MigrationPresentation import migration_banner_text, migration_diagnostics_text
@@ -45,6 +56,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
     detectionEvidenceStatusChanged = pyqtSignal()
     migrationChanged = pyqtSignal()
     detectionChanged = pyqtSignal()
+    recoveryDiscoveryChanged = pyqtSignal()
 
     def __init__(self, application: Any, follower: Any, output_plugin: Any = None) -> None:
         super().__init__(self.KEY, self.LABEL)
@@ -54,6 +66,11 @@ class MoonrakerFollowerMachineAction(MachineAction):
         self._toolhead_models = getattr(follower, "toolhead_models", None)
         self._detection = getattr(follower, "detection", None)
         self._detection_refusal = ""
+        self._recovery_sensors = []
+        self._recovery_saved_states = ["PAUSE_STATE"]
+        self._recovery_prepare_macros = []
+        self._recovery_sensor_pause = {}
+        self._recovery_discovery_status = "Open this tab to read the printer configuration."
         if self._detection is not None:
             self._detection.stateChanged.connect(self.detectionChanged.emit)
         self._qml_url = "settings/MoonrakerFollowerConfiguration.qml"
@@ -184,6 +201,161 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtProperty(bool, notify=settingsChanged)
     def settingsEnabled(self) -> bool:
         return self._config().enabled
+
+    @pyqtProperty(QVariant, notify=settingsChanged)
+    def settingsRecoverySensorNames(self):
+        return list(self._config().recovery_sensor_names)
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsRecoveryAutoPause(self):
+        return self._config().recovery_auto_pause
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRecoverySavedState(self):
+        return self._config().recovery_saved_state
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRecoveryPrepareMacro(self):
+        return self._config().recovery_prepare_macro
+
+    @pyqtProperty(QVariant, notify=settingsChanged)
+    def settingsRecoverySetupMacros(self):
+        return list(self._config().recovery_setup_macros)
+
+    @pyqtProperty(QVariant, notify=settingsChanged)
+    def settingsRecoveryTransparentMacros(self):
+        return list(self._config().recovery_transparent_macros)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRecoveryNozzleParameter(self):
+        return self._config().recovery_nozzle_parameter
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRecoveryBedParameter(self):
+        return self._config().recovery_bed_parameter
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryLeadIn(self):
+        return self._config().recovery_lead_in_mm
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsRecoveryLeadInMode(self):
+        return self._config().recovery_lead_in_mode
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def settingsRecoveryLeadInMoves(self):
+        return self._config().recovery_lead_in_moves
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryClearance(self):
+        return self._config().recovery_clearance_mm
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryXySpeed(self):
+        return self._config().recovery_xy_speed_mm_s
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryZSpeed(self):
+        return self._config().recovery_z_speed_mm_s
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsRecoveryPrimeEnabled(self):
+        return self._config().recovery_prime_enabled
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeX(self):
+        return self._config().recovery_prime_x
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeY(self):
+        return self._config().recovery_prime_y
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeZ(self):
+        return self._config().recovery_prime_z
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeAmount(self):
+        return self._config().recovery_prime_amount_mm
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeSpeed(self):
+        return self._config().recovery_prime_speed_mm_s
+
+    @pyqtProperty(float, notify=settingsChanged)
+    def settingsRecoveryPrimeDwell(self):
+        return self._config().recovery_prime_dwell_s
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def settingsRecoveryCommandTimeout(self):
+        return self._config().recovery_command_timeout_s
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def settingsRecoveryHeatingTimeout(self):
+        return self._config().recovery_heating_timeout_s
+
+    @pyqtProperty(int, notify=settingsChanged)
+    def settingsRecoveryStatusTimeout(self):
+        return self._config().recovery_status_timeout_s
+
+    @pyqtProperty(QVariant, notify=recoveryDiscoveryChanged)
+    def recoveryAvailableSensors(self):
+        return [{"name": name, "label": name + (" (Klipper pauses)" if self._recovery_sensor_pause.get(name) == "klipper"
+                                                   else " (follower pauses)" if self._recovery_sensor_pause.get(name) == "follower"
+                                                   else " (pause owner unknown)"),
+                 "pauseOwner": self._recovery_sensor_pause.get(name) or "unknown"}
+                for name in self._recovery_sensors]
+
+    @pyqtProperty(QVariant, notify=recoveryDiscoveryChanged)
+    def recoverySavedStates(self):
+        return list(self._recovery_saved_states)
+
+    @pyqtProperty(QVariant, notify=recoveryDiscoveryChanged)
+    def recoveryPrepareMacros(self):
+        return list(self._recovery_prepare_macros)
+
+    @pyqtProperty(str, notify=recoveryDiscoveryChanged)
+    def recoveryDiscoveryStatus(self):
+        return self._recovery_discovery_status
+
+    @pyqtSlot()
+    def refreshRecoveryConfiguration(self):
+        self._recovery_discovery_status = "Reading Klipper configuration…"
+        self.recoveryDiscoveryChanged.emit()
+        transport = getattr(self._follower, "transport", None)
+        if transport is None:
+            self._recovery_discovery_status = "Printer configuration is unavailable."
+            self.recoveryDiscoveryChanged.emit()
+            return
+
+        def received(payload, error):
+            configfile = ((payload or {}).get("result") or {}).get("status") or {}
+            config = (configfile.get("configfile") or {}).get("config") or {}
+            if error or not isinstance(config, dict):
+                self._recovery_discovery_status = "Printer configuration is unavailable."
+                self.recoveryDiscoveryChanged.emit()
+                return
+            self._recovery_sensors = sorted(name for name in config
+                if name.startswith(("filament_switch_sensor ", "filament_motion_sensor ")))
+            from ..printing.RunoutEvents import pause_owner
+            self._recovery_sensor_pause = {name: pause_owner(config, name) for name in self._recovery_sensors}
+            pause = config.get("gcode_macro PAUSE") or config.get("gcode_macro pause") or {}
+            body = str(pause.get("gcode") or "") if isinstance(pause, dict) else ""
+            states = re.findall(r"\bSAVE_GCODE_STATE\s+NAME=([A-Z][A-Z0-9_]*)", body, re.I)
+            self._recovery_saved_states = list(dict.fromkeys(["PAUSE_STATE"] + [s.upper() for s in states]))
+            self._recovery_prepare_macros = sorted(name.removeprefix("gcode_macro ").upper()
+                for name in config if name.startswith("gcode_macro "))
+            self._recovery_discovery_status = (f"Found {len(self._recovery_sensors)} filament sensor(s)."
+                                               if self._recovery_sensors else "No filament sensors reported by this printer.")
+            self.recoveryDiscoveryChanged.emit()
+
+        started = transport.send_json(
+            "recovery-settings", "config", "POST", "printer/objects/query", received,
+            body={"objects": {"configfile": ["config"]}}, replace=True,
+            category="discovery")
+        if not started:
+            self._recovery_discovery_status = "Could not request printer configuration."
+            self.recoveryDiscoveryChanged.emit()
 
     @pyqtProperty(str, notify=settingsChanged)
     def settingsUrl(self) -> str:
@@ -648,127 +820,29 @@ class MoonrakerFollowerMachineAction(MachineAction):
             if not isinstance(raw, dict):
                 return False
 
-            # The sliders deliver JS numbers (e.g. 250.0); the legacy
-            # text fields delivered digit strings. Accept both. Every
-            # refusal names its reason in the log — a save that fails
-            # validation must never fail silently (the toggle-revert
-            # report: the dialog accepted nothing and said nothing).
-            try:
-                interval = int(float(str(raw.get("poll_interval_ms", "")).strip()))
-                aux_interval = int(float(str(raw.get("aux_interval_ms", "")).strip()))
-                console_interval = int(float(str(raw.get("console_interval_ms", "")).strip()))
-                tolerance = float(str(raw.get("z_tolerance", "")).strip())
-                retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
-                raw_cache = str(raw.get("cache_max_mb") or "").strip()
-                cache_max = int(raw_cache) if raw_cache \
-                    else getattr(self._config(), "cache_max_mb", 2048)
-            except ValueError as exc:
-                Logger.log("w", "Moonraker settings save refused: unparsable field (%s)", exc)
-                return False
-            url = normalise_url(str(raw.get("url", "")))
-            enabled = bool(raw.get("enabled", False))
-            if not (250 <= interval <= 3_600_000):
-                Logger.log("w", "Moonraker settings save refused: poll interval out of range")
-                return False
-            if not (250 <= aux_interval <= 60_000) or not (250 <= console_interval <= 60_000):
-                Logger.log("w", "Moonraker settings save refused: aux/console interval out of range")
-                return False
-            if not (0.005 <= tolerance <= 0.250):
-                Logger.log("w", "Moonraker settings save refused: z tolerance out of range")
-                return False
-            if not (0.1 <= retry_interval <= 60.0):
-                Logger.log("w", "Moonraker settings save refused: retry interval out of range")
-                return False
-            if not (16 <= cache_max <= 4096):
-                Logger.log("w", "Moonraker settings save refused: cache size out of range")
-                return False
-            if enabled and not self._url_is_usable(url):
-                Logger.log("w", "Moonraker settings save refused: the URL is not usable")
-                return False
-
-            trans_input = str(raw.get("filename_translate_input") or "")
-            trans_output = str(raw.get("filename_translate_output") or "")
-            if len(trans_input) != len(trans_output):
-                Logger.log("w", "Moonraker settings save refused: translate input/output lengths differ")
-                return False
-
-            mode = str(raw.get("follow_mode") or FollowMode.EXACT.value)
-            if mode not in {item.value for item in FollowMode}:
-                mode = FollowMode.EXACT.value
-
             current = self._config()
-            warning_threshold = raw.get("detection_warning_threshold", current.detection_warning_threshold)
-            failure_threshold = raw.get("detection_failure_threshold", current.detection_failure_threshold)
-            if (type(warning_threshold) is not int or type(failure_threshold) is not int
-                    or not 0 <= warning_threshold < failure_threshold <= 100):
-                Logger.log("w", "Moonraker settings save refused: detection thresholds must be ordered percentages")
-                return False
-            detection_enabled = raw.get("detection_enabled", current.detection_enabled)
-            if not isinstance(detection_enabled, bool):
-                Logger.log("w", "Moonraker settings save refused: detection_enabled must be a checkbox value")
-                return False
-            if detection_enabled and not current.detection_enabled \
-                    and (not self.detectionGlobalEnabled or not self.detectionCameraReady
-                         or bool(raw.get("camera_disabled", current.camera_disabled))):
-                self._detection_refusal = (
-                    "Enable local detection in Settings and select a working camera before enabling this printer."
-                )
-                self.detectionChanged.emit()
-                Logger.log("w", "Moonraker settings save refused: %s", self._detection_refusal)
+            enabling_detection = raw.get("detection_enabled", current.detection_enabled) is True and not current.detection_enabled
+            discovery = ConfigDiscovery(
+                sensors=tuple(self._recovery_sensors),
+                saved_states=tuple(self._recovery_saved_states),
+                macros=tuple(self._recovery_prepare_macros),
+                detection_global_enabled=self.detectionGlobalEnabled,
+                detection_camera_ready=self.detectionCameraReady if enabling_detection else False)
+            try:
+                config = validate_config(raw, current, discovery,
+                                         url_is_usable=self._url_is_usable)
+            except ConfigValidationError as error:
+                if error.field == "detection_enabled":
+                    self._detection_refusal = error.message
+                    self.detectionChanged.emit()
+                Logger.log("w", f"Moonraker settings save refused: {error.message}")
                 return False
             self._detection_refusal = ""
             self.detectionChanged.emit()
-            # The mode is a validated two-literal choice: an unknown value
-            # keeps the current one — never a silent default (UX-M7).
-            feed_mode = str(raw.get("feed_mode") or "").strip().lower()
-            if feed_mode not in ("websocket", "http"):
-                feed_mode = str(getattr(current.feed_mode, "value", current.feed_mode))
-            data = asdict(current)
-            data.update({
-                "enabled": enabled,
-                "url": url,
-                "api_key": str(raw.get("api_key") or "").strip(),
-                "poll_interval_ms": interval,
-                "aux_interval_ms": aux_interval,
-                "console_interval_ms": console_interval,
-                "cache_max_mb": cache_max,
-                "cache_max_mb_explicit": bool(raw_cache) or current.cache_max_mb_explicit,
-                "moonraker_layer_is_one_based": bool(raw.get("moonraker_layer_is_one_based", True)),
-                "auto_preview": bool(raw.get("auto_preview", False)),
-                "z_fallback": bool(raw.get("z_fallback", True)),
-                "z_tolerance": tolerance,
-                "path_follow": bool(raw.get("path_follow", True)),
-                "path_smoothing": bool(raw.get("path_smoothing", True)),
-                "eta_learn": bool(raw.get("eta_learn", False)),
-                "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
-                "trace_layer": bool(raw.get("trace_layer", False)),
-                "seek_trace": bool(raw.get("seek_trace", False)),
-                "trace_http": bool(raw.get("trace_http", False)),
-                "memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False)),
-                "memory_diagnostics_trace": bool(raw.get("memory_diagnostics_trace", False)),
-                "camera_disabled": bool(raw.get("camera_disabled", False)),
-                "detection_enabled": detection_enabled,
-                "detection_warning_threshold": warning_threshold,
-                "detection_failure_threshold": failure_threshold,
-                "software_follower_renderer": bool(raw.get("software_follower_renderer", False)),
-                "feed_mode": feed_mode,
-                "follow_mode": mode,
-                "frontend_url": str(raw.get("frontend_url") or "").strip(),
-                "output_format": str(raw.get("output_format") or "gcode").lower(),
-                "upload_dialog": bool(raw.get("upload_dialog", True)),
-                "upload_path": str(raw.get("upload_path") or "").strip().strip("/"),
-                "upload_start_print": bool(raw.get("upload_start_print", False)),
-                "upload_remember_state": bool(raw.get("upload_remember_state", False)),
-                "upload_autohide_message": bool(raw.get("upload_autohide_message", False)),
-                "power_devices": str(raw.get("power_devices") or "").strip(),
-                "ready_retry_interval_s": retry_interval,
-                "filename_translate_input": trans_input,
-                "filename_translate_output": trans_output,
-                "filename_translate_remove": str(raw.get("filename_translate_remove") or ""),
-            })
             if self._toolhead_models is not None:
+                data = asdict(config)
                 data.update(self._toolhead_models.fields())
-            config = PrinterConfig.from_dict(data)
+                config = PrinterConfig.from_dict(data)
             saved = self._follower.apply_printer_config(config)
             if saved is False:
                 # A refused persistence write is not a saved setting: the

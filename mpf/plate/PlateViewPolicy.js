@@ -1,8 +1,16 @@
 .pragma library
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-20 — 6.0.0: Serve the explicit view-state owner without per-vertex cross-language calls.
+// 2026-09-30 [1c7b165] The camera's arithmetic has one pure owner
+
 // One Qt-free owner for the camera's arithmetic: the bed transform, the
 // pan clamps, the zoom's focal/eased terms, the scope's scale and the
 // physical stroke width. All functions are pure — the face and the
-// scope own the camera STATE and every Item that reads it; nothing here
+// scope supply intent values to PlateViewState, which owns camera state; nothing here
 // touches a QML object.
 //
 // The cap the zoom scale and the scope's graduations share.

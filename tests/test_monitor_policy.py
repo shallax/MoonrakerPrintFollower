@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Verify protocol-owned object classification and fan writability.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable monitor policy contracts."""
 from tests import monitor_test_support as harness
 
@@ -22,7 +32,7 @@ class MonitorPolicyConsistencyTests(harness.MonitorPolicyConsistencyTests):
         self.assertIn(f"(±{radius})", (harness.PLUGINS / "FollowingSettings.qml").read_text(encoding="utf-8"))
 
     def test_classification_table_is_the_single_object_policy(self):
-        from mpf.monitor.MonitorFormatting import object_kind, wanted_object
+        from mpf.moonraker.PrinterObjects import object_kind, wanted_object
         self.assertEqual(object_kind("fan"), "system")
         self.assertEqual(object_kind("heater_bed"), "system")
         self.assertEqual(object_kind("gcode_macro START_PRINT"), "macro")
@@ -46,7 +56,7 @@ class MonitorPolicyConsistencyTests(harness.MonitorPolicyConsistencyTests):
         # temperature-regulated — SET_FAN_SPEED never sticks — so
         # their rows render read-only. The other fan types register
         # the command.
-        from mpf.monitor.MonitorFormatting import fan_writable
+        from mpf.moonraker.PrinterObjects import fan_writable
         for name in ("fan", "fan_generic nevermore"):
             self.assertTrue(fan_writable(name), name)
         for name in ("controller_fan controller_fan1", "controller_fan controller_fan2",

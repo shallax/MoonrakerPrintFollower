@@ -1,4 +1,13 @@
 #!/bin/sh
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [3174be6] Keep pre-commit fast and preserve fragmented loopback frames
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-08 [7341f82] Development tooling: pinned container, quality gates and the Makefile
+
 # Pre-commit checks for MoonrakerPrintFollower.
 #
 # Installed as the git pre-commit hook by tools/install_hooks.sh; the

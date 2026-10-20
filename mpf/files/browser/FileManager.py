@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Delegate streaming upload lifetime to the shared multipart operation.
+# 2026-10-18 — 6.0.0: Fence walk and start callbacks; protect active files and report walk failures.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-11 [1c33814] 3.6.0: file manager, console resize, and e-stop reconnect
+
 """The file-manager service: resident listing, history and view state.
 
 One owner for the popup's data (round-2 A1): a full-tree walk on open
@@ -11,17 +22,15 @@ generation so stale callbacks can never publish.
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import quote
 
-from PyQt6.QtCore import QByteArray, QFile, QIODevice, QObject, QVariant, pyqtSignal
-from PyQt6.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkReply, QNetworkRequest
+from PyQt6.QtCore import QObject, pyqtSignal
 
 from ...moonraker.MoonrakerProtocol import (
-    _moonraker_error_text,
+    moonraker_error_text,
     delete_endpoint,
     directory_create_endpoint,
     directory_delete_endpoint,
@@ -52,15 +61,16 @@ from .FileManagerPolicy import (
     rename_target,
     upload_relpath,
 )
-from .ReplyBodyReader import ReplyBodyReader
+from ...moonraker.ReplyBodyReader import ReplyBodyReader
+from ...moonraker.MultipartUpload import MultipartUpload
 from .ThumbnailCache import ThumbnailCache
 
 MAX_DIRECTORIES = 50
-MAX_UPLOAD_REPLY_BYTES = 1024 * 1024
 
 
 class FileManager(QObject):
     changed = pyqtSignal()
+    invalidated = pyqtSignal()
     # Local explanations for per-row actions (metascan outcomes) —
     # the model routes these into the console feed like the
     # toolhead's rejectedNote.
@@ -79,6 +89,7 @@ class FileManager(QObject):
         super().__init__(parent)
         self._client = client
         self._generation = 0
+        self._walk_revision = 0
         self._rows: Dict[str, FileRow] = {}
         self._dirs: Set[str] = set()
         self._history: List[Dict[str, Any]] = []
@@ -107,7 +118,7 @@ class FileManager(QObject):
         # Upload operations key on their operation id, never the
         # destination path: a second upload of the same name must not
         # orphan the first's reply or let it emit a stale verdict.
-        self._upload_replies: Dict[str, tuple] = {}
+        self._uploads: Dict[str, tuple] = {}
         self._upload_seq = 0
         # Snapshot 3's column config lives HERE, not in the model (the
         # live ruling: the file manager is its own thing, composed
@@ -146,6 +157,7 @@ class FileManager(QObject):
         self._history_rev += 1
         self._directory = []
         self._selection = set()
+        self.invalidated.emit()
         self.changed.emit()
 
     def unbind(self) -> None:
@@ -168,6 +180,7 @@ class FileManager(QObject):
         self._history_rev += 1
         self._directory = []
         self._selection = set()
+        self.invalidated.emit()
         self.changed.emit()
 
     # ---- fetching --------------------------------------------------
@@ -187,6 +200,8 @@ class FileManager(QObject):
 
     def _walk(self) -> None:
         generation = self._generation
+        self._walk_revision += 1
+        revision = self._walk_revision
         transport = self._client.transport
         visited = 0
         pending = 0
@@ -202,20 +217,33 @@ class FileManager(QObject):
         fresh_dirs: Set[str] = set()
         walked_error: List[Optional[str]] = [None]
 
+        def publish() -> None:
+            if pending or generation != self._generation or revision != self._walk_revision:
+                return
+            self._refreshed_at = time.time()
+            self._walk_error = walked_error[0]
+            if self._walk_error is None:
+                self._rows = fresh_rows
+                self._dirs = fresh_dirs
+                self._rejoin_history()
+                self._data_rev += 1
+            self.changed.emit()
+
         def visit(directory: str, is_root: bool) -> None:
             nonlocal visited, pending
             if visited >= MAX_DIRECTORIES:
+                walked_error[0] = f"Listing stopped at the {MAX_DIRECTORIES}-folder limit; the previous listing is retained."
                 return
             visited += 1
             pending += 1
             def finished(payload, error) -> None:
                 nonlocal pending
-                pending -= 1
-                if generation != self._generation:
+                if generation != self._generation or revision != self._walk_revision:
                     return
                 if error or not isinstance(payload, dict):
                     walked_error[0] = error or "listing failed"
-                    self.changed.emit()
+                    pending -= 1
+                    publish()
                     return
                 result = payload.get("result") if isinstance(payload.get("result"), dict) else payload
                 for entry in result.get("dirs", ()) or ():
@@ -234,17 +262,8 @@ class FileManager(QObject):
                 usage = result.get("disk_usage")
                 if is_root and isinstance(usage, dict):
                     self._disk_usage = {str(k): int(v) for k, v in usage.items() if isinstance(v, (int, float))}
-                if pending == 0:
-                    self._refreshed_at = time.time()
-                    if walked_error[0] is None:
-                        self._rows = fresh_rows
-                        self._dirs = fresh_dirs
-                        self._walk_error = None
-                        self._rejoin_history()
-                        self._data_rev += 1
-                    else:
-                        self._walk_error = walked_error[0]
-                self.changed.emit()
+                pending -= 1
+                publish()
             started = transport.send_json("file-manager", f"dir:{directory}", "GET",
                 f"server/files/directory?path={quote('gcodes' + (f'/{directory}' if directory else ''), safe='/')}&extended=true",
                 finished, replace=True)
@@ -252,14 +271,7 @@ class FileManager(QObject):
                 # The transport refused to send: that is a walk
                 # failure too — without it, a fully-refused walk
                 # swaps in "success" and the banner never appears.
-                pending -= 1
-                walked_error[0] = walked_error[0] or "the directory listing could not be sent"
-                # A refused start must still terminate the walk with
-                # a visible failure — an empty walk with no error and
-                # no timestamp is the eternal "Loading files…" face.
-                walked_error[0] = "listing failed"
-                self._walk_error = walked_error[0]
-                self.changed.emit()
+                finished(None, "listing failed")
         visit("", True)
 
     def _fetch_history(self, limit: int) -> None:
@@ -406,6 +418,9 @@ class FileManager(QObject):
         if target is None:
             self.note.emit("Rename refused: the name is empty, unchanged, or not a plain filename.")
             return False
+        if target == str(printing_relpath or ""):
+            self.note.emit("Rename refused: the destination is currently printing.")
+            return False
         if name_collides(list(self._rows.values()), target) and not overwrite:
             self.note.emit(f"Rename refused: a file named {str(new_name).strip()} already exists.")
             return False
@@ -461,7 +476,7 @@ class FileManager(QObject):
             self.uploadFinished.emit(False, f"A file named {name} already exists.")
             self.note.emit(f"Upload refused: a file named {name} already exists.")
             return False
-        if any(in_flight == relpath for _reply, in_flight in self._upload_replies.values()):
+        if any(in_flight == relpath for _reply, in_flight in self._uploads.values()):
             # The ruling: a second upload of the same name while one
             # runs is refused with a verdict, never queued.
             self.uploadFinished.emit(False, f"An upload of {name} is already running.")
@@ -469,80 +484,46 @@ class FileManager(QObject):
             return False
         transport = self._client.transport
         try:
-            source = QFile(local_path)
-            if not source.open(QIODevice.OpenModeFlag.ReadOnly):
-                raise OSError(source.errorString())
-            multipart = QHttpMultiPart(QHttpMultiPart.ContentType.FormDataType)
-            part = QHttpPart()
-            part.setHeader(QNetworkRequest.KnownHeaders.ContentDispositionHeader,
-                           QVariant(f'form-data; name="file"; filename="{name}"'))
-            part.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, QVariant("application/octet-stream"))
-            part.setBodyDevice(source)
-            multipart.append(part)
             fields = {"root": "gcodes"}
             if self._directory:
                 fields["path"] = "/".join(self._directory)
-            for field, value in fields.items():
-                part = QHttpPart()
-                part.setHeader(QNetworkRequest.KnownHeaders.ContentDispositionHeader,
-                               QVariant(f'form-data; name="{field}"'))
-                part.setBody(QByteArray(value.encode()))
-                multipart.append(part)
-            request = transport.request("server/files/upload", timeout_ms=30000)
-            reply = transport.network.post(request, multipart)
-            # The same raw-reply ownership law as thumbnails: the
-            # reply rides the registry into a bound-method handler;
-            # the multipart and file device live as the reply's
-            # children so nothing dies mid-stream.
-            multipart.setParent(reply)
-            source.setParent(reply)
+            operation = MultipartUpload(transport, self)
             self._upload_seq += 1
             op_id = f"upload-{self._upload_seq}"
-            self._upload_replies[op_id] = (reply, relpath)
-            self._bodies.watch(reply, MAX_UPLOAD_REPLY_BYTES)
-            reply.uploadProgress.connect(
-                lambda sent, total, g=generation: self.uploadProgress.emit(
-                    max(0, min(100, int(sent * 100 / total))))
-                if total > 0 and g == self._generation else None)
-            reply.finished.connect(
-                lambda r=reply, p=op_id, g=generation, n=name: self._upload_finished(p, r, g, n)
-            )
+            self._uploads[op_id] = (operation, relpath)
+            operation.progress.connect(lambda percent, g=generation:
+                self.uploadProgress.emit(percent) if g == self._generation else None)
+            operation.finished.connect(lambda result, op=operation, p=op_id, g=generation, n=name:
+                self._upload_finished(p, op, g, n, result))
+            try:
+                operation.start(local_path, name, fields)
+            except Exception:
+                self._uploads.pop(op_id, None)
+                operation.cancel(notify=False)
+                operation.deleteLater()
+                raise
             return True
         except Exception as error:
             self.uploadFinished.emit(False, str(error))
             self.note.emit(f"Upload refused: {error}")
             return False
 
-    def _upload_finished(self, op_id: str, reply, generation: int, name: str) -> None:
-        reply._mpf_body_finished = True
-        entry = self._upload_replies.get(op_id)
-        if entry is not None and entry[0] is reply:
-            self._upload_replies.pop(op_id, None)
-        try:
-            response_body = self._bodies.take(reply, MAX_UPLOAD_REPLY_BYTES)
-        except ValueError:
-            response_body = b""
+    def _upload_finished(self, op_id, operation, generation, name, result):
+        entry = self._uploads.get(op_id)
+        if entry is not None and entry[0] is operation:
+            self._uploads.pop(op_id, None)
         if generation != self._generation:
-            # The printer changed mid-upload: the popup must resolve
-            # with a verdict, not hang.
             self.uploadFinished.emit(False, "The printer changed during the upload.")
-        elif getattr(reply, "_mpf_body_overflow", False):
+        elif result.overflow:
             self.uploadFinished.emit(False, "Upload response exceeds the size limit.")
             self.note.emit("Upload response exceeds the size limit.")
-        elif reply.error() != QNetworkReply.NetworkError.NoError:
-            detail = reply.errorString()
-            try:
-                body = json.loads(response_body.decode("utf-8", errors="replace"))
-                # The refusal words ride two shapes: flat, or nested
-                # under "error" (Moonraker's newer form — the
-                # transport unwraps the same way).
-                inner = body.get("error") if isinstance(body, dict) else None
-                words = _moonraker_error_text(inner if isinstance(inner, dict)
-                                              else body) if isinstance(body, dict) else ""
-                if words:
-                    detail = words
-            except Exception:
-                pass
+        elif result.network_error or result.cancelled:
+            detail = result.network_error or "Upload cancelled"
+            body = result.payload()
+            inner = body.get("error")
+            words = moonraker_error_text(inner if isinstance(inner, dict) else body)
+            if words:
+                detail = words
             self.uploadFinished.emit(False, detail)
             self.note.emit(f"Upload refused: {detail}")
         else:
@@ -550,28 +531,20 @@ class FileManager(QObject):
             self.note.emit(f"Uploaded {name}.")
             self.changed.emit()
             self.refresh()
-        # Every terminal path disposes the reply exactly once; the
-        # multipart and the source QFile close with it (parented
-        # children of the reply).
-        reply.deleteLater()
+        operation.deleteLater()
 
-    def _abort_uploads(self) -> None:
-        # Ownership is invalidated BEFORE abort: abort() emits finished
-        # synchronously, and the re-entrant handler must find no
-        # registry entry (the ordering rule shared with the thumbnails).
-        pending = list(self._upload_replies.items())
-        self._upload_replies.clear()
-        for _op_id, (reply, _relpath) in pending:
+    def _abort_uploads(self):
+        # Invalidate registry before cancellation's synchronous terminal signal.
+        pending = list(self._uploads.values())
+        self._uploads.clear()
+        for operation, _relpath in pending:
             try:
-                reply.abort()
+                operation.cancel()
             except Exception:
                 pass
-            try:
-                reply.deleteLater()
-            except Exception:
-                pass
+            operation.deleteLater()
 
-    def rename_directory(self, directory: str, new_name: Any, overwrite: bool = False) -> bool:
+    def rename_directory(self, directory: str, new_name: Any, overwrite: bool = False, printing_relpath: str = "") -> bool:
         """Snapshot 3: rename a FOLDER (a live request —
         right-click a breadcrumb segment or a strip chip). The host's
         move takes {source, dest} directory paths; on success the
@@ -585,6 +558,9 @@ class FileManager(QObject):
         target = rename_path(directory, new_name)
         if target is None:
             self.note.emit("Rename refused: the name is empty, unchanged, or not a plain name.")
+            return False
+        if any(str(printing_relpath).startswith(path + "/") for path in (directory, target)):
+            self.note.emit("Rename refused: the folder contains the active print.")
             return False
         if not overwrite and path_collides(self._dirs, target):
             self.note.emit(f"Rename refused: a folder named {str(new_name).strip()} already exists.")
@@ -607,7 +583,7 @@ class FileManager(QObject):
             replace=True, category="command")
         return True
 
-    def delete_directory(self, directory: str) -> bool:
+    def delete_directory(self, directory: str, printing_relpath: str = "") -> bool:
         """Snapshot 3: delete a FOLDER (a live request).
         The host's DELETE handles directories; on success the rows
         and dirs under it drop, and the view pops to the parent when
@@ -616,6 +592,9 @@ class FileManager(QObject):
         directory = str(directory).strip("/")
         if not directory:
             self.note.emit("Delete refused: the root cannot be deleted.")
+            return False
+        if str(printing_relpath).startswith(directory + "/"):
+            self.note.emit("Delete refused: the folder contains the active print.")
             return False
         transport = self._client.transport
 
@@ -707,15 +686,19 @@ class FileManager(QObject):
         """
         generation = self._generation
         relpath = str(relpath)
+        attempt = (relpath, time.time())
         def finished(payload, error) -> None:
-            if generation != self._generation:
+            if generation != self._generation or self._print_attempt is not attempt:
                 return
-            self._print_attempt = None if error else (relpath, time.time())
+            if error:
+                self._print_attempt = None
+                self.note.emit(f"Print start did not confirm: {error}. Check the printer before retrying.")
             self.changed.emit()
-        self._print_attempt = (relpath, time.time())
-        self._client.transport.send_json("file-manager", f"print:{relpath}", "POST",
+        self._print_attempt = attempt
+        if not self._client.transport.send_json("file-manager", f"print:{relpath}", "POST",
             print_start_endpoint(self._client.transport.identity[0], relpath),
-            finished, replace=True, category="command")
+            finished, replace=True, category="command"):
+            finished(None, "the request could not be sent")
 
     @property
     def print_attempt(self):

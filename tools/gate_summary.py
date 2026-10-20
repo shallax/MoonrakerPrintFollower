@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-24 [f601dc1] Windows cannot print the verdicts, and the file manager had no screenshot
+# 2026-09-24 [173d22d] The prompt is placed, sized and keyed like a dialog
+
 """A unit's verdict as a Markdown step summary.
 
 The Actions UI shows each job as a name and a dot, and the leg's own log

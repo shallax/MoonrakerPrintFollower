@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-19 [819f06b] 4.5.0 performance: server-response batches debounce into one shard write
+# 2026-09-19 [01786f0] 4.5.0 performance: unchanged projections are served from caches
+# 2026-09-10 [4990f07] Monitor readouts: layer-anchored ETA, endstops and the first live-pass fixes
+
 """Console state owner: the bounded, per-printer command transcript and
 the send lane.
 

@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Read caller-owned residency demands at hydration completion.
+# 2026-10-20 — 6.0.0: Consume the public lexical and source-line limit definitions.
+# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+
 """Hydrate one compact index layer, retaining its opening modal state."""
 from __future__ import annotations
 
@@ -10,27 +19,26 @@ from typing import Callable, Dict, Optional
 from . import ArcGeometry
 
 from .FeatureTracker import _FeatureTracker, _TYPE_NONE, _TYPE_OTHER
-from .GCodeParser import _ARC_CLOCKWISE, _ARC_COUNTER, _COMMAND, _FAST_MOTIONS, _MOTION, _TYPE_COMMENT, _TYPE_PREFIX, _fast_motion_line, _parse_arc_words, _parse_axes
-from .IndexLimits import _MAX_LINE_BYTES, _MAX_MOTIONS_PER_LAYER, _MAX_TYPE_NAME_BYTES
+from .GCodeParser import _ARC_CLOCKWISE, _ARC_COUNTER, COMMAND_PATTERN, _FAST_MOTIONS, MOTION_PATTERN, _TYPE_COMMENT, _TYPE_PREFIX, _fast_motion_line, parse_arc_words, parse_axes
+from .IndexLimits import MAX_LINE_BYTES, _MAX_MOTIONS_PER_LAYER, _MAX_TYPE_NAME_BYTES
 from .IndexWork import HydrationYield, _YIELD_CHECK_MASK, passive_yield
 from .MotionIndex import LayerMotionIndex
 
 def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                             keep_anchor: Optional[int] = None,
-                            should_stop: Optional[Callable[[], bool]] = None) -> bool:
+                            should_stop: Optional[Callable[[], bool]] = None, *,
+                            retention: Optional[Callable[[], frozenset[int]]] = None,
+                            cooperative: bool = True) -> bool:
     """Populate motion data for one layer of a compact large-file index.
 
     Boundary indexing keeps RAM bounded for huge files. Motion commands are then
     loaded only for layers actually viewed during the live print. Byte-position
     following remains available while hydration is pending.
 
-    keep_anchor names the FOLLOWED layer: the eviction window keeps
-    [anchor-1, anchor+1] around it, so a prefetched look-ahead layer
-    survives and the window follows the print rather than whichever
-    layer the background worker picked last. Without keep_anchor the
-    anchor is the index's followed_layer (set by the service, read
-    HERE at completion so a worker finishing after an anchor change
-    applies the latest policy), then the hydrated layer.
+    keep_anchor preserves a caller-selected neighbouring window. Additional
+    consumer windows come from retention(), read at completion under the index
+    lock. The hydrated layer's own window survives until its caller has consumed
+    the arrays; parsed index content carries no consumer selection state.
 
     The parse walks the layer's feature state as well as its geometry:
     the E axis for the travel boundaries and the ;TYPE: markers for the
@@ -83,7 +91,7 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
             checked = 0
             while handle.tell() < end:
                 checked += 1
-                if (checked & _YIELD_CHECK_MASK) == 0:
+                if cooperative and (checked & _YIELD_CHECK_MASK) == 0:
                     updated = passive_yield(time.monotonic(), yield_at)
                     if updated != yield_at:
                         yield_at = updated
@@ -92,10 +100,10 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                             # every array it had, which is none of them.
                             raise HydrationYield()
                 offset = handle.tell()
-                line = handle.readline(_MAX_LINE_BYTES + 1)
+                line = handle.readline(MAX_LINE_BYTES + 1)
                 if not line:
                     break
-                if len(line) > _MAX_LINE_BYTES:
+                if len(line) > MAX_LINE_BYTES:
                     line = b""
                 stripped = line.rstrip(b"\r\n")
                 if stripped.lstrip().startswith(_TYPE_PREFIX):
@@ -119,9 +127,9 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                 if fast is not None:
                     command, axes = fast
                 else:
-                    command_match = _COMMAND.search(code)
+                    command_match = COMMAND_PATTERN.search(code)
                     command = command_match.group(1).upper() if command_match else b""
-                    axes = _parse_axes(code)
+                    axes = parse_axes(code)
                 if units_scale != 1.0 and axes:
                     axes = {axis: value * units_scale for axis, value in axes.items()}
                 if command == b"G20":
@@ -152,10 +160,10 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
                 elif command == b"G92":
                     x = axes.get("X", x); y = axes.get("Y", y); z = axes.get("Z", z)
                     if "E" in axes: features.e = axes["E"]
-                elif command in _FAST_MOTIONS or _MOTION.search(stripped):
+                elif command in _FAST_MOTIONS or MOTION_PATTERN.search(stripped):
                     arc = None
                     if command in _ARC_CLOCKWISE or command in _ARC_COUNTER:
-                        arc_words = _parse_arc_words(code)
+                        arc_words = parse_arc_words(code)
                         if units_scale != 1.0 and arc_words:
                             arc_words = {word: value * units_scale for word, value in arc_words.items()}
                         arc = ArcGeometry.descriptor(
@@ -212,25 +220,12 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
             # look-ahead layers around the anchor; any reader of an
             # evicted layer sees an empty array (the same degraded
             # fallback as a never-hydrated one).
-            anchor = keep_anchor
-            if anchor is None:
-                anchor = index.followed_layer
-            if anchor is None:
-                anchor = layer
-            # A frozen follower layer is a second anchor: its window
-            # survives the live one's advance (the pop-over's detach
-            # would otherwise evict the very layer it is showing).
-            manual = index.manual_anchor
-            # The freshly hydrated layer's own window is a THIRD
-            # survivor: the background full-cache pass hydrates layers
-            # far outside both anchors and must hold the arrays valid
-            # until its prepare and encode complete — the next pass
-            # hydrate evicts this layer's window, so the union stays
-            # bounded at the live, manual and in-flight windows.
+            retained = set(retention()) if retention is not None else set()
+            anchor = layer if keep_anchor is None else keep_anchor
+            retained.update(range(max(0, anchor - 1), anchor + 2))
+            retained.update(range(max(0, layer - 1), layer + 2))
             for old in sorted(index.hydrated_layers):
-                if (old < anchor - 1 or old > anchor + 1) \
-                        and (manual is None or old < manual - 1 or old > manual + 1) \
-                        and (old < layer - 1 or old > layer + 1):
+                if old not in retained:
                     index.motion_offsets[old] = array("Q")
                     index.motion_x[old] = array("f")
                     index.motion_y[old] = array("f")

@@ -1,3 +1,15 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
+# 2026-10-20 — 6.0.0: Route runout pause and follower selection through explicit workflow owners.
+# 2026-10-18 — 6.0.0: Clear camera recovery only after a decoded frame and publish cooldown state.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-09-05 [6cd3659] v3: add unified Moonraker Monitor model and webcam discovery
+
 """One Cura Qt model: declarations and composition, not an inheritance stack."""
 from __future__ import annotations
 
@@ -8,21 +20,10 @@ from UM.Resources import Resources
 from UM.Logger import Logger
 from PyQt6.QtGui import QDesktopServices
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
+from ..application.RunoutPause import RunoutPause
+from ..application.FollowerSelection import FollowerSelection, coerce_anchor
 from .console.ConsoleController import ConsoleController
 from .temperature.TemperaturePresentation import TemperaturePresentation
-
-
-def _coerce_anchor(value):
-    """A valid integer ZERO is a layer (the P0 zero-index bug: the
-    old `value or -1` read the first layer as missing and refused the
-    detach/scrub on it). Only None and unparseable values mean
-    missing."""
-    if value is None:
-        return -1
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return -1
 
 
 def _british_spelling() -> bool:
@@ -44,7 +45,7 @@ def _british_spelling() -> bool:
 from .MonitorDetection import MonitorDetection
 from .camera.CameraRecovery import CameraRecovery
 from .camera.MonitorCamera import MonitorCamera
-from ..plate.PlateQt import _PLATE_TRAVEL_VISUAL_RATIO
+from ..plate.PlateRaster import _PLATE_TRAVEL_VISUAL_RATIO
 from ..plate.PlateRenderController import PlateRenderController, SceneInputs
 from .controls.MonitorCommands import MonitorCommands
 from .controls.MonitorControls import MonitorControls, _exclude_status
@@ -54,6 +55,7 @@ from .PauseAtLayerPresentation import PauseAtLayerPresentation
 from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, can_z_offset, jog_caption, section_reason
 from ..files.browser.FileBrowserPresentation import FileBrowserPresentation
 from ..printing.PrintStartOwner import PrintStartOwner
+from ..printing.RunoutEvents import RunoutEvents, SENSOR_PREFIXES
 from .layout.UiStateStore import UiStateStore
 
 from ..files.browser.FileManager import FileManager
@@ -320,10 +322,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     # The popover's pause-at-layer block (the coordinator's schedule,
     # the popover's own candidate).
     pauseAtLayerChanged = pyqtSignal()
+    recoveryChanged = pyqtSignal()
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
                  request_load=None, request_monitor_download=None, request_file_download=None,
                  request_plate_anchor=None, request_plate_split=None,
+                 recovery_selection=None,
+                 recovery_state=None, recovery_plan=None, recovery_start=None, recovery_review=None,
+                 recovery_cancel=None, recovery_suggest=None, recovery_changed=None,
+                 recovery_files=None, recovery_list_files=None, recovery_select_file=None,
                  request_follower_popover_open=None,
                  pause_at_layer_block=None, request_pause_toggle=None,
                  request_pause_remove=None, request_pause_clear=None,
@@ -351,6 +358,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The split seam is the progress slider's scrub, same shape.
         self._request_plate_anchor = request_plate_anchor
         self._request_plate_split = request_plate_split
+        self._recovery_selection = recovery_selection
+        self._recovery_state = recovery_state
+        self._recovery_plan = recovery_plan
+        self._recovery_review = recovery_review
+        self._recovery_start = recovery_start
+        self._recovery_cancel = recovery_cancel
+        self._recovery_suggest = recovery_suggest
+        self._recovery_files = recovery_files
+        self._recovery_list_files = recovery_list_files
+        self._recovery_select_file = recovery_select_file
+        if recovery_changed is not None:
+            recovery_changed.connect(self._schedule_publish)
+        self._runout_events = RunoutEvents()
+        self._runout_pause = RunoutPause(
+            send=client.transport.send_json, connected=lambda: client.connected,
+            config=self._config, print_state=self._print_state, changed=self._schedule_publish)
+        self._recovery_history_key = None
+        self._recovery_previous_attempt = {}
+        client.sessionInvalidated.connect(self._invalidate_recovery_observation)
         # The coordinator's explicit demand gate: the closed popover
         # stops the frozen window's per-poll serving (the reviewer's
         # C).
@@ -361,7 +387,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # anchor seams above: a model without them publishes no pause
         # block and drops the intents.
         self._pause_at_layer = PauseAtLayerPresentation(
-            block=pause_at_layer_block, anchor=lambda: self._follower_layer_anchor)
+            block=pause_at_layer_block, anchor=lambda: self._selection.anchor)
         self._request_pause_toggle = request_pause_toggle
         self._request_pause_remove = request_pause_remove
         self._request_pause_clear = request_pause_clear
@@ -438,10 +464,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The follower's attach state and its frozen layer — a LIVE view
         # state, never persisted: a restart follows the print again, and
         # the frozen layer belongs to the file that was printing.
-        self._follower_attached = True
-        self._follower_layer_anchor = -1
-        self._follower_layer_split = None
-        self._follower_job = None
+        self._selection = FollowerSelection(
+            anchor=self._plate_anchor_request, split=self._plate_split_request)
         self._plate_qt_job = None
         # The native render pipeline: PER-SURFACE render contexts — the
         # compact mini and the full popover hold their own view, plot,
@@ -457,7 +481,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # is a live debug toggle.
             trace_requested=lambda: (self._config() is not None
                                      and self._config().seek_trace),
-            attached=lambda: self._follower_attached,
+            attached=lambda: self._selection.attached,
             popover_open=lambda: self._follower_popover_open,
             scene_inputs=self._renderer_scene_inputs,
             notify=self._publish,
@@ -510,7 +534,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._camera_recovery = CameraRecovery(
             active=lambda: bool(getattr(self._data, "active", False)))
         self._camera.streamFailed.connect(self._on_stream_failed)
-        self._camera.streamRecovered.connect(self._on_stream_recovered)
         # The wake watch (a live report): a stream that survives a
         # suspend shows a FROZEN frame whose image size is already set,
         # so the render watchdog cannot see it — the wake transition
@@ -686,10 +709,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot()
     def cameraRenderStalled(self) -> None:
-        # The render watchdog (a live report): a stream
-        # that CONNECTED but never painted a frame raises no error
-        # signal — the QML pane watches the image's frame size and
-        # reports a stall here. The recovery is the same as a stream
+        # A connected stream can stop decoding without a transport error.
+        # The QML pane watches decoded-frame progress, including streams
+        # with a retained old image. Recovery is the same as a stream
         # failure: the nonce bump reloads the source, cadence-limited
         # by the same 10 s gate.
         self._on_stream_failed()
@@ -719,7 +741,67 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._data.set_console_expanded(expanded, stored)
 
     def _on_auxiliary(self):
+        snapshot = self._print_state()
+        self._bind_recovery_job(snapshot)
+        motion = getattr(snapshot, "motion_progress", None)
+        observation = getattr(snapshot, "observation", None)
+        new_events = self._runout_events.observe(
+            getattr(snapshot, "job_key", None), self._data.snapshot.auxiliary,
+            at=time.time(), selected=getattr(self._config(), "recovery_sensor_names", ()),
+            layer=getattr(motion, "layer", None), split=getattr(motion, "split", None),
+            file_position=getattr(observation, "file_position", None))
+        for event in new_events:
+            self._runout_pause.request(event, snapshot)
+        if new_events:
+            self._persist_recovery_events(snapshot)
         self._schedule_publish()
+
+    def _invalidate_recovery_observation(self, *_args):
+        self._runout_pause.invalidate()
+
+    def _bind_recovery_job(self, snapshot):
+        if self._runout_pause.bind(getattr(snapshot, "job_key", None)):
+            self._recovery_previous_attempt = {}
+            self._recovery_history_key = None
+
+    def _recovery_key(self, snapshot):
+        job = getattr(snapshot, "job_key", None)
+        history_id = str(getattr(snapshot, "history_job_id", "") or "")
+        if not job or not history_id or not callable(self._identity):
+            return None
+        machine_id, _name = self._identity()
+        if not machine_id or machine_id == "unknown":
+            return None
+        return (machine_id, history_id, job[0], job[1])
+
+    def _sync_recovery_history(self, snapshot):
+        key = self._recovery_key(snapshot)
+        if key is None or key == self._recovery_history_key:
+            return
+        self._recovery_history_key = key
+        if not hasattr(self._store, "get_machine_state"):
+            return
+        document = self._store.get_machine_state(key[0]) or {}
+        record = document.get("recoveryEvents") or {}
+        attempt = document.get("recoveryAttempt") or {}
+        self._recovery_previous_attempt = (dict(attempt)
+            if isinstance(attempt, Mapping) and attempt.get("jobId") == key[1]
+            and attempt.get("filename") == key[2] and attempt.get("size") == key[3]
+            else {})
+        if (isinstance(record, Mapping) and record.get("jobId") == key[1]
+                and record.get("filename") == key[2] and record.get("size") == key[3]):
+            self._runout_events.restore(snapshot.job_key, record.get("events"))
+        if self._runout_events.events:
+            self._persist_recovery_events(snapshot)
+
+    def _persist_recovery_events(self, snapshot):
+        key = self._recovery_key(snapshot)
+        if key is None or not hasattr(self._store, "set_machine_state"):
+            return
+        record = {"jobId": key[1], "filename": key[2], "size": key[3],
+                  "events": [event.document() for event in self._runout_events.events]}
+        if not self._store.set_machine_state(key[0], {"recoveryEvents": record}):
+            self._runout_pause.note = "Recovery marker storage failed; keep Cura open for this print."
 
     def _layer_index(self, snapshot):
         layer_info = getattr(snapshot, "layer", None)
@@ -1139,6 +1221,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         """The snapshot read and the transitions that precede the values
         built from it."""
         snapshot = self._print_state()
+        self._bind_recovery_job(snapshot)
+        self._runout_events.bind(getattr(snapshot, "job_key", None))
+        self._sync_recovery_history(snapshot)
         # The follower's attach state belongs to ONE print: a new file
         # re-attaches it before the value block reads the state.
         self._observe_follower_job(getattr(snapshot, "job_key", None))
@@ -1167,6 +1252,27 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         group; nothing here writes configuration or dispatches a
         command on a presenter's behalf."""
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
+        self._runout_events.bind(getattr(snapshot, "job_key", None))
+        selected_sensors = set(getattr(self._config(), "recovery_sensor_names", ()))
+        values["recoverySensorChoices"] = [
+            {"name": name, "selected": name in selected_sensors}
+            for name in sorted(self._data.snapshot.auxiliary)
+            if str(name).lower().startswith(SENSOR_PREFIXES)]
+        values["recoveryEvents"] = [event.document() for event in self._runout_events.events]
+        values["recoveryPreviousAttempt"] = self._recovery_previous_attempt
+        values["recoveryPrepareMacro"] = getattr(self._config(), "recovery_prepare_macro", "")
+        values["recoveryPauseNote"] = self._runout_pause.note
+        selection = self._recovery_selection() if self._follower_popover_open and self._recovery_selection else None
+        values["recoverySelection"] = ({
+            "layer": selection.selected_layer + 1,
+            "completedMotions": selection.completed_motions,
+            "nextMotion": selection.next_motion + 1,
+            "nextLayer": selection.next_layer + 1,
+            "offset": selection.next_motion_offset,
+            "x": selection.position[0], "y": selection.position[1], "z": selection.position[2]
+        } if selection is not None else {})
+        values["recoveryPlan"] = self._recovery_state() if self._recovery_state else {}
+        values["recoveryFiles"] = self._recovery_files() if self._recovery_files else {}
         # Connected with no auxiliary data landed yet: the pane's
         # loading state (the 2026-09-16 request — the empty grey page
         # on entry reads as dead, not as arriving).
@@ -1249,7 +1355,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # order let a stale manual payload (a detach's residue)
         # override the live print — the review's attach finding.
         popover = (
-            progress if self._follower_attached
+            progress if self._selection.attached
             else follower if follower is not None else progress)
         # The surfaces gate their payloads: a closed popover or a
         # collapsed section never re-wraps a fresh payload, so the
@@ -1281,7 +1387,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # "" means no estimate (behind the print, or no timing).
             values["plateAnchorEta"] = (
                 getattr(snapshot, "plate_anchor_eta", "") or ""
-                if not self._follower_attached else "")
+                if not self._selection.attached else "")
             if popover is None:
                 # No index at all: the reason stays empty — the face's
                 # download action owns that state (its idle line
@@ -1360,7 +1466,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # fallback candidate, so a popover that has never been slid
         # schedules at the layer it is actually showing.
         values.update(self._pause_at_layer.values(
-            snapshot, _coerce_anchor(values["plateProgressAnchor"]), values["plateLayerCount"]))
+            snapshot, coerce_anchor(values["plateProgressAnchor"]), values["plateLayerCount"]))
         # The plate's toolhead dot (physical position, the marker
         # convention): validity rides the connection — a paused
         # print's position is honest, a disconnected one is a lie if
@@ -1525,8 +1631,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             followerLineScale=self._follower_line_scale,
             followerTrueThickness=self._follower_true_thickness,
             followerTravelVisualRatio=_PLATE_TRAVEL_VISUAL_RATIO,
-            followerAttached=self._follower_attached,
-            followerLayerAnchor=self._follower_layer_anchor,
+            followerAttached=self._selection.attached,
+            followerLayerAnchor=self._selection.anchor,
             britishSpelling=_british_spelling(),
             improvingEta=(snapshot.load_active or self._improving_eta) and not snapshot.index_ready,
             printIndexReady=snapshot.index_ready,
@@ -1674,6 +1780,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     temperatureItems = value_property(QVariant, "temperatureItems", peripheralsChanged, [])
     fanItems = value_property(QVariant, "fanItems", peripheralsChanged, [])
     filamentSensorItems = value_property(QVariant, "filamentSensorItems", peripheralsChanged, [])
+    recoverySensorChoices = value_property(QVariant, "recoverySensorChoices", recoveryChanged, [])
+    recoveryEvents = value_property(QVariant, "recoveryEvents", recoveryChanged, [])
+    recoveryPreviousAttempt = value_property(QVariant, "recoveryPreviousAttempt", recoveryChanged, {})
+    recoveryPrepareMacro = value_property(str, "recoveryPrepareMacro", recoveryChanged, "")
+    recoveryPauseNote = value_property(str, "recoveryPauseNote", recoveryChanged, "")
+    recoverySelection = value_property(QVariant, "recoverySelection", recoveryChanged, {})
+    recoveryPlan = value_property(QVariant, "recoveryPlan", recoveryChanged, {})
+    recoveryFiles = value_property(QVariant, "recoveryFiles", recoveryChanged, {})
     plateObjects = value_property(QVariant, "plateObjects", plateObjectsChanged, {"objects": [], "truncated": 0, "excludedCount": 0})
     plateDot = value_property(QVariant, "plateDot", plateObjectsChanged, {"x": 0.0, "y": 0.0, "valid": False})
     plateHasObjects = value_property(bool, "plateHasObjects", plateObjectsChanged, False)
@@ -1780,6 +1894,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     hasBedMesh = value_property(bool, "hasBedMesh", controlsChanged, False)
     canRunSetup = value_property(bool, "canRunSetup", controlsChanged, False)
     temperaturePresetNames = value_property(QVariant, "temperaturePresetNames", controlsChanged, [])
+    heaterControlItems = value_property(QVariant, "heaterControlItems", typedControlsChanged, [])
+    canSetHeaterTemperature = value_property(bool, "canSetHeaterTemperature", typedControlsChanged, False)
+    canHeatersOff = value_property(bool, "canHeatersOff", typedControlsChanged, False)
     temperaturePresetItems = value_property(QVariant, "temperaturePresetItems", typedControlsChanged, [])
     canApplyTemperaturePreset = value_property(bool, "canApplyTemperaturePreset", controlsChanged, False)
     speedFactorPercent = value_property(int, "speedFactorPercent", controlsChanged, 100)
@@ -2103,6 +2220,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def cameraFirstFrameRendered(self):
         from ..diagnostics.CameraTiming import mark_once
         mark_once("T9", "first decoded frame")
+        self._on_stream_recovered()
 
     @pyqtSlot(result=int)
     def cameraPaneInstanceId(self):
@@ -2823,74 +2941,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # generation.
             self._plate_qt_job = job
             self.plate_renderer.begin_print()
-        if job == self._follower_job:
-            return
-        self._follower_job = job
-        if not self._follower_attached:
-            self._follower_attached = True
-            self._follower_layer_anchor = -1
-            self._follower_layer_split = None
-            self._plate_anchor_request(None)
-            self._plate_split_request(None)
+        self._selection.observe_job(job)
 
     @pyqtSlot(bool)
     def setFollowerAttached(self, attached):
-        """Attach/detach: detached freezes the anchor on the layer the
-        face is showing — and seeds the scrub with the live split, so
-        the frozen layer keeps drawing exactly where the print stood
-        (the live report: a detach that changed nothing read as dead).
-        Attached rejoins the live print and abandons the scrub. A
-        refused detach (no layer to hold) leaves the follower attached
-        rather than publishing a state the coordinator cannot serve."""
-        attached = bool(attached)
-        if attached == self._follower_attached:
-            return
-        self._follower_attached = attached
-        if attached:
-            self._follower_layer_anchor = -1
-            self._follower_layer_split = None
-            self._plate_anchor_request(None)
-            self._plate_split_request(None)
-        else:
-            frozen = self._follower_layer_anchor
-            if frozen < 0:
-                # Nothing frozen yet: the LIVE layer is where the face
-                # stands, so that is what the detach holds on to.
-                frozen = _coerce_anchor(
-                    self._values.get("plateProgressAnchor", -1))
-            if frozen < 0:
-                # The published anchor may lag the surface's demand
-                # (a direct feed before the coordinator's publish):
-                # the surface's own current layer is the same truth.
-                presented = self.plate_renderer.current_layer("popover")
-                if presented is not None:
-                    frozen = _coerce_anchor(presented)
-            if frozen < 0 and (self._values.get("plateLayerCount", 0) > 0
-                               or self._print_state().index_ready):
-                # The index can be ready before the physical print has
-                # reached one of its layers. The count can also lag the
-                # ready signal by a publish. Hold the detach at layer zero
-                # and serve its geometry as soon as that count arrives.
-                frozen = 0
-            if frozen >= 0:
-                self._follower_layer_anchor = frozen
-                seed = self._values.get("plateSplit")
-                if seed is not None and frozen == self._values.get("plateProgressAnchor"):
-                    # Detaching FROM the live layer: continue the fill
-                    # where it stood. A seek to another layer carries
-                    # no split — the scrub belongs to the live layer.
-                    self._follower_layer_split = int(seed)
-                else:
-                    self._follower_layer_split = None
-                self._plate_anchor_request(frozen)
-                self._plate_split_request(self._follower_layer_split)
-            else:
-                # No layer to freeze (no index): a detach that would
-                # change nothing is refused rather than published as a
-                # state the coordinator cannot serve.
-                self._follower_attached = True
-                return
-        self._publish()
+        if self._selection.set_attached(
+                attached, live_anchor=self._values.get("plateProgressAnchor", -1),
+                presented=self.plate_renderer.current_layer("popover"),
+                layer_count=self._values.get("plateLayerCount", 0),
+                index_ready=self._print_state().index_ready,
+                live_split=self._values.get("plateSplit")):
+            self._publish()
 
     @pyqtSlot()
     def seekAnchorTicked(self):
@@ -2902,54 +2963,93 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot(int)
     def setFollowerLayerAnchor(self, layer):
         self.plate_renderer.trace_seek_entry(layer)
-        """The layer slider's committed value (the debounced request):
-        a manual layer IS a detach — the face cannot follow the print
-        and hold another layer at once. A seek lands the layer at
-        100% — the scrub starts at the whole layer (the live
-        request), so the FULL marker rides the split seam."""
-        try:
-            layer = int(layer)
-        except (TypeError, ValueError):
-            return
-        if layer < 0:
-            return
-        if self._follower_attached:
-            self._follower_attached = False
-        if self._follower_layer_anchor == layer and self._follower_layer_split == -1:
+        if self._selection.seek(layer):
             self._publish()
-            return
-        self._follower_layer_anchor = layer
-        self._follower_layer_split = -1
-        self._plate_anchor_request(layer)
-        self._plate_split_request(-1)
-        self._publish()
 
     @pyqtSlot(int)
     def setFollowerLayerProgress(self, motions):
-        """The progress slider's committed value (the debounced
-        request): the scrub is a within-layer seek. From the LIVE
-        layer it is itself the detach — the layer freezes where the
-        print stood and the fill rides the scrubbed boundary."""
-        try:
-            motions = int(motions)
-        except (TypeError, ValueError):
-            return
-        total = int(self._values.get("plateLayerMotionCount", 0) or 0)
-        motions = max(0, min(motions, total))
-        if self._follower_attached:
-            frozen = _coerce_anchor(
-                self._values.get("plateProgressAnchor", -1))
-            if frozen < 0:
-                return
-            self._follower_attached = False
-            self._follower_layer_anchor = frozen
-            self._plate_anchor_request(frozen)
-        if self._follower_layer_split == motions:
+        if self._selection.scrub(
+                motions, total=self._values.get("plateLayerMotionCount", 0),
+                live_anchor=self._values.get("plateProgressAnchor", -1)):
             self._publish()
+
+    @pyqtSlot()
+    def markRecoveryStop(self):
+        if self._selection.attached:
             return
-        self._follower_layer_split = motions
-        self._plate_split_request(motions)
-        self._publish()
+        snapshot = self._print_state()
+        mark = self._runout_events.mark_manual(
+            getattr(snapshot, "job_key", None), at=time.time(),
+            layer=self._selection.anchor, split=self._selection.split)
+        if mark is not None:
+            self._runout_pause.note = "Manual stop estimate marked at the selected point."
+            self._persist_recovery_events(snapshot)
+            self._publish()
+
+    @pyqtSlot(QVariant)
+    def removeRecoveryStop(self, row):
+        if hasattr(row, "toVariant"):
+            row = row.toVariant()
+        snapshot = self._print_state()
+        if self._runout_events.remove(getattr(snapshot, "job_key", None), row):
+            self._runout_pause.note = "Stop bookmark removed. The selected restart point is unchanged."
+            self._persist_recovery_events(snapshot)
+            self._publish()
+
+    @pyqtSlot()
+    def suggestRecoveryLeadIn(self):
+        if self._recovery_suggest is not None:
+            self._recovery_suggest()
+            # The coordinator changed the selected split synchronously.
+            self._publish()
+
+    @pyqtSlot()
+    def refreshRecoveryFiles(self):
+        if self._recovery_list_files is not None:
+            self._recovery_list_files()
+            self._publish()
+
+    @pyqtSlot(str)
+    def selectRecoveryFile(self, filename):
+        if self._recovery_select_file is not None and self._recovery_select_file(filename):
+            self._selection.attached = False
+            self._selection.anchor = 0
+            self._selection.split = -1
+            self._publish()
+
+    @pyqtSlot()
+    def prepareRecovery(self):
+        if self._recovery_plan is not None:
+            self._recovery_plan()
+            self._publish()
+
+    @pyqtSlot(QVariant, result=QVariant)
+    def reviewRecovery(self, parameters):
+        if hasattr(parameters, "toVariant"):
+            parameters = parameters.toVariant()
+        if self._recovery_review is None:
+            return {"error": "Recovery review is unavailable. Check the G-code again."}
+        return self._recovery_review(parameters)
+
+    @pyqtSlot()
+    @pyqtSlot(QVariant)
+    def startRecovery(self, temperatures=None):
+        # QVariant slots receive QML object literals as QJSValue, not dict.
+        # Preserve the reviewed temperatures and Z reference at this boundary.
+        if hasattr(temperatures, "toVariant"):
+            temperatures = temperatures.toVariant()
+        if self._recovery_start is not None:
+            if temperatures is None:
+                self._recovery_start()
+            else:
+                self._recovery_start(temperatures)
+            self._publish()
+
+    @pyqtSlot()
+    def cancelRecovery(self):
+        if self._recovery_cancel is not None:
+            self._recovery_cancel()
+            self._publish()
 
     @pyqtSlot(int)
     def togglePauseAtLayer(self, layer):
@@ -3108,3 +3208,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def extrude(self, direction): self._toolhead.extrude(direction)
     @pyqtSlot()
     def heatersOff(self): self._controls.heaters_off()
+
+    @pyqtSlot(str, float)
+    def setHeaterTemperature(self, name, target):
+        self._controls.set_heater_temperature(name, target)

@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Verify cooldown discovery and latest temperature intent across controls.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+
 """Direct tests for MonitorControls: the control projections and the
 policy gates guarding every dispatch.
 
@@ -25,7 +35,7 @@ if QT_AVAILABLE:
     from mpf.monitor.controls import MonitorControls as controls_module
     from mpf.monitor.controls.MonitorControls import MonitorControls
     from mpf.monitor.MonitorPermissions import (Observation, R_NOT_PRINTING, R_UNKNOWN,
-                                            can_apply_temperature_preset, can_macro,
+                                            can_macro,
                                             can_restart, can_z_offset)
     from mpf.monitor.controls.MonitorTuning import MonitorTuning
 
@@ -113,8 +123,11 @@ if QT_AVAILABLE:
         def preview(self, key, value):
             self.previews.append((key, value))
 
-        def queue(self, key, value, channel, script):
+        def queue(self, key, value, channel, script, *, guard=None):
             self.queued.append((key, value, channel, script))
+
+        def discard(self, prefix):
+            self.displayed = {key: value for key, value in self.displayed.items() if not key.startswith(prefix)}
 
     class BedMesh(QObject):
         changed = pyqtSignal()
@@ -220,7 +233,7 @@ class ProjectionTests(ControlsCase):
         self.data.rebuild()
         values = self.controls.values
         self.assertFalse(values["canRunSetup"])
-        self.assertFalse(values["canApplyTemperaturePreset"])
+        self.assertTrue(values["canApplyTemperaturePreset"])
         self.assertFalse(values["canSaveConfig"])
 
     def test_a_paused_print_still_allows_a_temperature_preset(self):
@@ -639,8 +652,9 @@ class PresetTests(ControlsCase):
         self.data.rebuild(presets={"presets": {}, "cooldownGcode": "M104 S0"})
         self.assertEqual(self.controls.values["temperaturePresetNames"], ["Cooldown"])
         self.controls.apply_preset(0)
-        self.assertEqual(self.commands.calls[-1],
-                         ("script", "Cooldown", "M104 S0", can_apply_temperature_preset))
+        self.assertEqual(self.commands.calls[-1][:3],
+                         ("script", "Cooldown", "M104 S0"))
+        self.assertEqual(self.commands.calls[-1][3](record()).mode, "allowed")
 
     def test_a_non_mapping_preset_payload_is_ignored(self):
         self.data.rebuild(presets={"presets": ["junk"]})
@@ -677,22 +691,28 @@ class PresetTests(ControlsCase):
             "extruder1": {"bool": True},
             "heater_generic broken": "junk"}}}})
         self.controls.apply_preset(0)
-        self.assertEqual(self.commands.calls[-1], ("script", "PLA", "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=200"
+        self.assertEqual(self.commands.calls[-1][:3], ("script", "PLA", "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=200"
                                                    "\nSET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber TARGET=45"
-                                                   "\nM117 PLA", can_apply_temperature_preset))
+                                                   "\nM117 PLA"))
+        self.assertEqual(self.commands.calls[-1][3](record()).mode, "allowed")
 
-    def test_apply_preset_honours_the_bounds_and_the_print_state_gate(self):
+    def test_apply_preset_honours_bounds_and_lock_while_printing(self):
         self.controls.apply_preset(0)
         self.controls.apply_preset(-1)
         self.data.rebuild(presets={"presets": {"pla": {"name": "PLA", "values": {
             "extruder": {"bool": True, "value": 200}}}}})
-        # The gate is the print state, NOT setup_allowed: that one
-        # refuses a paused print, which is the case this action exists
-        # for (the live report: a live button whose click was dropped
-        # here in silence).
         self.data.observation = record(state="printing")
-        self.controls.apply_preset(0)
         self.controls.apply_preset(7)
+        self.assertEqual(self.commands.calls, [])
+        self.controls.apply_preset(0)
+        self.assertEqual(self.commands.calls[-1][2],
+                         "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=200")
+        self.commands.calls.clear()
+        for fields in (dict(controls_locked=True), dict(connection="no"),
+                       dict(connection="unknown"), dict(state="")):
+            self.data.observation = record(**fields)
+            self.controls.apply_preset(0)
+            self.controls.heaters_off()
         self.assertEqual(self.commands.calls, [])
 
     def test_a_paused_print_dispatches_the_preset_and_the_cooldown(self):
@@ -721,10 +741,10 @@ class PresetTests(ControlsCase):
                                               "sensor": {"bool": False}}},
             "abs": {"name": "ABS", "values": {"extruder": {"bool": True, "value": 250}}}}})
         self.controls.heaters_off()
-        self.assertEqual(self.commands.calls[-1], ("script", "Cooldown",
+        self.assertEqual(self.commands.calls[-1][:3], ("script", "Cooldown",
                                                    "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0"
-                                                   "\nSET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber TARGET=0",
-                                                   can_apply_temperature_preset))
+                                                   "\nSET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber TARGET=0"))
+        self.assertEqual(self.commands.calls[-1][3](record()).mode, "allowed")
 
     def test_cooldown_needs_commands_and_the_print_state_gate(self):
         self.data.rebuild(presets={"presets": {"pla": {"name": "PLA", "values": {

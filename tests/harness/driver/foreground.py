@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-30 [1f78aec] The driver's probe and interaction families get owners
+
 """Whether the DISPLAY shows this application, and how to ask for it.
 
 The evidence records the display, so a step that hands the foreground to

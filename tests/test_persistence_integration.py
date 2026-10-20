@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Resolve cache namespace composition through application indexing.
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-10-01 [1866243] Persist print sources and publish live download progress
+# 2026-09-18 [14bf827] 4.5.0: the persistence integration tests — the console's shard writes, the migration
+#   trigger and the toast's two flavours
+
 """The persistence re-points' integration contracts (4.5.0): the
 console's shard writes and settle timer, the shard-first load, the
 unknown-identity skip, the migration trigger, and the toast's two
@@ -903,7 +914,7 @@ class MachineNamespaceTests(unittest.TestCase):
             owner = self.FollowerRuntime(app, None)
         self.addCleanup(owner.close)
         unknown_store = owner.index._prepared.store
-        from mpf.gcode.CacheNamespaces import CacheNamespaces
+        from mpf.application.indexing.CacheNamespaces import CacheNamespaces
         self.assertEqual(owner.cache_namespaces.machine_hash,
                          CacheNamespaces._hash("unknown"),
                          "the unresolved runtime never hashed the unknown id")
@@ -1118,7 +1129,7 @@ class WriterOwnershipTests(unittest.TestCase):
         cutover below always races a worker that still owns the
         writer."""
         from mpf.gcode.IndexView import IndexView
-        import mpf.gcode.IndexTasks as task_module
+        import mpf.application.indexing.IndexTasks as task_module
         from tests.test_plate_progress import make_index
 
         service = owner.index

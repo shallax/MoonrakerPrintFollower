@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-18 [53afbd7] 4.5.0: the reviewer-attribution phrasing goes from the codebase
+# 2026-09-15 [c9fff64] 4.3.0 slice one: the print-start operation owner — the armed state, the publish-driven
+#   watchdog and the failure verdict move into a capabilities-only PrintStartOwner; the model keeps the
+#   projection; the timeout patch target moves with it and the module joins the inventory
+
 """The print-start operation owner (the 4.3.0 extraction).
 
 One owned operation across every start path: pending (the armed

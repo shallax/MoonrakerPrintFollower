@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
+# 2026-09-20 [ce9d4d9] 4.6.0: the four geometry/cache corrections and the physical-width zoom render
+
 """The zoom-precision raster contract (4.6.0): toolpath ink is
 PHYSICAL bed-space geometry, never a screen-constant pixel width.
 

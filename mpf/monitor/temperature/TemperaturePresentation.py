@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-30 [24e4438] Keep chart presentation internal and retarget its source contract
+# 2026-09-29 [1facb26] Give temperature presentation its own configuration and projection owner
+
 """Temperature chart preferences and cached UI projections.
 
 This owner has no Monitor-model reference: raw samples enter its history and

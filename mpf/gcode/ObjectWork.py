@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
+
 """Bounded per-object extrusion summaries from the index's single G-code scan."""
 from __future__ import annotations
 
@@ -78,7 +85,7 @@ class ObjectWorkTracker:
 
     def add(self, offset, x, y, z, extrusion):
         if (self._overflow or self._layer < 0 or not 0 < extrusion < 1e6
-                or not all(math.isfinite(value) for value in (x, y, z))):
+                or not math.isfinite(x) or not math.isfinite(y) or not math.isfinite(z)):
             return
         name = self._explicit if self._explicit_seen else self._mesh
         if not name or len(name) > 256:
@@ -95,13 +102,18 @@ class ObjectWorkTracker:
             self.objects[name] = row
         before = row["filament"]
         row["filament"] += extrusion
-        row["top"] = max(row["top"], z)
+        if z > row["top"]:
+            row["top"] = z
         row["last"] = offset
         bounds = row["bounds"]
-        bounds[0] = min(bounds[0], x)
-        bounds[1] = min(bounds[1], y)
-        bounds[2] = max(bounds[2], x)
-        bounds[3] = max(bounds[3], y)
+        if x < bounds[0]:
+            bounds[0] = x
+        if y < bounds[1]:
+            bounds[1] = y
+        if x > bounds[2]:
+            bounds[2] = x
+        if y > bounds[3]:
+            bounds[3] = y
         pending = self._pending.get(name)
         if pending is None:
             self._pending[name] = [offset, offset, before, row["filament"]]

@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: LGPL-3.0-or-later AND GPL-3.0-only
+# Moonraker Print Follower modifications: GNU GPLv3 (version 3 only); see LICENSE.
+# Upstream portions retain the LGPLv3-or-later terms and notices below.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-29 [2097457] Separate camera byte parsing, decoding and statistics from Qt presentation
+
 # Copyright (c) 2018 Aldo Hoeben / fieldOfView
 # NetworkMJPGImage is released under the terms of the LGPLv3 or higher.
 # Camera pipeline component extracted for Moonraker Print Follower.

@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-27 [bed0492] Harden RC networking, cache lifecycle, motion coordinates and UI diagnostics
+# 2026-09-11 [ab8865e] 4.0.0: add the pure RFC 6455 framing module with the security table as its tests
+
 from __future__ import annotations
 
 """Pure RFC 6455 client framing — no Qt, no sockets, no policy.

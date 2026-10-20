@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Preserve native UI logs and macOS crash reports after timeouts.
+# 2026-10-18 — 6.0.0: Keep native debugger launches opt-in for diagnostic legs.
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
+# 2026-09-06 [683f553] Consolidate release packaging maintenance
+
 # One gate leg: a single unit on a single OS.
 #
 # A reusable workflow, because there are two callers and they must run
@@ -28,6 +39,10 @@ on:
         description: "the release matrix's unit declaration, as JSON"
         type: string
         required: true
+      native_backtrace:
+        description: "Run macOS Cura under LLDB for a native crash stack"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -189,6 +204,7 @@ jobs:
         shell: bash
         env:
           SCENARIO: ${{ fromJSON(inputs.UNITS)[inputs.unit].group || fromJSON(inputs.UNITS)[inputs.unit].mode }}
+          HARNESS_NATIVE_BACKTRACE: ${{ inputs.native_backtrace && '1' || '0' }}
         run: |
           RUN_DIR_NAME="$GALLERY" \
             bash tools/native_harness.sh macos "${{ fromJSON(inputs.UNITS)[inputs.unit].cura }}" "$SCENARIO"
@@ -273,14 +289,14 @@ jobs:
           }
           if ($rc -ne 0) { throw "runner.py failed with exit $rc" }
 
-      - name: Preserve native renderer output (macOS)
+      - name: Preserve native crash diagnostics (macOS)
         if: always() && runner.os == 'macOS'
         shell: bash
         run: |
-          mkdir -p "$GALLERY"
-          if [ -f "$MPF_WORK_DIR/cura_run.log" ]; then
-            cp "$MPF_WORK_DIR/cura_run.log" "$GALLERY/cura-run.log"
+          if [ -f "$MPF_WORK_DIR/harness_env.sh" ]; then
+            . "$MPF_WORK_DIR/harness_env.sh"
           fi
+          python tools/collect_native_diagnostics.py --output "$GALLERY/native-diagnostics"
 
       # The verdict panel for this job's page. GitHub shows a job as a
       # name and a dot; the leg's own log buries the outcome under a

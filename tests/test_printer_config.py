@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Locate strict draft validation separately from tolerant configuration loading.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [d2db7b8] Clarify source macro choices and update prime defaults
+# 2026-09-04 [a99637b] Update to v1.1.0.
+
+from dataclasses import asdict
 import json
 import pathlib
 import unittest
@@ -23,6 +34,29 @@ class FakePreferences:
 
 
 class PrinterConfigTests(unittest.TestCase):
+    def test_prime_dwell_defaults_validation_and_persistence(self):
+        self.assertEqual(PrinterConfig.from_dict({}).recovery_prime_dwell_s, 5)
+        for value in (0, 5, 12.5, 300):
+            config = PrinterConfig.from_dict({"recovery_prime_dwell_s": value})
+            self.assertEqual(PrinterConfig.from_dict(asdict(config)).recovery_prime_dwell_s, value)
+        for value in (-1, 301, float("nan"), float("inf"), "bad"):
+            self.assertEqual(PrinterConfig.from_dict({"recovery_prime_dwell_s": value}).recovery_prime_dwell_s, 5)
+
+    def test_recovery_prime_defaults_are_disabled_and_can_be_overridden(self):
+        defaults = PrinterConfig.from_dict({})
+        self.assertFalse(defaults.recovery_prime_enabled)
+        self.assertEqual((defaults.recovery_prime_x, defaults.recovery_prime_y,
+                          defaults.recovery_prime_z, defaults.recovery_prime_amount_mm,
+                          defaults.recovery_prime_speed_mm_s), (0, 250, 100, 50, 5))
+        custom = PrinterConfig.from_dict({"recovery_prime_x": 12,
+                                          "recovery_prime_y": 210,
+                                          "recovery_prime_z": 90,
+                                          "recovery_prime_amount_mm": 30,
+                                          "recovery_prime_speed_mm_s": 2.5})
+        self.assertEqual((custom.recovery_prime_x, custom.recovery_prime_y,
+                          custom.recovery_prime_z, custom.recovery_prime_amount_mm,
+                          custom.recovery_prime_speed_mm_s), (12, 210, 90, 30, 2.5))
+
     def test_toolhead_rgb_maps_roundtrip_per_printer_and_reject_alpha_colours(self):
         prefs = FakePreferences()
         active = ['machine-a', 'Printer A']
@@ -388,7 +422,7 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertIn('"memory_diagnostics_log": memoryDiagnosticsBox.checked', config)
         self.assertIn('"memory_diagnostics_trace": memoryDiagnosticsTraceBox.checked', config)
         self.assertIn('"camera_disabled": cameraDisabledBox.checked', config)
-        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
+        action = (PLUGINS / "ConfigValidation.py").read_text(encoding="utf-8")
         self.assertIn('"trace_layer": bool(raw.get("trace_layer", False))', action)
         self.assertIn('"trace_http": bool(raw.get("trace_http", False))', action)
         self.assertIn('"memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False))', action)

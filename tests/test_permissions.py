@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-15 [ed4bbfb] 4.2.0 permissions policy: the rulings table — can_jog (jog_gate's shipped mapping,
+#   pause-first mode), per-device can_power, can_restart, can_start_print, can_macro, can_z_offset and
+#   can_set_absolute over the frozen observation record, with the fail-closed prelude and reason constants
+
 """Pure tests for the 4.2.0 permissions policy (MonitorPermissions).
 
 The table is the consolidation's contract: one derivation, every
@@ -125,14 +136,9 @@ class PolicyRulingTests(unittest.TestCase):
         self.assertEqual(can_restart(obs(state="standby")), Verdict("allowed", ""))
         self.assertEqual(can_restart(obs(state="error")), Verdict("allowed", ""))
 
-    def test_temperature_presets_refuse_while_printing_and_allow_while_paused(self):
-        # The presets take their own row rather than riding the setup
-        # one: a firmware restart is unsafe in either print state, a
-        # heater target is not. A paused print holds no moving
-        # toolhead, so a pause is exactly when a temperature change is
-        # wanted.
+    def test_temperature_presets_allow_printing_paused_and_idle(self):
         self.assertEqual(can_apply_temperature_preset(obs(state="printing")),
-                         Verdict("disabled", R_PRINTING))
+                         Verdict("allowed", ""))
         self.assertEqual(can_apply_temperature_preset(obs(state="paused")),
                          Verdict("allowed", ""))
         self.assertEqual(can_apply_temperature_preset(obs(state="standby")),

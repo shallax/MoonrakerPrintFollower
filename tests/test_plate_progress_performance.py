@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-09-20 [fbf69ef] 4.6.0: the follower controls, the bounded simplification and the download lifecycle
+#   hardening
+
 """The simplification's cost bound, on the shapes that make it matter.
 
 Douglas-Peucker is exact and cheap on ordinary geometry and quadratic

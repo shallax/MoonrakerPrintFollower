@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-27 [43ab36d] Accelerate follower rendering with retained GPU shader geometry
+
 """Regenerate the packaged Qt shader bundles; never needed by Cura users."""
 import argparse
 from pathlib import Path
@@ -28,7 +37,7 @@ def main():
         subprocess.run([executable, '--qsbversion', '64', '--glsl', '100 es,120,150',
                         '--hlsl', '50', '--msl', '12', '-o', str(source) + '.qsb', str(source)],
                        check=True)
-    print('Built shader bundles for Cura 5.7-5.13 (Qt 6.4-compatible format; tested on Qt 6.6)')
+    print('Built shader bundles for Cura 5.7-5.14 beta 1 (Qt 6.4-compatible format; tested on Qt 6.6)')
 
 
 if __name__ == '__main__':

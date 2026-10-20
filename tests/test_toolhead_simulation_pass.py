@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-12 [0701dcb] Improve reflection continuity and reduce rendering overhead
+# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+
 """Public native-pass contracts; doubles do not certify native GPU pixels."""
 import importlib.util
 from pathlib import Path

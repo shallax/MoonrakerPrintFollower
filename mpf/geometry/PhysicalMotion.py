@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [aeb1e5c] Restore faster centre and move-to toolhead travel
+# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+
 """Fail-closed physical travel checks over one fresh Klipper query.
 
 Use the planned G-code endpoint, an inclusive zero floor and reported axis
@@ -150,7 +159,7 @@ def prepare(op, status):
         axes = range(3) if op.kind == "center" else (2,) if op.kind == "z0" else \
             [i for i, v in enumerate(op.targets) if v is not None]
         coordinates = " ".join(f"{'XYZ'[i]}{command_number(target[i])}" for i in axes)
-        line = f"G90\nG1 {coordinates} F600"
+        line = f"G90\nG1 {coordinates} F{600 if op.kind == 'z0' else 3000}"
     # Save the ACTUAL mode/feedrate inside the script, not a polling guess.
     return "SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\n" + line \
         + "\nRESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0"

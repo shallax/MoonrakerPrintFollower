@@ -1,3 +1,11 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-05 [228f698] Finish Preview object banners for 5.1.0
+# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
+
 """Screen-space placement for Preview object-name banners."""
 from __future__ import annotations
 

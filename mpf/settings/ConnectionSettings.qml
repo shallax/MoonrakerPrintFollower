@@ -1,3 +1,12 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-10-19 — 6.0.0: Give setup pages clear titles and grouped section headings.
+// 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
+// 2026-09-30 [b01dfd8] Decompose settings into persistent feature-owned tabs
+
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3
@@ -38,6 +47,13 @@ Item {
             id: connectionColumn
             width: Math.max(0, parent.width - UM.Theme.getSize("scrollbar").width - 4 * screenScaleFactor)
             spacing: UM.Theme.getSize("default_margin").height
+
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Connection"
+                font: UM.Theme.getFont("large_bold")
+            }
 
             UM.Label {
                 text: "One Moonraker connection is shared by live following and Cura uploads."
@@ -115,6 +131,12 @@ Item {
                 font: UM.Theme.getFont("default_italic")
             }
 
+            UM.Label {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Status updates"
+                font: UM.Theme.getFont("medium_bold")
+            }
             UM.Label {
                 text: "Status update interval (milliseconds)"
             }

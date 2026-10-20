@@ -1,7 +1,16 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-16 [aeb1e5c] Restore faster centre and move-to toolhead travel
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+
 """Physical guard boundaries using invented Klipper status, never a printer."""
 import unittest
 
-from mpf.monitor.toolhead.PhysicalMotion import envelope, prepare, target_fields, UnsafeMotion
+from mpf.geometry.PhysicalMotion import envelope, prepare, target_fields, UnsafeMotion
 from mpf.monitor.toolhead.ToolheadPolicy import JogOp
 
 
@@ -36,7 +45,7 @@ class PhysicalMotionTests(unittest.TestCase):
                     target[axis] = 0
                     with self.subTest(base=base, mesh=mesh, axis=axis):
                         script = prepare(JogOp(kind='move-to', targets=tuple(target)), values)
-                        self.assertIn(f'G1 {"XYZ"[axis]}0 F600', script)
+                        self.assertIn(f'G1 {"XYZ"[axis]}0 F3000', script)
                         distance = -values['gcode_move']['gcode_position'][axis]
                         self.assertIn('G91', prepare(JogOp(kind='jog', axis='xyz'[axis], distance=distance), values))
                         target[axis] = -0.000000001
@@ -52,7 +61,7 @@ class PhysicalMotionTests(unittest.TestCase):
         for axis in range(3):
             targets = [None] * 3
             targets[axis] = 0
-            self.assertIn(f'G1 {"XYZ"[axis]}0 F600',
+            self.assertIn(f'G1 {"XYZ"[axis]}0 F3000',
                           prepare(JogOp(kind='move-to', targets=tuple(targets)), values))
             self.assertIn('G91', prepare(JogOp(kind='jog', axis='xyz'[axis], distance=1), values))
             targets[axis] = -.001
@@ -63,7 +72,7 @@ class PhysicalMotionTests(unittest.TestCase):
     def test_g92_base_is_not_confused_with_homing_origin(self):
         values = state(base=(100, 0, 5), origin=(0, 0, .05))
         self.assertEqual(envelope(values).base, (100, 0, 5))
-        self.assertIn('G1 X50 F600', prepare(JogOp(kind='move-to', targets=(50, None, None)), values))
+        self.assertIn('G1 X50 F3000', prepare(JogOp(kind='move-to', targets=(50, None, None)), values))
         with self.assertRaises(UnsafeMotion):
             prepare(JogOp(kind='move-to', targets=(101, None, None)), values)
 
@@ -79,7 +88,7 @@ class PhysicalMotionTests(unittest.TestCase):
         self.assertEqual(script, 'SAVE_GCODE_STATE NAME=MPF_MANUAL_MOVE\nG91\nG1 X1 F3000\n'
                          'RESTORE_GCODE_STATE NAME=MPF_MANUAL_MOVE MOVE=0')
         script = prepare(JogOp(kind='move-to', targets=(None, 50, None)), state())
-        self.assertIn('G90\nG1 Y50 F600', script)
+        self.assertIn('G90\nG1 Y50 F3000', script)
         self.assertNotIn(' X', script)
         self.assertNotIn(' Z', script)
 
@@ -107,8 +116,8 @@ class PhysicalMotionTests(unittest.TestCase):
     def test_mesh_values_never_introduce_a_clearance_floor(self):
         values = state(mesh=[[-.1, .3], [.2, 0]])
         # Compensation must not invent a positive lower clearance floor.
-        self.assertIn('G1 Z0.35 F600', prepare(JogOp(kind='move-to', targets=(None, None, .35)), values))
-        self.assertIn('G1 Z1 F600', prepare(JogOp(kind='move-to', targets=(None, None, 1)), values))
+        self.assertIn('G1 Z0.35 F3000', prepare(JogOp(kind='move-to', targets=(None, None, .35)), values))
+        self.assertIn('G1 Z1 F3000', prepare(JogOp(kind='move-to', targets=(None, None, 1)), values))
         original = prepare(JogOp(kind='z0'), values)
         values['bed_mesh']['mesh_matrix'][0][0] = float('nan')
         self.assertEqual(prepare(JogOp(kind='z0'), values), original)
@@ -141,7 +150,7 @@ class PhysicalMotionTests(unittest.TestCase):
     def test_mesh_fade_does_not_change_reported_upper_limit(self):
         values = state(position=(100, 100, 10), mesh=[[.0051, .0051], [.0051, .0051]])
         values['configfile']['config']['bed_mesh'].update(fade_start=1, fade_end=10)
-        self.assertIn('G1 Z200 F600', prepare(JogOp(kind='move-to', targets=(None, None, 200)), values))
+        self.assertIn('G1 Z200 F3000', prepare(JogOp(kind='move-to', targets=(None, None, 200)), values))
         with self.assertRaises(UnsafeMotion):
             prepare(JogOp(kind='move-to', targets=(None, None, 200.001)), values)
 
@@ -209,7 +218,7 @@ class PhysicalMotionTests(unittest.TestCase):
 
     def test_center_uses_physical_midpoint_and_z_zero_uses_gcode_coordinates(self):
         values = state(base=(10, 20, 5))
-        self.assertIn('G90\nG1 X90 Y80 Z45 F600', prepare(JogOp(kind='center'), values))
+        self.assertIn('G90\nG1 X90 Y80 Z45 F3000', prepare(JogOp(kind='center'), values))
         self.assertIn('G90\nG1 Z0 F600', prepare(JogOp(kind='z0'), values))
         self.assertEqual(prepare(JogOp(kind='home', script='G28'), None), 'G28')
 

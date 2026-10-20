@@ -1,8 +1,18 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Consume portable follow-mode values from the printing domain.
+# 2026-09-08 [c217114] 3.4.0 feature set: toolhead control, Monitor rework and review fixes
+# 2026-09-04 [a99637b] Update to v1.1.0.
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
+from ..printing.FollowMode import FollowMode as _FollowMode
 
 
 class FollowState(str, Enum):
@@ -17,11 +27,6 @@ class FollowState(str, Enum):
     ERROR = "error"
 
 
-class FollowMode(str, Enum):
-    EXACT = "exact"
-    COMPLETED = "completed"
-    LOOKAHEAD = "lookahead"
-    WINDOW = "window"
 
 
 @dataclass
@@ -35,15 +40,15 @@ def decide_layers(remote_layer: int, max_layer: int, mode: str, window_radius: i
     max_layer = max(0, int(max_layer))
     remote_layer = max(0, min(int(remote_layer), max_layer))
     try:
-        parsed = FollowMode(mode)
+        parsed = _FollowMode(mode)
     except ValueError:
-        parsed = FollowMode.EXACT
+        parsed = _FollowMode.EXACT
 
-    if parsed == FollowMode.COMPLETED:
+    if parsed == _FollowMode.COMPLETED:
         return FollowDecision(max(0, remote_layer - 1), minimum_layer=0, follow_path=False)
-    if parsed == FollowMode.LOOKAHEAD:
+    if parsed == _FollowMode.LOOKAHEAD:
         return FollowDecision(min(max_layer, remote_layer + 1), minimum_layer=0, follow_path=False)
-    if parsed == FollowMode.WINDOW:
+    if parsed == _FollowMode.WINDOW:
         radius = max(1, int(window_radius))
         return FollowDecision(
             min(max_layer, remote_layer + radius),

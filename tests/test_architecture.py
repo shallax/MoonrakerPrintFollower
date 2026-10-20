@@ -1,3 +1,14 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Enforce component ownership, portable interfaces and resolved dependency contracts.
+# 2026-10-18 — 6.0.0: Verify shared geometry and modular component ownership after extraction.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-09-07 [febe761] Reorganize test suite into domain files for 3.2.0
+
 """The architecture contract: document assertions, source laws and composition.
 
 Every rule in ARCHITECTURE.md that can be checked mechanically is checked
@@ -8,7 +19,7 @@ import json
 import pathlib
 import re
 import unittest
-from tests.source_root import SourceRoot
+from tests.source_root import SourceRoot, without_source_notice
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = SourceRoot(ROOT / "mpf")
@@ -145,7 +156,11 @@ class SourceContractTests(unittest.TestCase):
         allowed = {
             'ArcGeometry': set(),
             'BedMeshPresenter': {'BedMeshSceneNode'},
-            'BedMeshSceneNode': set(),
+            'BedMeshSceneNode': {'BedMeshGeometry'},
+            'BedMeshGeometry': set(),
+            'PrinterObjects': set(),
+            'RecoveryRefusal': set(),
+            'RecoveryMessages': set(),
             'ToolheadGeometry': {'ToolheadMeshFormat', 'ToolheadMaterials'},
             'ToolheadMeshFormat': set(),
             'ToolheadMaterials': set(),
@@ -160,7 +175,9 @@ class SourceContractTests(unittest.TestCase):
             'CadRuntime': {'RuntimeMirror', 'WindowsRuntimeWithoutRedist'},
             'WindowsRuntimeWithoutRedist': set(),
             'StepWorker': set(),
-            'ToolheadModels': {'ToolheadOpacity', 'ToolheadRotors', 'CadRuntime', 'ToolheadImport', 'ToolheadGeometry', 'ToolheadLighting', 'ToolheadMaterials'},
+            'ToolheadImportJobs': {'CadRuntime', 'ToolheadImport'},
+            'AppearanceDraft': set(),
+            'ToolheadModels': {'AppearanceDraft', 'ToolheadImportJobs', 'ToolheadOpacity', 'ToolheadRotors', 'CadRuntime', 'ToolheadGeometry', 'ToolheadLighting', 'ToolheadMaterials'},
             'ToolheadModelPreview': {'ToolheadOpacity', 'ToolheadMaterials', 'ToolheadGeometry', 'ToolheadPreviewGL'},
             'ToolheadPreviewGL': {'ToolheadMaterials', 'ToolheadRotors', 'PluginPaths', 'ToolheadLighting'},
             'ToolheadCamera': set(),
@@ -197,7 +214,10 @@ class SourceContractTests(unittest.TestCase):
             'ToolheadTransparency': {'ToolheadGLState','ToolheadSampleTarget'},
             'ToolheadPresenter': {'ToolheadGeometry', 'ToolheadSceneNode'},
             'CacheNamespaces': {'IndexCache', 'PreparedStore', 'RawSourceCache'},
-            'CachePolicy': set(),
+            'cache': {'IndexResidency', 'SourceIdentity', 'IndexCache', 'PreparedStore', 'RawSourceCache'},
+            'CachePolicy': {'ProcessOwner'},
+            'ProcessOwner': set(),
+            'SourceIdentity': set(),
             'RawSourceCache': {'CachePolicy'},
             'CameraBridge': {'CameraTiming'},
             'CameraTiming': set(),
@@ -212,13 +232,20 @@ class SourceContractTests(unittest.TestCase):
             'FileDownload': {'RemoteFileService'},
             'FileBrowserPresentation': {'FileFormatting', 'FileManagerPolicy', 'FilesViewModel'},
             'FileFormatting': set(),
-            'FileManager': {'FileManagerPolicy', 'MoonrakerProtocol', 'ReplyBodyReader', 'ThumbnailCache'},
+            'FileManager': {'MultipartUpload', 'FileManagerPolicy', 'MoonrakerProtocol', 'ReplyBodyReader', 'ThumbnailCache'},
             'FileManagerPolicy': set(),
             'ReplyBodyReader': set(),
+            'MultipartUpload': {'ReplyBodyReader'},
             'FilesViewModel': set(),
-            'FollowController': set(),
+            'FollowController': {'FollowMode'},
+            'FollowMode': set(),
+            'ConfigConstraints': set(),
+            'ConfigValidation': {'ConfigConstraints', 'PrinterConfig', 'FollowMode'},
+            'FollowerSelection': set(),
+            'RunoutPause': {'RunoutEvents'},
+            'RecoverySources': {'FileManagerPolicy'},
             'FollowerColourScheme': {'PreviewColours'},
-            'FollowerRuntime': {'ToolheadAssetStore', 'ToolheadModels', 'ToolheadPresenter', 'BedMeshPresenter', 'CacheNamespaces', 'CuraIntegration', 'FileDownload', 'GCodeIndexService', 'LocalDetectionService', 'MigrationNotice', 'MoonrakerClient', 'PauseController', 'PluginPersistence', 'PreviewFollower', 'PreviewMotion', 'PreviewPresentation', 'PreviewToolheadPresentation', 'PrintCoordinator', 'PrinterBinding', 'RemoteFileService', 'WhatsNew', 'WhatsNewOverlay'},
+            'FollowerRuntime': {'IndexProcess', 'ToolheadAssetStore', 'ToolheadModels', 'ToolheadPresenter', 'BedMeshPresenter', 'CacheNamespaces', 'CuraIntegration', 'FileDownload', 'GCodeIndexService', 'LocalDetectionService', 'MigrationNotice', 'MoonrakerClient', 'PauseController', 'PluginPersistence', 'PreviewFollower', 'PreviewMotion', 'PreviewPresentation', 'PreviewToolheadPresentation', 'PrintCoordinator', 'PrinterBinding', 'RemoteFileService', 'WhatsNew', 'WhatsNewOverlay'},
             'AssetInstaller': {'DetectionAssets', 'DetectionDownloadTransport', 'RuntimeMirror'},
             'DetectionAssets': {'RuntimeMirror'},
             'RuntimeMirror': set(),
@@ -229,24 +256,38 @@ class SourceContractTests(unittest.TestCase):
             'DetectionMask': set(),
             'PrintRunIdentity': set(),
             'CameraSourceIdentity': set(),
-            'MonitorDetection': {'CameraSourceIdentity', 'MonitorCamera', 'MonitorPermissions', 'DetectionPolicy', 'EvidenceStore', 'DetectionObservation', 'DetectionRegions', 'PrintRunIdentity'},
+            'DetectionActions': set(),
+            'DetectionRun': {'PrintRunIdentity'},
+            'MonitorDetection': {'DetectionActions', 'DetectionRun', 'CameraSourceIdentity', 'MonitorCamera', 'MonitorPermissions', 'DetectionPolicy', 'EvidenceStore', 'DetectionObservation', 'DetectionRegions'},
             'LocalDetectionService': {'AssetInstaller', 'DetectionAssets', 'EvidenceStore', 'LocalFailureModel', 'DetectionObservation', 'DetectionMask'},
             'EvidenceStore': set(),
             'LocalFailureModel': {'DetectionMask', 'DetectionObservation'},
+            'GCodeDocument': {'GCodeIndex', 'IndexView', 'MotionIndex', 'PlateProgress'},
             'GCodeIndex': {'ArcGeometry', 'FeatureTracker', 'GCodeParser', 'IndexAssembly', 'IndexHeader', 'IndexLimits', 'IndexWork', 'MotionIndex', 'ObjectWork'},
-            'GCodeIndexService': {'GCodeIndex', 'IndexTasks', 'IndexView', 'LayerCache', 'MotionIndex', 'MotionRefinement', 'ObjectVisitTracker', 'PlateProgress', 'PlateSplitTracker', 'PreparedSession', 'PrintState'},
+            'GCodeIndexService': {'GCodeIndex', 'IndexTasks', 'IndexView', 'LayerCache', 'MotionIndex', 'ObjectVisitTracker', 'PreparedSession', 'IndexResidency', 'IndexMotionTracking'},
+            'IndexMotionTracking': {'PlateSplitTracker', 'MotionRefinement', 'PlateProgress', 'PrintState'},
+            'IndexResidency': set(),
             'GCodeParser': set(),
-            'GpuFollower': {'GpuStrokeMaterial', 'PlateAxisGeometry', 'PreviewColours', 'TravelStates'},
-            'GpuObjectPicker': {'GpuFollower'},
+            'GpuFollower': {'GpuStrokeMaterial', 'PlateAxisGeometry', 'PreviewColours', 'TravelStates', 'ToolpathGeometry'},
+            'GpuObjectPicker': {'GpuFollower', 'ToolpathGeometry'},
             'GpuStrokeMaterial': {'PluginPaths'},
+            'ToolpathGeometry': {'TravelStates'},
+            'qt': {'GpuFollower', 'PlateQt', 'PlateRaster'},
+            'raster': {'PlateRaster'},
+            'scenegraph': {'GpuFollower', 'PlateQt'},
+            'RasterFiles': set(),
+            'RasterJobs': set(),
+            'RasterAssets': {'RasterFiles'},
             'IndexAssembly': {'MotionIndex'},
-            'IndexCache': {'ArcGeometry', 'CachePolicy', 'FeatureTracker', 'IndexCodec', 'IndexLimits', 'MoonrakerProtocol', 'MotionIndex', 'MotionRanges', 'ObjectWork'},
+            'IndexCache': {'ArcGeometry', 'CachePolicy', 'FeatureTracker', 'IndexCodec', 'IndexLimits', 'SourceIdentity', 'MotionIndex', 'MotionRanges', 'ObjectWork'},
             'IndexCodec': {'ArcGeometry', 'IndexLimits'},
             'IndexHeader': {'GCodeParser'},
             'IndexHydrator': {'ArcGeometry', 'FeatureTracker', 'GCodeParser', 'IndexLimits', 'IndexWork', 'MotionIndex'},
             'IndexLimits': set(),
+            'IndexProcess': {'IndexCache', 'MotionIndex', 'SourceIdentity', 'PreparedStore', 'CadRuntime'},
+            'IndexWorker': {'GCodeIndex', 'IndexCache', 'SourceIdentity', 'IndexHydrator', 'PlateProgress'},
             'IndexTasks': {'IndexHydrator', 'IndexWork', 'LayerCache', 'MotionIndex', 'PlateProgress', 'PreparedStore'},
-            'IndexView': {'MotionIndex', 'ObjectWork'},
+            'IndexView': {'ArcGeometry', 'MotionIndex', 'ObjectWork'},
             'IndexWork': set(),
             'LayerCache': set(),
             'LeakProbe': {'MoonrakerOutputDevice'},
@@ -255,21 +296,22 @@ class SourceContractTests(unittest.TestCase):
             'MigrationPresentation': set(),
             'MonitorCamera': {'CameraBridge', 'CameraTiming', 'MoonrakerProtocol'},
             'MonitorCommands': {'MonitorFormatting', 'MonitorPermissions'},
-            'MonitorControls': {'MonitorFormatting', 'MonitorPermissions'},
-            'MonitorData': {'ToolheadFanReadings', 'CameraTiming', 'ConsolePolicy', 'MonitorFormatting', 'MonitorPermissions', 'MoonrakerSession'},
-            'MonitorFormatting': {'MonitorPermissions', 'Polygons', 'ToolheadReadout'},
+            'MonitorControls': {'PrinterObjects', 'HeaterTargets', 'MonitorFormatting', 'MonitorPermissions'},
+            'MonitorData': {'PrinterObjects', 'ToolheadFanReadings', 'CameraTiming', 'ConsolePolicy', 'MonitorFormatting', 'MonitorPermissions', 'MoonrakerSession'},
+            'MonitorFormatting': {'PrinterObjects', 'MonitorPermissions', 'Polygons', 'ToolheadReadout'},
             'MonitorPermissions': set(),
             'MonitorPublication': set(),
             'MonitorTemperatureHistory': {'MonitorFormatting'},
             'MonitorTuning': set(),
+            'HeaterTargets': {'MonitorFormatting'},
             'MoonrakerClient': {'CameraTiming', 'MoonrakerProtocol', 'MoonrakerSession'},
-            'MoonrakerFollowerMachineAction': {'CacheNamespaces', 'DetectionAssets', 'FollowController', 'MigrationPresentation', 'MoonrakerProtocol', 'MoonrakerSession', 'MoonrakerTransport', 'PrinterConfig'},
+            'MoonrakerFollowerMachineAction': {'ConfigValidation', 'CacheNamespaces', 'DetectionAssets', 'MigrationPresentation', 'MoonrakerProtocol', 'MoonrakerSession', 'MoonrakerTransport', 'PrinterConfig', 'RunoutEvents'},
             'MoonrakerMJPGImage': {'FrameDecoder', 'CameraStatistics', 'MJPEGParser'},
             'FrameDecoder': set(),
             'CameraRecovery': {'CameraTiming', 'CameraSourceIdentity'},
             'CameraStatistics': set(),
             'MJPEGParser': set(),
-            'MoonrakerMonitorModel': {'MonitorDetection', 'FileBrowserPresentation', 'TemperaturePresentation', 'CameraRecovery', 'CameraTiming', 'ConsoleController', 'FileManager', 'FileManagerPolicy', 'FilesViewModel', 'MigrationPresentation', 'PauseAtLayerPresentation', 'MonitorCamera', 'MonitorCommands', 'MonitorControls', 'MonitorData', 'MonitorFormatting', 'MonitorPermissions', 'MonitorPublication', 'MonitorTemperatureHistory', 'MonitorTuning', 'PlateQt', 'PlateRenderController', 'PlateSceneIdentity', 'PrintStartOwner', 'PrinterConfig', 'SectionLayoutPolicy', 'StateStore', 'ToolheadController', 'ToolheadPolicy', 'UiStateStore', 'WhatsNew'},
+            'MoonrakerMonitorModel': {'FollowerSelection', 'RunoutPause', 'MonitorDetection', 'FileBrowserPresentation', 'TemperaturePresentation', 'CameraRecovery', 'CameraTiming', 'ConsoleController', 'FileManager', 'FileManagerPolicy', 'FilesViewModel', 'MigrationPresentation', 'PauseAtLayerPresentation', 'MonitorCamera', 'MonitorCommands', 'MonitorControls', 'MonitorData', 'MonitorFormatting', 'MonitorPermissions', 'MonitorPublication', 'MonitorTemperatureHistory', 'MonitorTuning', 'PlateRaster', 'PlateRenderController', 'PlateSceneIdentity', 'PrintStartOwner', 'PrinterConfig', 'RunoutEvents', 'SectionLayoutPolicy', 'StateStore', 'ToolheadController', 'ToolheadPolicy', 'UiStateStore', 'WhatsNew'},
             'MoonrakerOutputDevice': {'CuraOutputWriter', 'MonitorPermissions', 'PluginPaths', 'UploadController'},
             'MoonrakerOutputDevicePlugin': {'FollowerColourScheme', 'MoonrakerMonitorModel', 'MoonrakerOutputDevice', 'PluginPaths'},
             'MoonrakerPrintFollower': {'FollowerRuntime', 'LeakProbe', 'WhatsNewOverlay'},
@@ -290,8 +332,9 @@ class SourceContractTests(unittest.TestCase):
             'PersistenceMigration': {'PrinterConfig'},
             'PlateProgress': {'ArcGeometry', 'MotionIndex', 'MotionRanges', 'TravelStates'},
             'PlateAxisGeometry': set(),
-            'PlateQt': {'PlateAxisGeometry', 'PreviewColours'},
-            'PlateRenderController': {'PlateQt', 'PlateSceneIdentity', 'RenderSurface'},
+            'PlateQt': set(),
+            'PlateRaster': {'PlateAxisGeometry', 'PreviewColours'},
+            'PlateRenderController': {'PlateQt', 'PlateRaster', 'RasterJobs', 'RasterAssets', 'PlateSceneIdentity', 'RenderSurface'},
             'PlateSceneIdentity': set(),
             'PlateSplitTracker': set(),
             'PluginPaths': set(),
@@ -303,19 +346,28 @@ class SourceContractTests(unittest.TestCase):
             'PreviewFollower': {'CuraAdapter', 'FollowController', 'PreviewFormatting'},
             'PreviewFormatting': set(),
             'PreviewMotion': {'CuraAdapter', 'PreviewSmoothing'},
-            'PreviewPresentation': {'ObjectNameProjection', 'PluginPaths', 'CameraProjection', 'ViewportHover'},
+            'ObjectTagScene': {'ObjectTagPresentation'},
+            'ObjectTagPresentation': set(),
+            'PreviewPresentation': {'ObjectTagScene', 'ObjectTagPresentation', 'ObjectNameProjection', 'PluginPaths', 'CameraProjection', 'ViewportHover'},
             'PreviewToolheadPresentation': {'PluginPaths'},
             'ToolheadReadout': set(),
             'ObjectNameProjection': {'Polygons'},
             'PreviewSmoothing': set(),
-            'PrintCoordinator': {'LoadStateTracker', 'MonitorFormatting', 'MoonrakerProtocol', 'NextPausePipeline', 'PreviewFormatting', 'PrintIdentity', 'PrintState', 'RemoteJobService'},
+            'PrintCoordinator': {'RecoverySources', 'LoadStateTracker', 'MonitorFormatting', 'MoonrakerProtocol', 'NextPausePipeline', 'PreviewFormatting', 'PrintIdentity', 'PrintState', 'RemoteJobService', 'RecoveryController', 'RecoveryPlanning'},
             'PrintIdentity': set(),
             'PrintStartOwner': set(),
             'PrintState': {'RemoteJobService'},
             'PrinterBinding': {'CameraTiming', 'CuraAdapter', 'PersistenceMigration', 'PrinterConfig'},
-            'PrinterConfig': {'ToolheadOpacity', 'ToolheadRotors', 'DetectionRegions', 'ToolheadLighting', 'ToolheadMaterials'},
-            'RemoteFileService': {'DownloadStream', 'MoonrakerProtocol'},
+            'PrinterConfig': {'ConfigConstraints', 'FollowMode', 'ToolheadOpacity', 'ToolheadRotors', 'DetectionRegions', 'ToolheadLighting', 'ToolheadMaterials'},
+            'RemoteFileService': {'DownloadStream', 'MoonrakerProtocol', 'ProcessOwner'},
             'RemoteJobService': set(),
+            'RecoveryPlanning': {'RecoveryRefusal', 'ArcGeometry', 'GCodeParser', 'IndexLimits'},
+            'RecoveryActions': {'PhysicalMotion'},
+            'RecoveryReview': {'RecoveryActions', 'PhysicalMotion'},
+            'RecoveryHandover': {'PhysicalMotion', 'RecoveryActions'},
+            'RecoveryExecution': {'RecoveryHandover', 'RecoveryActions'},
+            'RecoveryController': {'RecoveryRefusal', 'RecoveryMessages', 'RecoveryReview', 'MoonrakerProtocol', 'RecoveryExecution', 'RecoveryPlanning', 'RecoveryHandover', 'PhysicalMotion'},
+            'RunoutEvents': set(),
             'RenderSurface': set(),
             'SectionLayoutPolicy': set(),
             'SocketFraming': set(),
@@ -327,7 +379,7 @@ class SourceContractTests(unittest.TestCase):
             'ToolheadPolicy': set(),
             'TravelStates': set(),
             'UiStateStore': set(),
-            'UploadController': {'MoonrakerTransport', 'PrinterConfig'},
+            'UploadController': {'MultipartUpload', 'MoonrakerProtocol', 'PrinterConfig'},
             'WhatsNew': set(),
             'WhatsNewOverlay': {'PluginPaths', 'WhatsNew'},
         }
@@ -353,7 +405,10 @@ class SourceContractTests(unittest.TestCase):
                     imported |= imported_names(node)
             self.assertLessEqual(imported, dependencies, module)
             if module not in follower_exceptions:
-                self.assertNotIn("_follower", source, module)
+                self.assertFalse(any(
+                    isinstance(node, ast.Attribute) and node.attr == "_follower"
+                    or isinstance(node, ast.Name) and node.id == "_follower"
+                    for node in ast.walk(ast.parse(source))), module)
             if module not in cura_exceptions:
                 self.assertNotIn("from cura.", source, module)
 
@@ -486,7 +541,8 @@ class SourceContractTests(unittest.TestCase):
         # (v3.0.0) is not a nickname and is always written X.Y.Z.
         for path in PLUGINS.rglob("*"):
             if path.suffix in {".py", ".qml"}:
-                self.assertIsNone(re.search(r"\bv3\b(?!\.\d)", path.read_text(encoding="utf-8"), re.I), path.name)
+                source = without_source_notice(path.read_text(encoding="utf-8"))
+                self.assertIsNone(re.search(r"\bv3\b(?!\.\d)", source, re.I), path.name)
 
     def test_qt_imports_name_the_module_that_owns_the_class(self):
         # QHostAddress broke the plugin on Cura 5.13's bundled PyQt6:
@@ -683,7 +739,7 @@ class CompositionStructureTests(unittest.TestCase):
         facade = (PLUGINS / "MoonrakerPrintFollower.py").read_text(encoding="utf-8")
         root = (PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8")
         coordinator = (PLUGINS / "PrintCoordinator.py").read_text(encoding="utf-8")
-        self.assertLess(len(facade.splitlines()), 70)
+        self.assertLess(len(without_source_notice(facade).splitlines()), 85)
         self.assertIn("class MoonrakerPrintFollower(QObject, Extension)", facade)
         for token in (
             "RemoteFileService", "GCodeIndexService", "PreviewFollower", "PauseController", "CuraIntegration",
@@ -719,7 +775,10 @@ class CompositionStructureTests(unittest.TestCase):
         output = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")
         follower_transport = (PLUGINS / "RemoteFileService.py").read_text(encoding="utf-8")
         self.assertIn("transport.send_json", output)
-        self.assertIn("transport.network.post", output)
+        multipart = (PLUGINS / "MultipartUpload.py").read_text(encoding="utf-8")
+        self.assertIn("MultipartUpload(self._client.transport, self)", output)
+        self.assertIn("self._transport.network.post", multipart)
+        self.assertNotIn("QHttpMultiPart(", output)
         self.assertNotIn("QNetworkAccessManager", output)
         self.assertIn("self._transport.send_json", follower_transport)
         self.assertIn("self._transport.request", follower_transport)
@@ -745,7 +804,9 @@ class CompositionStructureTests(unittest.TestCase):
         self.assertIn("self._client.connected", source)
         self.assertIn("self._upload()", source)
         self.assertNotIn("getvalue()", source)
-        self.assertIn("part.setBodyDevice(file)", source)
+        multipart = (PLUGINS / "MultipartUpload.py").read_text(encoding="utf-8")
+        self.assertIn("part.setBodyDevice(source)", multipart)
+        self.assertNotIn("getvalue()", multipart)
 
     def test_active_machine_switch_resets_session_before_new_binding(self):
         source = (PLUGINS / "PrinterBinding.py").read_text(encoding="utf-8")

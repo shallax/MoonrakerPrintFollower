@@ -1,3 +1,10 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-09-27 [dd99358] Mirror Cura preview colours and travel states and composite ghost opacity on GPU
+
 """Travel classifications matching Cura's four motion categories.
 
 Positive E first repays retracted filament; a partial prime leaves the tool

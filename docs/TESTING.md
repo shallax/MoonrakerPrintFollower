@@ -1,6 +1,141 @@
 # TESTING.md — the real-Cura UI test harness
 
-## 5.4.0 — current validation
+## 6.0.0 — current validation
+
+Run `make all` and `make coverage` on
+`release/v6.0.0`. Recovery fixtures cover exact byte boundaries, accumulated
+and relative E, lead-in, sensor pause ownership, printer config discovery,
+paused-state preflight, unloaded-file selection, temperature waits, optional
+nozzle priming and sequential command handover. The QML engine and
+follower contract checks cover the distinct recovery review and confirmation.
+Read-only queries of a live Moonraker printer may verify configuration and
+source shape; **do not send printer commands during a live print**. A disposable
+paused virtual-SD printer is still required before claiming physical recovery
+validation.
+
+The initial 18 October whole-product audit passed **6,232 tests in 275 isolated
+processes**, with **97.58% overall statement coverage** and every required
+in-process module at or above 95%. The extracted `ToolpathGeometry`, `GCodeDocument`, recovery controller,
+heater target discovery and tuning
+owner are at 100%. The isolated STEP helper retains its separate mandatory
+95% native-CAD coverage gate in CI. Canonical Linux captures were regenerated;
+all 54 light/dark capture pairs are byte-identical. Native and Docker wheel
+checks pass, including external installation and the rendering example.
+
+### Release readiness and outstanding qualification
+
+Statement coverage measures executed lines; it does not prove every interaction,
+printer macro, timing order or UI path. Automated checks do not establish a
+bug-free product or a whole-product performance guarantee.
+
+The 6.0.0 merge and tag require both gates on the final PR commit:
+
+- PR CI, including native Windows/macOS builds, supported Python versions,
+  installed-Cura smoke checks and the full three-platform release scenarios.
+- The complete supported-version UI sweep against that same commit. Ordinary
+  branch CI is a narrower check; configuring these matrices does not mean they
+  have run. GitHub Actions retains the per-step evidence and job verdicts.
+
+Release-check regressions cover normalized older Cura runtime metadata, readable
+macOS QtTest bindings, missing Windows QtTest runtime installation and boot input
+readiness. Real-QML stage replacement tests check both rendered pixels and actual
+mouse delivery; a visible-property check alone missed a disappearing Preview card.
+Native test files have a 300-second process deadline, report start/end progress
+immediately and dump thread stacks every 60 seconds while running. Failed or
+cancelled CI jobs retain their per-file logs. `tools/native/test_worker.py` keeps
+the same isolated module/script and coverage invocation under that watchdog.
+UI-driver RPCs have one total deadline and never replay a command after a send
+attempt. Losing the driver stops the suite and finalizes its partial gallery.
+The first harness handshake has a bounded 90-second cold-start budget, shared
+with window discovery: the driver listener can exist while Cura still builds
+its initial QML tree. Subsequent RPCs retain the ordinary 20-second deadline
+unless their operation declares another bound. A sent command is never replayed;
+a lost driver still fails the scenario and preserves its gallery.
+
+macOS gate artifacts also retain launcher/configuration logs, Cura's redirected
+Python streams and native crash reports under `native-diagnostics/`, even when
+the scenario process is interrupted before its own cleanup runs.
+For a native macOS crash that lacks useful OS reports, dispatch the `Leg`
+workflow with `native_backtrace=true`; its explicit LLDB launch preserves C++
+thread stacks and loaded-image addresses in `native-backtrace.log`. Ordinary
+release gates use the normal application launch. Debugger setup is restricted to
+disposable GitHub runners; it preserves Cura's entitlements and adds debug access
+to that installation. The diagnostic run does not replace an ordinary gate.
+
+Additional qualification remains necessary before claiming physical recovery
+validation or sustained whole-product performance:
+
+- Validate paused and unloaded recovery on a disposable physical print, including
+  within-layer selection, prime/XY/Z order, object-top reference and final restart.
+  Earlier user trials and simulated firmware tests do not qualify this exact build.
+- Record current-build performance and memory behaviour during sustained following,
+  large-file indexing/seeking, camera decoding and combined rendering/lighting.
+  Existing seek budgets and historical rendering measurements cover specific
+  cases; no whole-product performance or long-duration stability claim is made.
+
+Do not restart an active user Cura session or issue printer commands to obtain
+this evidence. Use an isolated Cura profile/simulator and a deliberately prepared
+disposable printer test. Release publication remains a separate decision.
+
+### Recovery regression audit
+
+Run these focused tests with
+`make test_files FILES="tests.test_qml_recovery tests.test_recovery_protocol tests.test_coordinator_coverage tests.test_recovery_controller"`.
+
+- Real Qt Quick windows receive mouse clicks to choose layer and within-layer
+  restart points, open confirmation, acknowledge it and submit. A refusal must
+  remain visible. Small-panel geometry and independent recovery/slider state
+  gates are checked. The numbered confirmation checks travel coordinates,
+  configurable clearance, purge/dwell order and estimated descent time.
+- A command-interpreting printer double executes the recovery sequence and
+  checks final XYZ, extrusion, feed rate and file offset across mesh offsets,
+  restart Z references and optional priming. Every pending operation is tested
+  for cancellation and transport failure; stale and duplicate replies must not
+  advance an attempt. Dwell tests check its duration and nozzle position after
+  extrusion, omission when priming is disabled, and transport timeout allowance.
+  Success requires matching print, SD and pause states.
+- The real coordinator and recovery controller run together with a source file
+  and simulated transport. The new-print notification deliberately arrives
+  before the resume command reply; recovery must survive its own new run while
+  unrelated jobs invalidate it.
+
+These tests run in the normal suite. The Qt tests use Cura component doubles,
+and the protocol model is not Klipper. They do not establish installed-Cura
+compatibility, custom macro correctness or physical print quality.
+
+### Whole-product regression audit and library consumers
+
+The 6.0.0 audit also covers descending file sorts, recursive-list failure/retry
+and stale walk callbacks, active-file destination/directory protection, upload
+confirmation invalidation and late print acknowledgements. Heater tests click real
+QML controls and wait beyond the debounce interval to prove a newly selected
+profile or cooldown cannot be overwritten by older bumps. Cooldown works without
+saved profiles. Real command/tuning-owner tests also hold a Home acknowledgement
+while profiles, cooldown and individual Off commands race; newer choices cancel
+older unsent group scripts, while invalid inputs preserve the valid queued choice.
+Camera tests cover EOF after a decoded frame, stalled frame counters,
+recovery indicators and IPv6 bridge origins.
+
+Recovery protocol tests include independent G90/G91 and M82/M83 modes, configured
+arc planes, selected object state, active-exclusion refusal, missing feed rates,
+zero bed targets, cancellation after restart submission and independently malformed
+physical/G-code coordinates. These augment the click-through workflow tests above.
+
+`make library` verifies the selective module/shader inventory, every shared source
+byte and both plugin versions,
+then installs outside the checkout. A `-I -S` consumer exercises parsing, exact
+boundaries, compact hydration and CPU vertices without site packages. AST checks
+cover lazy imports so new application dependencies cannot silently enter the wheel.
+Document tests prove source-file independence, nested snapshot immutability,
+cross-document concurrent reads, cancellation and refusal of incomplete retained
+motion geometry. Real Qt tests cover immutable empty/retraction-only payloads
+through QVariantMap conversion as well as pixel parity. Optional installed Qt
+probes verify raster pixels, retained geometry and the standalone example; they do
+not claim an installed GPU-shader frame or physical-printer validation. The core
+consumer also runs in the normal test suite. Docker and native commands use their
+selected backend rather than requiring host Qt for Docker builds.
+
+## 5.4.0 — historical validation
 
 Run `make all` and the platform CAD smoke matrix on `release/v5.4.0`. The
 release workflow stages all 27 optional assets, verifies their hashes against
@@ -288,7 +423,18 @@ The existing 5.11 loaded-toolpath limitation applies to p8 too; b12 still
 exercises its 2D follower. Static README captures deliberately hold a
 complete layer and do not claim to test smoothing.
 
-For current local runs, `make ui_test MODE=suite CURA_VERSION=5.13.0`
+On macOS CI, Cura 5.14 beta 1 uses the supported `force_modern` OpenGL
+preference. The Apple software renderer provides a 4.1 core context, but Cura
+normally prefers legacy 2.1 for speed. This beta has two upstream legacy
+mesh/colour bugs; the plugin does not patch either host class. Cura 5.13
+retains its default renderer and the legacy nonempty-mesh assertion. Beta
+legacy Preview remains an upstream limitation, not a qualified rendering path.
+
+The current release gate uses Cura `5.14.0-beta.1` as primary and `5.13.0`
+as secondary. The UI Version Sweep includes every minor from 5.7 through
+5.13 plus 5.14 beta 1 (128 version/unit jobs).
+
+For current local runs, `make ui_test MODE=suite CURA_VERSION=5.14.0-beta.1`
 uses the real-Cura harness on every supported host. Linux stages Cura
 in its headless Docker harness; macOS and Windows stage and drive their
 native desktop Cura installations. `make ui_release_gate` runs the
@@ -325,7 +471,7 @@ the proof artifact.
    real UI being rendered, exactly as live testing does.
 2. Screenshots as the evidence of tests passing — video recordings
    are even better (in the style of Cypress or Browserstack).
-3. Cura 5.13 for now, with the version specifiable.
+3. Cura 5.14 beta 1 for now, with the version specifiable.
 4. Open enough to test everything end-to-end, eventually.
 5. Any single test must be runnable on its own, for fast iteration
    on one thing.
@@ -385,7 +531,7 @@ Hard rules, in order:
 ```
 ┌──────────────────────────── harness image (docker) ───────────────────────────┐
 │  Xvfb :99 (1920x1080, the one geometry) + ffmpeg (x11grab)                   │
-│   └─ real Cura AppImage (5.13.0 baseline; CURA_VERSION selects others)       │
+│   └─ real Cura AppImage (5.14.0-beta.1 baseline; CURA_VERSION selects others)       │
 │        └─ plugin (production code) ──┐  real TCP: websocket + HTTP           │
 │        └─ HarnessDriver (test-only   ├────────────►  Moonraker simulator     │
 │           plugin, never shipped)     │               (Tornado, scripted)     │
@@ -588,6 +734,11 @@ pinned config directory checked into `tests/harness/config` (welcome,
 What's-New and local-detection offer prompts suppressed, machine and
 printer record present, window geometry pinned); a pre-scenario gate
 asserts the expected stage is active and no overlay covers it.
+The driver waits for `CuraApplication.started` and activates the exact
+`FDM Printer Base Description` fixture. An empty startup registry is pending;
+it never triggers creation of a replacement printer. A missing fixture fails
+the gate. Failed registration, real-input readiness or boot gates stop the
+scenario group and save its gallery immediately.
 
 Artifacts land in `/tmp/mpf/ui-artifacts/<run>/`: `index.html` (the
 step gallery), `evidence.json` (the machine-readable per-step
@@ -1186,3 +1337,33 @@ source tree and in both actual package formats. Moving or deleting a target is
 a failure, including the upload dialog that previously fell outside the scan.
 The normal QML engine and capture gates remain mandatory; static path existence
 is not a substitute for successful component creation or visual evidence.
+
+
+## Recovery release validation
+
+`make coverage` runs each test file in an isolated process and enforces 95% as a
+minimum both overall and per Python file. Inspect the JSON missing-line report
+when adding a workflow; a green total does not excuse an uncovered controller.
+Recovery tests cover exact indexed/attached selection, QVariant geometry delivery,
+visible model/bed/axis pixels in all four projections, dialog reopen resets,
+small-window controls, and Dismiss without cancelling the asynchronous handover.
+The independent protocol simulator checks that seek and modal restoration finish
+above the print and that the final descent and SD start share one command batch.
+
+Lifecycle tests hold and release asynchronous profile, metadata, source and command
+replies around cancellation or session invalidation. They assert that stale replies
+cannot restart a handover or send the next command. These are local synthetic
+checks, not proof of a safe path around an arbitrary real object.
+
+`tools/capture_recovery.py` adds `19-recovery-selection`, `20-recovery-preview`
+and `21-recovery-confirmation` (plus dark variants) to the normal capture commands.
+It scans synthetic G-code and renders the shipped QML with real Cura themes, audits
+contrast, and deliberately supplies no command slots or network transport. The
+preview capture shows the full panel separately; the confirmation capture shows
+its scrolled action list and fixed footer. Regenerate committed screenshots through
+`make BACKEND=docker generate_screenshots`; native captures are useful local evidence
+but do not replace the canonical Linux pixels.
+
+Never close or restart a user's Cura during recovery. Before an explicitly requested
+restart, verify a terminal recovery outcome in both the current UI and logs; a
+selected point or a stationary nozzle alone does not establish completion.

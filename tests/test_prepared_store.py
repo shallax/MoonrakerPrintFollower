@@ -1,3 +1,16 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Inject prepared-cache diagnostics independently of Uranium logging.
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-21 [065c09f] 4.6.0: the file-backed prepared cold store — the pass's encodings persist per print with
+#   random access and atomic finalisation, a reopened print skips the whole preparation walk (the real 467 MB
+#   print measures 197 MB prepared), the size policy evicts whole prints by recency, and the seek debounce drops
+#   to 80 ms
+
 """The file-backed prepared store's current format contract: the
 layout, the per-layer states (EMPTY / CACHED / UNCACHEABLE), random
 access, identity gating, atomic completion, the size policy, the
@@ -14,6 +27,7 @@ import sys
 import tempfile
 import time
 import unittest
+from mpf.storage import ProcessOwner as process_owner
 
 from mpf.gcode.PlateProgress import decode_layer, encode_layer
 from mpf.gcode.PreparedStore import STATE_CACHED, STATE_EMPTY, PreparedCache, _FORMAT_VERSION
@@ -291,14 +305,13 @@ class PreparedStoreTests(unittest.TestCase):
         # alive, so the adoption never destroys a file whose owner
         # may still hold it.
         from unittest.mock import patch
-        import mpf.gcode.CachePolicy as store_module
         name = "print.mpfp.tmp-12345-1234"
-        with patch.object(store_module.sys, "platform", "linux"), \
-                patch.object(store_module.os, "kill", side_effect=PermissionError()):
+        with patch.object(process_owner.sys, "platform", "linux"), \
+                patch.object(process_owner.os, "kill", side_effect=PermissionError()):
             self.assertTrue(self.cache._tmp_liveness(name),
                             "an access-denied owner read dead")
-        with patch.object(store_module.sys, "platform", "linux"), \
-                patch.object(store_module.os, "kill",
+        with patch.object(process_owner.sys, "platform", "linux"), \
+                patch.object(process_owner.os, "kill",
                              side_effect=OSError("unexplained")):
             self.assertTrue(self.cache._tmp_liveness(name),
                             "an unexplained probe failure read dead")
@@ -312,7 +325,6 @@ class PreparedStoreTests(unittest.TestCase):
         # is fabricated.
         from unittest.mock import patch
         import ctypes
-        import mpf.gcode.CachePolicy as store_module
 
         def verdict(open_handle, open_error, exit_ok, exit_code):
             closed = []
@@ -345,7 +357,7 @@ class PreparedStoreTests(unittest.TestCase):
                               create=True), \
                     patch.object(ctypes, "get_last_error", return_value=open_error,
                                  create=True):
-                result = store_module._windows_liveness(1234)
+                result = process_owner.windows_process_alive(1234)
             return result, closed
 
         # OpenProcess ERROR_INVALID_PARAMETER -> provably dead.
@@ -372,15 +384,14 @@ class PreparedStoreTests(unittest.TestCase):
         # through the probe. (The probe's own kernel calls run on
         # the Windows host suite; this wiring is platform-pinned.)
         from unittest.mock import patch
-        import mpf.gcode.CachePolicy as store_module
         name = "print.mpfp.tmp-12345-1234"
-        with patch.object(store_module.sys, "platform", "win32"), \
-                patch.object(store_module, "_windows_liveness",
+        with patch.object(process_owner.sys, "platform", "win32"), \
+                patch.object(process_owner, "windows_process_alive",
                              return_value=True):
             self.assertTrue(self.cache._tmp_liveness(name),
                             "the Windows alive verdict read dead")
-        with patch.object(store_module.sys, "platform", "win32"), \
-                patch.object(store_module, "_windows_liveness",
+        with patch.object(process_owner.sys, "platform", "win32"), \
+                patch.object(process_owner, "windows_process_alive",
                              return_value=False):
             self.assertFalse(self.cache._tmp_liveness(name),
                              "the Windows dead verdict read alive")
@@ -390,24 +401,23 @@ class PreparedStoreTests(unittest.TestCase):
         # dead on ProcessLookupError, conservative alive on
         # PermissionError and on any indeterminate OSError.
         from unittest.mock import patch
-        import mpf.gcode.CachePolicy as store_module
         name = "print.mpfp.tmp-12345-1234"
-        with patch.object(store_module.sys, "platform", "linux"), \
-                patch.object(store_module.os, "kill", return_value=None):
+        with patch.object(process_owner.sys, "platform", "linux"), \
+                patch.object(process_owner.os, "kill", return_value=None):
             self.assertTrue(self.cache._tmp_liveness(name),
                             "a live POSIX owner read dead")
-        with patch.object(store_module.sys, "platform", "linux"), \
-                patch.object(store_module.os, "kill",
+        with patch.object(process_owner.sys, "platform", "linux"), \
+                patch.object(process_owner.os, "kill",
                              side_effect=ProcessLookupError()):
             self.assertFalse(self.cache._tmp_liveness(name),
                              "a gone POSIX owner read alive")
-        with patch.object(store_module.sys, "platform", "linux"), \
-                patch.object(store_module.os, "kill",
+        with patch.object(process_owner.sys, "platform", "linux"), \
+                patch.object(process_owner.os, "kill",
                              side_effect=PermissionError()):
             self.assertTrue(self.cache._tmp_liveness(name),
                             "an access-denied POSIX owner read dead")
-        with patch.object(store_module.sys, "platform", "linux"), \
-                patch.object(store_module.os, "kill",
+        with patch.object(process_owner.sys, "platform", "linux"), \
+                patch.object(process_owner.os, "kill",
                              side_effect=OSError("indeterminate")):
             self.assertTrue(self.cache._tmp_liveness(name),
                             "an indeterminate POSIX failure read dead")
@@ -1105,8 +1115,6 @@ class PreparedStoreArbitrationTests(unittest.TestCase):
         # The diagnostics ride the decision points: when a candidate
         # supersedes a partial the log names both counts, so a restore
         # that resumed from a crash is explained.
-        from unittest.mock import patch
-        import mpf.gcode.PreparedStore as store_module
         calls = []
 
         class Recorder:
@@ -1121,8 +1129,8 @@ class PreparedStoreArbitrationTests(unittest.TestCase):
         for layer in range(3):
             self.cache.append(writer, layer, encode_layer(_payload(layer)))
         _park_dead_tmp(writer)
-        with patch.object(store_module, "_Logger", Recorder):
-            reloaded = PreparedCache(self.cache.directory)
+        reloaded = PreparedCache(self.cache.directory,
+            log=lambda message, *args: Recorder.log("i", message, *args))
         self.assertEqual(len(calls), 1,
                          "the superseding decision was never logged")
         level, message, args = calls[0]
@@ -1424,9 +1432,8 @@ class PreparedStoreStartupGuardTests(unittest.TestCase):
         # os.kill itself may refuse the pid (a narrow pid_t): an owner
         # that cannot exist is dead, not an error.
         from unittest.mock import patch
-        import mpf.gcode.CachePolicy as store_module
-        with patch.object(store_module.sys, "platform", "linux"), \
-                patch.object(store_module.os, "kill",
+        with patch.object(process_owner.sys, "platform", "linux"), \
+                patch.object(process_owner.os, "kill",
                              side_effect=OverflowError()):
             self.assertFalse(self.cache._tmp_liveness("print.mpfp.tmp-12345-1234"),
                              "an out-of-range pid read alive")

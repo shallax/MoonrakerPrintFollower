@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-20 — 6.0.0: Preserve write lifecycle under reentrant shared-upload cancellation.
+# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable qt follower integration contracts."""
 from tests import qt_integration_support as harness
 
@@ -610,11 +620,14 @@ class QtRuntimeTests(harness.QtRuntimeTests):
         completed, errors = [], []
         device.writeFinished.connect(completed.append)
         device.writeError.connect(errors.append)
+        from mpf.moonraker.MultipartUpload import MultipartUpload, UploadResult
         reply = harness.Mock()
-        reply.isRunning.return_value = True
+        operation = MultipartUpload(transport, device._upload)
         generation = device._upload._generation
-        reply.abort.side_effect = lambda: device._upload._uploaded(reply, generation)
-        device._upload._reply = reply
+        operation._reply = reply
+        operation.finished.connect(lambda result: device._upload._uploaded(operation, generation, result))
+        reply.abort.side_effect = lambda: operation.finished.emit(UploadResult(cancelled=True))
+        device._upload._upload_operation = operation
         device.deactivate()
         self.qt.events()
         reply.abort.assert_called_once()

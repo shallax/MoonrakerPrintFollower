@@ -1,3 +1,13 @@
+// Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+// SPDX-License-Identifier: GPL-3.0-only
+// Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+//
+// Selected Git history (newest first; oldest and latest two content changes):
+// 2026-09-27 [e1fbc8d] Prevent popover gestures from reaching the webcam underneath
+// 2026-09-19 [450e38b] 4.5.0: in-bounds clicks keep the configure popovers open; the popover close glyphs are
+//   gone; every bespoke checkbox and radio becomes Cura's native control
+// 2026-09-10 [713f61c] 3.5.0 groundwork: aux-fed temperature history, charts and the shared pop-over shell
+
 import QtQuick 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM

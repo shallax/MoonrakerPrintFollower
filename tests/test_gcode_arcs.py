@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
+# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
+# 2026-09-20 [ced0e6b] 4.6.0: the motion-edge geometry repair, real G2/G3 arcs and the layer-290 fixture
+
 """G2/G3 arcs from literal G-code to drawn geometry.
 
 Every case here starts from the G-code a slicer or a hand-written file
@@ -648,7 +657,7 @@ class ArcCacheTests(unittest.TestCase):
         # nothing about the file it came from: every v9 blob is refused
         # rather than read as an arc-free one.
         blob = self._blob(ARC_SOURCE)
-        self.assertEqual(index_codec_module._CACHE_VERSION, 15,
+        self.assertGreater(index_codec_module._CACHE_VERSION, 9,
                          "the cache version must move past the era that could drop arcs")
         self._rewrite_header(blob, dict(self._header_of(blob), version=9))
         self.assertIsNone(self.cache.load(self.identity),
@@ -729,7 +738,7 @@ class ArcCacheTests(unittest.TestCase):
         # chord. Accepting one would silently regress the geometry, so it
         # is refused and the file is read again.
         blob = self._blob(ARC_SOURCE)
-        self.assertEqual(self._header_of(blob)["version"], 15)
+        self.assertEqual(self._header_of(blob)["version"], index_codec_module._CACHE_VERSION)
         self._rewrite_header(blob, dict(self._header_of(blob), version=8))
         self.assertIsNone(self.cache.load(self.identity),
                           "a pre-arc cache blob was accepted as arc-aware")

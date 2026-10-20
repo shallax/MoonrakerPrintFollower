@@ -1,3 +1,12 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
+# 2026-09-30 [f425547] mpf's subpackages are capitalised
+# 2026-09-04 [81f5b92] Fix v2.0.0.
+
 """The nozzle lifecycle repair's full guard chain (the coverage bolster
 target — the module stood at 4%): every capability gate, every missing
 piece, the compatibility-mode early-out, the activity/parent/visible

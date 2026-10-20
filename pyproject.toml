@@ -1,0 +1,35 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Release history:
+# 2026-10-18 — 6.0.0: Package a standalone toolpath distribution with optional Qt.
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moonraker-toolpath"
+version = "6.0.0"
+description = "Reusable G-code indexing, toolpath geometry and optional Qt rendering from MoonrakerPrintFollower"
+readme = "docs/LIBRARY.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-only"
+license-files = ["LICENSE", "docs/THIRDPARTYSOFTWARE.md"]
+authors = [{name = "Thomas Pedley", email = "moonrakerprintfollower@maintain.contact"}]
+dependencies = []
+
+[project.optional-dependencies]
+qt = ["PyQt6>=6.11,<7"]
+fast = ["numpy>=1.26"]
+
+[project.urls]
+Repository = "https://github.com/shallax/MoonrakerPrintFollower"
+Documentation = "https://github.com/shallax/MoonrakerPrintFollower/blob/release/v6.0.0/docs/LIBRARY.md"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.exclude-package-data]
+"*" = ["**/__pycache__/*", "**/.*", "**/*.pyc", "**/*.pyo", "**/*.orig", "**/*.rej", "**/*.swp", "**/*.swo", "**/*.tmp", "**/*.bak", "**/*~"]

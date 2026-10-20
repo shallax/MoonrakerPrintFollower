@@ -1,5 +1,18 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-20 — 6.0.0: Inspect detection owners and preserve fixed-layout gates after QML extraction.
+# 2026-10-18 — 6.0.0: Verify toolhead cooldown arming without a wall-clock race.
+# 2026-10-18 — 6.0.0: Verify stable projections after heater discovery and freshness overlays.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+
 """Executable monitor model runtime contracts."""
 import time
+from unittest.mock import patch
 from tests import monitor_test_support as harness
 
 class MonitorQtTests(harness.MonitorQtTests):
@@ -86,8 +99,8 @@ class MonitorQtTests(harness.MonitorQtTests):
         if owner._detection is None or not owner._detection.ready:
             from types import SimpleNamespace
             owner._detection = SimpleNamespace(ready=True, enabled=True, reset=lambda: None)
-        owner._detection_attested_at = time.monotonic()
-        owner._detection_run_identity = PrintRunIdentity("active-job", 1000.0, "sample.gcode", "test-binding")
+        owner._run.attested_at = time.monotonic()
+        owner._run.identity = PrintRunIdentity("active-job", 1000.0, "sample.gcode", "test-binding")
 
     def test_detection_controls_refuse_changes_until_enabled_for_the_printer(self):
         from PyQt6.QtCore import QObject, pyqtSignal
@@ -247,15 +260,15 @@ class MonitorQtTests(harness.MonitorQtTests):
             notify.assert_called_with("failure", False)
             model._failure_detection._handle_detection_action(context, "failure", now + 95)
             pause.assert_called_once()
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            self.assertFalse(model._failure_detection._actions.state.paused)
             self.assertFalse(self.follower.persistence.get_machine_state(context[0])
                              ["detectionActions"]["paused"])
             notify.assert_called_with("failure", False)
             model._data.commandChanged.emit({
-                "commandId": model._failure_detection._detection_pause_attempt,
+                "commandId": model._failure_detection._actions.state.pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "confirmed",
             })
-            self.assertTrue(model._failure_detection._detection_paused_for_print)
+            self.assertTrue(model._failure_detection._actions.state.paused)
             self.assertTrue(self.follower.persistence.get_machine_state(context[0])
                             ["detectionActions"]["paused"])
             model._failure_detection._handle_detection_action(context, "failure", now + 200)
@@ -272,8 +285,8 @@ class MonitorQtTests(harness.MonitorQtTests):
     def test_an_unacknowledged_alert_repeats_on_a_bounded_budget(self):
         import time
         from unittest.mock import patch
-        from mpf.monitor.MonitorDetection import (
-            DETECTION_ALERT_MAX_PER_PRINT, DETECTION_ALERT_REPEAT_SECONDS)
+        from mpf.detection.DetectionActions import (
+            ALERT_MAX_PER_PRINT, ALERT_REPEAT_SECONDS)
         config = self.follower.current_printer_config()
         self.follower.apply_printer_config(harness.replace(
             config, detection_enabled=True, detection_notify_enabled=True,
@@ -298,23 +311,23 @@ class MonitorQtTests(harness.MonitorQtTests):
             self.assertEqual(model.detectionAlertLevel, "failure")
             # A missed toast must not mean a missed failure: the alert
             # re-raises on the long interval, and stops at the cap.
-            model._failure_detection._handle_detection_action(context, "failure", now + DETECTION_ALERT_REPEAT_SECONDS - 1)
+            model._failure_detection._handle_detection_action(context, "failure", now + ALERT_REPEAT_SECONDS - 1)
             notify.assert_called_once()
-            for step in (0, 1, DETECTION_ALERT_MAX_PER_PRINT * 2):
+            for step in (0, 1, ALERT_MAX_PER_PRINT * 2):
                 model._failure_detection._handle_detection_action(
-                    context, "warning", now + DETECTION_ALERT_REPEAT_SECONDS + 1 + step * DETECTION_ALERT_REPEAT_SECONDS)
-            self.assertEqual(notify.call_count, DETECTION_ALERT_MAX_PER_PRINT,
+                    context, "warning", now + ALERT_REPEAT_SECONDS + 1 + step * ALERT_REPEAT_SECONDS)
+            self.assertEqual(notify.call_count, ALERT_MAX_PER_PRINT,
                              "the repeat budget must be the cap, not the attempts")
             self.assertEqual(model.detectionAlertLevel, "failure")
         # The budget is per print and survives a restart: it rides the
         # record, not the process.
         record = self.follower.persistence.get_machine_state(printer_id)["detectionActions"]
-        self.assertEqual(record["alertCount"], DETECTION_ALERT_MAX_PER_PRINT)
+        self.assertEqual(record["alertCount"], ALERT_MAX_PER_PRINT)
         self.assertEqual(record["alertLevel"], "failure")
         restored = self.monitor()
         restored._failure_detection._sync_detection_thresholds()
-        restored._failure_detection._sync_detection_action_context((context[0], model._failure_detection._detection_run_identity), time.time())
-        self.assertEqual(restored._failure_detection._detection_alert_count, DETECTION_ALERT_MAX_PER_PRINT)
+        restored._failure_detection._actions.sync((context[0], model._failure_detection._run.identity), time.time())
+        self.assertEqual(restored._failure_detection._actions.state.alert_count, ALERT_MAX_PER_PRINT)
         # Acknowledging ends the repeat: the next alert is a fresh,
         # immediate one.
         with patch.object(model._failure_detection, "_notify_detection") as notify:
@@ -555,21 +568,21 @@ class MonitorQtTests(harness.MonitorQtTests):
         with patch.object(model._commands, "send", return_value=True) as pause:
             model._failure_detection._handle_detection_action(context, "failure", time.time())
             model._data.commandChanged.emit({
-                "commandId": model._failure_detection._detection_pause_attempt,
+                "commandId": model._failure_detection._actions.state.pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "confirmed",
             })
             self.assertTrue(model.detectionPauseRearmable)
             model.rearmDetectionPause()
             self.assertFalse(model.detectionPauseRearmable)
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
-            self.assertIsNone(model._failure_detection._detection_acknowledged_at)
+            self.assertFalse(model._failure_detection._actions.state.paused)
+            self.assertIsNone(model._failure_detection._actions.state.acknowledged_at)
             self.assertFalse(self.follower.persistence.get_machine_state(printer_id)
                              ["detectionActions"]["paused"])
             self.assertEqual(pause.call_count, 1, "re-arm must not command the printer")
             context = model._failure_detection._detection_context()
             model._failure_detection._handle_detection_action(context, "failure", time.time() + 10)
             self.assertEqual(pause.call_count, 2)
-            self.assertTrue(model._failure_detection._detection_pause_pending)
+            self.assertTrue(model._failure_detection._actions.state.pause_pending)
 
     def test_rearm_works_while_paused_with_a_restored_latch_and_refuses_failed_save(self):
         import time
@@ -588,8 +601,8 @@ class MonitorQtTests(harness.MonitorQtTests):
         self.attest(model)
         job = model._print_state().job_key
         self.assertIsNotNone(job)
-        model._failure_detection._detection_action_saved = {
-            "run": model._failure_detection._detection_run_identity.as_dict(), "paused": True,
+        model._failure_detection._actions.state.saved = {
+            "run": model._failure_detection._run.identity.as_dict(), "paused": True,
             "alertedAt": time.time(), "acknowledgedAt": time.time(),
         }
         self.assertTrue(model.detectionPauseRearmable)
@@ -600,7 +613,7 @@ class MonitorQtTests(harness.MonitorQtTests):
         model.rearmDetectionPause()
         self.assertFalse(model.detectionPauseRearmable)
         saved = self.follower.persistence.get_machine_state(printer_id)["detectionActions"]
-        self.assertEqual(saved["run"], model._failure_detection._detection_run_identity.as_dict())
+        self.assertEqual(saved["run"], model._failure_detection._run.identity.as_dict())
         self.assertFalse(saved["paused"])
 
     def test_automatic_pause_is_not_latched_when_dispatch_fails_or_state_is_unconfirmed(self):
@@ -624,34 +637,34 @@ class MonitorQtTests(harness.MonitorQtTests):
         with patch.object(model._commands, "send", return_value=False) as pause:
             model._failure_detection._handle_detection_action(context, "failure", now)
             pause.assert_called_once()
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
-            self.assertFalse(model._failure_detection._detection_pause_pending)
+            self.assertFalse(model._failure_detection._actions.state.paused)
+            self.assertFalse(model._failure_detection._actions.state.pause_pending)
             self.assertFalse((self.follower.persistence.get_machine_state(context[0]) or {})
                              .get("detectionActions", {}).get("paused", False))
-        self.assertTrue(model._failure_detection._detection_pause_uncertain)
+        self.assertTrue(model._failure_detection._actions.state.pause_uncertain)
         model.rearmDetectionPause()
         with patch.object(model._commands, "send", return_value=True) as pause:
             context = model._failure_detection._detection_context()
             model._failure_detection._handle_detection_action(context, "failure", now + 10)
             pause.assert_called_once()
-            self.assertTrue(model._failure_detection._detection_pause_pending)
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            self.assertTrue(model._failure_detection._actions.state.pause_pending)
+            self.assertFalse(model._failure_detection._actions.state.paused)
             model._failure_detection._handle_detection_action(context, "failure", now + 20)
             pause.assert_called_once()
             model._data.commandChanged.emit({
-                "commandId": model._failure_detection._detection_pause_attempt,
+                "commandId": model._failure_detection._actions.state.pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "failed",
             })
-            self.assertFalse(model._failure_detection._detection_pause_pending)
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            self.assertFalse(model._failure_detection._actions.state.pause_pending)
+            self.assertFalse(model._failure_detection._actions.state.paused)
             model._failure_detection._handle_detection_action(context, "failure", now + 21)
             self.assertEqual(pause.call_count, 2)
             model._data.commandChanged.emit({
-                "commandId": model._failure_detection._detection_pause_attempt,
+                "commandId": model._failure_detection._actions.state.pause_attempt,
                 "name": "Pause", "terminal": True, "outcome": "timed_out",
             })
-            self.assertTrue(model._failure_detection._detection_pause_pending)
-            self.assertFalse(model._failure_detection._detection_paused_for_print)
+            self.assertTrue(model._failure_detection._actions.state.pause_pending)
+            self.assertFalse(model._failure_detection._actions.state.paused)
             model._failure_detection._handle_detection_action(context, "failure", now + 30)
             self.assertEqual(pause.call_count, 2)
         self.deliver_state("complete")
@@ -1129,20 +1142,26 @@ class MonitorQtTests(harness.MonitorQtTests):
         # release unreachable and hold the urgent floor forever.
         model = self.monitor()
         self.deliver_state("standby")
-        model._toolhead._guard_cooldown.setInterval(500)
+        cooldown = model._toolhead._guard_cooldown
         model.setJogDistance(1)
         model.jog("x", 1)
         client = self.follower.client
         self.assertTrue(client._session.toolhead_guard)
         scripts = [r for r in self.transport.requests if r.path == "printer/gcode/script"]
-        scripts[0].callback({}, None)
-        self.qt.events(10)
-        for _ in range(3):
-            self.deliver_state("standby")
+        # Control expiry instead of assuming three polled updates will run
+        # within 500 ms on a busy CI host. The real timeout signal still
+        # exercises the production guard-release connection.
+        with patch.object(cooldown, "start") as arm:
+            scripts[0].callback({}, None)
             self.qt.events(10)
-        self.assertTrue(client._session.toolhead_guard)  # settling, not re-armed
-        self.qt.events(700)
-        self.assertFalse(client._session.toolhead_guard)  # released on schedule
+            arm.assert_called_once_with()
+            for _ in range(3):
+                self.deliver_state("standby")
+                self.qt.events(10)
+            self.assertTrue(client._session.toolhead_guard)
+            arm.assert_called_once_with()  # polling did not re-arm expiry
+            cooldown.timeout.emit()
+        self.assertFalse(client._session.toolhead_guard)  # released by timeout
 
     def test_jog_keeps_its_place_behind_queued_one_shots(self):
         # The toolhead sends on the shared command lane. A jog tapped
@@ -1417,13 +1436,16 @@ class MonitorQtTests(harness.MonitorQtTests):
                 self.deliver_state("standby")
                 self.qt.events(1)
             self.assertEqual(scans, [], "core-only landings must not rescan peripherals")
+            self.assertIs(controls_first, model._controls.values,
+                          "unchanged controls must keep their copy")
             model._data._merge_aux({"extruder": {"temperature": 200.0, "target": 210.0}})
             self.qt.events(1)
             self.assertEqual(len(scans), 1, "an aux landing rescans exactly once")
         self.assertIs(console_first["consoleLines"], model._console.values["consoleLines"],
                       "an unchanged transcript must keep its projection")
-        self.assertIs(controls_first, model._controls.values,
-                      "unchanged controls must keep their copy")
+        self.assertIsNot(controls_first, model._controls.values,
+                         "newly discovered cooldown support is a real control change")
+        self.assertTrue(model._controls.values["canHeatersOff"])
 
     def test_stale_polls_cannot_raise_the_z_projection_between_dispatched_moves(self):
         model = self.monitor()
@@ -3519,8 +3541,8 @@ Item {
         # Monitor files must never be exempt, and the set must not
         # grow silently (round-2 security F13). Inside the popup the
         # chrome still uses enabled/opacity, never visible:.
-        exempt_files = {"MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml", "DetectionSettings.qml", "DetectionOffer.qml", "MoonrakerUploadDialog.qml"}
-        self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml", "DetectionSettings.qml", "DetectionOffer.qml", "MoonrakerUploadDialog.qml"})
+        exempt_files = {"MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml", "DetectionSettings.qml", "RecoverySettings.qml", "RecoveryControls.qml", "DetectionOffer.qml", "MoonrakerUploadDialog.qml"}
+        self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "ConnectionSettings.qml", "FollowingSettings.qml", "UploadSettings.qml", "DiagnosticsSettings.qml", "DetectionSettings.qml", "RecoverySettings.qml", "RecoveryControls.qml", "DetectionOffer.qml", "MoonrakerUploadDialog.qml"})
         for monitor_file in ("MoonrakerMonitor.qml", "MoonrakerMonitorDashboard.qml", "MoonrakerPreviewCard.qml"):
             self.assertNotIn(monitor_file, exempt_files)
         # The camera's configured gate moved into CameraPane as
@@ -3546,6 +3568,7 @@ Item {
             "hoverClockProxy", "root.compact",
         ))
         allowed = {
+            "visible: root.cameraControlLive",  # overlay freshness indicator within the fixed viewport
             # The new Preview dock collapses only on an explicit user request.
             # Its focus outline adds chrome without hiding or moving controls.
             "visible: root.collapsed",
@@ -3614,7 +3637,7 @@ Item {
             # own !major mirror).
             "visible: !line",
             "visible: !root.cameraBarFits && root.cameraControlLive && root.cameraPictureWidth >= 96 * screenScaleFactor && root.cameraPictureHeight >= 96 * screenScaleFactor",
-            "visible: root.configured && root.printerModel != null && root.printerModel.monitorConnected && cameraImage.visible && cameraImage.imageWidth > 0 && root.cameraPictureWidth >= cameraLiveBadge.width + width + 3 * badgeGap",
+            "visible: root.cameraControlLive && root.cameraPictureWidth >= cameraLiveBadge.width + width + 3 * badgeGap",
             # The plate's toolhead dot: scene-graph decoration INSIDE
             # the canvas's reserved slot — it can never shift layout,
             # only its own marker can appear inside the fixed map.
@@ -3635,7 +3658,7 @@ Item {
             'visible: gpuFollower.visible && (modelData === "ghost" ? root.showBase : (modelData === "prev" ? root.showPrevious || root._handoffOpacity > 0 : root.showNext))',
             "visible: root.available()",
             # The penguin is a transient drawing inside the fixed face.
-            "visible: root._penguinActive || opacity > 0",
+            "visible: state.active || opacity > 0",
             # The objects list's current-row bar: a highlight behind
             # the text, never a layout shift.
             "visible: modelData.current",
@@ -3821,8 +3844,8 @@ Item {
             'visible: root.gpuRendering ? root.available() && !gpuFollower.ready : root._presentation.kind === "preparing" && !root._presentation.ready',
             "visible: !root.gpuRendering",
             "visible: !root.gpuRendering && root.available() && (root.showRetractions || root.showUnretractions)",
-            "visible: !root.gpuRendering && root._interactionActive",
-            'visible: !root.gpuRendering && root._interactionActive && (root._gestureNavSource !== "" || navigationData() !== "")',
+            "visible: !root.gpuRendering && camera.interactionActive",
+            'visible: !root.gpuRendering && camera.interactionActive && (delivery.gestureSource !== "" || navigationData() !== "")',
             "visible: jumpButton.visible",
             "visible: root.showTravels && _fullRaster() && ExactComposition.travelsOf(root.progress.layers.current)",
             "visible: root.available() && root.showPrevious && _ghost(\"prev\") != null && ExactComposition.rasterOf(_ghost(\"prev\"))",
@@ -3832,7 +3855,7 @@ Item {
             'visible: root._presentation.prefix === "current"',
             'visible: root._presentation.kind === "preparing" && !root._presentation.ready',
             'visible: root._presentation.prefix === "retained"',
-            "visible: root._interactionActive",
+            "visible: camera.interactionActive",
             # The full raster's standing: the full state OR the
             # 100% -> partial entry's transaction — the predicate
             # itself holds the previous composition until the
@@ -3843,7 +3866,7 @@ Item {
             # source latches at entry so a mid-gesture retirement
             # never unloads the scene in hand (an interaction driven
             # without an entry falls back to the live eligible URL).
-            "visible: root._interactionActive && (root._gestureNavSource !== \"\" || navigationData() !== \"\")",
+            "visible: camera.interactionActive && (delivery.gestureSource !== \"\" || navigationData() !== \"\")",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).
@@ -3892,6 +3915,8 @@ Item {
             "visible: gridVertical.height > 0 && gridVertical.contentY < gridVertical.contentHeight - gridVertical.height - 2",
             "visible: root.printerModel != null && root.printerModel.fileManagerWalkError !== \"\"",
             "visible: root.printerModel != null && root.printerModel.plateSourceStatus !== \"\"",
+            # Profile headings/captions follow inventory, not running state.
+            "visible: root.printerModel != null && root.printerModel.temperaturePresetItems.length > 0",
             "visible: busy",
             # Download actions retain a permanent row; only the optional
             # consent/cancel buttons change opacity through visibility.
@@ -3922,6 +3947,11 @@ Item {
             # MODE of the follower popover — attaching again is the
             # user's own act, and the two rows above it never move.
             "visible: root.printerModel != null && !root.printerModel.followerAttached",
+            # Recovery is an explicit tab choice in the expanded follower.
+            "visible: !recoveryPanel.visible",
+            # File selection is available only while there is no active
+            # print to rewind; it is the unloaded-recovery mode.
+            "visible: root.printerModel != null && root.printerModel.recoveryFiles !== undefined && root.printerModel.recoveryFiles.available === true",
         }
         for path in sorted(harness.PLUGINS.rglob("*.qml")):
             if path.name in exempt_files:

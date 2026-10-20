@@ -1,3 +1,13 @@
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected Git history (newest first; oldest and latest two content changes):
+# 2026-10-18 — 6.0.0: Reject transient empty and unrelated machine selections at boot.
+# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
+# 2026-09-24 [77c477c] harness: the native legs boot twice, and their setup reports its own failures
+
 """The seeded config variants' pins.
 
 The two-boot legs boot from a state the committed fixture is NOT, and
@@ -13,12 +23,15 @@ Run directly (like the other harness files):
 """
 
 import os
+import importlib.util
 import pathlib
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -43,6 +56,44 @@ printer_configs_v1 = {"Old Printer": {"url": "http://127.0.0.1:7125"}}
 [some_other_plugin]
 value = keep me
 """
+
+
+class SeedActivationTests(unittest.TestCase):
+    def test_startup_never_creates_a_replacement_and_selects_the_exact_seed(self):
+        spec = importlib.util.spec_from_file_location("harness_machine", HERE / "driver/machine.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        manager = Mock(activeMachine=None)
+        app = SimpleNamespace(started=False, getMachineManager=lambda: manager)
+        registry = Mock()
+        registry.findContainerStacks.return_value = []
+        self.assertFalse(module.activate_seed(app, registry)["ok"])
+        registry.findContainerStacks.assert_not_called()
+        manager.addMachine.assert_not_called()
+        app.started = True
+        self.assertFalse(module.activate_seed(app, registry)["ok"])
+        manager.addMachine.assert_not_called()
+        wrong = Mock()
+        wrong.getName.return_value = module.SEED_NAME + " #2"
+        wrong.getId.return_value = "wrong"
+        wrong.getMetaDataEntry.return_value = "machine"
+        manager.activeMachine = wrong
+        registry.findContainerStacks.return_value = [wrong]
+        self.assertFalse(module.activate_seed(app, registry)["ok"])
+        seed = Mock()
+        seed.getName.return_value = module.SEED_NAME
+        seed.getId.return_value = "seed"
+        seed.getMetaDataEntry.return_value = "machine"
+        registry.findContainerStacks.return_value = [wrong, seed]
+        # A delayed selection must remain pending, even if the requested ID exists.
+        self.assertFalse(module.activate_seed(app, registry)["ok"])
+        manager.setActiveMachine.assert_called_once_with("seed")
+        manager.setActiveMachine.side_effect = lambda _: setattr(manager, "activeMachine", seed)
+        self.assertTrue(module.activate_seed(app, registry)["ok"])
+        manager.setActiveMachine.reset_mock()
+        self.assertTrue(module.activate_seed(app, registry)["ok"])
+        manager.setActiveMachine.assert_not_called()
+        manager.addMachine.assert_not_called()
 
 
 class TransformTests(unittest.TestCase):

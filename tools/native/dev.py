@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+# Copyright 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
+# SPDX-License-Identifier: GPL-3.0-only
+# Licensed under GNU GPLv3 (version 3 only); see LICENSE.
+#
+# Selected release and Git history (newest first; original provenance retained):
+# 2026-10-18 — 6.0.0: Bound each native test process and report progress as files finish.
+# 2026-10-18 — 6.0.0: Build and verify reusable wheels through the selected native or Docker backend.
+# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-09-26 [2bdf753] Add a native Windows development leg
+
 """Native Windows and macOS development procedures (no Docker).
 
 Linux runs the procedures as tools/*.sh inside the pinned dev container
@@ -135,7 +146,7 @@ HARNESS_MODULES = (
     "tests/harness/test_harness_native.py",
 )
 DETERMINISM_SCRIPTS = ("capture_monitor.py", "capture_preview.py", "capture_preview_toolhead.py",
-                       "capture_settings.py", "capture_upload.py", "capture_toolhead.py")
+                       "capture_settings.py", "capture_upload.py", "capture_toolhead.py", "capture_recovery.py")
 CAPTURE_SCRIPTS = DETERMINISM_SCRIPTS + ("capture_whatsnew.py",
                                          "capture_filemanager.py")
 COVERAGE_BAR = 95.0
@@ -334,6 +345,9 @@ def formatted_text(root: Path, env: dict, exe: str, path: Path):
 
 
 # --- the suite ------------------------------------------------------------
+TEST_PROCESS_TIMEOUT = 300
+
+
 def run_jobs(root: Path, jobs, log_dir: Path, workers: int):
     """One process per job. Returns (label, rc, ran tests, log, failures, secs)."""
     # A hard wall-clock renderer budget measures the host as well as the
@@ -384,14 +398,17 @@ def suite_jobs(python: str, root: Path, names, env: dict, coverage: bool,
     jobs = []
     for name in names:
         job_env = dict(env)
-        argv = [python, "-m"]
+        argv = [python]
         if coverage and name != "test_follower_seek_performance.py":
             job_env["COVERAGE_FILE"] = str(cov_dir / ("cov.%s.coverage" % name[:-3]))
-            argv += ["coverage", "run", "-m"]
-        argv += ["unittest", "discover", "-v", "-s", "tests", "-p", name]
+            argv += ["-m", "coverage", "run"]
+        argv += [str(root / "tools/native/test_worker.py"), "module",
+                 "unittest", "discover", "-v", "-s", "tests", "-p", name]
         jobs.append((name[:-3], argv, job_env))
     if include_harness:
-        jobs += [(Path(module).stem, [python, module.replace("/", os.sep)], dict(env))
+        jobs += [(Path(module).stem,
+                  [python, str(root / "tools/native/test_worker.py"),
+                   "file", module.replace("/", os.sep)], dict(env))
                  for module in HARNESS_MODULES]
     return jobs
 
@@ -454,9 +471,16 @@ def _one_job(packed):
     label, argv, env = job
     log_path = log_dir / ("%s.log" % label)
     started = time.monotonic()
+    print("START %s - log: %s" % (label, log_path), flush=True)
     with open(log_path, "wb") as log:
-        rc = subprocess.call([str(a) for a in argv], cwd=root, stdout=log,
-                             stderr=subprocess.STDOUT, env=env)
+        try:
+            rc = subprocess.run([str(a) for a in argv], cwd=root, stdout=log,
+                                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                env=env, timeout=TEST_PROCESS_TIMEOUT).returncode
+        except subprocess.TimeoutExpired:
+            rc = 124
+            log.write(("\nERROR: %s exceeded the %ss process deadline\n"
+                       % (label, TEST_PROCESS_TIMEOUT)).encode("utf-8"))
     text = log_path.read_text(encoding="utf-8", errors="replace")
     ran = 0
     failing = []
@@ -468,7 +492,12 @@ def _one_job(packed):
         if label == "test_platform_safety" and line.startswith("OK (skipped="):
             rc = 1
             failing.append("ERROR: platform safety skipped Qt tests")
-    return label, rc, ran, log_path, failing, time.monotonic() - started
+    took = time.monotonic() - started
+    print("END %s - %s (%s)" % (label, "PASS" if rc == 0 and ran else "FAIL",
+                               elapsed_text(took)), flush=True)
+    if rc != 0:
+        print("\n".join(text.splitlines()[-35:]), flush=True)
+    return label, rc, ran, log_path, failing, took
 
 
 # --- the pinned toolchain -------------------------------------------------
@@ -1007,8 +1036,8 @@ def cmd_ui_test(args) -> int:
 def cmd_ui_release_gate(args) -> int:
     if cmd_gates(args):
         return 1
-    primary = os.environ.get("CURA_PRIMARY", "5.13.0")
-    secondary = os.environ.get("CURA_SECONDARY", "5.12.0")
+    primary = os.environ.get("CURA_PRIMARY", "5.14.0-beta.1")
+    secondary = os.environ.get("CURA_SECONDARY", "5.13.0")
     groups = ("connection", "status", "temperatures", "console", "webcams",
               "files", "motion", "printing", "settings", "visual", "preview",
               "probe", "configure", "stress")
@@ -1125,6 +1154,17 @@ def cmd_package(args) -> int:
     return record("package", _build_artifacts(root, tool_env()))
 
 
+def cmd_library(args) -> int:
+    root = checkout_root()
+    env = tool_env()
+    ok = run([sys.executable, "-m", "pip", "wheel", "--no-deps", ".",
+              "--wheel-dir", "dist/library"], cwd=root, env=env) == 0
+    if ok:
+        wheel = root / "dist" / "library" / ("moonraker_toolpath-%s-py3-none-any.whl" % _version(root))
+        ok = run([sys.executable, "tools/check_library.py", str(wheel), "--qt"], cwd=root, env=env) == 0
+    return record("library", ok)
+
+
 def cmd_snapshot(args) -> int:
     root = checkout_root()
     if not _build_artifacts(root, tool_env()):
@@ -1208,7 +1248,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("command", choices=(
         "bootstrap", "lint", "format", "test", "coverage", "captures", "refresh", "shaders",
-        "determinism", "package", "snapshot", "copy_snapshot", "gates", "hooks", "hook-check", "clean",
+        "determinism", "package", "library", "snapshot", "copy_snapshot", "gates", "hooks", "hook-check", "clean",
         "dev_up", "dev_down", "exec", "ui_test", "ui_release_gate"))
     parser.add_argument("--jobs", type=int, default=default_jobs(),
                         help="parallel test/diagnostic workers (default: JOBS or 16)")
@@ -1219,7 +1259,7 @@ def main(argv=None) -> int:
     parser.add_argument("--to", default="", help="snapshot destination")
     parser.add_argument("--qsb", default="", help="Qt Shader Tools qsb executable")
     parser.add_argument("--mode", default="scenario", help="native UI harness mode")
-    parser.add_argument("--cura-version", default="5.13.0", help="native Cura harness version")
+    parser.add_argument("--cura-version", default="5.14.0-beta.1", help="native Cura harness version")
     parser.add_argument("--no-qmlformat", action="store_true",
                         help="bootstrap without the PySide6 wheel qmlformat comes in")
     parser.add_argument("--no-install", action="store_true",
@@ -1229,7 +1269,7 @@ def main(argv=None) -> int:
         "bootstrap": cmd_bootstrap, "lint": cmd_lint, "format": cmd_format,
         "test": cmd_test, "coverage": cmd_coverage, "captures": cmd_captures,
         "refresh": cmd_refresh, "shaders": cmd_shaders,
-        "determinism": cmd_determinism, "package": cmd_package,
+        "determinism": cmd_determinism, "package": cmd_package, "library": cmd_library,
         "snapshot": cmd_snapshot, "copy_snapshot": cmd_copy_snapshot,
         "gates": cmd_gates, "hooks": cmd_hooks,
         "hook-check": cmd_hook_check, "clean": cmd_clean,
