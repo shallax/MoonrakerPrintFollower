@@ -737,11 +737,11 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # Cura 5.14 has two upstream legacy mesh/colour errors. Use Cura's
     # supported modern-context preference on this disposable macOS host;
     # 5.13 keeps the default legacy renderer coverage. No host code is patched.
-    awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" -v modern="$( case "$CURA_VERSION" in 5.14.*) echo 1 ;; *) echo 0 ;; esac )" '
+    awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" -v modern="$(printf '%s' "$CURA_VERSION" | cut -d. -f1,2)" '
         BEGIN { sec = "" }
         /^\[/ { sec = $0; print; if (sec == "[general]") print "disabled_plugins = " ids;
-            if (sec == "[view]" && modern == 1) print "opengl_version_detect = force_modern"; next }
-        sec == "[view]" && modern == 1 && /^opengl_version_detect[[:space:]]*=/ { next }
+            if (sec == "[view]" && modern == "5.14") print "opengl_version_detect = force_modern"; next }
+        sec == "[view]" && modern == "5.14" && /^opengl_version_detect[[:space:]]*=/ { next }
         sec == "[general]" && /^disabled_plugins = / { next }
         sec == "[general]" && /^version = / { print "version = " ver; next }
         sec == "[cura]" && /^active_machine = / { print "active_machine = " am; next }
