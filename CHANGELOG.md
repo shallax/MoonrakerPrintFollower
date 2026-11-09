@@ -5,7 +5,8 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 ## 6.0.1
 
 - Update the build and UI harness defaults, CI gates and version sweep to use
-  Cura 5.14.0 instead of 5.14.0-beta.1.
+  Cura 5.14.0 instead of 5.14.0-beta.1. Bump the standalone library package
+  to 6.0.1 as well.
 
 ## 6.0.0
 

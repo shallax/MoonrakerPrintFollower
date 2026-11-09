@@ -11,7 +11,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "moonraker-toolpath"
-version = "6.0.0"
+version = "6.0.1"
 description = "Reusable G-code indexing, toolpath geometry and optional Qt rendering from MoonrakerPrintFollower"
 readme = "docs/LIBRARY.md"
 requires-python = ">=3.10"
@@ -26,7 +26,7 @@ fast = ["numpy>=1.26"]
 
 [project.urls]
 Repository = "https://github.com/shallax/MoonrakerPrintFollower"
-Documentation = "https://github.com/shallax/MoonrakerPrintFollower/blob/release/v6.0.0/docs/LIBRARY.md"
+Documentation = "https://github.com/shallax/MoonrakerPrintFollower/blob/release/v6.0.1/docs/LIBRARY.md"
 
 [tool.setuptools]
 include-package-data = false
