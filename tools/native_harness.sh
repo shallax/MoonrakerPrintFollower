@@ -4,12 +4,13 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-11-09 — 6.0.1: Select the modern renderer for stable Cura 5.14.0.
 # 2026-10-19 — 6.0.0: Select modern OpenGL for beta CI without patching Cura classes.
 # 2026-10-18 — 6.0.0: Support opt-in LLDB launch for native crash diagnosis.
 # 2026-10-18 - 6.0.0: Repair root-only QtTest permissions before launching Cura.
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-09-24 [bf703bf] gate: every unit runs on every platform - 17 units x 3 OS
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-09-24 gate: every unit runs on every platform - 17 units x 3 OS
 
 # The macOS half of the UI harness host: install Cura, seed its config,
 # move the display, stage the plugin and the driver, start the simulator

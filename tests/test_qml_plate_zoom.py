@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Keep zoom delivery checks on explicit lifecycle state owners.
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable qml plate zoom contracts."""
 from tests import qml_engine_support as harness

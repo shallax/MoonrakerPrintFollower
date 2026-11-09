@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
+# 2026-10-05 Add Preview object banners and recognize slow Cura loads
 
 """Bounded per-object extrusion summaries from the index's single G-code scan."""
 from __future__ import annotations

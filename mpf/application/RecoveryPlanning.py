@@ -6,8 +6,8 @@
 # 2026-10-20 — 6.0.0: Use public lexical and extrusion-run queries and return structured source refusals.
 # 2026-10-19 — 6.0.0: Guide unreviewed macro classification through Recovery setup.
 # 2026-10-18 — 6.0.0: Reconstruct feed rate, arc plane and selected object before recovery.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 Implement interrupted print recovery handover
 
 """Read-only recovery planning for a paused virtual-SD print.
 

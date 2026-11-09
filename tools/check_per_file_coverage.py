@@ -4,9 +4,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-10-03 [8b8ac48] Give the pixel settle and the exclusion schema one owner each
-# 2026-09-19 [0f5d266] 4.5.0: the camera stream, the narrow-window contract and the release hardening
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-10-03 Give the pixel settle and the exclusion schema one owner each
+# 2026-09-19 4.5.0: the camera stream, the narrow-window contract and the release hardening
 
 """The per-file coverage gate: every plugin file clears 95% on its own.
 

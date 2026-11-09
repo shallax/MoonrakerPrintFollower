@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-06 [afc9149] Fix cross-platform CI tests and CAD archive name validation
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-10-06 Fix cross-platform CI tests and CAD archive name validation
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
 
 """Selection-tool topology echoes must not impersonate path-slider input."""
 import sys

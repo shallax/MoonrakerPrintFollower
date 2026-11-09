@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
+# 2026-10-12 Prepare 5.4.0 runtime mirror and follower controls
 
 """Generate the packaged Easter egg strokes from the capture penguin G-code."""
 from __future__ import annotations

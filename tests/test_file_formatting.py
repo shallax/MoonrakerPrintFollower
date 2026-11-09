@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-30 [14500a2] Extract file-browser presentation from the Monitor facade
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-30 Extract file-browser presentation from the Monitor facade
 
 """File labels reject invalid numerical inputs without a Monitor dependency."""
 import unittest

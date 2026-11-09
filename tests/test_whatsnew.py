@@ -3,9 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
-# 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
-# 2026-09-15 [cf5323d] 4.1.0: the one-time what's-new popup, proven through the harness
+# 2026-11-09 — 6.0.1: Pin the frozen 6.0.0 notes after adding the new entry.
+# 2026-10-13 Implement interrupted print recovery handover
+# 2026-10-12 Prepare 5.4.0 runtime mirror and follower controls
+# 2026-09-15 4.1.0: the one-time what's-new popup, proven through the harness
 
 """The what's-new content and its once-per-version marker contract.
 

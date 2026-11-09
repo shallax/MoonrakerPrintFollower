@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-10-03 [950d97a] Keep the alert's frame and timeline, and carry it to the desktop
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-10-03 Keep the alert's frame and timeline, and carry it to the desktop
 
 """The alert's own evidence: the frame that raised it and a bounded
 per-print score timeline, in a folder beside the detection assets.

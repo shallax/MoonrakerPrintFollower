@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-07 [2ec6e6e] Harden lifecycle ownership and race guards
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-07 Harden lifecycle ownership and race guards
 
 """PrintState domain: immutable snapshots and the single LayerResolver."""
 from __future__ import annotations

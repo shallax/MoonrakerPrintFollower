@@ -3,10 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-19 [256ac1e] 4.5.0 camera cold-start: one stream owner, coalesced discovery, the bridge request trace
-# 2026-09-19 [4bcca14] 4.5.0: the timing chain announces when it arms, and the temperatures scenario scrolls the
+# 2026-09-19 4.5.0 camera cold-start: one stream owner, coalesced discovery, the bridge request trace
+# 2026-09-19 4.5.0: the timing chain announces when it arms, and the temperatures scenario scrolls the
 #   reset buttons into view before the presses
-# 2026-09-19 [a765674] 4.5.0: the T0-T9 cold-camera timing chain — one monotonic origin, trace-gated, every
+# 2026-09-19 4.5.0: the T0-T9 cold-camera timing chain — one monotonic origin, trace-gated, every
 #   stage marked from activation through the first decoded frame
 
 """The T0-T9 cold-camera timing chain (the reviewer's diagnostics).

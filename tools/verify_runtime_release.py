@@ -4,7 +4,7 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — Verify the source/notices companion's covered payloads, size and digest.
-# 2026-10-12 [abf18f3] Mirror optional runtime assets on plugin releases
+# 2026-10-12 Mirror optional runtime assets on plugin releases
 
 """Check that a GitHub release has every pinned optional runtime asset."""
 

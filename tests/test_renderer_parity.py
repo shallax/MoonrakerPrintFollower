@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Inspect camera ownership while preserving physical stroke and focal parity assertions.
-# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-22 [773e361] 4.6.0: the burn fix, the parity coverage floor and the webcam FPS control
+# 2026-10-01 Draw switchable bed-axis arrows across plate views
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-22 4.6.0: the burn fix, the parity coverage floor and the webcam FPS control
 
 """The renderer-parity contract (4.6.0): the native rasterised
 toolpath presents the SAME PHYSICAL stroke width the QML vector

@@ -3,10 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-16 [ada1bfb] 4.3.0: remove the follow render pass, restore the native nozzle lifecycle
-# 2026-09-16 [d30a066] 4.3.0: the follow pass is the only render path — the monkeypatch and the nozzle hack are
+# 2026-09-16 4.3.0: remove the follow render pass, restore the native nozzle lifecycle
+# 2026-09-16 4.3.0: the follow pass is the only render path — the monkeypatch and the nozzle hack are
 #   gone
-# 2026-09-04 [81f5b92] Fix v2.0.0.
+# 2026-09-04 Fix v2.0.0.
 
 """Keep Cura's own SimulationView nozzle available during live following.
 

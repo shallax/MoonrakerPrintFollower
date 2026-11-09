@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-27 [d70d1b6] Share accepted live motion progress across Preview and Monitor and repair CI expectations
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-09-27 Share accepted live motion progress across Preview and Monitor and repair CI expectations
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable qt preview integration contracts."""
 from tests import qt_integration_support as harness

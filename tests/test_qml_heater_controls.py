@@ -4,7 +4,7 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Verify cooldown discovery and latest temperature intent across controls.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
 
 """Mouse-driven temperature controls connected to real control and tuning owners."""
 import unittest

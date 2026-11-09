@@ -4,8 +4,8 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Exercise decoded camera freshness, recovery state and URL handling.
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable qml camera lifecycle contracts."""
 from tests import qml_engine_support as harness

@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Remove the injected host-logger assertion from portable cache validation.
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-29 [1db0cab] Test extracted parser, hydration, cache and read-only query boundaries
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-29 Test extracted parser, hydration, cache and read-only query boundaries
 
 """A cache hit is accepted only when its metadata describes valid motion columns."""
 import gzip

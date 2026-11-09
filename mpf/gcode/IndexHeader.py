@@ -4,7 +4,7 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Ignore malformed optional per-extruder diameter metadata.
-# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+# 2026-09-29 Decompose indexing into explicit parser, cache and worker components
 
 """Read slicer layer markers and filament metadata before the motion scan."""
 from __future__ import annotations

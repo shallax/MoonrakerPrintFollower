@@ -4,9 +4,9 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Document recovery of established streams whose decoded frames stop.
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [520544b] Give the webcam stream's recovery its own owner
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 Give the webcam stream's recovery its own owner
 
 """The webcam stream's freshness policy: when the pane must be told to
 reload, and what the veil means while it has not.

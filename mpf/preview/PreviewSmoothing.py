@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-08 [9c4fb93] Reconstruct the trajectory between polls so the glide is poll-rate independent
-# 2026-09-07 [9029546] Glide past stale observations with a bounded lookahead
-# 2026-09-07 [7ce149f] Smooth the Preview path head for 3.3.0
+# 2026-09-08 Reconstruct the trajectory between polls so the glide is poll-rate independent
+# 2026-09-07 Glide past stale observations with a bounded lookahead
+# 2026-09-07 Smooth the Preview path head for 3.3.0
 
 """Pure display policy for the Preview path within one layer.
 

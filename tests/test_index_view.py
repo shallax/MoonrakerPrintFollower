@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-29 [1db0cab] Test extracted parser, hydration, cache and read-only query boundaries
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-29 Test extracted parser, hydration, cache and read-only query boundaries
 
 """Read-only query fallbacks for unavailable or invalid continuous-Z evidence."""
 import unittest

@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Inject cache diagnostics instead of importing the host logger.
-# 2026-10-01 [1866243] Persist print sources and publish live download progress
-# 2026-09-28 [60c7f1a] Use controlled clocks for test timing and remove capture diagnostics
-# 2026-09-21 [065c09f] 4.6.0: the file-backed prepared cold store — the pass's encodings persist per print with
+# 2026-10-01 Persist print sources and publish live download progress
+# 2026-09-28 Use controlled clocks for test timing and remove capture diagnostics
+# 2026-09-21 4.6.0: the file-backed prepared cold store — the pass's encodings persist per print with
 #   random access and atomic finalisation, a reopened print skips the whole preparation walk (the real 467 MB
 #   print measures 197 MB prepared), the size policy evicts whole prints by recency, and the seek debounce drops
 #   to 80 ms

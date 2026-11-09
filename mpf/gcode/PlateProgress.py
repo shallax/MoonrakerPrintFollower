@@ -4,9 +4,9 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Synchronise shared prepared-cache access across independent indexes.
-# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
-# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
-# 2026-09-20 [11c27cf] 4.6.0: the follower face — the progress polylines prepared in the coordinator with the
+# 2026-10-01 Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 Capitalise the remaining top-level directories
+# 2026-09-20 4.6.0: the follower face — the progress polylines prepared in the coordinator with the
 #   motion-index split, the OctoApp-style prev/current/next view with the travel-boundary glyphs, the face
 #   toggle, the right-inset sweep and the plate capture seed
 

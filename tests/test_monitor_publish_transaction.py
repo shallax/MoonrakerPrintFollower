@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Read frozen selection from its explicit follower-selection owner.
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-30 [3e5edca] Give the publication one owner
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-30 Give the publication one owner
 
 """The facade's publication transaction, driven through the real model.
 

@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-30 [5fb2d5b] Move the renderer's worker and resource lifecycle out of the Monitor
+# 2026-09-30 Move the renderer's worker and resource lifecycle out of the Monitor
 
 """One follower surface's native render context.
 

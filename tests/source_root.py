@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-29 [da47b7c] The documents and resources move into their domains
-# 2026-09-29 [fa05e3a] The package gains its domain hierarchy
+# 2026-09-29 The documents and resources move into their domains
+# 2026-09-29 The package gains its domain hierarchy
 
 """Finding a source file by name, not by the directory it sits in.
 

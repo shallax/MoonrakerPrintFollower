@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
-# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
-# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
-# 2026-09-05 [0b33c68] v3: register integrated Moonraker output device
+# 2026-10-13 Implement interrupted print recovery handover
+# 2026-10-08 Add toolhead materials, scene reflections and fan animation
+# 2026-09-05 v3: register integrated Moonraker output device
 
 from __future__ import annotations
 

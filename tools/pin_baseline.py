@@ -4,9 +4,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
-# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
-# 2026-09-15 [5aca3af] 4.3.0 foundations: the lands-first pins — the 23 section ids pinned as an exact set plus
+# 2026-10-01 Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 Capitalise the remaining top-level directories
+# 2026-09-15 4.3.0 foundations: the lands-first pins — the 23 section ids pinned as an exact set plus
 #   the console reference, the no-oscillation inequality pinned from its literals, the pin-pass baseline tool,
 #   the coverage key family becomes a directory scan with the floor re-derived, and the projection count's clock
 #   frozen in its test

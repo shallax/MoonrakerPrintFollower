@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
-# 2026-09-08 [0f363ac] Deterministic captures: vendored Cura assets, capture harness, committed screenshots
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-10-01 Revert "Capitalise the remaining top-level directories"
+# 2026-09-08 Deterministic captures: vendored Cura assets, capture harness, committed screenshots
 
 """Theme backend for the deterministic Monitor captures.
 

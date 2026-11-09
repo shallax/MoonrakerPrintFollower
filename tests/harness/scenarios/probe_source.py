@@ -5,9 +5,9 @@
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-19 — 6.0.0: Require real legacy Preview mesh geometry in playback readiness.
 # 2026-10-18 — 6.0.0: Require the actual final Preview path in playback evidence.
-# 2026-10-06 [8da5d38] Update UI probes for cached toolhead rendering and larger settings tree
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-09-30 [67f0fe4] The scenario suite becomes a package, by group
+# 2026-10-06 Update UI probes for cached toolhead rendering and larger settings tree
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-09-30 The scenario suite becomes a package, by group
 
 """The probe bodies and window floors the scenario groups share.
 

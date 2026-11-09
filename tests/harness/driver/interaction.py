@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-30 [1f78aec] The driver's probe and interaction families get owners
+# 2026-09-30 The driver's probe and interaction families get owners
 
 """Synthesized input, and the proof that it arrived where it was aimed.
 

@@ -6,9 +6,9 @@
 # 2026-10-19 — 6.0.0: Reject playback readiness without native legacy mesh vertices.
 # 2026-10-18 — 6.0.0: Require the actual final Preview path in playback evidence.
 # 2026-10-18 — 6.0.0: Check presentation probe arguments without rejecting optional failure policy.
-# 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
-# 2026-10-06 [8da5d38] Update UI probes for cached toolhead rendering and larger settings tree
-# 2026-09-13 [4fe5590] the panel round's harness hardening: honest evidence, real semantics, closed gaps
+# 2026-10-07 Judge static spans and native restoration against actual renderer behavior
+# 2026-10-06 Update UI probes for cached toolhead rendering and larger settings tree
+# 2026-09-13 the panel round's harness hardening: honest evidence, real semantics, closed gaps
 
 """Structural checks on the suite specs — the host-side guard the
 probe-code-in-string-constants pattern lacked: a bad escape or a

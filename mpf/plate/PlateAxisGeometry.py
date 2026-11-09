@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
+# 2026-10-01 Draw switchable bed-axis arrows across plate views
 
 """Border-aligned bed axis arrows shared by raster and GPU rendering."""
 

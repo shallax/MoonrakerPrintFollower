@@ -3,9 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-10-12 [48fdc0f] Finish shared path indices and cropped lighting output
-# 2026-09-19 [41924ff] 4.5.0: narrow the chart retirement, pin the matrix, settle the captures
+# 2026-11-09 — 6.0.1: Pin the release matrix to stable Cura 5.14.0.
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-12 Finish shared path indices and cropped lighting output
+# 2026-09-19 4.5.0: narrow the chart retirement, pin the matrix, settle the captures
 
 """The release-matrix parity gate: the GitHub PR CI workflow's
 logical units must match the local canonical release gate's units —

@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
-# 2026-09-30 [1378522] The runner's two measurement instruments get owners
+# 2026-10-07 Judge static spans and native restoration against actual renderer behavior
+# 2026-09-30 The runner's two measurement instruments get owners
 
 """The still-frame analysis: whether a leg's recording moved.
 

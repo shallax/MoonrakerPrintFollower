@@ -924,10 +924,9 @@ an SPDX licence identifier. The project licence is GNU GPLv3, version 3 only
 (`GPL-3.0-only`); the full text is in `LICENSE`. Preserve upstream attribution
 and licence terms in derived camera modules and vendored fixtures.
 
-The initial 6.0.0 source headers record the earliest commit and two latest content
-changes, following renames, in newest-first order. Those snapshot entries use Git
-author dates, abbreviated hashes and commit subjects; subjects can describe a
-larger change than that file alone.
+Source headers keep a short, newest-first selection of pertinent history entries
+with dates and file-specific summaries. They do not include commit hashes or
+copied commit subjects; Git remains the complete history.
 
 At the end of **every release cycle**, review every project-owned source header
 against the Git history since the preceding release tag (or the recorded cycle
@@ -937,12 +936,11 @@ applies when finalizing another candidate without changing the version number.
 
 Use brief, file-specific summaries of meaningful behaviour changes, fixes or
 structural changes, with `YYYY-MM-DD` dates from the relevant Git commits and the
-release version. Include commit references where available and follow renames
-when finding earlier history. Add new entries newest first, retain the original
-provenance, and keep only a short selection of recent pertinent entries: Git is
-the complete history. Do not manufacture entries for unchanged files, pure
-renames or edits confined to notices. Recheck late release fixes so their entries
-are included in the final packaged sources.
+release version. Follow renames when finding earlier history. Add new entries
+newest first, retain the original provenance, and keep only a short selection of
+recent pertinent entries: Git is the complete history. Do not manufacture
+entries for unchanged files, pure renames or edits confined to notices. Recheck
+late release fixes so their entries are included in the final packaged sources.
 
 Shebangs, encoding declarations and
 format directives retain their required positions before the header. Do not add

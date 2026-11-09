@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Inspect standing prefix and file-reference ownership directly.
-# 2026-10-03 [6c323ef] Read the prefix takeover from the composition, not a fringe count
-# 2026-10-03 [d8fd7da] Name the term that holds the prefix takeover
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-03 Read the prefix takeover from the composition, not a fringe count
+# 2026-10-03 Name the term that holds the prefix takeover
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable qml plate prefix ownership contracts."""
 from tests import qml_engine_support as harness

@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-18 [7fe91f6] 4.5.0: the persistence facade and the one-shot migration's control flow — the strict
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-18 4.5.0: the persistence facade and the one-shot migration's control flow — the strict
 #   read, the backup gate, the verify-by-re-read, the clean-as-commit-point and the pretty key-scoped stores
 
 """Pure tests for the 4.5.0 one-shot migration (the panel's C1-C6/B1/E5

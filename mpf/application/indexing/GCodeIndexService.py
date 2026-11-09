@@ -5,9 +5,9 @@
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Retain deferred motion-array work until its raw source lease arrives.
 # 2026-10-20 — 6.0.0: Delegate live matching and consumer residency to explicit owners.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-01 [1866243] Persist print sources and publish live download progress
-# 2026-09-07 [547223f] Establish shared Moonraker session and service runtime
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-01 Persist print sources and publish live download progress
+# 2026-09-07 Establish shared Moonraker session and service runtime
 
 """Index lifecycle and scheduling. One in-flight job; observations and caches have explicit owners."""
 from __future__ import annotations

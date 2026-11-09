@@ -4,8 +4,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-06 [1df3fc1] Bound native 3D capture rounding without relaxing UI or alpha checks
-# 2026-09-19 [d24aa8a] 4.5.0: the capture settles on the whole window, transactionally
+# 2026-10-06 Bound native 3D capture rounding without relaxing UI or alpha checks
+# 2026-09-19 4.5.0: the capture settles on the whole window, transactionally
 
 """The determinism gate's mismatch diagnostics: when two captures
 differ, print the differing-pixel count, the changed bounding box and

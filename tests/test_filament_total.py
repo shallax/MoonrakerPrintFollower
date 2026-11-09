@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-10 [2f5ce3b] Round-5 review fixes: verdicts, feed voices, filament totals, store-seed fix and docs
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-10 Round-5 review fixes: verdicts, feed voices, filament totals, store-seed fix and docs
 
 """Filament total sourcing: the client-side header parse and the honest guard.
 

@@ -4,9 +4,9 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Verify shared geometry and modular component ownership after extraction.
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-28 [fb91fc1] Enforce 95 percent coverage for every plugin file
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-28 Enforce 95 percent coverage for every plugin file
 
 """Rendering contract for the retained GPU stroke material."""
 

@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Inspect delivery and camera state in raster-coordinate parity checks.
-# 2026-10-01 [4584d5a] Stabilize native plate rendering assertions across hosts
-# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-01 Stabilize native plate rendering assertions across hosts
+# 2026-10-01 Draw switchable bed-axis arrows across plate views
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable qml plate raster mapping contracts."""
 from tests import qml_engine_support as harness

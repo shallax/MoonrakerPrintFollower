@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-09-07 [febe761] Reorganize test suite into domain files for 3.2.0
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-09-07 Reorganize test suite into domain files for 3.2.0
 
 """Pure MoonrakerSession behaviour: poll policy, coalescing, rebind and commands."""
 from __future__ import annotations

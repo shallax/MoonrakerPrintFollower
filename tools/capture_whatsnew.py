@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-15 [cf5323d] 4.1.0: the one-time what's-new popup, proven through the harness
+# 2026-10-07 Add Preview toolhead controls for 5.3.0
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-15 4.1.0: the one-time what's-new popup, proven through the harness
 
 """Deterministic offscreen capture of the what's-new overlay.
 

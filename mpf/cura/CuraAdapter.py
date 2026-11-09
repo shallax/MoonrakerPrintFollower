@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-19 — 6.0.0: Retain public host APIs without a beta class-method workaround.
-# 2026-09-16 [ada1bfb] 4.3.0: remove the follow render pass, restore the native nozzle lifecycle
-# 2026-09-16 [432ed5c] 4.3.0: the follow pass rides a settings debug toggle, off for the soak
-# 2026-09-04 [a99637b] Update to v1.1.0.
+# 2026-09-16 4.3.0: remove the follow render pass, restore the native nozzle lifecycle
+# 2026-09-16 4.3.0: the follow pass rides a settings debug toggle, off for the soak
+# 2026-09-04 Update to v1.1.0.
 
 from __future__ import annotations
 

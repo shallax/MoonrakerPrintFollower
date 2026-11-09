@@ -9,9 +9,9 @@
 # 2026-10-18 — 6.0.0: Bound RPC transactions and stop suites when the driver is lost.
 # 2026-10-18 — 6.0.0: Require the restored seed and preserve evidence on failed boot gates.
 # 2026-10-18 — 6.0.0: Fail boot evidence when real QtTest input is unavailable.
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-10-03 [950d97a] Keep the alert's frame and timeline, and carry it to the desktop
-# 2026-09-12 [1fcf985] harness: Phase-A skeleton — driver, runner, wrapper, first live run
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-10-03 Keep the alert's frame and timeline, and carry it to the desktop
+# 2026-09-12 harness: Phase-A skeleton — driver, runner, wrapper, first live run
 
 """Phase-A runner: real Cura under Xvfb, real clicks, real captures.
 

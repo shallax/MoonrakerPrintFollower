@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
 
 """Only the live server history row can attest a durable print identity."""
 from copy import deepcopy

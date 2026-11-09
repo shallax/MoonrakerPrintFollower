@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history:
-# 2026-10-20 [326436d] Speed up Windows indexing and parallel layer preparation.
+# 2026-10-20 Speed up Windows indexing and parallel layer preparation.
 
 """Disposable Windows scan/preparation workers with bounded result handoff."""
 from __future__ import annotations

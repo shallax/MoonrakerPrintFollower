@@ -6,9 +6,9 @@
 # 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
 # 2026-10-18 — 6.0.0: Drain cancelled planning workers before deleting test source files.
 # 2026-10-18 — 6.0.0: Cover recovery modes, telemetry validation and restart lifecycle regressions.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-13 [368df57] Wait for unloaded recovery test before cleanup on Windows
-# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 Wait for unloaded recovery test before cleanup on Windows
+# 2026-10-13 Implement interrupted print recovery handover
 
 """Asynchronous source planning and guarded transport handover."""
 import copy

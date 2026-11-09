@@ -4,10 +4,11 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-11-09 — 6.0.1: Select stable Cura 5.14.0 by default.
 # 2026-10-18 — 6.0.0: Normalize bundled distribution names across supported Cura versions.
-# 2026-10-16 [1d52947] Handle multiple compatible PyQt wheels deterministically
-# 2026-10-16 [10580bf] Match harness QtTest wheels to Cura embedded runtime metadata
-# 2026-09-13 [433ee88] harness: Cura version selection, swap proven, release-gate wiring
+# 2026-10-16 Handle multiple compatible PyQt wheels deterministically
+# 2026-10-16 Match harness QtTest wheels to Cura embedded runtime metadata
+# 2026-09-13 harness: Cura version selection, swap proven, release-gate wiring
 
 """Fetch and prepare a pinned Cura version for the scenario harness.
 

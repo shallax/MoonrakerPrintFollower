@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Exercise bounded multipart replies through the real shared upload operation.
-# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
-# 2026-10-03 [13b277f] Keep a stale signal visible, contain the camera seam, and give alerts reach
-# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+# 2026-10-07 Add Preview toolhead controls for 5.3.0
+# 2026-10-03 Keep a stale signal visible, contain the camera seam, and give alerts reach
+# 2026-09-18 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
 
 """Line coverage for the Moonraker output-device adapter pair.
 

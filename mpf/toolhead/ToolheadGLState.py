@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-10 [e1b5812] Exclude unused rendering prototypes from the release
-# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
-# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+# 2026-10-10 Exclude unused rendering prototypes from the release
+# 2026-10-10 Complete directional reflections and reduce rendering overhead
+# 2026-10-08 Add toolhead materials, scene reflections and fan animation
 
 """Save the host bindings around optional owned render targets."""
 from __future__ import annotations

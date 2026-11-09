@@ -3,10 +3,11 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-11-09 — 6.0.1: Cover stable Cura defaults and the 5.14.0 harness.
 # 2026-10-18 — 6.0.0: Cover older Cura metadata casing and normalized wheel names.
-# 2026-10-16 [1d52947] Handle multiple compatible PyQt wheels deterministically
-# 2026-10-16 [10580bf] Match harness QtTest wheels to Cura embedded runtime metadata
-# 2026-09-14 [e168ec7] harness: fix the doubled evidence path, with tests
+# 2026-10-16 Handle multiple compatible PyQt wheels deterministically
+# 2026-10-16 Match harness QtTest wheels to Cura embedded runtime metadata
+# 2026-09-14 harness: fix the doubled evidence path, with tests
 
 """Regression pins for the run-dir resolution rule.
 

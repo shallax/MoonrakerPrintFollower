@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Preview-family coverage: the follower, motion, framing, toolhead and data seams.
 

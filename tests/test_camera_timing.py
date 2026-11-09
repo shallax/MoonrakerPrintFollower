@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-19 [0f5d266] 4.5.0: the camera stream, the narrow-window contract and the release hardening
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-19 4.5.0: the camera stream, the narrow-window contract and the release hardening
 
 """The T0-T9 camera-timing chain's contract: trace-gated marks,
 mark_once deduplication per origin, and the begin() reset.

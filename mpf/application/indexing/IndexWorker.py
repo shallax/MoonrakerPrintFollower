@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history:
-# 2026-10-20 [326436d] Speed up Windows indexing and parallel layer preparation.
+# 2026-10-20 Speed up Windows indexing and parallel layer preparation.
 
 """Isolated stdlib-only scanner entry point, independent of Cura's executable."""
 from __future__ import annotations

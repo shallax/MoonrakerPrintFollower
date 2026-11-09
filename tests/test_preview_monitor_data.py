@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-08 Add toolhead materials, scene reflections and fan animation
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable preview monitor data contracts."""
 from tests import preview_family_support as harness

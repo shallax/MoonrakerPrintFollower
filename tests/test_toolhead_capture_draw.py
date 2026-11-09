@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-12 [48fdc0f] Finish shared path indices and cropped lighting output
-# 2026-10-10 [41c12c8] Reduce CPU overhead in toolhead rendering
-# 2026-10-08 [f386c3d] Capture reflections asynchronously with fenced resource ownership
+# 2026-10-12 Finish shared path indices and cropped lighting output
+# 2026-10-10 Reduce CPU overhead in toolhead rendering
+# 2026-10-08 Capture reflections asynchronously with fenced resource ownership
 
 """Private draw admission, exact index bytes and balanced failure cleanup."""
 import sys

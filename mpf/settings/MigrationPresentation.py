@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-29 [90e8a59] Organise source by feature ownership and enforce domain boundaries
+# 2026-09-29 Organise source by feature ownership and enforce domain boundaries
 
 """Shared presentation of settings-migration outcomes; no screen dependencies."""
 

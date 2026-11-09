@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Exercise public lexical recognition and motion-word parsing capabilities.
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-29 [1db0cab] Test extracted parser, hydration, cache and read-only query boundaries
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-29 Test extracted parser, hydration, cache and read-only query boundaries
 
 """Fast-path parity and modal-state preservation through compact hydration."""
 from pathlib import Path

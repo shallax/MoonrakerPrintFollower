@@ -5,9 +5,9 @@
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-20 — 6.0.0: Probe actual lifecycle owners and enforce QML error boundaries across specialised fixtures.
 # 2026-10-18 — 6.0.0: Exercise decoded camera freshness, recovery state and URL handling.
-# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
-# 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-13 Implement interrupted print recovery handover
+# 2026-10-08 Fix fan rotation and add toolhead colour and reflection controls
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Contracts measured on the REAL engine, offscreen: geometry the text
 linters cannot see and delegate rendering that only exists once the

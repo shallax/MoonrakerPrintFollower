@@ -3,15 +3,16 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-11-09 — 6.0.1: Add stable Cura 5.14.0 harness notes.
 # 2026-10-20 — 6.0.0: Describe narrower reusable APIs and keep the release summary within the default view.
 # 2026-10-19 — 6.0.0: Explain batch macro review and clearer setup section headings.
 # 2026-10-19 — 6.0.0: Describe shipped changes without claiming product finality.
 # 2026-10-19 — 6.0.0: Qualify beta support without claiming an upstream renderer repair.
 # 2026-10-18 — 6.0.0: Mention camera stability and corrected printer layer numbering.
 # 2026-10-18 — 6.0.0: Describe final recovery, temperature and whole-product reliability changes.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
-# 2026-09-15 [cf5323d] 4.1.0: the one-time what's-new popup, proven through the harness
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 Implement interrupted print recovery handover
+# 2026-09-15 4.1.0: the one-time what's-new popup, proven through the harness
 
 """The what's-new content and its once-per-version marker logic.
 

@@ -4,9 +4,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
-# 2026-09-13 [e9c5c69] CI: run the harness smoke set on every PR
+# 2026-11-09 — 6.0.1: Use stable Cura 5.14.0 for the local smoke harness.
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-01 Revert "Capitalise the remaining top-level directories"
+# 2026-09-13 CI: run the harness smoke set on every PR
 
 # The branch and PR harness check: the smoke set against the primary pinned
 # Cura, twice in a row — the second unit proves the boot survives the

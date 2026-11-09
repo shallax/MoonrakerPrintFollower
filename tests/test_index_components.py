@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
-# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
-# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+# 2026-10-01 Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 Capitalise the remaining top-level directories
+# 2026-09-29 Decompose indexing into explicit parser, cache and worker components
 
 """Ownership boundaries of the concrete index worker collaborators."""
 from dataclasses import FrozenInstanceError

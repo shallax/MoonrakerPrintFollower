@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
-# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
-# 2026-09-20 [ced0e6b] 4.6.0: the motion-edge geometry repair, real G2/G3 arcs and the layer-290 fixture
+# 2026-10-13 Derive recovery clearance and support object-top Z homing
+# 2026-10-05 Add Preview object banners and recognize slow Cura loads
+# 2026-09-20 4.6.0: the motion-edge geometry repair, real G2/G3 arcs and the layer-290 fixture
 
 """G2/G3 arcs from literal G-code to drawn geometry.
 

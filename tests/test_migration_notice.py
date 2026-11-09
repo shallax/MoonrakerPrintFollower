@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-18 [c2ccc78] 4.5.0: the migration failure surfaces — the once-per-failure toast after the What's-New
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-18 4.5.0: the migration failure surfaces — the once-per-failure toast after the What's-New
 #   sequence, the dismissible dialog banner and the permanent diagnostics row
 
 """Pure tests for the migration-failure surfaces' ordering (the UX

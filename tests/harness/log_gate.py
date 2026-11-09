@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-29 [08bf615] The coordinator fixture stops holding a class across tests
-# 2026-09-29 [beca85a] The plugin directory becomes mpf/, and its refs follow
-# 2026-09-27 [bed0492] Harden RC networking, cache lifecycle, motion coordinates and UI diagnostics
+# 2026-09-29 The coordinator fixture stops holding a class across tests
+# 2026-09-29 The plugin directory becomes mpf/, and its refs follow
+# 2026-09-27 Harden RC networking, cache lifecycle, motion coordinates and UI diagnostics
 
 """The same plugin-log verdict for native and container Cura journeys."""
 from pathlib import Path

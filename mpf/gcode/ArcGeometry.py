@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-27 [dd99358] Mirror Cura preview colours and travel states and composite ghost opacity on GPU
-# 2026-09-20 [ce9d4d9] 4.6.0: the four geometry/cache corrections and the physical-width zoom render
-# 2026-09-20 [ced0e6b] 4.6.0: the motion-edge geometry repair, real G2/G3 arcs and the layer-290 fixture
+# 2026-09-27 Mirror Cura preview colours and travel states and composite ghost opacity on GPU
+# 2026-09-20 4.6.0: the four geometry/cache corrections and the physical-width zoom render
+# 2026-09-20 4.6.0: the motion-edge geometry repair, real G2/G3 arcs and the layer-290 fixture
 
 """The physical geometry of ONE logical motion.
 

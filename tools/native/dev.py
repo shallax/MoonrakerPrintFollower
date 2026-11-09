@@ -4,11 +4,12 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-11-09 — 6.0.1: Use stable Cura 5.14.0 in native harness defaults.
 # 2026-10-18 — 6.0.0: Bound each native test process and report progress as files finish.
 # 2026-10-18 — 6.0.0: Build and verify reusable wheels through the selected native or Docker backend.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-09-26 [2bdf753] Add a native Windows development leg
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-09-26 Add a native Windows development leg
 
 """Native Windows and macOS development procedures (no Docker).
 

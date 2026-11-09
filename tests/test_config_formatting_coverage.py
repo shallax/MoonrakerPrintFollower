@@ -5,9 +5,9 @@
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-20 — 6.0.0: Read printer-object families from their protocol owner.
 # 2026-10-18 — 6.0.0: Exercise decoded camera freshness, recovery state and URL handling.
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-10-01 [1866243] Persist print sources and publish live download progress
-# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-10-01 Persist print sources and publish live download progress
+# 2026-09-18 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
 
 """Coverage for the settings, formatting and persistence surfaces.
 

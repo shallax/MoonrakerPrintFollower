@@ -4,9 +4,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
-# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
-# 2026-09-26 [62afaa1] Run a chosen list of test files in parallel
+# 2026-10-01 Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 Capitalise the remaining top-level directories
+# 2026-09-26 Run a chosen list of test files in parallel
 
 """Run a chosen list of test files, sharded across processes.
 

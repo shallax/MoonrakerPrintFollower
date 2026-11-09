@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-18 — 6.0.0: Reject transient empty and unrelated machine selections at boot.
-# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
-# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
-# 2026-09-24 [77c477c] harness: the native legs boot twice, and their setup reports its own failures
+# 2026-10-01 Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 Capitalise the remaining top-level directories
+# 2026-09-24 harness: the native legs boot twice, and their setup reports its own failures
 
 """The seeded config variants' pins.
 

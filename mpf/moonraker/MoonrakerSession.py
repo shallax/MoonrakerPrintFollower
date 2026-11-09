@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-09-07 [547223f] Establish shared Moonraker session and service runtime
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-09-07 Establish shared Moonraker session and service runtime
 
 from __future__ import annotations
 

@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-18 — 6.0.0: Exercise restrictive wheel permissions and cached binding repair.
-# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
-# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
-# 2026-09-24 [bf703bf] gate: every unit runs on every platform - 17 units x 3 OS
+# 2026-10-01 Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 Capitalise the remaining top-level directories
+# 2026-09-24 gate: every unit runs on every platform - 17 units x 3 OS
 
 """The platform dispatch's pins, host-safe on any platform.
 

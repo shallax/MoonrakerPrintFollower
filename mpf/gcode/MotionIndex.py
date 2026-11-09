@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Remove printer/follower selection anchors from parsed content.
-# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
-# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
-# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+# 2026-10-13 Derive recovery clearance and support object-top Z homing
+# 2026-10-05 Add Preview object banners and recognize slow Cura loads
+# 2026-09-29 Decompose indexing into explicit parser, cache and worker components
 
 """Indexed motion data and read-only matching queries. No files, workers or presentation."""
 from __future__ import annotations

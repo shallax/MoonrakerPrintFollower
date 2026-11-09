@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Verify camera handoff order at the view-state owner and preserve face ports.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 Derive recovery clearance and support object-top Z homing
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable monitor qml contracts contracts."""
 from tests import monitor_test_support as harness

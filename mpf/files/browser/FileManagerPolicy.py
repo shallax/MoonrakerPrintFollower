@@ -4,9 +4,9 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Correct descending text sorts with stable ties and missing values last.
-# 2026-09-23 [2ac0f5e] 4.6.0: the platform pass, the gesture identity and the camera nonce
-# 2026-09-18 [53afbd7] 4.5.0: the reviewer-attribution phrasing goes from the codebase
-# 2026-09-11 [1c33814] 3.6.0: file manager, console resize, and e-stop reconnect
+# 2026-09-23 4.6.0: the platform pass, the gesture identity and the camera nonce
+# 2026-09-18 4.5.0: the reviewer-attribution phrasing goes from the codebase
+# 2026-09-11 3.6.0: file manager, console resize, and e-stop reconnect
 
 """File-manager view policy: pure projections over a resident listing.
 

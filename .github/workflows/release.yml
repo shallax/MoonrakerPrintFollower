@@ -5,9 +5,9 @@
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-20 — Automatically stage and require the pinned runtime source/notices companion.
 # 2026-10-18 — 6.0.0: Include the verified reusable Python wheel in future release assets.
-# 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
-# 2026-10-12 [abf18f3] Mirror optional runtime assets on plugin releases
-# 2026-09-06 [683f553] Consolidate release packaging maintenance
+# 2026-10-12 Prepare 5.4.0 runtime mirror and follower controls
+# 2026-10-12 Mirror optional runtime assets on plugin releases
+# 2026-09-06 Consolidate release packaging maintenance
 
 name: Release
 

@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-27 [5fe83b4] Render extrusion widths and retraction events and polish Monitor controls
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-09-27 Render extrusion widths and retraction events and polish Monitor controls
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable monitor tuning runtime contracts."""
 from tests import monitor_test_support as harness

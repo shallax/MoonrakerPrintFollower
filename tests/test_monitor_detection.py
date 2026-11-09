@@ -4,8 +4,8 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Drive attestation and action owners through the Qt detection bridge.
-# 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-10-04 Finish per-camera failure detection controls and training
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
 
 """Executable detection owner contracts for run identity, actions and exact observations."""
 from copy import deepcopy

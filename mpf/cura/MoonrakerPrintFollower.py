@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
-# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
-# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
-# 2026-09-01 [1294efa] Initial release
+# 2026-10-13 Implement interrupted print recovery handover
+# 2026-10-08 Add toolhead materials, scene reflections and fan animation
+# 2026-09-01 Initial release
 
 """Stable Cura extension facade; domain behaviour is composed, not inherited."""
 from PyQt6.QtCore import QObject, pyqtSlot

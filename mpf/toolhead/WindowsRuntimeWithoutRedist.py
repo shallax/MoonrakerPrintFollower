@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-12 [88f08ec] Make Windows CAD derivative reproducible across hosts
-# 2026-10-12 [abf18f3] Mirror optional runtime assets on plugin releases
+# 2026-10-12 Make Windows CAD derivative reproducible across hosts
+# 2026-10-12 Mirror optional runtime assets on plugin releases
 
 """Remove bundled Microsoft CRT/OpenMP files from the pinned Windows archives.
 

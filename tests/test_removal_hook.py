@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-18 [d4f23e6] 4.5.0: the removal hook's contract tests — the E1 trap, the filters, the session stop and
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-18 4.5.0: the removal hook's contract tests — the E1 trap, the filters, the session stop and
 #   the preserved legacy mirror
 
 """The machine-removal hook's contract (the panel's E1/B2/E6 rulings):

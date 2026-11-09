@@ -4,9 +4,9 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Exercise decoded camera freshness, recovery state and URL handling.
-# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
-# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
-# 2026-09-29 [2097457] Separate camera byte parsing, decoding and statistics from Qt presentation
+# 2026-10-01 Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 Capitalise the remaining top-level directories
+# 2026-09-29 Separate camera byte parsing, decoding and statistics from Qt presentation
 
 """Camera pipeline integration contracts, isolated by test-file process."""
 import time
