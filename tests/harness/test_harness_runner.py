@@ -1773,7 +1773,7 @@ class CaptureGateTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform != "win32" and shutil.which("bash") and shutil.which("awk"),
                          "macOS config seed requires bash and awk")
-    def test_macos_beta_modern_context_seed_preserves_other_versions_and_preferences(self):
+    def test_macos_514_modern_context_seed_preserves_other_versions_and_preferences(self):
         import configparser
         import subprocess
         import tempfile
@@ -1782,7 +1782,7 @@ class CaptureGateTests(unittest.TestCase):
         end = script.index('    mv "$CONFIG_DIR_FILE.tmp"', start)
         seed = script[start:end]
         fixture = (ROOT / "tests/harness/config/config/cura/5.13/cura.cfg").read_text()
-        for version in ("5.13.0", "5.14.0-beta.1", "5.14.0-beta.2", "5.14.0"):
+        for version in ("5.13.0", "5.14.0"):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as temp:
                 path = Path(temp) / "cura.cfg"
                 # An existing value must be replaced once, not duplicated.
@@ -1795,7 +1795,7 @@ class CaptureGateTests(unittest.TestCase):
                 parsed = configparser.ConfigParser()
                 parsed.read(str(path) + ".tmp")
                 self.assertEqual(parsed["view"]["opengl_version_detect"],
-                                 "force_modern" if version == "5.14.0-beta.1" else "automatic")
+                                 "force_modern" if version.startswith("5.14.") else "automatic")
                 self.assertEqual(parsed["cura"]["active_machine"], "Seeded printer")
                 self.assertEqual(parsed["general"]["disabled_plugins"], "network-plugin")
                 self.assertEqual(parsed["moonrakerprintfollower"]["printer_configs_migrated_v1"], "True")
@@ -1805,7 +1805,7 @@ class CaptureGateTests(unittest.TestCase):
         import subprocess
         env = {key: value for key, value in os.environ.items()
                if key not in ("GITHUB_ACTIONS", "HARNESS_DISPOSABLE_HOST")}
-        for version in ("5.13.0", "5.14.0-beta.1"):
+        for version in ("5.13.0", "5.14.0"):
             with self.subTest(version=version):
                 proc = subprocess.run(["bash", str(ROOT / "tools/native_harness.sh"),
                                        "macos", version, "preview"], env=env,

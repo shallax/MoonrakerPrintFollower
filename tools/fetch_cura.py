@@ -150,8 +150,8 @@ def discover(root: pathlib.Path) -> tuple[str, str, str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("version", nargs="?", default="5.14.0-beta.1",
-                    help="Cura version, e.g. 5.14.0-beta.1 (default) or 5.13.0")
+    ap.add_argument("version", nargs="?", default="5.14.0",
+                    help="Cura version, e.g. 5.14.0 (default) or 5.13.0")
     ap.add_argument("--force", action="store_true",
                     help="re-fetch even if a manifest exists")
     args = ap.parse_args()

@@ -41,6 +41,13 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "6.0.1",
+        "headline": "Version 6.0.1 updates the Cura harness baseline to stable 5.14.0.",
+        "items": (
+            "Build scripts, CI release gates and the UI version sweep now use stable Cura 5.14.0.",
+        ),
+    },
+    {
         "version": "6.0.0",
         "headline": "Version 6.0.0 adds interrupted-print recovery, heater controls and reliability fixes across the plugin.",
         "items": (
@@ -49,7 +56,7 @@ WHATS_NEW: Tuple[dict, ...] = (
             "Set return clearance above the selected layer, optional priming XYZ, extrusion amount and speed, and a priming dwell (5 seconds by default). Low prime heights rise to restart Z + 5 mm; travel respects the printer's Z ceiling. After purging, return X/Y before lowering; lift first if below clearance. There is no dwell at the restart point.",
             "Use point selects a stop bookmark; Remove deletes it. Bookmarks and printed paths are estimates, not proof of deposited filament. After starting recovery, Dismiss returns to Print Follower without cancelling it. Reopened dialogs reset their scroll and preview step.",
             "Adjust each heater in Temperatures with a slider or 1, 5, 10 and 25 degree bumps, within limits read from Moonraker. Temperature profiles remain available while printing; cooldown also works without saved profiles.",
-            "Cura 5.14 beta 1 is supported alongside 5.13 in CI and the UI version sweep. Recovery also works without a runout sensor.",
+            "Cura 5.14.0 is supported alongside 5.13 in CI and the UI version sweep. Recovery also works without a runout sensor.",
             "Fixes cover printer layer numbering, file ordering/stale actions, frozen-camera detection, macOS camera stability and queued heater changes. Developers can reuse indexing, caches, geometry and raster/scene-graph APIs through the documented Python library.",
         ),
     },

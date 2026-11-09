@@ -101,13 +101,13 @@ case "$ARCH_REQUEST" in
     auto|arm64|x64) ;;
     *) die "--arch must be auto, arm64 or x64 (got '$ARCH_REQUEST')" ;;
 esac
-printf '%s' "$CURA_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$' ||
-    die "'$CURA_VERSION' is not a version like 5.13.0 or 5.14.0-beta.1"
+printf '%s' "$CURA_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' ||
+    die "'$CURA_VERSION' is not a version like 5.13.0 or 5.14.0"
 REQ_MM="$(printf '%s' "$CURA_VERSION" | cut -d. -f1,2)"
 REQ_MAJOR="${REQ_MM%%.*}"
 REQ_MINOR="${REQ_MM##*.}"
 if [ "$REQ_MAJOR" -ne 5 ] || [ "$REQ_MINOR" -lt 7 ] || [ "$REQ_MINOR" -gt 14 ]; then
-    die "Cura $CURA_VERSION is outside the range this harness ranges over (5.7.0 to 5.14.0-beta.1)"
+    die "Cura $CURA_VERSION is outside the range this harness ranges over (5.7.0 to 5.14.0)"
 fi
 if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${HARNESS_DISPOSABLE_HOST:-}" != "1" ]; then
     die "this harness replaces Cura and deletes/reseeds its user profile; use a disposable test host with HARNESS_DISPOSABLE_HOST=1"
@@ -734,10 +734,10 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # rewritten and the plugin state and section set the Linux gate seeds
     # stand. disabled_plugins is dropped wherever it is and re-emitted
     # under [general], which is where Uranium reads it.
-    # This beta has two upstream legacy mesh/colour errors. Use Cura's
+    # Cura 5.14 has two upstream legacy mesh/colour errors. Use Cura's
     # supported modern-context preference on this disposable macOS host;
     # 5.13 keeps the default legacy renderer coverage. No host code is patched.
-    awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" -v modern="$( [ "$CURA_VERSION" = 5.14.0-beta.1 ] && echo 1 || echo 0 )" '
+    awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" -v modern="$( case "$CURA_VERSION" in 5.14.*) echo 1 ;; *) echo 0 ;; esac )" '
         BEGIN { sec = "" }
         /^\[/ { sec = $0; print; if (sec == "[general]") print "disabled_plugins = " ids;
             if (sec == "[view]" && modern == 1) print "opengl_version_detect = force_modern"; next }
@@ -1065,17 +1065,19 @@ PY
     # oversized windows remained stale either way, and the forced path is the
     # one Cura calls "much slower", which measured 3.5x on the layer-view
     # unit (group-printing, 2.8 -> 9.7 min) against a 15-minute budget.
-    # Beta 5.14 explicitly uses modern GL to avoid its broken legacy mesh
+    # Cura 5.14 explicitly uses modern GL to avoid its broken legacy mesh
     # path; 5.13 retains the default. The available-desktop bound keeps
     # native presentation live; native capture judges the actual pixels.
     GL_LINE="$(grep -h 'Detected most suitable OpenGL context version:' \
         "$CONFIG_DIR/cura.log" 2>/dev/null | tail -1 || true)"
-    if [ "$CURA_VERSION" = 5.14.0-beta.1 ]; then
+    case "$CURA_VERSION" in
+        5.14.*)
         case "$GL_LINE" in
             *"4.1 Core profile"*) ;;
-            *) die "Cura beta did not select the requested modern OpenGL context: $GL_LINE" ;;
+            *) die "Cura 5.14 did not select the requested modern OpenGL context: $GL_LINE" ;;
         esac
-    fi
+        ;;
+    esac
     case "$GL_LINE" in
         *"4.1 Core profile"*)
             note "renderer: ${GL_LINE##*: }" ;;

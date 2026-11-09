@@ -74,7 +74,7 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertEqual(PLUGIN_META["api"], 8)
 
     def test_readme_states_cura_5_compatibility_boundary(self):
-        self.assertIn("Cura 5.7–5.14 beta 1 / SDK 8.7–8.13", README)
+        self.assertIn("Cura 5.7–5.14.0 / SDK 8.7–8.13", README)
         self.assertIn("Cura 4.x / SDK 7.x is not supported", README)
         self.assertIn("5.7 floor", README)
 

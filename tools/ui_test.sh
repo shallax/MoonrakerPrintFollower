@@ -148,7 +148,7 @@ CONTAINER_RUN_DIR="$(container_path "$(tools/ui_test_paths.sh resolve "$CONTAINE
 
 # The pinned Cura for this run: any version can be selected; prepare
 # one with tools/fetch_cura.py (the manifest records the swap).
-CURA_VERSION="${CURA_VERSION:-5.14.0-beta.1}"
+CURA_VERSION="${CURA_VERSION:-5.14.0}"
 CURA_ROOT="$WORK_DIR/cura_versions/$CURA_VERSION/root"
 CURA_WHEELS="$WORK_DIR/cura_versions/$CURA_VERSION/wheels"
 # The fallback fetch extracts into THIS run's tree — never the shared

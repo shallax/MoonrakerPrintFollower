@@ -49,7 +49,7 @@ jobs:
           - "5.11.0"
           - "5.12.0"
           - "5.13.0"
-          - "5.14.0-beta.1"
+          - "5.14.0"
         unit:
           - {name: smoke, mode: suite, group: smoke, budget: 20}
           - {name: configure, mode: suite, group: configure, budget: 15}

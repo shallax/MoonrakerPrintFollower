@@ -29,7 +29,7 @@ travel respect the printer's Z ceiling. Dismiss leaves an active handover runnin
 and reopening resets scrolling and preview steps.
 
 This release also adds bounded per-heater temperature sliders and selectable
-1/5/10/25 degree bumps, profiles during printing, and Cura 5.14 beta 1 compatibility.
+1/5/10/25 degree bumps, profiles during printing, and Cura 5.14.0 compatibility.
 Package metadata, release notes and What's New stay at 6.0.0 until publication.
 The whole-product audit also corrects file-manager races and sorting, decoded
 camera freshness, heater command ordering and recovery modal-state restoration.

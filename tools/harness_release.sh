@@ -48,7 +48,7 @@ HARNESS_DIR="${HARNESS_DIR:-/tmp/mpf}"
 # own name(s) — never the dev harness container, which an ad-hoc run
 # may be using (the gate used to remove it out from under them).
 CONTAINER="${HARNESS_CONTAINER:-mpf-cura-gate}"
-PRIMARY="${CURA_PRIMARY:-5.14.0-beta.1}"
+PRIMARY="${CURA_PRIMARY:-5.14.0}"
 SECONDARY="${CURA_SECONDARY:-5.13.0}"
 RUN_ROOT="$HARNESS_DIR/ui-artifacts/runs/$(date +%Y-%m-%d-%H%M%S)"
 
