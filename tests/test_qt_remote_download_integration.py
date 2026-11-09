@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Qualify metadata retry before slow writer completion without requiring a transient phase.
-# 2026-10-01 [0a51955] Keep metadata retries independent of download failures
-# 2026-10-01 [4be23c8] Fix slow-link source recovery and stream wakeups
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-01 Keep metadata retries independent of download failures
+# 2026-10-01 Fix slow-link source recovery and stream wakeups
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable qt remotefileservicedownloadtests contracts."""
 from tests import qt_integration_support as harness

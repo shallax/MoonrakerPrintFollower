@@ -3,9 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-10-12 [48fdc0f] Finish shared path indices and cropped lighting output
-# 2026-09-19 [41924ff] 4.5.0: narrow the chart retirement, pin the matrix, settle the captures
+# 2026-11-09 — 6.0.1: Pin the release matrix to stable Cura 5.14.0.
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-12 Finish shared path indices and cropped lighting output
+# 2026-09-19 4.5.0: narrow the chart retirement, pin the matrix, settle the captures
 
 """The release-matrix parity gate: the GitHub PR CI workflow's
 logical units must match the local canonical release gate's units —
@@ -65,7 +66,7 @@ LOCAL_GROUPS = (
 EXPECTED_SWEEP_UNITS = ("smoke",) + LOCAL_GROUPS + ("firstinstall",)
 
 EXPECTED_SWEEP_VERSIONS = (
-    "5.7.0", "5.8.0", "5.9.0", "5.10.0", "5.11.0", "5.12.0", "5.13.0", "5.14.0-beta.1",
+    "5.7.0", "5.8.0", "5.9.0", "5.10.0", "5.11.0", "5.12.0", "5.13.0", "5.14.0",
 )
 
 
@@ -199,7 +200,7 @@ class ReleaseMatrixParityTests(unittest.TestCase):
 
     def test_the_smokes_cover_both_pinned_versions(self):
         declared = workflow_units()
-        self.assertEqual(declared["smoke-primary"]["cura"], "5.14.0-beta.1")
+        self.assertEqual(declared["smoke-primary"]["cura"], "5.14.0")
         self.assertEqual(declared["smoke-secondary"]["cura"], "5.13.0")
         local = LOCAL
         self.assertIn("$SECONDARY smoke suite smoke", local)
@@ -235,7 +236,7 @@ class ReleaseMatrixParityTests(unittest.TestCase):
             self.assertEqual(declared["budget"], expected[canonical_name]["budget"], name)
 
     def test_the_sweep_covers_the_supported_version_range(self):
-        versions = tuple(re.findall(r'- "(\d+\.\d+\.\d+(?:-beta\.\d+)?)"', SWEEP))
+        versions = tuple(re.findall(r'- "(\d+\.\d+\.\d+)"', SWEEP))
         self.assertEqual(versions, EXPECTED_SWEEP_VERSIONS)
 
 

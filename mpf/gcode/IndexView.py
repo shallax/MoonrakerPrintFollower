@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Expose bounded extrusion-run evidence through the read-only query interface.
-# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
-# 2026-10-13 [3f9fcb5] Begin v6 recovery with exact follower boundary mapping
-# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+# 2026-10-13 Derive recovery clearance and support object-top Z homing
+# 2026-10-13 Begin v6 recovery with exact follower boundary mapping
+# 2026-09-29 Decompose indexing into explicit parser, cache and worker components
 
 """Read-only index queries, including continuous-Z layer evidence."""
 from __future__ import annotations

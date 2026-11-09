@@ -4,12 +4,13 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-11-09 — 6.0.1: Select the modern renderer for stable Cura 5.14.0.
 # 2026-10-19 — 6.0.0: Select modern OpenGL for beta CI without patching Cura classes.
 # 2026-10-18 — 6.0.0: Support opt-in LLDB launch for native crash diagnosis.
 # 2026-10-18 - 6.0.0: Repair root-only QtTest permissions before launching Cura.
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-09-24 [bf703bf] gate: every unit runs on every platform - 17 units x 3 OS
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-09-24 gate: every unit runs on every platform - 17 units x 3 OS
 
 # The macOS half of the UI harness host: install Cura, seed its config,
 # move the display, stage the plugin and the driver, start the simulator
@@ -101,13 +102,13 @@ case "$ARCH_REQUEST" in
     auto|arm64|x64) ;;
     *) die "--arch must be auto, arm64 or x64 (got '$ARCH_REQUEST')" ;;
 esac
-printf '%s' "$CURA_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$' ||
-    die "'$CURA_VERSION' is not a version like 5.13.0 or 5.14.0-beta.1"
+printf '%s' "$CURA_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' ||
+    die "'$CURA_VERSION' is not a version like 5.13.0 or 5.14.0"
 REQ_MM="$(printf '%s' "$CURA_VERSION" | cut -d. -f1,2)"
 REQ_MAJOR="${REQ_MM%%.*}"
 REQ_MINOR="${REQ_MM##*.}"
 if [ "$REQ_MAJOR" -ne 5 ] || [ "$REQ_MINOR" -lt 7 ] || [ "$REQ_MINOR" -gt 14 ]; then
-    die "Cura $CURA_VERSION is outside the range this harness ranges over (5.7.0 to 5.14.0-beta.1)"
+    die "Cura $CURA_VERSION is outside the range this harness ranges over (5.7.0 to 5.14.0)"
 fi
 if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${HARNESS_DISPOSABLE_HOST:-}" != "1" ]; then
     die "this harness replaces Cura and deletes/reseeds its user profile; use a disposable test host with HARNESS_DISPOSABLE_HOST=1"
@@ -734,14 +735,14 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
     # rewritten and the plugin state and section set the Linux gate seeds
     # stand. disabled_plugins is dropped wherever it is and re-emitted
     # under [general], which is where Uranium reads it.
-    # This beta has two upstream legacy mesh/colour errors. Use Cura's
+    # Cura 5.14 has two upstream legacy mesh/colour errors. Use Cura's
     # supported modern-context preference on this disposable macOS host;
     # 5.13 keeps the default legacy renderer coverage. No host code is patched.
-    awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" -v modern="$( [ "$CURA_VERSION" = 5.14.0-beta.1 ] && echo 1 || echo 0 )" '
+    awk -v ver="$PREF_VER" -v ids="$IDS" -v am="$MACHINE" -v modern="$(printf '%s' "$CURA_VERSION" | cut -d. -f1,2)" '
         BEGIN { sec = "" }
         /^\[/ { sec = $0; print; if (sec == "[general]") print "disabled_plugins = " ids;
-            if (sec == "[view]" && modern == 1) print "opengl_version_detect = force_modern"; next }
-        sec == "[view]" && modern == 1 && /^opengl_version_detect[[:space:]]*=/ { next }
+            if (sec == "[view]" && modern == "5.14") print "opengl_version_detect = force_modern"; next }
+        sec == "[view]" && modern == "5.14" && /^opengl_version_detect[[:space:]]*=/ { next }
         sec == "[general]" && /^disabled_plugins = / { next }
         sec == "[general]" && /^version = / { print "version = " ver; next }
         sec == "[cura]" && /^active_machine = / { print "active_machine = " am; next }
@@ -1065,17 +1066,19 @@ PY
     # oversized windows remained stale either way, and the forced path is the
     # one Cura calls "much slower", which measured 3.5x on the layer-view
     # unit (group-printing, 2.8 -> 9.7 min) against a 15-minute budget.
-    # Beta 5.14 explicitly uses modern GL to avoid its broken legacy mesh
+    # Cura 5.14 explicitly uses modern GL to avoid its broken legacy mesh
     # path; 5.13 retains the default. The available-desktop bound keeps
     # native presentation live; native capture judges the actual pixels.
     GL_LINE="$(grep -h 'Detected most suitable OpenGL context version:' \
         "$CONFIG_DIR/cura.log" 2>/dev/null | tail -1 || true)"
-    if [ "$CURA_VERSION" = 5.14.0-beta.1 ]; then
+    case "$CURA_VERSION" in
+        5.14.*)
         case "$GL_LINE" in
             *"4.1 Core profile"*) ;;
-            *) die "Cura beta did not select the requested modern OpenGL context: $GL_LINE" ;;
+            *) die "Cura 5.14 did not select the requested modern OpenGL context: $GL_LINE" ;;
         esac
-    fi
+        ;;
+    esac
     case "$GL_LINE" in
         *"4.1 Core profile"*)
             note "renderer: ${GL_LINE##*: }" ;;

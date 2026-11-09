@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-05 [567dd10] Wait for Preview card layout to settle in native test
-# 2026-10-05 [228f698] Finish Preview object banners for 5.1.0
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-05 Wait for Preview card layout to settle in native test
+# 2026-10-05 Finish Preview object banners for 5.1.0
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable qml dashboard layout contracts."""
 from tests import qml_engine_support as harness

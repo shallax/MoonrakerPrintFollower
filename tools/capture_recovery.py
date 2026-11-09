@@ -4,7 +4,7 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Share and verify canonical recovery actions across confirmation and execution.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
 
 """Real recovery screens with synthetic G-code; no network or printer commands."""
 from __future__ import annotations

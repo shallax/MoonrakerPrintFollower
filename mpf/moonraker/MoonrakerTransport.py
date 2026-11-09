@@ -3,10 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-24 [706a90f] A confirmed replace survives Cura's next turn, and two Windows suite tests stop reading a
+# 2026-09-24 A confirmed replace survives Cura's next turn, and two Windows suite tests stop reading a
 #   clock that ticks
-# 2026-09-18 [28bc4ab] 4.5.0: the coverage wave's live finds — three defects and one dead branch
-# 2026-09-07 [547223f] Establish shared Moonraker session and service runtime
+# 2026-09-18 4.5.0: the coverage wave's live finds — three defects and one dead branch
+# 2026-09-07 Establish shared Moonraker session and service runtime
 
 from __future__ import annotations
 

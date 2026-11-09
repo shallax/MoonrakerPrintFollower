@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-15 [ad303eb] the hourglass clear: skip only the improve's own publish, settle the clear before the
+# 2026-09-15 the hourglass clear: skip only the improve's own publish, settle the clear before the
 #   values build, and end the hourglass outright on a printer switch — the binding-reset and download-failure
 #   semantics preserved with their tests
 

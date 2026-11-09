@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
-# 2026-10-01 [1d8bd42] Capitalise the remaining top-level directories
-# 2026-09-12 [ee78fa4] harness: Phase D — the code-derived coverage matrix + Tier-2 specs
+# 2026-10-01 Revert "Capitalise the remaining top-level directories"
+# 2026-10-01 Capitalise the remaining top-level directories
+# 2026-09-12 harness: Phase D — the code-derived coverage matrix + Tier-2 specs
 
 """The code-derived coverage matrix (TESTING.md 3, the suite).
 

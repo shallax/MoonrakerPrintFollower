@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-30 [67f0fe4] The scenario suite becomes a package, by group
+# 2026-09-30 The scenario suite becomes a package, by group
 
 """The the sustained-load legs scenarios.
 

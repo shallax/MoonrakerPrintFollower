@@ -3,15 +3,16 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-11-09 — 6.0.1: Verify stable renderer settings for Cura 5.14.0.
 # 2026-10-20 — 6.0.0: Prove cold-boot handshake and normal action deadlines remain distinct.
 # 2026-10-19 — 6.0.0: Rehearse the beta-only modern renderer preference seed.
 # 2026-10-18 — 6.0.0: Keep invalid inline probe serialization visible.
 # 2026-10-18 — 6.0.0: Prove bounded RPCs, no command replay and crash evidence finalization.
 # 2026-10-18 — 6.0.0: Prove failed startup stops scenarios and keeps its gallery.
 # 2026-10-18 — 6.0.0: Require usable real input in boot evidence.
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
-# 2026-09-14 [6f074cf] harness: the per-run evidence record — every step leaves a machine-readable entry, and
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-07 Judge static spans and native restoration against actual renderer behavior
+# 2026-09-14 harness: the per-run evidence record — every step leaves a machine-readable entry, and
 #   shot() refuses a mis-sized frame
 
 """Host-side pins for the runner's evidence spine.
@@ -1773,7 +1774,7 @@ class CaptureGateTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform != "win32" and shutil.which("bash") and shutil.which("awk"),
                          "macOS config seed requires bash and awk")
-    def test_macos_beta_modern_context_seed_preserves_other_versions_and_preferences(self):
+    def test_macos_514_modern_context_seed_preserves_other_versions_and_preferences(self):
         import configparser
         import subprocess
         import tempfile
@@ -1782,7 +1783,7 @@ class CaptureGateTests(unittest.TestCase):
         end = script.index('    mv "$CONFIG_DIR_FILE.tmp"', start)
         seed = script[start:end]
         fixture = (ROOT / "tests/harness/config/config/cura/5.13/cura.cfg").read_text()
-        for version in ("5.13.0", "5.14.0-beta.1", "5.14.0-beta.2", "5.14.0"):
+        for version in ("5.13.0", "5.14.0"):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as temp:
                 path = Path(temp) / "cura.cfg"
                 # An existing value must be replaced once, not duplicated.
@@ -1795,7 +1796,7 @@ class CaptureGateTests(unittest.TestCase):
                 parsed = configparser.ConfigParser()
                 parsed.read(str(path) + ".tmp")
                 self.assertEqual(parsed["view"]["opengl_version_detect"],
-                                 "force_modern" if version == "5.14.0-beta.1" else "automatic")
+                                 "force_modern" if version.startswith("5.14.") else "automatic")
                 self.assertEqual(parsed["cura"]["active_machine"], "Seeded printer")
                 self.assertEqual(parsed["general"]["disabled_plugins"], "network-plugin")
                 self.assertEqual(parsed["moonrakerprintfollower"]["printer_configs_migrated_v1"], "True")
@@ -1805,7 +1806,7 @@ class CaptureGateTests(unittest.TestCase):
         import subprocess
         env = {key: value for key, value in os.environ.items()
                if key not in ("GITHUB_ACTIONS", "HARNESS_DISPOSABLE_HOST")}
-        for version in ("5.13.0", "5.14.0-beta.1"):
+        for version in ("5.13.0", "5.14.0"):
             with self.subTest(version=version):
                 proc = subprocess.run(["bash", str(ROOT / "tools/native_harness.sh"),
                                        "macos", version, "preview"], env=env,

@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-10-03 [13b277f] Keep a stale signal visible, contain the camera seam, and give alerts reach
-# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-10-03 Keep a stale signal visible, contain the camera seam, and give alerts reach
+# 2026-09-07 Replace transitional runtime layers with composed components
 
 """Real Qt, minimal Cura host doubles, and isolated production-package imports.
 

@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Supply consumer retention windows through the residency owner.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable index hydration contracts."""
 from tests import index_plate_support as harness

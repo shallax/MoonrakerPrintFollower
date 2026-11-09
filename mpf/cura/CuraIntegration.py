@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-19 — 6.0.0: Retain public host APIs without a beta class-method workaround.
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-10-05 [228f698] Finish Preview object banners for 5.1.0
-# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-10-05 Finish Preview object banners for 5.1.0
+# 2026-09-07 Replace transitional runtime layers with composed components
 
 """The only follower component that knows Cura scene/view/file lifecycle APIs."""
 from __future__ import annotations

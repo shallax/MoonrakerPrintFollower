@@ -3,6 +3,6 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
+# 2026-10-03 Add local failure detection candidate for 5.0.0
 
 """Local, observation-only failure detection."""

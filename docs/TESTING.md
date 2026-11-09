@@ -1,40 +1,26 @@
 # TESTING.md — the real-Cura UI test harness
 
-## 6.0.0 — current validation
+## Validation workflow
 
-Run `make all` and `make coverage` on
-`release/v6.0.0`. Recovery fixtures cover exact byte boundaries, accumulated
-and relative E, lead-in, sensor pause ownership, printer config discovery,
-paused-state preflight, unloaded-file selection, temperature waits, optional
-nozzle priming and sequential command handover. The QML engine and
-follower contract checks cover the distinct recovery review and confirmation.
-Read-only queries of a live Moonraker printer may verify configuration and
-source shape; **do not send printer commands during a live print**. A disposable
-paused virtual-SD printer is still required before claiming physical recovery
-validation.
+Use `make all` for the complete local gate and `make coverage` for the coverage
+report. Install the repository hooks with `make install_hooks`; hooks run fast
+static checks, while the full suite and package checks remain part of the build
+and CI. The Makefile and this document describe the supported local commands and
+their evidence.
 
-The initial 18 October whole-product audit passed **6,232 tests in 275 isolated
-processes**, with **97.58% overall statement coverage** and every required
-in-process module at or above 95%. The extracted `ToolpathGeometry`, `GCodeDocument`, recovery controller,
-heater target discovery and tuning
-owner are at 100%. The isolated STEP helper retains its separate mandatory
-95% native-CAD coverage gate in CI. Canonical Linux captures were regenerated;
-all 54 light/dark capture pairs are byte-identical. Native and Docker wheel
-checks pass, including external installation and the rendering example.
+PR acceptance includes native Windows and macOS builds, supported Python and Qt
+runtime jobs, package verification, installed-Cura checks and the full three-
+platform release scenarios. The on-demand UI Version Sweep covers every Cura
+version configured in `.github/workflows/sweep.yml`; run it against the exact PR
+head and confirm all matrix jobs complete before relying on it as release
+evidence. CI retains per-step logs and job verdicts.
 
-### Release readiness and outstanding qualification
+### Limits and real-world qualification
 
 Statement coverage measures executed lines; it does not prove every interaction,
 printer macro, timing order or UI path. Automated checks do not establish a
-bug-free product or a whole-product performance guarantee.
-
-The 6.0.0 merge and tag require both gates on the final PR commit:
-
-- PR CI, including native Windows/macOS builds, supported Python versions,
-  installed-Cura smoke checks and the full three-platform release scenarios.
-- The complete supported-version UI sweep against that same commit. Ordinary
-  branch CI is a narrower check; configuring these matrices does not mean they
-  have run. GitHub Actions retains the per-step evidence and job verdicts.
+bug-free product or a whole-product performance guarantee. A configured matrix
+is not evidence that it ran: verify the workflow conclusion and tested commit.
 
 Release-check regressions cover normalized older Cura runtime metadata, readable
 macOS QtTest bindings, missing Windows QtTest runtime installation and boot input
@@ -68,7 +54,7 @@ validation or sustained whole-product performance:
 - Validate paused and unloaded recovery on a disposable physical print, including
   within-layer selection, prime/XY/Z order, object-top reference and final restart.
   Earlier user trials and simulated firmware tests do not qualify this exact build.
-- Record current-build performance and memory behaviour during sustained following,
+- Record performance and memory behaviour during sustained following,
   large-file indexing/seeking, camera decoding and combined rendering/lighting.
   Existing seek budgets and historical rendering measurements cover specific
   cases; no whole-product performance or long-duration stability claim is made.
@@ -76,6 +62,17 @@ validation or sustained whole-product performance:
 Do not restart an active user Cura session or issue printer commands to obtain
 this evidence. Use an isolated Cura profile/simulator and a deliberately prepared
 disposable printer test. Release publication remains a separate decision.
+
+### Historical validation record — 6.0.0
+
+The initial 18 October whole-product audit passed **6,232 tests in 275 isolated
+processes**, with **97.58% overall statement coverage** and every required
+in-process module at or above 95%. `ToolpathGeometry`, `GCodeDocument`, the
+recovery controller and heater target discovery/tuning owner were at 100%. The
+isolated STEP helper retained its separate 95% native-CAD coverage gate in CI.
+Canonical Linux captures were regenerated; all 54 light/dark capture pairs were
+byte-identical. Native and Docker wheel checks passed, including external
+installation and the rendering example.
 
 ### Recovery regression audit
 
@@ -103,9 +100,9 @@ These tests run in the normal suite. The Qt tests use Cura component doubles,
 and the protocol model is not Klipper. They do not establish installed-Cura
 compatibility, custom macro correctness or physical print quality.
 
-### Whole-product regression audit and library consumers
+### Historical whole-product regression audit and library consumers
 
-The 6.0.0 audit also covers descending file sorts, recursive-list failure/retry
+The historical 6.0.0 audit also covered descending file sorts, recursive-list failure/retry
 and stale walk callbacks, active-file destination/directory protection, upload
 confirmation invalidation and late print acknowledgements. Heater tests click real
 QML controls and wait beyond the debounce interval to prove a newly selected
@@ -423,18 +420,18 @@ The existing 5.11 loaded-toolpath limitation applies to p8 too; b12 still
 exercises its 2D follower. Static README captures deliberately hold a
 complete layer and do not claim to test smoothing.
 
-On macOS CI, Cura 5.14 beta 1 uses the supported `force_modern` OpenGL
+On macOS CI, Cura 5.14.0 uses the supported `force_modern` OpenGL
 preference. The Apple software renderer provides a 4.1 core context, but Cura
-normally prefers legacy 2.1 for speed. This beta has two upstream legacy
+normally prefers legacy 2.1 for speed. Cura 5.14.0 has two upstream legacy
 mesh/colour bugs; the plugin does not patch either host class. Cura 5.13
-retains its default renderer and the legacy nonempty-mesh assertion. Beta
+retains its default renderer and the legacy nonempty-mesh assertion. The 5.14.0
 legacy Preview remains an upstream limitation, not a qualified rendering path.
 
-The current release gate uses Cura `5.14.0-beta.1` as primary and `5.13.0`
-as secondary. The UI Version Sweep includes every minor from 5.7 through
-5.13 plus 5.14 beta 1 (128 version/unit jobs).
+The release gate's primary and secondary Cura versions are configured in
+`.github/workflows/ci.yml`. The UI Version Sweep tests every version declared in
+`.github/workflows/sweep.yml`, across every configured release unit.
 
-For current local runs, `make ui_test MODE=suite CURA_VERSION=5.14.0-beta.1`
+To test a selected version locally, `make ui_test MODE=suite CURA_VERSION=<version>`
 uses the real-Cura harness on every supported host. Linux stages Cura
 in its headless Docker harness; macOS and Windows stage and drive their
 native desktop Cura installations. `make ui_release_gate` runs the
@@ -471,7 +468,7 @@ the proof artifact.
    real UI being rendered, exactly as live testing does.
 2. Screenshots as the evidence of tests passing — video recordings
    are even better (in the style of Cypress or Browserstack).
-3. Cura 5.14 beta 1 for now, with the version specifiable.
+3. Cura 5.14.0 for now, with the version specifiable.
 4. Open enough to test everything end-to-end, eventually.
 5. Any single test must be runnable on its own, for fast iteration
    on one thing.
@@ -531,7 +528,7 @@ Hard rules, in order:
 ```
 ┌──────────────────────────── harness image (docker) ───────────────────────────┐
 │  Xvfb :99 (1920x1080, the one geometry) + ffmpeg (x11grab)                   │
-│   └─ real Cura AppImage (5.14.0-beta.1 baseline; CURA_VERSION selects others)       │
+│   └─ real Cura AppImage (5.14.0 baseline; CURA_VERSION selects others)       │
 │        └─ plugin (production code) ──┐  real TCP: websocket + HTTP           │
 │        └─ HarnessDriver (test-only   ├────────────►  Moonraker simulator     │
 │           plugin, never shipped)     │               (Tornado, scripted)     │

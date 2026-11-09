@@ -4,7 +4,7 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Expose lexical patterns and axis/arc parsing as explicit reusable capabilities.
-# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+# 2026-09-29 Decompose indexing into explicit parser, cache and worker components
 
 """G-code token and marker recognition shared by scanning and hydration."""
 from __future__ import annotations

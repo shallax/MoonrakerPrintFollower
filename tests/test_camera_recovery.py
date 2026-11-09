@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [520544b] Give the webcam stream's recovery its own owner
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 Give the webcam stream's recovery its own owner
 
 """The camera recovery policy: the nonce, the veil and the URL rules.
 

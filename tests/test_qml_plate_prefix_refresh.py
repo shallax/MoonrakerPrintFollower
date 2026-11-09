@@ -4,8 +4,8 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Read retained prefix state from the delivery owner during refresh.
-# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-01 Draw switchable bed-axis arrows across plate views
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable qml plate prefix refresh contracts."""
 from tests import qml_engine_support as harness

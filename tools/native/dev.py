@@ -4,11 +4,12 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-11-09 — 6.0.1: Use stable Cura 5.14.0 in native harness defaults.
 # 2026-10-18 — 6.0.0: Bound each native test process and report progress as files finish.
 # 2026-10-18 — 6.0.0: Build and verify reusable wheels through the selected native or Docker backend.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-09-26 [2bdf753] Add a native Windows development leg
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-09-26 Add a native Windows development leg
 
 """Native Windows and macOS development procedures (no Docker).
 
@@ -1036,7 +1037,7 @@ def cmd_ui_test(args) -> int:
 def cmd_ui_release_gate(args) -> int:
     if cmd_gates(args):
         return 1
-    primary = os.environ.get("CURA_PRIMARY", "5.14.0-beta.1")
+    primary = os.environ.get("CURA_PRIMARY", "5.14.0")
     secondary = os.environ.get("CURA_SECONDARY", "5.13.0")
     groups = ("connection", "status", "temperatures", "console", "webcams",
               "files", "motion", "printing", "settings", "visual", "preview",
@@ -1259,7 +1260,7 @@ def main(argv=None) -> int:
     parser.add_argument("--to", default="", help="snapshot destination")
     parser.add_argument("--qsb", default="", help="Qt Shader Tools qsb executable")
     parser.add_argument("--mode", default="scenario", help="native UI harness mode")
-    parser.add_argument("--cura-version", default="5.14.0-beta.1", help="native Cura harness version")
+    parser.add_argument("--cura-version", default="5.14.0", help="native Cura harness version")
     parser.add_argument("--no-qmlformat", action="store_true",
                         help="bootstrap without the PySide6 wheel qmlformat comes in")
     parser.add_argument("--no-install", action="store_true",

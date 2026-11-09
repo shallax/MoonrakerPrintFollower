@@ -4,10 +4,11 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-11-09 — 6.0.1: Select stable Cura 5.14.0 by default.
 # 2026-10-18 — 6.0.0: Normalize bundled distribution names across supported Cura versions.
-# 2026-10-16 [1d52947] Handle multiple compatible PyQt wheels deterministically
-# 2026-10-16 [10580bf] Match harness QtTest wheels to Cura embedded runtime metadata
-# 2026-09-13 [433ee88] harness: Cura version selection, swap proven, release-gate wiring
+# 2026-10-16 Handle multiple compatible PyQt wheels deterministically
+# 2026-10-16 Match harness QtTest wheels to Cura embedded runtime metadata
+# 2026-09-13 harness: Cura version selection, swap proven, release-gate wiring
 
 """Fetch and prepare a pinned Cura version for the scenario harness.
 
@@ -150,8 +151,8 @@ def discover(root: pathlib.Path) -> tuple[str, str, str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("version", nargs="?", default="5.14.0-beta.1",
-                    help="Cura version, e.g. 5.14.0-beta.1 (default) or 5.13.0")
+    ap.add_argument("version", nargs="?", default="5.14.0",
+                    help="Cura version, e.g. 5.14.0 (default) or 5.13.0")
     ap.add_argument("--force", action="store_true",
                     help="re-fetch even if a manifest exists")
     args = ap.parse_args()

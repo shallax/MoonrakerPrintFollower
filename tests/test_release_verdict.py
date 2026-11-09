@@ -4,8 +4,8 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — Require automatic companion staging and digest verification in the tag workflow.
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-10-04 [e67283c] Require release gate success before publication
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-10-04 Require release gate success before publication
 
 """Tag publication requires completed checks, including the Cura matrix."""
 from __future__ import annotations

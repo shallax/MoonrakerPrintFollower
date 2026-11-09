@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Load application indexing and explicit painter/job owners in indexing fixtures.
-# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
-# 2026-10-01 [7074cff] Make asynchronous release tests tolerate delayed workers
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-13 Derive recovery clearance and support object-top Z homing
+# 2026-10-01 Make asynchronous release tests tolerate delayed workers
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """The per-motion feature columns, and the demand that fills them.
 

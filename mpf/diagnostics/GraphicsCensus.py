@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-12 [48fdc0f] Finish shared path indices and cropped lighting output
-# 2026-10-12 [0701dcb] Improve reflection continuity and reduce rendering overhead
+# 2026-10-12 Finish shared path indices and cropped lighting output
+# 2026-10-12 Improve reflection continuity and reduce rendering overhead
 
 """Opt-in graphics ownership metadata; never binds or queries GL storage.
 

@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Preserve write lifecycle under reentrant shared-upload cancellation.
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable qt follower integration contracts."""
 from tests import qt_integration_support as harness

@@ -4,8 +4,8 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Inspect actual raster asset/reference lifetime and worker owners.
-# 2026-09-30 [00b0e3e] Spell the discard sweep's URLs the way the renderer spells them
-# 2026-09-30 [1634aac] Cover the controller's seams and drop an accessor nothing called
+# 2026-09-30 Spell the discard sweep's URLs the way the renderer spells them
+# 2026-09-30 Cover the controller's seams and drop an accessor nothing called
 
 """The render controller's own contracts: the presentation restamp, the
 decoded cache's consumer identity, the pixel-width stroke, the

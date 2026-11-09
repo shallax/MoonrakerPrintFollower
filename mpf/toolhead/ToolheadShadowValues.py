@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
+# 2026-10-10 Complete directional reflections and reduce rendering overhead
 
 """Frozen delivered point lights and complete point-shadow storage admission.
 

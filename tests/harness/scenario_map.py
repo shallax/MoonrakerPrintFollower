@@ -5,9 +5,9 @@
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-20 — 6.0.0: Document internal lifecycle probes with independent QML qualification evidence.
 # 2026-10-18 — 6.0.0: Map discovered-heater cooldown availability to the controls scenario.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
-# 2026-09-12 [ee78fa4] harness: Phase D — the code-derived coverage matrix + Tier-2 specs
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 Implement interrupted print recovery handover
+# 2026-09-12 harness: Phase D — the code-derived coverage matrix + Tier-2 specs
 
 """The surface→scenario map (coverage.py's check consumes this).
 

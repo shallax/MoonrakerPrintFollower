@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-17 [ec91dd4] 4.4.0 persistence: the section-layout policy — the static pane table, the normaliser and
+# 2026-10-03 Add local failure detection candidate for 5.0.0
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-17 4.4.0 persistence: the section-layout policy — the static pane table, the normaliser and
 #   the new state key; the architecture rows follow, including the toolhead row's dead coalescing claim
 
 """Pure tests for the section-layout policy (4.4.0): the pane table,

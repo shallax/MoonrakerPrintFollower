@@ -4,9 +4,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
-# 2026-09-26 [81a59eb] Stabilize capture parity and asynchronous validation across hosts
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-07 Add Preview toolhead controls for 5.3.0
+# 2026-09-26 Stabilize capture parity and asynchronous validation across hosts
 
 # Canonical screenshot entry point, called inside the pinned amd64 image.
 # Qt selects CPU-specific raster routines at startup. Disable optional

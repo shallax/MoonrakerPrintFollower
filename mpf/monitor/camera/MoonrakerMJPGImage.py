@@ -5,9 +5,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-18 — 6.0.0: Avoid macOS OpenGL framebuffer painter crashes with raster camera frames.
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-10-03 [13b277f] Keep a stale signal visible, contain the camera seam, and give alerts reach
-# 2026-09-19 [0f5d266] 4.5.0: the camera stream, the narrow-window contract and the release hardening
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-10-03 Keep a stale signal visible, contain the camera seam, and give alerts reach
+# 2026-09-19 4.5.0: the camera stream, the narrow-window contract and the release hardening
 
 # Copyright (c) 2018 Aldo Hoeben / fieldOfView
 # NetworkMJPGImage is released under the terms of the LGPLv3 or higher.

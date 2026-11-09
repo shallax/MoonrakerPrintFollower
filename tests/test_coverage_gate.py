@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-03 [a7058b7] Close the gate's mask, repair the mirror, and correct the round's text
-# 2026-10-03 [e2d2a71] Judge the coverage gate from the tree, not the coverage json
+# 2026-10-03 Close the gate's mask, repair the mirror, and correct the round's text
+# 2026-10-03 Judge the coverage gate from the tree, not the coverage json
 
 """The per-file coverage gate judges the tree, not the json.
 

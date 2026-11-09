@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-18 [503ed4b] 4.5.0: the print-start owner and remote-job service suites, and the metadata latch's
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-18 4.5.0: the print-start owner and remote-job service suites, and the metadata latch's
 #   empty-history fix — an unattestable reply is None, never a permanent refusal
 
 """Pure tests for the remote-job observation service: the run

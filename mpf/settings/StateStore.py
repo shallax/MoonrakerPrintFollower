@@ -3,10 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-09-18 [8d5403b] 4.5.0: the persistence transaction commits only after verify, and the boot latch is
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-09-18 4.5.0: the persistence transaction commits only after verify, and the boot latch is
 #   explicit
-# 2026-09-15 [fb627c3] 4.2.0 state store: the explicit owner of the Monitor's persisted chrome —
+# 2026-09-15 4.2.0 state store: the explicit owner of the Monitor's persisted chrome —
 #   read-modify-write merges that preserve foreign keys (4.3.0's store consumes the same file), the one-time
 #   migration's deliberate replace, and rate-limited failure notes through the console with a per-session latch
 

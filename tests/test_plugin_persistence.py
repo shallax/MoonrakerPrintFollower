@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
-# 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
-# 2026-09-18 [7fe91f6] 4.5.0: the persistence facade and the one-shot migration's control flow — the strict
+# 2026-10-04 Finish per-camera failure detection controls and training
+# 2026-10-03 Add local failure detection candidate for 5.0.0
+# 2026-09-18 4.5.0: the persistence facade and the one-shot migration's control flow — the strict
 #   read, the backup gate, the verify-by-re-read, the clean-as-commit-point and the pretty key-scoped stores
 
 """Pure tests for the 4.5.0 persistence facade (the panel's E2/E3/H5

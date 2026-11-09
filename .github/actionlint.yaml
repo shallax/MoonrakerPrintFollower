@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-20 [37f794c] 4.6.0: the live-test fixes — the follower reads the monitor's own index (no preview
+# 2026-09-20 4.6.0: the live-test fixes — the follower reads the monitor's own index (no preview
 #   dependency) with its download action, the two controls split into their own sections, the dot and the key
 #   distinguished, the canvas clips, and the runner-label lint config
 

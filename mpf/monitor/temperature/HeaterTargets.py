@@ -4,7 +4,7 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Discover writable heater commands independently of slider limits.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
 
 """Writable heater inventory and limits from Moonraker's Klipper config."""
 import math

@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-11 [0966887] 4.0.0: live-test round — feed fixes, cadence sliders, camera bridge, and preview
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-11 4.0.0: live-test round — feed fixes, cadence sliders, camera bridge, and preview
 #   stabilisation
 
 """Key-carrying local republisher for authenticated camera streams.

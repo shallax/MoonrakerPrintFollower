@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-19 — 6.0.0: Fit grouped recovery settings with native and canonical font metrics.
-# 2026-10-13 [34e4039] Capture the recovery settings tab
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-09-08 [0f363ac] Deterministic captures: vendored Cura assets, capture harness, committed screenshots
+# 2026-10-13 Capture the recovery settings tab
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-09-08 Deterministic captures: vendored Cura assets, capture harness, committed screenshots
 
 """Deterministic offscreen capture of the Moonraker settings page.
 

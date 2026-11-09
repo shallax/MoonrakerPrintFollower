@@ -5,9 +5,9 @@
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Use public source-line limits in indexed-file boundary tests.
 # 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
-# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
-# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
-# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+# 2026-10-13 Derive recovery clearance and support object-top Z homing
+# 2026-10-05 Add Preview object banners and recognize slow Cura loads
+# 2026-09-18 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
 
 """Integration coverage for the gcode index and the Cura lifecycle adapter.
 

@@ -4,9 +4,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-29 [beca85a] The plugin directory becomes mpf/, and its refs follow
-# 2026-09-17 [4d4f57a] 4.3.0: the plugin identity becomes MoonrakerPrintFollower
-# 2026-09-10 [4990f07] Monitor readouts: layer-anchored ETA, endstops and the first live-pass fixes
+# 2026-09-29 The plugin directory becomes mpf/, and its refs follow
+# 2026-09-17 4.3.0: the plugin identity becomes MoonrakerPrintFollower
+# 2026-09-10 Monitor readouts: layer-anchored ETA, endstops and the first live-pass fixes
 
 # Point Cura at this checkout directly: symlink the plugin directory
 # into Cura's user plugin folder, so edits here show up on the next

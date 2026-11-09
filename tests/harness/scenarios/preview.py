@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-18 — 6.0.0: Expect the seeded one-based printer layer in pause checks.
-# 2026-10-07 [b91c493] Judge static spans and native restoration against actual renderer behavior
-# 2026-10-06 [8da5d38] Update UI probes for cached toolhead rendering and larger settings tree
-# 2026-09-30 [67f0fe4] The scenario suite becomes a package, by group
+# 2026-10-07 Judge static spans and native restoration against actual renderer behavior
+# 2026-10-06 Update UI probes for cached toolhead rendering and larger settings tree
+# 2026-09-30 The scenario suite becomes a package, by group
 
 """The the Preview card and the plate follower scenarios.
 

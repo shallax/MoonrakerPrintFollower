@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-13 [a5234d9] docs: drop verbatim quotes and author attributions from the repo text
-# 2026-09-10 [2f5ce3b] Round-5 review fixes: verdicts, feed voices, filament totals, store-seed fix and docs
-# 2026-09-10 [4990f07] Monitor readouts: layer-anchored ETA, endstops and the first live-pass fixes
+# 2026-09-13 docs: drop verbatim quotes and author attributions from the repo text
+# 2026-09-10 Round-5 review fixes: verdicts, feed voices, filament totals, store-seed fix and docs
+# 2026-09-10 Monitor readouts: layer-anchored ETA, endstops and the first live-pass fixes
 
 """Pure console policy: history bounds and input guards.
 

@@ -4,9 +4,9 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Keep Qt materials separate from reusable vertex packing.
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-27 [43ab36d] Accelerate follower rendering with retained GPU shader geometry
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-27 Accelerate follower rendering with retained GPU shader geometry
 
 """Pixel-width capsule strokes expanded and antialiased by the GPU."""
 

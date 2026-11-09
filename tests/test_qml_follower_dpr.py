@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-30 [5fb2d5b] Move the renderer's worker and resource lifecycle out of the Monitor
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-09-30 Move the renderer's worker and resource lifecycle out of the Monitor
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Follower view DPR transport through the production Qt model."""
 from tests import qml_engine_support as harness

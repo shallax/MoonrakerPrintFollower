@@ -8,10 +8,15 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 6.0.0
-- **Target:** Cura 5.7–5.14 beta 1 / SDK 8.7–8.13
+- **Release:** 6.0.1
+- **Target:** Cura 5.7–5.14.0 / SDK 8.7–8.13
 - **Copyright:** 2026 Thomas Pedley <moonrakerprintfollower@maintain.contact>
 - **Licence:** [GNU GPLv3, version 3 only](LICENSE) (`GPL-3.0-only`)
+
+## What changed in 6.0.1
+
+Update the Cura build and UI harness baseline to stable Cura 5.14.0 / SDK 8.13.
+The harnesses, CI release gate and UI Version Sweep use the stable release.
 
 ## What changed in 6.0.0
 
@@ -31,8 +36,8 @@ selection, validation, import and detection workflows from Cura presentation;
 see the [architecture](docs/ARCHITECTURE.md) and
 [modularity implementation record](docs/MODULARITY_IMPLEMENTATION.md).
 
-- Add Cura 5.14 beta 1 / SDK 8.13 support, with 5.14 beta 1 as the primary
-  CI version, 5.13 as secondary, and the beta included in the UI Version Sweep.
+- Support Cura 5.14.0 / SDK 8.13, with 5.14.0 as the primary CI version,
+  5.13 as secondary, and both releases in the UI Version Sweep.
 
 Print Follower can recover a paused virtual-SD job from an exact,
 selected motion boundary. It can also select an unloaded root G-code file and
@@ -820,15 +825,14 @@ After verifying the integrated plugin with your printers, the separate Moonraker
 
 ## Cura / SDK compatibility
 
-The plugin targets **Cura 5.7 / SDK 8.7** through **Cura 5.14 beta 1 / SDK 8.13**. The package declares SDK 8.7 as its minimum package SDK, and `plugin.json` records the SDKs 8.7 through 8.13 — a deliberate product boundary; the 5.7 floor is not an API dependency.
+The plugin targets **Cura 5.7 / SDK 8.7** through **Cura 5.14.0 / SDK 8.13**. The package declares SDK 8.7 as its minimum package SDK, and `plugin.json` records the SDKs 8.7 through 8.13 — a deliberate product boundary; the 5.7 floor is not an API dependency.
 
-Cura 5.14 beta 1 has upstream defects in its legacy Preview renderer. The
-macOS beta CI runs use Cura's supported modern OpenGL preference; Cura 5.13
+Cura 5.14.0 has upstream defects in its legacy Preview renderer. The
+macOS CI runs use Cura's supported modern OpenGL preference; Cura 5.13
 retains default-renderer coverage. The plugin does not patch Cura classes or
-change users' graphics preferences. See [renderer qualification](docs/TESTING.md)
-for this beta limitation.
+change users' graphics preferences. See [renderer qualification](docs/TESTING.md).
 
-The implementation stays on APIs present across Cura 5.7–5.14 beta 1: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
+The implementation stays on APIs present across Cura 5.7–5.14.0: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
 
 Cura 4.x / SDK 7.x is not supported, and neither is Cura 5.6 or older. On Cura 5.11 alone the preview integration is limited by a 5.11 SimulationView bug: that version rebuilds its view layers only when the Preview stage is re-entered, and the plugin's load lands while Preview is already open — so the live print does not appear in the view and the layer slider stays hidden after a load until you switch tabs and come back (the follower's card, state and pause scheduling still work throughout).
 

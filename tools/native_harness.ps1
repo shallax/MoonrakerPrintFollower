@@ -4,10 +4,11 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
+# 2026-11-09 — 6.0.1: Use stable Cura 5.14.0 for native Windows runs.
 # 2026-10-18 - 6.0.0: Install the exact missing QtTest runtime independently of its binding.
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-09-28 [9887e49] Keep native Windows harness RPC files in its temp work directory
-# 2026-09-24 [bf703bf] gate: every unit runs on every platform - 17 units x 3 OS
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-09-28 Keep native Windows harness RPC files in its temp work directory
+# 2026-09-24 gate: every unit runs on every platform - 17 units x 3 OS
 
 # The Windows half of the UI harness host: install Cura, seed its config,
 # move the display, stage the plugin and the driver, start the simulator the
@@ -44,7 +45,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$CuraVersion = '5.14.0-beta.1',
+    [string]$CuraVersion = '5.14.0',
     [string]$Scenario = '-',
     [string]$Arch = 'auto',
     [string]$WorkDir = '',
@@ -98,14 +99,14 @@ function Fail([string]$Message) {
 # --- arguments and the tree ----------------------------------------------
 # The argument checks come before the host check: a mistyped version is
 # wrong on every host, and reporting it as one is the useful answer.
-if ($CuraVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$') {
-    Fail "'$CuraVersion' is not a version like 5.13.0 or 5.14.0-beta.1"
+if ($CuraVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+    Fail "'$CuraVersion' is not a version like 5.13.0 or 5.14.0"
 }
 $verParts = $CuraVersion.Split('.')
 $verMajor = [int]$verParts[0]
 $verMinor = [int]$verParts[1]
 if ($verMajor -ne 5 -or $verMinor -lt 7 -or $verMinor -gt 14) {
-    Fail "Cura $CuraVersion is outside the range this harness ranges over (5.7.0 to 5.14.0-beta.1)"
+    Fail "Cura $CuraVersion is outside the range this harness ranges over (5.7.0 to 5.14.0)"
 }
 $mm = "$verMajor.$verMinor"
 switch ($Arch) {

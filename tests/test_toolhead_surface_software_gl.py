@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-12 [b60b255] Qualify exact clipping on Apple software OpenGL and isolate EGL tests
+# 2026-10-12 Qualify exact clipping on Apple software OpenGL and isolate EGL tests
 
 """Real deferred lighting through the software-scissor compatibility path."""
 import configparser

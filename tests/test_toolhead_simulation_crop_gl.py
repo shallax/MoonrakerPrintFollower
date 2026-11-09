@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-12 [0701dcb] Improve reflection continuity and reduce rendering overhead
+# 2026-10-12 Improve reflection continuity and reduce rendering overhead
 
 """Exact completed-depth crops using actual Qt framebuffer storage."""
 import ctypes

@@ -1,9 +1,10 @@
 # Moonraker Print Follower roadmap
 
-6.0.0 adds recovery, heater controls and reliability improvements. Its merge and tag require passing PR
-CI and the full supported-version UI sweep on the final commit, as described in
-TESTING.md alongside the limits of automated validation. Further maintenance focuses
-on correctness, compatibility, documentation and reusable component boundaries.
+Further maintenance focuses on correctness, compatibility, documentation and
+reusable component boundaries. Changes are qualified through PR CI and the
+supported-version UI sweep described in TESTING.md. Automated checks have the
+limits documented there; neither they nor simulated printers establish physical
+print quality or whole-product performance.
 `ARCHITECTURE.md` describes the implemented product; version fields and the release
 checklist live in `INSTRUCTIONS.md`. Older plans below are historical proposals,
 not commitments to additional feature releases.
@@ -12,7 +13,7 @@ Release notes are maintained in
 `CHANGELOG.md`, `README.md` and the What's New entries;
 `ARCHITECTURE.md` describes the implementation.
 
-## Current release — 6.0.0 (18 October 2026)
+## Historical implementation record — 6.0.0 (18 October 2026)
 
 The `release/v6.0.0` branch includes interrupted-print recovery with exact
 indexed boundaries, live selection without detachment, manual and sensor stop
@@ -28,9 +29,9 @@ Return clearance and priming dwell are configurable; effective prime heights and
 travel respect the printer's Z ceiling. Dismiss leaves an active handover running,
 and reopening resets scrolling and preview steps.
 
-This release also adds bounded per-heater temperature sliders and selectable
-1/5/10/25 degree bumps, profiles during printing, and Cura 5.14 beta 1 compatibility.
-Package metadata, release notes and What's New stay at 6.0.0 until publication.
+This release added bounded per-heater temperature sliders and selectable
+1/5/10/25 degree bumps, profiles during printing, and Cura 5.14.0 compatibility.
+Package metadata, release notes and What's New were held at 6.0.0 until publication.
 The whole-product audit also corrects file-manager races and sorting, decoded
 camera freshness, heater command ordering and recovery modal-state restoration.
 G-code indexing and CPU geometry now have supported library entry points without

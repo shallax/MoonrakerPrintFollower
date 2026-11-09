@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-10-01 [b5f5511] Revert "Capitalise the remaining top-level directories"
-# 2026-09-06 [492550e] Add release reproducibility coverage
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-10-01 Revert "Capitalise the remaining top-level directories"
+# 2026-09-06 Add release reproducibility coverage
 
 """Release packaging: QML structural checks, hygiene and reproducible artifacts."""
 from __future__ import annotations

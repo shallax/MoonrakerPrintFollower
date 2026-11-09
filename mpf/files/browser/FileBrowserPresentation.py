@@ -4,7 +4,7 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Invalidate stale drafts and recheck active-file upload and directory mutations.
-# 2026-09-30 [14500a2] Extract file-browser presentation from the Monitor facade
+# 2026-09-30 Extract file-browser presentation from the Monitor facade
 
 """File-browser drafts, actions and cached row projections.
 

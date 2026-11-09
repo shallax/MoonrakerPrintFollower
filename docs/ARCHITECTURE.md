@@ -2559,21 +2559,21 @@ No progress invokes the existing recovery/retry policy and removes the Live badg
 only another decoded frame clears recovery, not headers or incoming bytes.
 Bridge origins are constructed with QUrl host/port fields, preserving IPv6 literals.
 
-### Cura 5.14 beta 1 renderer qualification
+### Cura 5.14.0 renderer qualification
 
-The plugin does not replace Cura or Uranium class methods. Cura 5.14 beta 1
+The plugin does not replace Cura or Uranium class methods. Cura 5.14.0
 has two upstream legacy renderer defects: `LayerPolygon.mapLineTypeToColor`
 indexes a Python list with a NumPy array, and `MeshData.getColors` evaluates
 an array as a boolean instead of returning the colour array. The former
 workaround was removed because it could not repair the whole rendering path.
 
 On disposable macOS CI hosts, the harness seeds Cura's supported
-`view/opengl_version_detect = force_modern` preference for that exact beta
+`view/opengl_version_detect = force_modern` preference for Cura 5.14.0
 and requires the resulting 4.1 core context. Software OpenGL supports this
 context, although Cura normally selects legacy mode for performance. Cura
 5.13 retains default context selection and legacy mesh coverage. Native
 Preview probes require nonempty mesh geometry when using legacy mode.
-Users of this beta's legacy renderer may encounter blank Preview geometry;
+Users of Cura 5.14.0's legacy renderer may encounter blank Preview geometry;
 this plugin does not repair that upstream defect or change users' graphics
 preferences.
 

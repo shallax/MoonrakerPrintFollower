@@ -3,9 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
-# 2026-09-04 [81f5b92] Fix v2.0.0.
+# 2026-11-09 — 6.0.1: Keep SDK coverage aligned with stable Cura 5.14.0.
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-03 Add local failure detection candidate for 5.0.0
+# 2026-09-04 Fix v2.0.0.
 
 import json
 import pathlib
@@ -74,7 +75,7 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertEqual(PLUGIN_META["api"], 8)
 
     def test_readme_states_cura_5_compatibility_boundary(self):
-        self.assertIn("Cura 5.7–5.14 beta 1 / SDK 8.7–8.13", README)
+        self.assertIn("Cura 5.7–5.14.0 / SDK 8.7–8.13", README)
         self.assertIn("Cura 4.x / SDK 7.x is not supported", README)
         self.assertIn("5.7 floor", README)
 

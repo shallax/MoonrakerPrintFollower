@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-19 [ccace8b] 4.5.0 lifecycle: stop means stopped, and the UI notices retire cleanly
-# 2026-09-18 [c2ccc78] 4.5.0: the migration failure surfaces — the once-per-failure toast after the What's-New
+# 2026-09-19 4.5.0 lifecycle: stop means stopped, and the UI notices retire cleanly
+# 2026-09-18 4.5.0: the migration failure surfaces — the once-per-failure toast after the What's-New
 #   sequence, the dismissible dialog banner and the permanent diagnostics row
 
 """The migration-failure surfaces' owner (the UX persona's spec): a

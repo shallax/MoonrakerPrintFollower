@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-04 [3b9341b] Interrupt blocked model setup receipt reliably on Windows
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
+# 2026-10-04 Interrupt blocked model setup receipt reliably on Windows
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
 
 """Cancellation aborts blocked header and chunk-header receipt, not just body reads."""
 import socket

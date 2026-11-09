@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
-# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
+# 2026-10-12 Prepare 5.4.0 runtime mirror and follower controls
+# 2026-10-08 Add toolhead materials, scene reflections and fan animation
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
 
 """Download the pinned CAD reader and exercise real STEP units, instances and colours."""
 from __future__ import annotations

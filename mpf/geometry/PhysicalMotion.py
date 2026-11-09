@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-16 [aeb1e5c] Restore faster centre and move-to toolhead travel
-# 2026-10-10 [80c4b26] Complete directional reflections and reduce rendering overhead
-# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-10-16 Restore faster centre and move-to toolhead travel
+# 2026-10-10 Complete directional reflections and reduce rendering overhead
+# 2026-10-07 Add Preview toolhead controls for 5.3.0
 
 """Fail-closed physical travel checks over one fresh Klipper query.
 

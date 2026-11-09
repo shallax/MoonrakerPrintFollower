@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-08 [7341f82] Development tooling: pinned container, quality gates and the Makefile
+# 2026-09-08 Development tooling: pinned container, quality gates and the Makefile
 
 # Dependabot keeps the workflow actions current. The plugin itself has
 # no runtime pip dependencies (Cura supplies them), and the CI/dev pins

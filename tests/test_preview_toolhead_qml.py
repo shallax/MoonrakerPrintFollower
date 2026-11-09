@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
+# 2026-10-07 Add Preview toolhead controls for 5.3.0
 
 """Isolated Toolhead presentation tests: no printer or command transport."""
 import unittest

@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Use shared upload-operation receipts and faithful bounded reply reads.
-# 2026-10-03 [0bb9b65] Pin the evidence drive to its context and cover the store's refusals
-# 2026-10-01 [1866243] Persist print sources and publish live download progress
-# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+# 2026-10-03 Pin the evidence drive to its context and cover the store's refusals
+# 2026-10-01 Persist print sources and publish live download progress
+# 2026-09-18 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
 
 """Coverage for the what's-new overlay's window owner, the upload
 controller and the camera bridge.

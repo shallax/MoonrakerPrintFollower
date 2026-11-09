@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Supply host diagnostics explicitly to the portable prepared cache.
-# 2026-10-01 [1866243] Persist print sources and publish live download progress
-# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
-# 2026-09-22 [3b83162] 4.6.0: the persistence lifecycle wave — the machine-following namespace, the
+# 2026-10-01 Persist print sources and publish live download progress
+# 2026-09-29 Decompose indexing into explicit parser, cache and worker components
+# 2026-09-22 4.6.0: the persistence lifecycle wave — the machine-following namespace, the
 #   clean-shutdown checkpoint, the interrupted-candidate arbitration and the unified per-print folder
 
 """The per-machine cache namespace owner (the review's machine-

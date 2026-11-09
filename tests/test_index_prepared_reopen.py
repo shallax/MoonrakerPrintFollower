@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Verify deferred array ownership during lease-less prepared-cache reopen.
-# 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
-# 2026-10-02 [5253a2f] Make prepared batch yield assertion scheduling independent
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-08 Fix fan rotation and add toolhead colour and reflection controls
+# 2026-10-02 Make prepared batch yield assertion scheduling independent
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable index prepared reopen contracts."""
 from tests import index_plate_support as harness

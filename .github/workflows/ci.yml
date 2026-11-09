@@ -3,12 +3,13 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-11-09 — 6.0.1: Run release gates on stable Cura 5.14.0.
 # 2026-10-18 — 6.0.0: Preserve native UI logs and macOS crash reports after timeouts.
 # 2026-10-18 — 6.0.0: Retain native test logs when a runner deadline cancels the job.
 # 2026-10-18 — 6.0.0: Verify the reusable wheel with an installed external consumer.
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
-# 2026-09-08 [7341f82] Development tooling: pinned container, quality gates and the Makefile
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-12 Prepare 5.4.0 runtime mirror and follower controls
+# 2026-09-08 Development tooling: pinned container, quality gates and the Makefile
 
 name: CI
 
@@ -550,7 +551,7 @@ jobs:
           - firstinstall
     env:
       HARNESS_CONTAINER: mpf-cura-gate-${{ matrix.unit }}
-      UNITS: '{"group-connection": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "connection"}, "group-console": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "console"}, "group-files": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "files"}, "group-motion": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "motion"}, "group-preview": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "preview"}, "group-printing": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "printing"}, "group-probe": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "probe"}, "group-settings": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "settings"}, "group-status": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "status"}, "group-configure": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "configure"}, "group-stress": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "stress"}, "group-temperatures": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "temperatures"}, "group-visual": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "visual"}, "group-webcams": {"mode": "suite", "budget": 15, "cura": "5.14.0-beta.1", "group": "webcams"}, "smoke-primary": {"mode": "suite", "budget": 20, "cura": "5.14.0-beta.1", "group": "smoke"}, "smoke-secondary": {"mode": "suite", "budget": 20, "cura": "5.13.0", "group": "smoke"}, "firstinstall": {"mode": "firstinstall", "budget": 10, "cura": "5.14.0-beta.1"}}'
+      UNITS: '{"group-connection": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "connection"}, "group-console": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "console"}, "group-files": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "files"}, "group-motion": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "motion"}, "group-preview": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "preview"}, "group-printing": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "printing"}, "group-probe": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "probe"}, "group-settings": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "settings"}, "group-status": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "status"}, "group-configure": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "configure"}, "group-stress": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "stress"}, "group-temperatures": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "temperatures"}, "group-visual": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "visual"}, "group-webcams": {"mode": "suite", "budget": 15, "cura": "5.14.0", "group": "webcams"}, "smoke-primary": {"mode": "suite", "budget": 20, "cura": "5.14.0", "group": "smoke"}, "smoke-secondary": {"mode": "suite", "budget": 20, "cura": "5.13.0", "group": "smoke"}, "firstinstall": {"mode": "firstinstall", "budget": 10, "cura": "5.14.0"}}'
     steps:
       - name: Check out the source
         uses: actions/checkout@v7

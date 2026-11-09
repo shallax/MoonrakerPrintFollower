@@ -4,9 +4,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-16 [9a7694f] Support Cura 5.14 beta 1 and advance CI version coverage
-# 2026-10-02 [882dd06] Isolate Cura libraries from harness timeout
-# 2026-09-12 [1fcf985] harness: Phase-A skeleton — driver, runner, wrapper, first live run
+# 2026-11-09 — 6.0.1: Default UI runs to stable Cura 5.14.0.
+# 2026-10-16 Support Cura 5.14 beta 1 and advance CI version coverage
+# 2026-10-02 Isolate Cura libraries from harness timeout
+# 2026-09-12 harness: Phase-A skeleton — driver, runner, wrapper, first live run
 
 # The real-Cura scenario driver: boots Cura under Xvfb in the harness
 # container, runs the selected scenario mode, and leaves nothing behind.
@@ -148,7 +149,7 @@ CONTAINER_RUN_DIR="$(container_path "$(tools/ui_test_paths.sh resolve "$CONTAINE
 
 # The pinned Cura for this run: any version can be selected; prepare
 # one with tools/fetch_cura.py (the manifest records the swap).
-CURA_VERSION="${CURA_VERSION:-5.14.0-beta.1}"
+CURA_VERSION="${CURA_VERSION:-5.14.0}"
 CURA_ROOT="$WORK_DIR/cura_versions/$CURA_VERSION/root"
 CURA_WHEELS="$WORK_DIR/cura_versions/$CURA_VERSION/wheels"
 # The fallback fetch extracts into THIS run's tree — never the shared

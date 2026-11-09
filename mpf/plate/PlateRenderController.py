@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Delegate raster publication and asset lifetime; use named job receipts.
-# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
-# 2026-09-30 [1634aac] Cover the controller's seams and drop an accessor nothing called
-# 2026-09-30 [5fb2d5b] Move the renderer's worker and resource lifecycle out of the Monitor
+# 2026-10-01 Draw switchable bed-axis arrows across plate views
+# 2026-09-30 Cover the controller's seams and drop an accessor nothing called
+# 2026-09-30 Move the renderer's worker and resource lifecycle out of the Monitor
 
 """The follower's native renderer: one owner for the surfaces' worker
 and resource lifecycle.

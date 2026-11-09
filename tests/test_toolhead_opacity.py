@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-08 [ea3aa7d] Fix fan rotation and add toolhead colour and reflection controls
-# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+# 2026-10-08 Fix fan rotation and add toolhead colour and reflection controls
+# 2026-10-08 Add toolhead materials, scene reflections and fan animation
 
 """Original alpha, sparse precedence, hidden picking and packed draw admission."""
 import unittest

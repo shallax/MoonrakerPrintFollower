@@ -3,9 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
-# 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
-# 2026-09-15 [cf5323d] 4.1.0: the one-time what's-new popup, proven through the harness
+# 2026-11-09 — 6.0.1: Pin the frozen 6.0.0 notes after adding the new entry.
+# 2026-10-13 Implement interrupted print recovery handover
+# 2026-10-12 Prepare 5.4.0 runtime mirror and follower controls
+# 2026-09-15 4.1.0: the one-time what's-new popup, proven through the harness
 
 """The what's-new content and its once-per-version marker contract.
 
@@ -157,7 +158,7 @@ class WhatsNewContentTests(unittest.TestCase):
         digest = hashlib.sha256(payload).hexdigest()
         self.assertEqual(
             digest,
-            "266818e1fb32d5343e6bedd4b35a160b8388760d206291d9be258ce46f46a0ce",
+            "26eb3de8f192468d4569572e15988a78d2398293f362307461cb23a1f1a93b9b",
             "the historical what's-new content changed — shipped release "
             "notes are frozen; only a new head entry may be added, and "
             "this pin recomputed for the release")

@@ -3,9 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
-# 2026-10-12 [3897f26] Cover runtime mirror integrity and Windows archive guards
-# 2026-10-03 [4635fb3] Add local failure detection candidate for 5.0.0
+# 2026-11-09 — 6.0.1: Expect versioned runtime assets under the new release.
+# 2026-10-13 Implement interrupted print recovery handover
+# 2026-10-12 Cover runtime mirror integrity and Windows archive guards
+# 2026-10-03 Add local failure detection candidate for 5.0.0
 
 """Pinned and cancellable local inference asset installation."""
 
@@ -48,7 +49,7 @@ class CancelAfter:
 class DetectionAssetsTests(unittest.TestCase):
     def test_model_and_inference_wheel_use_this_plugin_releases_assets(self):
         wheel = DetectionAssets.RuntimeWheel("onnxruntime-test.whl", "a" * 64, 100)
-        self.assertTrue(RELEASE_BASE.endswith("/releases/download/v6.0.0/"))
+        self.assertTrue(RELEASE_BASE.endswith("/releases/download/v6.0.1/"))
         self.assertEqual(DetectionAssets.MODEL_URL,
                          RELEASE_BASE + "model-weights-5a6b1be1fa.onnx")
         self.assertEqual(AssetInstaller.wheel_url(wheel), asset_url(wheel.filename))

@@ -4,7 +4,7 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Capture generation-scoped residency capabilities for hydration workers.
-# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+# 2026-09-29 Decompose indexing into explicit parser, cache and worker components
 
 """Worker-local indexing tasks with submission-time inputs.
 

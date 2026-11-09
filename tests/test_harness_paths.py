@@ -3,10 +3,11 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected release and Git history (newest first; original provenance retained):
+# 2026-11-09 — 6.0.1: Cover stable Cura defaults and the 5.14.0 harness.
 # 2026-10-18 — 6.0.0: Cover older Cura metadata casing and normalized wheel names.
-# 2026-10-16 [1d52947] Handle multiple compatible PyQt wheels deterministically
-# 2026-10-16 [10580bf] Match harness QtTest wheels to Cura embedded runtime metadata
-# 2026-09-14 [e168ec7] harness: fix the doubled evidence path, with tests
+# 2026-10-16 Handle multiple compatible PyQt wheels deterministically
+# 2026-10-16 Match harness QtTest wheels to Cura embedded runtime metadata
+# 2026-09-14 harness: fix the doubled evidence path, with tests
 
 """Regression pins for the run-dir resolution rule.
 
@@ -96,7 +97,7 @@ class CuraProfileVersionTests(unittest.TestCase):
             self.assertEqual(fetch_cura.pick_wheel(candidates, True)["filename"], names[1])
 
     def test_stale_cached_wheels_are_replaced_using_separate_binding_and_qt_pins(self):
-        version = "5.14.0-beta.1"
+        version = "5.14.0"
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
             prepared = base / version
@@ -202,8 +203,8 @@ class CuraProfileVersionTests(unittest.TestCase):
             self.assertEqual(binary.stat().st_mode & 0o777, 0o755)
             self.assertEqual(outside.stat().st_mode & 0o777, 0o600)
 
-    def test_prepared_beta_uses_the_modern_boot_environment(self):
-        version = "5.14.0-beta.1"
+    def test_prepared_514_uses_the_modern_boot_environment(self):
+        version = "5.14.0"
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
             manifest_path = base / version / "manifest.json"
@@ -224,10 +225,10 @@ class CuraProfileVersionTests(unittest.TestCase):
                 self.assertEqual(wheels.stat().st_mode & 0o555, 0o555)
 
     @unittest.skipUnless(SHELL, NO_SHELL)
-    def test_beta_and_stable_releases_use_major_minor_profile_directories(self):
+    def test_stable_releases_use_major_minor_profile_directories(self):
         script = UI_TEST.read_text(encoding="utf-8")
         assignment = next(line for line in script.splitlines() if line.startswith("SEED_VER="))
-        for version, expected in (("5.13.0", "5.13"), ("5.14.0-beta.1", "5.14")):
+        for version, expected in (("5.13.0", "5.13"), ("5.14.0", "5.14")):
             with self.subTest(version=version):
                 result = subprocess.run(
                     [SHELL, "-c", assignment + '\nprintf "%s" "$SEED_VER"'],

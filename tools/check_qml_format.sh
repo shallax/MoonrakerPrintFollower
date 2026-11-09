@@ -4,8 +4,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-29 [5a07535] The QML format gate expands its own globs
-# 2026-09-08 [7341f82] Development tooling: pinned container, quality gates and the Makefile
+# 2026-09-29 The QML format gate expands its own globs
+# 2026-09-08 Development tooling: pinned container, quality gates and the Makefile
 
 # Verify that QML files are qmlformat-canonical.
 #

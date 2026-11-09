@@ -6,9 +6,9 @@
 # 2026-10-20 — 6.0.0: Inspect accepted physical progress at the application tracking owner.
 # 2026-10-19 — 6.0.0: Prove stopped playback completion after missing late telemetry.
 # 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
-# 2026-10-01 [1866243] Persist print sources and publish live download progress
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-01 Persist print sources and publish live download progress
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable index physical progress contracts."""
 from mpf.gcode.MotionIndex import better_candidate

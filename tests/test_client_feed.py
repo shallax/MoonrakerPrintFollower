@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-06 [ab3a658] Add custom toolheads and lighting for v5.2.0
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-11 [2e5fe93] 4.0.0: wire the websocket feed branch into the client, proven live against a
+# 2026-10-06 Add custom toolheads and lighting for v5.2.0
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-11 4.0.0: wire the websocket feed branch into the client, proven live against a
 #   key-enforcing TLS proxy
 
 """The client's websocket feed branch: admission, proof, fallback, refusals."""

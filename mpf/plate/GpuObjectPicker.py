@@ -4,9 +4,9 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Share extracted CPU strokes with the library renderer.
-# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
-# 2026-09-27 [5a5719d] Retain object outlines and guard frame-hold transitions
-# 2026-09-27 [43ab36d] Accelerate follower rendering with retained GPU shader geometry
+# 2026-10-01 Draw switchable bed-axis arrows across plate views
+# 2026-09-27 Retain object outlines and guard frame-hold transitions
+# 2026-09-27 Accelerate follower rendering with retained GPU shader geometry
 
 """Retained object outlines using the follower's scene-graph stroke engine."""
 from array import array

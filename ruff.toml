@@ -3,7 +3,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-08 [7341f82] Development tooling: pinned container, quality gates and the Makefile
+# 2026-09-08 Development tooling: pinned container, quality gates and the Makefile
 
 # Ruff configuration: the correctness core only. The codebase predates
 # ruff and intentionally keeps its own style; linting targets real

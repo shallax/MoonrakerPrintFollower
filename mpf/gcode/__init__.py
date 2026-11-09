@@ -5,7 +5,7 @@
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-20 — 6.0.0: Expose extrusion-run values while keeping parser exports separate from portable caches.
 # 2026-10-18 — 6.0.0: Expose supported Qt-free indexing, hydration and boundary APIs.
-# 2026-09-08 [0f363ac] Deterministic captures: vendored Cura assets, capture harness, committed screenshots
+# 2026-09-08 Deterministic captures: vendored Cura assets, capture harness, committed screenshots
 
 """Supported, standard-library-only G-code indexing and geometry API."""
 from .GCodeIndex import build_index_from_file, build_index_from_bytes

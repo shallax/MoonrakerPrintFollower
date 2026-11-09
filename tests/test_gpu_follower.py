@@ -4,9 +4,9 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Verify shared geometry and modular component ownership after extraction.
-# 2026-10-01 [02e4bd5] Draw switchable bed-axis arrows across plate views
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-27 [43ab36d] Accelerate follower rendering with retained GPU shader geometry
+# 2026-10-01 Draw switchable bed-axis arrows across plate views
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-27 Accelerate follower rendering with retained GPU shader geometry
 
 """Geometry invariants shared by the retained follower and object picker."""
 from array import array

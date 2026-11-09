@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-18 — 6.0.0: Keep slicer marker numbers separate from firmware layer numbering.
-# 2026-10-13 [a2da858] Derive recovery clearance and support object-top Z homing
-# 2026-10-05 [8a4fec8] Add Preview object banners and recognize slow Cura loads
-# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
+# 2026-10-13 Derive recovery clearance and support object-top Z homing
+# 2026-10-05 Add Preview object banners and recognize slow Cura loads
+# 2026-09-29 Decompose indexing into explicit parser, cache and worker components
 
 """Assemble scanned layer records into the query index.
 

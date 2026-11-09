@@ -4,9 +4,9 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Discard superseded heater values without disturbing other pending tuning.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-09-08 [c217114] 3.4.0 feature set: toolhead control, Monitor rework and review fixes
-# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-09-08 3.4.0 feature set: toolhead control, Monitor rework and review fixes
+# 2026-09-07 Replace transitional runtime layers with composed components
 
 """Debounced, revision-guarded live tuning independent of QML and printer discovery."""
 from __future__ import annotations

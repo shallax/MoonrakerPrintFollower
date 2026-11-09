@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Share process-owner liveness with persistent cache cleanup.
-# 2026-10-04 [3fda19f] Finish per-camera failure detection controls and training
-# 2026-10-01 [0a51955] Keep metadata retries independent of download failures
-# 2026-09-07 [547223f] Establish shared Moonraker session and service runtime
+# 2026-10-04 Finish per-camera failure detection controls and training
+# 2026-10-01 Keep metadata retries independent of download failures
+# 2026-09-07 Establish shared Moonraker session and service runtime
 
 from __future__ import annotations
 

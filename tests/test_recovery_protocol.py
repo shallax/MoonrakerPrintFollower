@@ -4,7 +4,7 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Cover recovery modes, telemetry validation and restart lifecycle regressions.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
 
 """Recovery protocol tests with queued replies and a command-level printer model.
 

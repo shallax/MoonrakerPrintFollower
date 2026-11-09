@@ -3,8 +3,8 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-29 [2cd649b] Decompose indexing into explicit parser, cache and worker components
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-09-29 Decompose indexing into explicit parser, cache and worker components
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable index object visits contracts."""
 from tests import index_plate_support as harness

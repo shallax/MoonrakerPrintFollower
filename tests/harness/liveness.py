@@ -4,7 +4,7 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-18 — 6.0.0: Propagate terminal driver failures to stop native suites promptly.
-# 2026-09-30 [1378522] The runner's two measurement instruments get owners
+# 2026-09-30 The runner's two measurement instruments get owners
 
 """The presentation record and its verdict.
 

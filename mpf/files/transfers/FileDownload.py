@@ -3,10 +3,10 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-23 [2ac0f5e] 4.6.0: the platform pass, the gesture identity and the camera nonce
-# 2026-09-23 [843540c] 4.6.0: the RC review wave — the Windows sweep, the stale geometry, the worker save and
+# 2026-09-23 4.6.0: the platform pass, the gesture identity and the camera nonce
+# 2026-09-23 4.6.0: the RC review wave — the Windows sweep, the stale geometry, the worker save and
 #   the census's last frame
-# 2026-09-11 [1c33814] 3.6.0: file manager, console resize, and e-stop reconnect
+# 2026-09-11 3.6.0: file manager, console resize, and e-stop reconnect
 
 """The file-manager Download capability: one stream into a temp
 location, then either the file loads into Cura through the follower's

@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-12 [0701dcb] Improve reflection continuity and reduce rendering overhead
-# 2026-10-08 [4a8f8a3] Fix slice reflections and reduce large-print capture overhead
-# 2026-10-08 [e2f777d] Add toolhead materials, scene reflections and fan animation
+# 2026-10-12 Improve reflection continuity and reduce rendering overhead
+# 2026-10-08 Fix slice reflections and reduce large-print capture overhead
+# 2026-10-08 Add toolhead materials, scene reflections and fan animation
 
 """Atomic capture, frozen snapshots, coalescing and optional failure recovery."""
 from contextlib import nullcontext

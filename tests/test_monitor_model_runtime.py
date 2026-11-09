@@ -6,9 +6,9 @@
 # 2026-10-20 — 6.0.0: Inspect detection owners and preserve fixed-layout gates after QML extraction.
 # 2026-10-18 — 6.0.0: Verify toolhead cooldown arming without a wall-clock race.
 # 2026-10-18 — 6.0.0: Verify stable projections after heater discovery and freshness overlays.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-13 [54a31e5] Implement interrupted print recovery handover
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-13 Implement interrupted print recovery handover
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable monitor model runtime contracts."""
 import time

@@ -4,7 +4,7 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-09-24 [3c7a63b] The prompt's name goes on the content, not the popup
+# 2026-09-24 The prompt's name goes on the content, not the popup
 
 # Build an image with a bounded retry.
 #

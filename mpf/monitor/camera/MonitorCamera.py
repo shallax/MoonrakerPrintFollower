@@ -4,9 +4,9 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Preserve IPv6 literals when constructing camera bridge URLs.
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-07 [29b5fc3] Replace transitional runtime layers with composed components
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-07 Replace transitional runtime layers with composed components
 
 """Webcam selection/transform policy with an explicit configuration capability."""
 from dataclasses import replace

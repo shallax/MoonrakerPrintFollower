@@ -5,9 +5,9 @@
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-20 — 6.0.0: Exercise shared upload operations, bounded replies and cancellation lifetime.
 # 2026-10-18 — 6.0.0: Cover file-manager ordering, invalidation and active-file protection.
-# 2026-10-01 [d8cf321] Revert "mpf's subpackages are capitalised"
-# 2026-09-30 [f425547] mpf's subpackages are capitalised
-# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+# 2026-10-01 Revert "mpf's subpackages are capitalised"
+# 2026-09-30 mpf's subpackages are capitalised
+# 2026-09-18 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
 
 """Coverage for the file-manager service and its pure view policy.
 

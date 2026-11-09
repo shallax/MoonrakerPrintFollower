@@ -4,9 +4,9 @@
 #
 # Selected release and Git history (newest first; original provenance retained):
 # 2026-10-18 — 6.0.0: Verify cooldown discovery and latest temperature intent across controls.
-# 2026-10-18 [b68f411] Complete print recovery controls, temperature adjustment and release documentation
-# 2026-10-07 [6b3d8e9] Add Preview toolhead controls for 5.3.0
-# 2026-09-18 [64ff78e] 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
+# 2026-10-18 Complete print recovery controls, temperature adjustment and release documentation
+# 2026-10-07 Add Preview toolhead controls for 5.3.0
+# 2026-09-18 4.5.0: the coverage wave lands — fifteen behavioural suites lift plugins/ from 83% to 99%
 
 """Direct tests for MonitorControls: the control projections and the
 policy gates guarding every dispatch.

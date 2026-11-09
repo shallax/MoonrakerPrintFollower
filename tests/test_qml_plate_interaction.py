@@ -4,9 +4,9 @@
 #
 # Selected Git history (newest first; oldest and latest two content changes):
 # 2026-10-20 — 6.0.0: Inspect camera gestures and overlay playback through their actual owners.
-# 2026-10-13 [52df354] Verify recovery safety paths and release gates
-# 2026-10-12 [5a32b35] Prepare 5.4.0 runtime mirror and follower controls
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-13 Verify recovery safety paths and release gates
+# 2026-10-12 Prepare 5.4.0 runtime mirror and follower controls
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable qml plate interaction contracts."""
 from tests import qml_engine_support as harness

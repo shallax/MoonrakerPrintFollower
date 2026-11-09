@@ -3,9 +3,9 @@
 # Licensed under GNU GPLv3 (version 3 only); see LICENSE.
 #
 # Selected Git history (newest first; oldest and latest two content changes):
-# 2026-10-04 [7981ac6] Harden local detection and add per-print mute and monitored regions
-# 2026-10-01 [19ea61a] Bound asynchronous render drain by wall-clock deadline
-# 2026-09-27 [9e9ae5d] Reduce layer-load overhead and split isolated test domains
+# 2026-10-04 Harden local detection and add per-print mute and monitored regions
+# 2026-10-01 Bound asynchronous render drain by wall-clock deadline
+# 2026-09-27 Reduce layer-load overhead and split isolated test domains
 
 """Executable contracts for the completed component boundaries."""
 from __future__ import annotations
